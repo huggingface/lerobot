@@ -334,6 +334,19 @@ def _pad_sequence(sequence: Tensor, padding: int) -> Tensor:
     return torch.cat([sequence, sequence.new_zeros(sequence.shape[0], padding, sequence.shape[2])], dim=1)
 
 
+def _selective_text_cross_entropy(
+    language_model: BeingH05Qwen3ForCausalLM,
+    hidden_states: Tensor,
+    labels: Tensor,
+) -> Tensor:
+    """Project only supervised positions instead of materializing full-vocabulary logits."""
+    supervised = labels.ne(-100)
+    if not bool(supervised.any()):
+        return hidden_states.sum() * 0.0
+    logits = language_model.get_output_embeddings()(hidden_states[supervised]).float()
+    return F.cross_entropy(logits, labels[supervised])
+
+
 INTERNLM2_SYSTEM_MESSAGE = (
     "你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, "
     "是一个有用无害的人工智能助手。"
@@ -605,6 +618,7 @@ class BeingH05Model(nn.Module):
         packed_action_indexes: Tensor,
         padded_state: Tensor,
         packed_state_indexes: Tensor,
+        packed_text_labels: Tensor | None = None,
         **kwargs,
     ) -> dict[str, Tensor]:
         del kwargs
@@ -670,7 +684,13 @@ class BeingH05Model(nn.Module):
             packed_und_token_indexes=packed_und_indexes,
             packed_gen_token_indexes=packed_gen_indexes,
         )
-        del hidden_und
+        text_loss = torch.tensor(0.0, device=device)
+        if packed_text_labels is not None:
+            text_loss = _selective_text_cross_entropy(
+                self.language_model,
+                hidden_und[: packed_text_indexes.numel()],
+                packed_text_labels,
+            )
         action_hidden = hidden_gen[len(packed_state_indexes) :]
         predicted_velocity = self.action_decoder(
             action_hidden.reshape(batch_size, self.action_chunk_length, -1)
@@ -684,7 +704,7 @@ class BeingH05Model(nn.Module):
             * padded_action_mask.float()
         )
         action_loss = masked_loss.sum() / (padded_action_mask.sum() + 1e-8)
-        return {"action_loss": action_loss, "und_loss": torch.tensor(0.0, device=device)}
+        return {"action_loss": action_loss, "text_loss": text_loss, "und_loss": text_loss}
 
     @torch.no_grad()
     def get_action(
@@ -1083,6 +1103,11 @@ class BeingH05Policy(PreTrainedPolicy):
         return outputs
 
     def _pack_model_inputs(self, batch: dict[str, Any], training: bool) -> dict[str, Any]:
+        if batch.get("being_h05_messages"):
+            return self._pack_recipe_model_inputs(batch, training)
+        return self._pack_action_model_inputs(batch, training)
+
+    def _pack_action_model_inputs(self, batch: dict[str, Any], training: bool) -> dict[str, Any]:
         states = batch["being_h05.state"]
         pixels = batch["being_h05.pixel_values"]
         prompts = batch["being_h05_prompt"]
@@ -1189,17 +1214,151 @@ class BeingH05Policy(PreTrainedPolicy):
             result["padded_action_mask"] = valid.reshape(-1, valid.shape[-1])
         return result
 
+    def _pack_recipe_model_inputs(self, batch: dict[str, Any], training: bool) -> dict[str, Any]:
+        """Pack rendered recipe messages with assistant-only language supervision."""
+        states = batch["being_h05.state"]
+        pixels = batch["being_h05.pixel_values"]
+        messages = batch["being_h05_messages"]
+        targets = batch["being_h05_target_message_indices"]
+        predict_actions = batch["being_h05_predict_actions"].to(device=states.device, dtype=torch.bool)
+        device = states.device
+        bsz, views = pixels.shape[:2]
+        if len(messages) != bsz or len(targets) != bsz or predict_actions.numel() != bsz:
+            raise ValueError("Being-H0.5 recipe supervision must align with the observation batch.")
+        image_valid = batch.get(
+            "being_h05.image_valid",
+            torch.ones((bsz, views), dtype=torch.bool, device=device),
+        )
+        text_ids: list[int] = []
+        text_labels: list[int] = []
+        text_indexes: list[int] = []
+        vision_indexes: list[int] = []
+        state_indexes: list[int] = []
+        action_indexes: list[int] = []
+        position_ids: list[int] = []
+        sample_lens: list[int] = []
+        split_lens: list[int] = []
+        attn_modes: list[str] = []
+        packed_images: list[torch.Tensor] = []
+        cursor = 0
+
+        def add_text(tokens: list[int], labels: list[int] | None = None) -> None:
+            nonlocal cursor
+            text_ids.extend(tokens)
+            text_labels.extend(labels if labels is not None else [-100] * len(tokens))
+            text_indexes.extend(range(cursor, cursor + len(tokens)))
+            cursor += len(tokens)
+
+        system_ids = self.tokenizer.encode(f"system\n{self.model.system_message}")
+        assistant_ids = self.tokenizer.encode("assistant\n")
+        for sample in range(bsz):
+            sample_images = pixels[sample, image_valid[sample]]
+            if sample_images.shape[0] == 0:
+                raise ValueError("Being-H0.5 requires at least one present camera per sample.")
+            packed_images.extend(sample_images.unbind(0))
+            num_image_tokens = self.model.num_image_token * sample_images.shape[0]
+            sample_start = cursor
+            rope = 0
+
+            block_start = cursor
+            add_text([self._bos, *system_ids, self._eos, self._newline])
+            content_len = cursor - block_start
+            position_ids.extend(range(rope, rope + content_len))
+            rope += content_len
+            split_lens.append(content_len)
+            attn_modes.append("causal")
+
+            first_user = True
+            target_set = set(targets[sample])
+            for message_index, message in enumerate(messages[sample]):
+                role = message["role"]
+                role_ids = self.tokenizer.encode(f"{role}\n")
+                content_ids = self.tokenizer.encode(message["content"])
+                block_start = cursor
+                if role == "user" and first_user:
+                    first_user = False
+                    add_text([self._bos, *role_ids, self._image_start])
+                    vision_indexes.extend(range(cursor, cursor + num_image_tokens))
+                    cursor += num_image_tokens
+                    add_text([self._image_end, self._state_start])
+                    state_indexes.append(cursor)
+                    cursor += 1
+                    add_text([self._state_end, *content_ids, self._eos, self._newline])
+                else:
+                    block = [self._bos, *role_ids, *content_ids, self._eos, self._newline]
+                    labels = [-100] * len(block)
+                    if message_index in target_set:
+                        header_length = 1 + len(role_ids)
+                        for offset, token in enumerate([*content_ids, self._eos]):
+                            labels[header_length - 1 + offset] = token
+                    add_text(block, labels)
+                content_len = cursor - block_start
+                position_ids.extend(range(rope, rope + content_len))
+                rope += content_len
+                split_lens.append(content_len)
+                attn_modes.append("causal")
+
+            if first_user:
+                raise ValueError("Being-H0.5 recipe messages require at least one user turn.")
+
+            block_start = cursor
+            add_text([self._bos, *assistant_ids])
+            action_indexes.extend(range(cursor, cursor + self.config.chunk_size))
+            cursor += self.config.chunk_size
+            add_text([self._eos])
+            action_len = cursor - block_start
+            position_ids.extend(range(rope, rope + action_len))
+            split_lens.append(action_len)
+            attn_modes.append("causal")
+            sample_lens.append(cursor - sample_start)
+
+        padding = (-cursor) % 128
+        if padding:
+            sample_lens.append(padding)
+            split_lens.append(padding)
+            attn_modes.append("causal")
+        result = {
+            "sequence_length": cursor,
+            "packed_text_ids": torch.tensor(text_ids, dtype=torch.long, device=device),
+            "packed_text_labels": torch.tensor(text_labels, dtype=torch.long, device=device),
+            "packed_text_indexes": torch.tensor(text_indexes, dtype=torch.long, device=device),
+            "sample_lens": sample_lens,
+            "packed_position_ids": torch.tensor(position_ids, dtype=torch.long, device=device),
+            "split_lens": split_lens,
+            "attn_modes": attn_modes,
+            "packed_vit_tokens": torch.stack(packed_images).to(device),
+            "packed_vit_token_indexes": torch.tensor(vision_indexes, dtype=torch.long, device=device),
+            "packed_action_indexes": torch.tensor(action_indexes, dtype=torch.long, device=device),
+            "padded_state": states,
+            "packed_state_indexes": torch.tensor(state_indexes, dtype=torch.long, device=device),
+            "embodiment_ids": torch.full((bsz,), self.config.embodiment_id, dtype=torch.long, device=device),
+        }
+        if training:
+            actions = batch[ACTION]
+            result["padded_action"] = actions.reshape(-1, actions.shape[-1])
+            valid = batch.get("being_h05.action_valid", torch.ones_like(actions, dtype=torch.bool))
+            valid = valid & predict_actions[:, None, None]
+            result["padded_action_mask"] = valid.reshape(-1, valid.shape[-1])
+        return result
+
     def forward(self, batch: dict[str, Any], reduction: str = "mean"):
         output = self.model(**self._model_kwargs(batch))
         if isinstance(output, dict):
             loss = output.get("loss")
             if loss is None:
-                loss = output["action_loss"] + output["und_loss"]
+                loss = (
+                    self.config.action_loss_weight * output["action_loss"]
+                    + self.config.text_loss_weight * output["text_loss"]
+                )
         else:
             loss = output.loss
         if reduction == "none" and loss.ndim == 0:
             loss = loss.unsqueeze(0)
-        return loss, {"loss": float(loss.detach().mean())}
+        metrics = {"loss": float(loss.detach().mean())}
+        if isinstance(output, dict):
+            metrics["action_loss"] = float(output["action_loss"].detach().mean())
+            metrics["text_loss"] = float(output["text_loss"].detach().mean())
+        return loss, metrics
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> torch.Tensor:

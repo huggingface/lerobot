@@ -326,6 +326,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
+    if (
+        cfg.policy.type == "being_h05"
+        and getattr(active_cfg, "recipe_path", None)
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.warning(
+            "being_h05 is loading pretrained weights from %s, but building processors from the current "
+            "Being-H0.5 config so recipe messages and text labels are generated.",
+            processor_pretrained_path,
+        )
+        processor_pretrained_path = None
 
     processor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:

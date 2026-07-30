@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -21,6 +22,7 @@ from lerobot.policies.being_h05.configuration_being_h05 import ROBOCASA_CAMERA_K
 from lerobot.policies.being_h05.processor_being_h05 import (
     ACTION_SLOTS,
     STATE_SLOTS,
+    BeingH05MessagesStep,
     BeingH05SemanticPackStep,
     make_being_h05_pre_post_processors,
     pack_named,
@@ -91,6 +93,61 @@ def test_missing_middle_camera_is_masked_without_changing_camera_roles():
     assert observation["being_h05.image_valid"].tolist() == [[True, False, True]]
 
 
+def test_recipe_messages_are_serialized_and_route_joint_action_training():
+    transition = {
+        TransitionKey.COMPLEMENTARY_DATA: {
+            "messages": [
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "feature": ROBOCASA_CAMERA_KEYS[0]},
+                            {"type": "text", "text": "What should happen next?"},
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "say",
+                                    "arguments": {"text": "I will close the drawer."},
+                                }
+                            }
+                        ],
+                    },
+                ]
+            ],
+            "message_streams": [["low_level", "low_level"]],
+            "target_message_indices": [[1]],
+        }
+    }
+
+    complementary = BeingH05MessagesStep()(transition)[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert complementary["being_h05_messages"] == [
+        [
+            {"role": "user", "content": "What should happen next?"},
+            {"role": "assistant", "content": "<say>I will close the drawer.</say>"},
+        ]
+    ]
+    assert complementary["being_h05_target_message_indices"] == [[1]]
+    assert complementary["being_h05_predict_actions"].tolist() == [True]
+
+
+def test_recipe_text_targets_must_be_assistant_messages():
+    transition = {
+        TransitionKey.COMPLEMENTARY_DATA: {
+            "messages": [[{"role": "user", "content": "question"}]],
+            "message_streams": [["high_level"]],
+            "target_message_indices": [[0]],
+        }
+    }
+
+    with pytest.raises(ValueError, match="assistant messages"):
+        BeingH05MessagesStep()(transition)
+
+
 def test_config_and_factories_are_wired_without_importing_author_dependencies():
     config = make_policy_config(
         "being_h05",
@@ -113,6 +170,66 @@ def test_config_and_factories_are_wired_without_importing_author_dependencies():
     assert isinstance(preprocessor.steps[2], BeingH05SemanticPackStep)
     assert postprocessor.steps[0].get_config() == {}
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
+
+
+def test_recipe_pipeline_renders_language_columns_before_being_serialization():
+    pytest.importorskip("datasets")
+    from lerobot.processor.render_messages_processor import RenderMessagesStep
+
+    config = BeingH05Config(
+        recipe_path="recipes/subtask_joint.yaml",
+        input_features={
+            **{
+                key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224))
+                for key in ROBOCASA_CAMERA_KEYS
+            },
+            **{
+                f"observation.state.{name}": PolicyFeature(type=FeatureType.STATE, shape=(end - start,))
+                for name, (start, end) in STATE_SLOTS.items()
+            },
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))},
+    )
+
+    preprocessor, _ = make_being_h05_pre_post_processors(config)
+
+    assert isinstance(preprocessor.steps[2], RenderMessagesStep)
+    assert isinstance(preprocessor.steps[3], BeingH05SemanticPackStep)
+    assert isinstance(preprocessor.steps[4], BeingH05MessagesStep)
+
+    batch = {
+        **_named_state(),
+        **{key: torch.rand(1, 3, 224, 224) for key in ROBOCASA_CAMERA_KEYS},
+        ACTION: torch.zeros(1, config.chunk_size, 12),
+        "task": ["close the drawer"],
+        "timestamp": torch.tensor([0.0]),
+        "index": torch.tensor([0]),
+        "language_persistent": [
+            [
+                {
+                    "role": "assistant",
+                    "content": "reach for the handle",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                    "camera": None,
+                    "tool_calls": None,
+                }
+            ]
+        ],
+        "language_events": [[]],
+    }
+
+    processed = preprocessor(batch)
+
+    assert processed["being_h05_messages"] == [
+        [
+            {"role": "user", "content": "close the drawer"},
+            {"role": "assistant", "content": "reach for the handle"},
+        ]
+    ]
+    assert processed["being_h05_target_message_indices"] == [[1]]
+    assert processed["being_h05_predict_actions"].tolist() == [True]
+    assert processed[ACTION].shape == (1, config.chunk_size, 200)
 
 
 def test_processor_pipeline_save_reload(tmp_path):

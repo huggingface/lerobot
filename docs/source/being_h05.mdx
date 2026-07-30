@@ -82,14 +82,17 @@ environment-specific vector adapter is not included.
 
 ## Training
 
-`BeingH05Policy.forward` implements the released mixture-of-flow objective.
-During training, the preprocessor:
+`BeingH05Policy.forward` supports the released flow-matching objective, causal
+language cross-entropy, or both objectives in one packed sequence. During
+training, the preprocessor:
 
 1. resizes and normalizes each configured camera;
-2. formats the natural-language task prompt;
-3. maps robot state and actions into their semantic 200D slots;
-4. builds state/action validity masks; and
-5. packs the vision, language, state, and action tokens for the model.
+2. renders optional language-recipe columns into role-delimited messages;
+3. marks only `target: true` assistant content and EOS tokens as language
+   labels;
+4. maps robot state and actions into their semantic 200D slots;
+5. routes `low_level` samples to the action loss; and
+6. packs vision, language, state, and action tokens into one causal sequence.
 
 ### Training Command Example
 
@@ -104,6 +107,32 @@ lerobot-train \
   --policy.device=cuda \
   --wandb.enable=true
 ```
+
+This command performs action training conditioned on the dataset task string.
+To jointly train an annotated subtask target and its action chunk, select the
+shared language recipe:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/being_h05_base \
+  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.action_loss_weight=1.0 \
+  --policy.text_loss_weight=1.0 \
+  --dataset.repo_id=your_name/your_language_dataset \
+  --batch_size=1 \
+  --steps=3000 \
+  --output_dir=outputs/train/being_h05_joint \
+  --job_name=being_h05_joint \
+  --policy.device=cuda
+```
+
+The recipe renderer consumes `language_persistent` and `language_events`, then
+produces `messages`, `message_streams`, and `target_message_indices`. A
+high-level recipe sample trains only its assistant text target. A low-level
+sample trains actions, and a low-level sample with an assistant target—such as
+`subtask_joint.yaml`—trains text and actions together. Non-target user,
+assistant, system, image, state, and action positions are ignored by the
+language loss.
 
 The default optimizer is AdamW with learning rate `2e-5`, followed by a cosine
 decay schedule with 1,000 warmup steps. These values can be overridden with
@@ -128,6 +157,13 @@ A training dataset must provide:
 - 12D action chunks ordered as EEF translation, EEF rotation, gripper, base
   motion, and control mode; and
 - at least `policy.chunk_size` action steps per training sample.
+
+Text or joint training additionally requires LeRobot language annotations
+compatible with the selected `recipe_path`. See
+[Language columns and recipes](./language_and_recipes) for annotation and
+recipe examples. Start language-supervised fine-tuning from
+`lerobot/being_h05_base`; the RoboCasa action checkpoint does not retain
+reliable text generation.
 
 Map a dataset's native robot representation to these named fields before
 training or inference. Missing semantic modalities remain masked instead of
@@ -207,12 +243,15 @@ described in [Language columns and recipes](./language_and_recipes).
 
 ## Key Configuration Parameters
 
-| Option                | Default | Description                        |
-| --------------------- | ------: | ---------------------------------- |
-| `chunk_size`          | 16 / 15 | Base / RoboCasa action-chunk size  |
-| `n_action_steps`      |       8 | Actions executed before replanning |
-| `num_inference_steps` |       4 | Flow-matching sampling steps       |
-| `image_size`          |     224 | Required input image size          |
+| Option                | Default | Description                               |
+| --------------------- | ------: | ----------------------------------------- |
+| `chunk_size`          | 16 / 15 | Base / RoboCasa action-chunk size         |
+| `n_action_steps`      |       8 | Actions executed before replanning        |
+| `num_inference_steps` |       4 | Flow-matching sampling steps              |
+| `image_size`          |     224 | Required input image size                 |
+| `recipe_path`         |  `None` | Optional language-supervision recipe      |
+| `action_loss_weight`  |     1.0 | Flow-matching loss weight                 |
+| `text_loss_weight`    |     1.0 | Assistant-token cross-entropy loss weight |
 
 ## Semantic data convention
 

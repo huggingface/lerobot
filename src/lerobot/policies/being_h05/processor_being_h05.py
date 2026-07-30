@@ -16,14 +16,17 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import torch
 from PIL import Image
 from torchvision.transforms import InterpolationMode, functional as tvf
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
+from lerobot.configs.recipe import TrainingRecipe
 from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
@@ -72,6 +75,97 @@ def unpack_action(packed: torch.Tensor) -> dict[str, torch.Tensor]:
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return "" if content is None else str(content)
+    return "\n".join(
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+    )
+
+
+def _serialize_message(message: dict[str, Any]) -> dict[str, str]:
+    role = message.get("role")
+    if role not in {"system", "user", "assistant"}:
+        raise ValueError(f"Being-H0.5 does not support the message role {role!r}.")
+    content = _message_content_to_text(message.get("content"))
+    say_texts = []
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else None
+        if not isinstance(function, dict) or function.get("name") != "say":
+            continue
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (TypeError, ValueError):
+                arguments = {}
+        if isinstance(arguments, dict) and arguments.get("text"):
+            say_texts.append(str(arguments["text"]))
+    if say_texts:
+        markers = "".join(f"<say>{text}</say>" for text in say_texts)
+        content = f"{content}\n{markers}" if content else markers
+    return {"role": role, "content": content}
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="being_h05_messages")
+class BeingH05MessagesStep(ProcessorStep):
+    """Validate recipe messages and retain only the text contract consumed by Being-H0.5."""
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        messages = complementary.get("messages")
+        if not messages:
+            return transition
+        is_batched = not isinstance(messages[0], dict)
+        if not is_batched:
+            messages = [messages]
+        streams = complementary.get("message_streams")
+        targets = complementary.get("target_message_indices")
+        if streams is None:
+            streams = [[] for _ in messages]
+        elif not is_batched:
+            streams = [streams]
+        if targets is None:
+            targets = [[] for _ in messages]
+        elif not is_batched:
+            targets = [targets]
+        if len(messages) != len(streams) or len(messages) != len(targets):
+            raise ValueError("Being-H0.5 messages, streams, and target indices must have equal batches.")
+
+        serialized_batch = []
+        predict_actions = []
+        for sample_messages, sample_streams, sample_targets in zip(messages, streams, targets, strict=True):
+            if len(sample_messages) != len(sample_streams):
+                raise ValueError("Being-H0.5 message streams must align with messages.")
+            for target in sample_targets:
+                if target < 0 or target >= len(sample_messages):
+                    raise ValueError(f"Being-H0.5 target message index {target} is out of bounds.")
+                if sample_messages[target].get("role") != "assistant":
+                    raise ValueError("Being-H0.5 text targets must be assistant messages.")
+            serialized_batch.append([_serialize_message(message) for message in sample_messages])
+            predict_actions.append(any(stream == "low_level" for stream in sample_streams))
+
+        complementary["being_h05_messages"] = serialized_batch
+        complementary["being_h05_target_message_indices"] = [list(value) for value in targets]
+        complementary["being_h05_predict_actions"] = torch.tensor(predict_actions, dtype=torch.bool)
+        transition = transition.copy()
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
 
 
 @dataclass
@@ -230,16 +324,26 @@ def make_being_h05_pre_post_processors(
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
     )
+    input_steps = [steps.add_batch_dim, steps.normalize]
+    if config.recipe_path:
+        from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: PLC0415
+
+        input_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+    input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
     return make_policy_processor_pipelines(
-        input_steps=[
-            steps.add_batch_dim,
-            steps.normalize,
-            semantic_step,
-            steps.to_device,
-        ],
+        input_steps=input_steps,
         output_steps=[
             BeingH05SemanticUnpackStep(),
             steps.unnormalize,
             steps.to_cpu,
         ],
     )
+
+
+def _load_recipe(path_str: str) -> TrainingRecipe:
+    path = Path(path_str)
+    if not path.is_absolute() and not path.exists():
+        candidate = Path(recipe_module.__file__).resolve().parent / path_str
+        if candidate.exists():
+            path = candidate
+    return TrainingRecipe.from_yaml(path)

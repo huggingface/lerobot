@@ -53,6 +53,9 @@ class BeingH05Config(PreTrainedConfig):
         "According to the instruction '{task_description}', what's the micro-step actions "
         "in the next {k} steps?"
     )
+    recipe_path: str | None = None
+    action_loss_weight: float = 1.0
+    text_loss_weight: float = 1.0
     metadata: dict = field(default_factory=dict)
     optimizer_lr: float = 2e-5
     optimizer_weight_decay: float = 0.0
@@ -80,6 +83,10 @@ class BeingH05Config(PreTrainedConfig):
             )
         if self.image_size != 224:
             raise ValueError("Released Being-H0.5 checkpoints require 224px images.")
+        if self.action_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("Being-H0.5 loss weights must be non-negative.")
+        if self.action_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one Being-H0.5 training loss must be enabled.")
 
     def validate_features(self) -> None:
         visual = [key for key, value in self.input_features.items() if value.type == FeatureType.VISUAL]
