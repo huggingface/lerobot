@@ -1444,7 +1444,7 @@ def modify_tasks(
     2. Set specific tasks for specific episodes (using `episode_tasks`)
     3. Replace existing task strings wherever they appear (using `task_replacements`)
 
-    You can combine all of them: `new_task` sets the default, while `episode_tasks` and 
+    You can combine all of them: `new_task` sets the default, while `episode_tasks` and
     `task_replacements` override specific episodes, with `episode_tasks` taking precedence.
 
     The dataset is modified in-place, updating only the task-related files:

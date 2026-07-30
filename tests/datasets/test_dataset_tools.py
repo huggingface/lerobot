@@ -1177,7 +1177,9 @@ def test_modify_tasks_default_task_and_replacements(sample_dataset):
 
 def test_modify_tasks_no_task_specified(sample_dataset):
     """Test error when no task is specified."""
-    with pytest.raises(ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"):
+    with pytest.raises(
+        ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"
+    ):
         modify_tasks(sample_dataset)
 
 
