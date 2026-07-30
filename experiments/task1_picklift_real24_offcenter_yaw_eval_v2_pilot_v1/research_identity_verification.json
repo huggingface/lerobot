@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-07-30T07:36:52.9412643Z",
+  "verification_mode": "read_only_windows_research_checkout",
+  "research_repo": "G:\\PhysicalAI\\IAmRobotTrainerResearch",
+  "head_commit": "ca62d043d55a70f06c91a9b4ffdfcac16a63d5cd",
+  "working_tree_status": "clean",
+  "files": {
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v1.json",
+      "sha256": "4975d82942843cadba3301c97f82617af669953b056cf18bc81dcf5ec6a4a55c",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v1.json",
+      "sha256": "4863646a12d5ae26b6d750f3db946d0a71aa479459710842f15722f60af4944b",
+      "match": true
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v1.json",
+      "sha256": "681b155cfa49380bed6f2ed7d887275a35ffa912cd8e9a2b3844306daa49a17a",
+      "match": true
+    },
+    "alignment_manifest": {
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "match": true
+    }
+  },
+  "validated_contract": {
+    "pose_count": 12,
+    "unique_cells": 12,
+    "positions_equal_to_cell_center": 0,
+    "quadrant_counts": {
+      "x_minus_y_minus": 3,
+      "x_minus_y_plus": 3,
+      "x_plus_y_minus": 3,
+      "x_plus_y_plus": 3
+    },
+    "yaw_counts": {
+      "0": 6,
+      "45": 6
+    },
+    "pose_sha_order_recomputed": true,
+    "uses_prior_failure_or_success_labels": false,
+    "fixed_real24_model_hash_matches": true,
+    "alignment_status": "accepted_frozen",
+    "joint_geometry_profile_id": "picklift_real_to_mujoco_joint_geometry_v1",
+    "sim_camera_profile_id": "picklift_real_canonical_12cell_camera_v6",
+    "real_camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1"
+  },
+  "hardware_access": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "follower_12v": false,
+    "policy_rollout": false
+  }
+}
