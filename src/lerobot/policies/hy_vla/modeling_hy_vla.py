@@ -1455,16 +1455,12 @@ class HyVLAFlowMatching(nn.Module):
         img_masks,
         lang_tokens,
         lang_masks,
-        state=None,
-        actions=None,
+        state,
+        actions,
         noise=None,
         time=None,
-        lang_token_labels=None,
     ) -> Tensor:
-        """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        losses_flow = None
-        losses_ntp = None
-
+        """Compute the per-element flow-matching action loss."""
         (
             prefix_embs,
             prefix_pad_masks,
@@ -1474,32 +1470,22 @@ class HyVLAFlowMatching(nn.Module):
             image_full_ranges,
         ) = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
 
-        # action, text + action
-        if actions is not None:
-            if noise is None:
-                noise = self.sample_noise(actions.shape, actions.device)
+        if noise is None:
+            noise = self.sample_noise(actions.shape, actions.device)
+        if time is None:
+            time = self.sample_time(actions.shape[0], actions.device)
 
-            if time is None:
-                time = self.sample_time(actions.shape[0], actions.device)
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
 
-            time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * actions
-            u_t = noise - actions
-
-            suffix_embs, suffix_pad_masks, suffix_att_masks, modality_mask_suffix = self.embed_suffix(
-                state,
-                x_t,
-                time,
-            )
-
-            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-
-        # text only
-        else:
-            suffix_embs = None
-            pad_masks = torch.cat([prefix_pad_masks], dim=1)
-            att_masks = torch.cat([prefix_att_masks], dim=1)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, modality_mask_suffix = self.embed_suffix(
+            state,
+            x_t,
+            time,
+        )
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
@@ -1507,7 +1493,7 @@ class HyVLAFlowMatching(nn.Module):
         # Adjust visual-segment attention according to the configured scope.
         self._apply_visual_segment_mask(att_2d_masks, image_idx_ranges, image_full_ranges)
 
-        (prefix_out, suffix_out), _, att_vis_output, _ = self.dual_tower.forward(
+        (_, suffix_out), _, _, _ = self.dual_tower.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
@@ -1517,43 +1503,9 @@ class HyVLAFlowMatching(nn.Module):
             modality_masks=[modality_mask_prefix, modality_mask_suffix],
         )
 
-        # Flow matching prediction
-        if actions is not None:
-            suffix_out = suffix_out[:, -self.config.n_action_steps :]
-            v_t = self.action_out_proj(suffix_out)  # torch.float32 -> bf16
-            losses_flow = F.mse_loss(u_t.float(), v_t.float(), reduction="none")  # bf16 -> torch.float32
-
-        # Next-token prediction
-        if lang_token_labels is not None:
-            attention_mask = None
-            logits = self.dual_tower.vlm.language_model.lm_head(prefix_out)
-
-            # Upcast to float if we need to compute the loss to avoid potential precision issues
-            logits = logits.float()
-            shift_logits = logits[..., -self.config.tokenizer_max_length : -1, :]
-            shift_labels = lang_token_labels[..., 1:]
-
-            if attention_mask is not None:
-                # we use the input attention mask to shift the logits and labels, because it is 2D.
-                # we also crop attn mask in case it is longer, which happens in PrefixTuning with peft
-                shift_attention_mask = attention_mask[:, -shift_logits.shape[1] :].to(logits.device)
-                shift_logits = shift_logits[shift_attention_mask.to(logits.device) != 0].contiguous()
-                shift_labels = shift_labels[shift_attention_mask.to(shift_labels.device) != 0].contiguous()
-            else:
-                shift_logits = shift_logits.contiguous()
-                shift_labels = shift_labels.contiguous()
-
-            # Flatten the tokens
-            losses_ce = nn.CrossEntropyLoss(
-                reduction="none",
-                ignore_index=self.dual_tower.vlm.config.ignore_index,
-            )
-
-            flat_logits = shift_logits.view(-1, self.dual_tower.vlm.config.text_config.vocab_size)
-            flat_labels = shift_labels.view(-1).to(shift_logits.device)
-            losses_ntp = losses_ce(flat_logits, flat_labels)
-
-        return losses_flow, losses_ntp
+        suffix_out = suffix_out[:, -self.config.n_action_steps :]
+        v_t = self.action_out_proj(suffix_out)
+        return F.mse_loss(u_t.float(), v_t.float(), reduction="none")
 
     # @torch.compile(mode="reduce-overhead")
     def sample_actions(
@@ -1895,7 +1847,7 @@ class HyVLAPolicy(PreTrainedPolicy):
             for task in tasks
         ]
 
-    def prepare_language(self, batch: dict[str, Any]) -> tuple[Tensor, Tensor, Tensor]:
+    def prepare_language(self, batch: dict[str, Any]) -> tuple[Tensor, Tensor]:
         device = next(
             value.device
             for key, value in batch.items()
@@ -1907,24 +1859,18 @@ class HyVLAPolicy(PreTrainedPolicy):
         if not isinstance(raw_tasks, list | tuple) or not all(isinstance(task, str) for task in raw_tasks):
             raise ValueError("Hy-VLA requires an already-selected raw LeRobot task string per sample.")
         tasks = self._format_tasks(list(raw_tasks))
-        labels = batch.get("text_label")
-        if labels is not None:
-            labels = [label + self.language_tokenizer.eos_token for label in labels]
         tokenized = self.language_tokenizer(
             tasks,
-            text_pair=labels,
             padding="max_length",
             padding_side="right",
             truncation=True,
             max_length=self.config.tokenizer_max_length,
             return_tensors="pt",
             add_special_tokens=False,
-            return_token_type_ids=True,
         )
         tokens = tokenized["input_ids"].to(device)
         masks = tokenized["attention_mask"].to(device=device, dtype=torch.bool)
-        token_types = tokenized.get("token_type_ids", torch.zeros_like(tokens)).to(device)
-        return tokens, masks, token_types
+        return tokens, masks
 
     def prepare_state(self, batch: dict[str, Any]) -> Tensor:
         model_device, model_dtype = self._model_device_dtype()
@@ -1938,8 +1884,8 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     def _prepare_model_inputs(self, batch: dict[str, Any]):
         images, image_masks = self.prepare_images(batch)
-        tokens, language_masks, token_types = self.prepare_language(batch)
-        return images, image_masks, tokens, language_masks, token_types
+        tokens, language_masks = self.prepare_language(batch)
+        return images, image_masks, tokens, language_masks
 
     def forward(
         self,
@@ -1948,16 +1894,10 @@ class HyVLAPolicy(PreTrainedPolicy):
         noise: Tensor | None = None,
         time: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor | float]]:
-        images, image_masks, tokens, language_masks, token_types = self._prepare_model_inputs(batch)
+        images, image_masks, tokens, language_masks = self._prepare_model_inputs(batch)
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
-        labels = None
-        if batch.get("text_label") is not None:
-            labels = tokens.masked_fill(
-                token_types == self.model.dual_tower.vlm.config.pad_token_id,
-                self.model.dual_tower.vlm.config.ignore_index,
-            )
-        flow_losses, language_losses = self.model(
+        flow_losses = self.model(
             images,
             image_masks,
             tokens,
@@ -1966,10 +1906,7 @@ class HyVLAPolicy(PreTrainedPolicy):
             actions,
             noise,
             time,
-            labels,
         )
-        if flow_losses is None:
-            raise RuntimeError("Hy-VLA training requires an action target.")
         flow_losses = flow_losses[..., : self.config.model_action_dim]
         action_mask = batch.get(f"{ACTION}.mask")
         if action_mask is not None:
@@ -1990,12 +1927,9 @@ class HyVLAPolicy(PreTrainedPolicy):
             flow_loss = flow_loss_per_sample.mean()
         else:
             raise ValueError(f"Unsupported reduction {reduction!r}.")
-        language_loss = language_losses.mean() if language_losses is not None else flow_loss.new_zeros(())
-        loss = flow_loss + language_loss
-        return loss, {
-            "loss": loss,
+        return flow_loss, {
+            "loss": flow_loss,
             "flow_loss": flow_loss.detach(),
-            "language_loss": language_loss.detach(),
         }
 
     def _pair_relative_absolute(self, actions: Tensor) -> Tensor:
@@ -2013,7 +1947,7 @@ class HyVLAPolicy(PreTrainedPolicy):
             self._append_inference_history(batch)
         if not self._action_queue:
             model_batch = self._with_inference_history(batch) if self.config.use_video_encoder else batch
-            images, image_masks, tokens, language_masks, _ = self._prepare_model_inputs(model_batch)
+            images, image_masks, tokens, language_masks = self._prepare_model_inputs(model_batch)
             actions = self.model.sample_actions(
                 images,
                 image_masks,
@@ -2033,7 +1967,7 @@ class HyVLAPolicy(PreTrainedPolicy):
         """Return the complete normalized chunk without mutating the action queue."""
 
         self.eval()
-        images, image_masks, tokens, language_masks, _ = self._prepare_model_inputs(batch)
+        images, image_masks, tokens, language_masks = self._prepare_model_inputs(batch)
         actions = self.model.sample_actions(
             images,
             image_masks,

@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Hy-VLA action-training smoke tests."""
+
 import torch
 from torch import nn
 
@@ -22,8 +24,6 @@ from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAPolicy
 
 
 class _CapturingTokenizer:
-    eos_token = "<eos>"
-
     def __init__(self):
         self.received = None
 
@@ -34,7 +34,6 @@ class _CapturingTokenizer:
         return {
             "input_ids": torch.zeros(batch, length, dtype=torch.long),
             "attention_mask": torch.ones(batch, length, dtype=torch.long),
-            "token_type_ids": torch.zeros(batch, length, dtype=torch.long),
         }
 
 
@@ -43,10 +42,9 @@ class _FakeFlow(nn.Module):
         super().__init__()
         self.scale = nn.Parameter(torch.tensor(0.25))
 
-    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time, labels):
+    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time):
         target = actions[..., :20]
-        losses = (self.scale * torch.ones_like(target) - target).square()
-        return losses, None
+        return (self.scale * torch.ones_like(target) - target).square()
 
 
 class _IndexedLossFlow(nn.Module):
@@ -54,9 +52,9 @@ class _IndexedLossFlow(nn.Module):
         super().__init__()
         self.anchor = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time, labels):
+    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time):
         losses = torch.arange(actions.shape[-1], device=actions.device, dtype=actions.dtype)
-        return losses.expand_as(actions) + self.anchor * 0, None
+        return losses.expand_as(actions) + self.anchor * 0
 
 
 def _lightweight_policy() -> HyVLAPolicy:
