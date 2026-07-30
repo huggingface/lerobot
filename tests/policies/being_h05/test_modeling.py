@@ -73,6 +73,40 @@ def test_mot_reuses_transformers_qwen3_primitives_and_checkpoint_names():
     assert "model.layers.0.mlp_mot_gen.gate_proj.weight" in state_dict
 
 
+def test_understanding_kv_cache_matches_full_decode():
+    config = Qwen3Config(
+        vocab_size=32,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+    )
+    config.expert_config = Qwen3Config(
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+    )
+    config._attn_implementation = "sdpa"
+    model = BeingH05Qwen3ForCausalLM(config).eval()
+    inputs = torch.randn(1, 6, config.hidden_size)
+
+    full_logits, _ = model.forward_understanding(inputs)
+    _, cache = model.forward_understanding(inputs[:, :-1], use_cache=True)
+    cached_logits, _ = model.forward_understanding(
+        inputs[:, -1:],
+        past_key_values=cache,
+        use_cache=True,
+    )
+
+    torch.testing.assert_close(cached_logits[:, -1], full_logits[:, -1], rtol=1e-5, atol=1e-5)
+
+
 def test_released_zero_strength_mpg_is_noop():
     module = MPGEnhancement(
         obs_feature_dim=16,

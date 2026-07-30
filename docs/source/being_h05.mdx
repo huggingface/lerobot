@@ -7,8 +7,10 @@ and action-selection interfaces for the released base and RoboCasa models.
 
 ## Model Overview
 
-Being-H0.5 combines visual observations, robot state, and a natural-language
-task to predict a chunk of robot actions with flow matching.
+Being-H0.5 combines visual observations, robot state, and natural language in
+one model. Its understanding expert can generate grounded text, including
+visual-question answers and task plans, while its action expert predicts robot
+action chunks with flow matching.
 
 | Component         | Implementation                                   | Role                                       |
 | ----------------- | ------------------------------------------------ | ------------------------------------------ |
@@ -29,6 +31,8 @@ attention, connector, semantic packing, and flow-action modules live in
 - Loading the released base and RoboCasa checkpoints from the Hub.
 - Training and fine-tuning through `lerobot-train`.
 - Inference through `predict_action_chunk` and `select_action`.
+- Grounded text generation through `generate_text`.
+- Interactive task planning and VQA through the language runtime adapter.
 - Three ordered camera inputs and natural-language task instructions.
 - Fixed semantic 200D state and action representations with validity masks.
 - The released four-step flow-matching sampler.
@@ -47,13 +51,21 @@ required.
 
 ## Checkpoints
 
-| Variant  | LeRobot checkpoint                                                                | Intended use                        |
-| -------- | --------------------------------------------------------------------------------- | ----------------------------------- |
-| Base     | [`lerobot/being_h05_base`](https://huggingface.co/lerobot/being_h05_base)         | Cross-embodiment fine-tuning        |
-| RoboCasa | [`lerobot/being_h05_robocasa`](https://huggingface.co/lerobot/being_h05_robocasa) | RoboCasa evaluation and fine-tuning |
+| Variant  | LeRobot checkpoint                                                                | Intended use                          |
+| -------- | --------------------------------------------------------------------------------- | ------------------------------------- |
+| Base     | [`lerobot/being_h05_base`](https://huggingface.co/lerobot/being_h05_base)         | VQA, planning, and policy fine-tuning |
+| RoboCasa | [`lerobot/being_h05_robocasa`](https://huggingface.co/lerobot/being_h05_robocasa) | RoboCasa evaluation and fine-tuning   |
 
 The checkpoints include the policy configuration, tokenizer, serialized
 preprocessor and postprocessor, and model weights.
+
+<Tip>
+
+Use the base checkpoint for text generation and VQA. The released RoboCasa
+checkpoint is specialized for action prediction and does not retain reliable
+text-generation quality.
+
+</Tip>
 
 ## Usage
 
@@ -132,9 +144,10 @@ policy = BeingH05Policy.from_pretrained("lerobot/being_h05_base")
 policy.to("cuda").eval()
 ```
 
-The policy predicts 16 actions at a time and executes the first
-`n_action_steps` actions before sampling another chunk. The released
-checkpoints use four flow-matching inference steps.
+The policy predicts the checkpoint-configured action chunk (16 steps for the
+base checkpoint and 15 for RoboCasa) and executes the first `n_action_steps`
+actions before sampling another chunk. The released checkpoints use four
+flow-matching inference steps.
 
 Evaluate a checkpoint after providing an environment adapter that emits the
 required named fields:
@@ -152,14 +165,54 @@ lerobot-eval \
 Reset the policy and its processor pipelines at every episode boundary when
 using a custom evaluation loop.
 
+### Text and VQA
+
+`BeingH05Policy.generate_text` uses the same InternVL vision tower, Qwen3
+understanding stream, and language-model head stored in the checkpoint. It
+supports greedy decoding by default and optional temperature and top-p
+sampling:
+
+```python
+answer = policy.generate_text(
+    processed_observation,
+    "What object is next to the bowl?",
+    max_new_tokens=64,
+)[0]
+```
+
+`processed_observation` is the output of the Being-H0.5 preprocessor and must
+contain `being_h05.pixel_values` and `being_h05.image_valid`.
+
+The policy is also registered with LeRobot's interactive language runtime:
+
+```bash
+lerobot-rollout \
+  --language \
+  --policy.path=lerobot/being_h05_base \
+  --policy.device=cuda \
+  --robot.type=<robot> \
+  <robot and camera options>
+```
+
+At the runtime prompt, ask about the current camera observation:
+
+```text
+/ask What object is next to the bowl?
+```
+
+`/ask` pauses action dispatch before running VQA. During action rollouts, the
+adapter can also generate the next subtask and a short memory note from the
+current observation. These runtime streams follow the same message roles
+described in [Language columns and recipes](./language_and_recipes).
+
 ## Key Configuration Parameters
 
-| Option                | Default | Description                           |
-| --------------------- | ------: | ------------------------------------- |
-| `chunk_size`          |      16 | Number of actions generated per chunk |
-| `n_action_steps`      |       8 | Actions executed before replanning    |
-| `num_inference_steps` |       4 | Flow-matching sampling steps          |
-| `image_size`          |     224 | Required input image size             |
+| Option                | Default | Description                        |
+| --------------------- | ------: | ---------------------------------- |
+| `chunk_size`          | 16 / 15 | Base / RoboCasa action-chunk size  |
+| `n_action_steps`      |       8 | Actions executed before replanning |
+| `num_inference_steps` |       4 | Flow-matching sampling steps       |
+| `image_size`          |     224 | Required input image size          |
 
 ## Semantic data convention
 

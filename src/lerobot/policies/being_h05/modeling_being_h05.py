@@ -41,6 +41,9 @@ from .configuration_being_h05 import BeingH05Config
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer, Qwen3Config
+    from transformers.cache_utils import Cache, DynamicCache
+    from transformers.generation.logits_process import TemperatureLogitsWarper, TopPLogitsWarper
+    from transformers.masking_utils import create_causal_mask
     from transformers.models.internvl.configuration_internvl import InternVLVisionConfig
     from transformers.models.internvl.modeling_internvl import InternVLVisionModel
     from transformers.models.qwen3.modeling_qwen3 import (
@@ -53,6 +56,8 @@ if TYPE_CHECKING or _transformers_available:
 else:
     # Keep the policy package importable without its optional Transformers extra.
     AutoTokenizer = None
+    Cache = None
+    DynamicCache = None
     InternVLVisionConfig = None
     InternVLVisionModel = None
     Qwen3Config = None
@@ -60,7 +65,10 @@ else:
     Qwen3MLP = None
     Qwen3RMSNorm = None
     Qwen3RotaryEmbedding = None
+    TemperatureLogitsWarper = None
+    TopPLogitsWarper = None
     apply_rotary_pos_emb = None
+    create_causal_mask = None
 
 _compiled_flex_attention = torch.compile(flex_attention)
 
@@ -148,6 +156,7 @@ class BeingH05PackedMoTAttention(Qwen3Attention):
             values.unsqueeze(0),
             enable_gqa=True,
             block_mask=attention_mask,
+            kernel_options={"BLOCK_M": 64, "BLOCK_N": 64},
         )
         attention_output = attention_output[0, :, :total_length].transpose(0, 1)
         attention_output = attention_output.reshape(total_length, self.num_heads * self.head_dim)
@@ -210,6 +219,7 @@ class BeingH05Qwen3MoTModel(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        self.config = config
         expert_config = config.expert_config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
         self.layers = nn.ModuleList(
@@ -243,6 +253,47 @@ class BeingH05Qwen3MoTModel(nn.Module):
             )
         return self.norm(packed_sequence_und), self.norm_mot_gen(packed_sequence_gen)
 
+    def forward_understanding(
+        self,
+        inputs_embeds: Tensor,
+        *,
+        past_key_values: Cache | None = None,
+        use_cache: bool = False,
+    ) -> tuple[Tensor, Cache | None]:
+        """Run the standard Qwen3 understanding stream with a Transformers KV cache."""
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        position_ids = torch.arange(
+            past_seen_tokens,
+            past_seen_tokens + inputs_embeds.shape[1],
+            device=inputs_embeds.device,
+        ).unsqueeze(0)
+        attention_mask = create_causal_mask(
+            config=self.config,
+            inputs_embeds=inputs_embeds,
+            attention_mask=None,
+            past_key_values=past_key_values,
+            position_ids=position_ids,
+        )
+        position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
+        hidden_states = inputs_embeds
+        for layer in self.layers:
+            residual = hidden_states
+            hidden_states = layer.input_layernorm(hidden_states)
+            hidden_states, _ = Qwen3Attention.forward(
+                layer.self_attn,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = residual + hidden_states
+            hidden_states = hidden_states + layer.mlp(layer.post_attention_layernorm(hidden_states))
+        return self.norm(hidden_states), past_key_values if use_cache else None
+
 
 class BeingH05Qwen3ForCausalLM(nn.Module):
     """Minimal CausalLM owner retaining the released checkpoint's tensor names."""
@@ -262,6 +313,20 @@ class BeingH05Qwen3ForCausalLM(nn.Module):
     def forward(self, **kwargs) -> tuple[Tensor, Tensor]:
         return self.model(**kwargs)
 
+    def forward_understanding(
+        self,
+        inputs_embeds: Tensor,
+        *,
+        past_key_values: Cache | None = None,
+        use_cache: bool = False,
+    ) -> tuple[Tensor, Cache | None]:
+        hidden_states, past_key_values = self.model.forward_understanding(
+            inputs_embeds,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+        )
+        return self.lm_head(hidden_states), past_key_values
+
 
 def _pad_sequence(sequence: Tensor, padding: int) -> Tensor:
     if padding == 0:
@@ -269,9 +334,13 @@ def _pad_sequence(sequence: Tensor, padding: int) -> Tensor:
     return torch.cat([sequence, sequence.new_zeros(sequence.shape[0], padding, sequence.shape[2])], dim=1)
 
 
-SYSTEM_MESSAGE = (
+INTERNLM2_SYSTEM_MESSAGE = (
     "你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, "
     "是一个有用无害的人工智能助手。"
+)
+INTERNVL2_5_SYSTEM_MESSAGE = (
+    "你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位"
+    "联合开发的多模态大语言模型。"
 )
 
 
@@ -456,7 +525,11 @@ class BeingH05Model(nn.Module):
         self.unified_action_dim = 200
         self.select_layer = author_config.get("select_layer", -1)
         self.downsample_ratio = author_config.get("downsample_ratio", 0.5)
-        self.system_message = author_config.get("system_message") or SYSTEM_MESSAGE
+        self.system_message = author_config.get("system_message") or (
+            INTERNVL2_5_SYSTEM_MESSAGE
+            if author_config.get("template") == "internvl2_5"
+            else INTERNLM2_SYSTEM_MESSAGE
+        )
         self.num_timestep_buckets = author_config.get("num_timestep_buckets", 1000)
         self.noise_s = author_config.get("noise_s", 0.999)
         self.num_inference_timesteps = num_inference_steps
@@ -827,6 +900,7 @@ class BeingH05Policy(PreTrainedPolicy):
             llm_config.expert_config = Qwen3Config.from_dict(llm_dict["expert_config"])
         llm_config.qk_norm = llm_dict.get("qk_norm", True)
         llm_config.use_mot = llm_dict.get("use_mot", True)
+        llm_config._attn_implementation = "sdpa"
         vit_dict = dict(config.author_config["vit_config"])
         vit_config = InternVLVisionConfig.from_dict(vit_dict)
         vit_config.attention_bias, vit_config.use_qk_norm = (
@@ -888,6 +962,125 @@ class BeingH05Policy(PreTrainedPolicy):
     def _model_kwargs(self, batch: dict[str, Any]) -> dict[str, Any]:
         kwargs = batch.get("being_h05.model_inputs")
         return kwargs if kwargs is not None else self._pack_model_inputs(batch, training=ACTION in batch)
+
+    def _text_prompt_embeddings(
+        self,
+        pixels: Tensor,
+        image_valid: Tensor,
+        prompt: str,
+    ) -> Tensor:
+        sample_images = pixels[image_valid]
+        if sample_images.shape[0] == 0:
+            raise ValueError("Being-H0.5 text generation requires at least one present camera.")
+        image_embeddings = self.model.extract_feature(sample_images)
+        token_blocks = (
+            [
+                self._bos,
+                *self.tokenizer.encode(f"system\n{self.model.system_message}"),
+                self._eos,
+                self._newline,
+            ],
+            [self._bos, *self.tokenizer.encode("user\n")],
+            [*self.tokenizer.encode(prompt), self._eos, self._newline],
+            [self._bos, *self.tokenizer.encode("assistant\n")],
+        )
+        embed_tokens = self.model.language_model.get_input_embeddings()
+        embeddings = [
+            embed_tokens(torch.tensor(block, dtype=torch.long, device=pixels.device))
+            for block in token_blocks
+        ]
+        image_start = embed_tokens(torch.tensor([self._image_start], device=pixels.device))
+        image_end = embed_tokens(torch.tensor([self._image_end], device=pixels.device))
+        interleaved_images = [part for image in image_embeddings for part in (image_start, image, image_end)]
+        return torch.cat([embeddings[0], embeddings[1], *interleaved_images, embeddings[2], embeddings[3]])[
+            None
+        ]
+
+    @staticmethod
+    def _sample_text_token(
+        logits: Tensor,
+        generated_ids: Tensor,
+        *,
+        temperature: float,
+        top_p: float,
+    ) -> Tensor:
+        if temperature == 0:
+            return logits.argmax(dim=-1)
+        if temperature != 1:
+            logits = TemperatureLogitsWarper(temperature)(generated_ids, logits)
+        if top_p < 1:
+            logits = TopPLogitsWarper(top_p)(generated_ids, logits)
+        return torch.multinomial(logits.softmax(dim=-1), num_samples=1).squeeze(-1)
+
+    @torch.no_grad()
+    def generate_text(
+        self,
+        batch: dict[str, Any],
+        prompts: str | Sequence[str],
+        *,
+        max_new_tokens: int = 64,
+        min_new_tokens: int = 0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+    ) -> list[str]:
+        """Generate grounded text with the checkpoint's native VLM understanding stream."""
+        if max_new_tokens < 1:
+            raise ValueError("max_new_tokens must be at least 1.")
+        if not 0 <= min_new_tokens <= max_new_tokens:
+            raise ValueError("min_new_tokens must be between 0 and max_new_tokens.")
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative.")
+        if not 0 < top_p <= 1:
+            raise ValueError("top_p must be in (0, 1].")
+
+        pixels = batch["being_h05.pixel_values"]
+        batch_size, views = pixels.shape[:2]
+        image_valid = batch.get(
+            "being_h05.image_valid",
+            torch.ones((batch_size, views), dtype=torch.bool, device=pixels.device),
+        )
+        if isinstance(prompts, str):
+            prompts = [prompts] * batch_size
+        elif len(prompts) != batch_size:
+            raise ValueError(f"Expected {batch_size} text prompts, got {len(prompts)}.")
+
+        eos_token_ids = {self._eos}
+        if self.tokenizer.eos_token_id is not None:
+            eos_token_ids.add(self.tokenizer.eos_token_id)
+        outputs = []
+        self.eval()
+        for sample, prompt in enumerate(prompts):
+            inputs_embeds = self._text_prompt_embeddings(
+                pixels[sample],
+                image_valid[sample],
+                prompt,
+            )
+            logits, cache = self.model.language_model.forward_understanding(
+                inputs_embeds,
+                use_cache=True,
+            )
+            generated = torch.empty((1, 0), dtype=torch.long, device=pixels.device)
+            for index in range(max_new_tokens):
+                next_logits = logits[:, -1].float()
+                if index < min_new_tokens:
+                    next_logits[:, list(eos_token_ids)] = -torch.inf
+                next_token = self._sample_text_token(
+                    next_logits,
+                    generated,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+                generated = torch.cat([generated, next_token[:, None]], dim=1)
+                if index >= min_new_tokens and next_token.item() in eos_token_ids:
+                    break
+                next_embedding = self.model.language_model.get_input_embeddings()(next_token[:, None])
+                logits, cache = self.model.language_model.forward_understanding(
+                    next_embedding,
+                    past_key_values=cache,
+                    use_cache=True,
+                )
+            outputs.append(self.tokenizer.decode(generated[0].tolist(), skip_special_tokens=True).strip())
+        return outputs
 
     def _pack_model_inputs(self, batch: dict[str, Any], training: bool) -> dict[str, Any]:
         states = batch["being_h05.state"]
