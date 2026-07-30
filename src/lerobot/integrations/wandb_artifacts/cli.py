@@ -16,7 +16,9 @@
 """``lerobot-wandb``: move LeRobot datasets to/from W&B Artifacts. Never touches the Hub.
 
 Deliberately ``argparse``-based rather than wired into the central Draccus config parser,
-consistent with this repo's existing precedent for small standalone scripts.
+consistent with this repo's existing precedent for small standalone scripts. Transfer commands
+always use an online W&B run: their success contract is a durable, cross-machine artifact, not a
+local offline run that still needs a later ``wandb sync``.
 
 Examples:
 
@@ -32,7 +34,6 @@ import argparse
 from pathlib import Path
 
 import wandb
-
 from lerobot.utils.utils import init_logging
 
 from .inspect import inspect_dataset_directory, validate_dataset_directory
@@ -47,7 +48,7 @@ def cmd_dataset_upload(args: argparse.Namespace) -> None:
     metadata = inspect_dataset_directory(args.root)
     aliases = args.aliases or ["latest"]
 
-    run = wandb.init(entity=args.entity, project=args.project, job_type="dataset_upload", mode=args.mode)
+    run = wandb.init(entity=args.entity, project=args.project, job_type="dataset_upload", mode="online")
     try:
         result = upload_directory(
             run,
@@ -76,14 +77,18 @@ def cmd_dataset_download(args: argparse.Namespace) -> None:
         entity=args.entity or parsed.entity,
         project=args.project or parsed.project,
         job_type="dataset_download",
-        mode=args.mode,
+        mode="online",
     )
     try:
-        result = download_artifact(run, parsed, expected_type=DATASET_ARTIFACT_TYPE, download_root=args.root)
+        result = download_artifact(
+            run,
+            parsed,
+            expected_type=DATASET_ARTIFACT_TYPE,
+            download_root=args.root,
+            validator=validate_dataset_directory,
+        )
     finally:
         run.finish()
-
-    validate_dataset_directory(result.local_path)
 
     print(f"Downloaded dataset artifact {result.resolved_ref} to: {result.local_path}")
 
@@ -109,7 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
     upload_parser.add_argument(
         "--alias", dest="aliases", action="append", default=[], help="Repeatable. Defaults to ['latest']."
     )
-    upload_parser.add_argument("--mode", choices=["online", "offline", "disabled"], default=None)
     upload_parser.set_defaults(func=cmd_dataset_upload)
 
     download_parser = action_subparsers.add_parser(
@@ -132,7 +136,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="W&B project to create the lineage run in. Defaults to the artifact's own project (--ref).",
     )
-    download_parser.add_argument("--mode", choices=["online", "offline", "disabled"], default=None)
     download_parser.set_defaults(func=cmd_dataset_download)
 
     return parser
