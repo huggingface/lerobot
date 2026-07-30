@@ -98,6 +98,19 @@ def _resolve_tasks(task: str) -> tuple[list[str], str | None]:
     return names, None
 
 
+def _get_task_horizon(task: str) -> int:
+    """Return the rollout horizon registered by RoboCasa for a task."""
+    from robocasa.utils.dataset_registry_utils import get_task_horizon
+
+    try:
+        return int(get_task_horizon(task))
+    except ValueError as exc:
+        raise ValueError(
+            f"No RoboCasa horizon is registered for task '{task}'. "
+            "Set `--env.episode_length=<steps>` explicitly."
+        ) from exc
+
+
 def convert_action(flat_action: np.ndarray) -> dict[str, Any]:
     """Split a flat (12,) action vector into a RoboCasa action dict.
 
@@ -154,7 +167,7 @@ class RoboCasaEnv(gym.Env):
 
         self.camera_name = parse_camera_names(camera_name)
 
-        self._max_episode_steps = episode_length if episode_length is not None else 1000
+        self._max_episode_steps = episode_length if episode_length is not None else _get_task_horizon(task)
 
         # Deferred — created on first reset() inside the worker subprocess
         # to avoid inheriting stale GPU/EGL contexts across fork().
