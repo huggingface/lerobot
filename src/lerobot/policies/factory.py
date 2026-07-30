@@ -47,6 +47,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
+from .g05.configuration_g05 import G05Config
 from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
@@ -178,6 +179,22 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        if isinstance(policy_cfg, G05Config):
+            from .g05.processor_g05 import make_g05_pre_post_processors_from_pretrained
+
+            return make_g05_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                revision=pretrained_revision,
+                dataset_stats=kwargs.get("dataset_stats"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+            )
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 

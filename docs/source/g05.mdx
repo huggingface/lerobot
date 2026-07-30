@@ -1,0 +1,152 @@
+# G0.5
+
+G0.5 combines a Qwen3.5 vision-language backbone with a flow-matching action expert. The integration follows the regular LeRobot policy contract: `G05Config`, `G05Policy`, and serializable pre/postprocessor pipelines all use the registry name `g05`.
+
+Paper and project page: TBD
+
+## Install
+
+```bash
+uv sync --extra g05 --extra training
+```
+
+Continuous flow and autoregressive action-token paths are controlled directly by `continuous_action` and `discrete_action`. Joint training enables both objectives. Inference must enable exactly one: use `continuous_action=true, discrete_action=false` for flow matching, or `continuous_action=false, discrete_action=true` for autoregressive ActionCodec decoding. The SO101 flow path performs the checkpoint-required greedy CoT generation before action inference. Its LeRobot camera contract uses `observation.images.exterior_rgb` and `observation.images.right_wrist_rgb`; the absent left-wrist slot is generated inside the artifact processor.
+
+G0.5 keeps the original text/action `eager` default, while vision defaults to the original fallback path, `sdpa`. Set `attn_implementation` and `vision_attn_implementation` in `G05Config` to `eager`, `sdpa`, `flash_attention_2`, or `flash_attention_4`. Flash Attention packages are optional local dependencies; the policy never downloads kernels at runtime.
+
+## Load
+
+```python
+from lerobot.policies.g05.configuration_g05 import G05Config
+from lerobot.policies.g05.modeling_g05 import G05Policy
+from lerobot.policies.factory import make_pre_post_processors
+
+path = "ZibinDong/g05-libero-fm"
+config = G05Config.from_pretrained(path)
+policy = G05Policy.from_pretrained(path, config=config, strict=True)
+preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=path)
+```
+
+Keep `config.json`, policy safetensors, both processor JSON files, their state files, `processor/`, and `action_tokenizer/` together. The ActionCodec subdirectory is a standard local Hugging Face model and is required even when a continuous-only policy does not load it at runtime. Moving only the policy weights is unsupported.
+
+## LIBERO benchmark
+
+G0.5 provides separate autoregressive and flow-matching checkpoints:
+
+- [ZibinDong/g05-libero-ar](https://huggingface.co/ZibinDong/g05-libero-ar)
+- [ZibinDong/g05-libero-fm](https://huggingface.co/ZibinDong/g05-libero-fm)
+
+Both evaluations use the source-compatible 166-token base-model prompt, strict FP32 inference, eager text/action and vision attention, `NVIDIA_TF32_OVERRIDE=0`, `seed=0`, and the default LIBERO episode lengths. Each suite contains 10 tasks with 50 episodes per task. The action horizon and execution window are both 10.
+
+Evaluation hardware: NVIDIA H20 (140 GB).
+
+### Autoregressive results
+
+The autoregressive checkpoint uses `discrete_action=true` and `continuous_action=false`.
+
+| Suite          | Success rate | Successes | Episodes |
+| -------------- | -----------: | --------: | -------: |
+| libero_spatial |        99.0% |       495 |      500 |
+| libero_object  |       100.0% |       500 |      500 |
+| libero_goal    |        97.8% |       489 |      500 |
+| libero_10      |        96.0% |       480 |      500 |
+| **Overall**    |   **98.20%** |  **1964** | **2000** |
+
+Run once for each suite by setting `SUITE` to `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`:
+
+```bash
+export NVIDIA_TF32_OVERRIDE=0
+export MUJOCO_GL=egl
+export SUITE=libero_spatial
+
+uv run lerobot-eval \
+    --policy.path=ZibinDong/g05-libero-ar \
+    --policy.device=cuda \
+    --policy.dtype=float32 \
+    --policy.use_amp=false \
+    --policy.attn_implementation=eager \
+    --policy.vision_attn_implementation=eager \
+    --policy.discrete_action=true \
+    --policy.continuous_action=false \
+    --policy.predict_cot=false \
+    --policy.action_attend_cot=false \
+    --env.type=libero \
+    --env.task="$SUITE" \
+    --env.camera_name_mapping='{"agentview_image":"image","robot0_eye_in_hand_image":"wrist_image"}' \
+    --env.observation_height=256 \
+    --env.observation_width=256 \
+    --eval.batch_size=50 \
+    --eval.n_episodes=50 \
+    --eval.use_async_envs=true \
+    --seed=0 \
+    --output_dir="outputs/eval/g05-libero-ar-${SUITE}"
+```
+
+### Flow-matching results
+
+The flow-matching checkpoint uses `discrete_action=false` and `continuous_action=true`.
+
+| Suite          | Success rate | Successes | Episodes |
+| -------------- | -----------: | --------: | -------: |
+| libero_spatial |        98.2% |       491 |      500 |
+| libero_object  |       100.0% |       500 |      500 |
+| libero_goal    |        98.0% |       490 |      500 |
+| libero_10      |        97.8% |       489 |      500 |
+| **Overall**    |   **98.50%** |  **1970** | **2000** |
+
+Run once for each suite by setting `SUITE` to `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`:
+
+```bash
+export NVIDIA_TF32_OVERRIDE=0
+export MUJOCO_GL=egl
+export SUITE=libero_spatial
+
+uv run lerobot-eval \
+    --policy.path=ZibinDong/g05-libero-fm \
+    --policy.device=cuda \
+    --policy.dtype=float32 \
+    --policy.use_amp=false \
+    --policy.attn_implementation=eager \
+    --policy.vision_attn_implementation=eager \
+    --policy.discrete_action=false \
+    --policy.continuous_action=true \
+    --policy.predict_cot=false \
+    --policy.action_attend_cot=false \
+    --env.type=libero \
+    --env.task="$SUITE" \
+    --env.camera_name_mapping='{"agentview_image":"image","robot0_eye_in_hand_image":"wrist_image"}' \
+    --env.observation_height=256 \
+    --env.observation_width=256 \
+    --eval.batch_size=50 \
+    --eval.n_episodes=50 \
+    --eval.use_async_envs=true \
+    --seed=0 \
+    --output_dir="outputs/eval/g05-libero-fm-${SUITE}"
+```
+
+## SO100/SO101 deployment
+
+SO100 and SO101 use the same six-axis LeRobot control contract. The converted artifact emits absolute degree targets in this order: `shoulder_pan.pos`, `shoulder_lift.pos`, `elbow_flex.pos`, `wrist_flex.pos`, `wrist_roll.pos`, and `gripper.pos`. Keep `robot.use_degrees=true`; the first five axes use degrees and the gripper uses its calibrated 0–100 range.
+
+The exterior camera is required and must be named `exterior_rgb`. `left_wrist_rgb` and `right_wrist_rgb` are optional; omitted wrist slots become black frames, matching the random camera-drop training pipeline. A two-camera rollout can be started with:
+
+```bash
+uv run lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=/path/to/lerobot-g05-so101 \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.use_degrees=true \
+  --robot.max_relative_target=5 \
+  --robot.cameras="{ exterior_rgb: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, right_wrist_rgb: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+  --task="pick up the object" \
+  --fps=30 \
+  --duration=60 \
+  --device=cuda
+```
+
+Use `--robot.type=so100_follower` unchanged for SO100. `max_relative_target` is a controller-side safety limit on the change between the current and commanded absolute target; tune it conservatively for the physical setup.
+
+## Published checkpoint defaults
+
+All published checkpoints predict 32 actions. The recommended execution windows are 10 for LIBERO, 16 for DROID, 32 for SO101, and 16 for the base checkpoint. These values are artifact configuration, not model branches.
