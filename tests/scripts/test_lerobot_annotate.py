@@ -18,6 +18,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import requests
+from huggingface_hub.errors import RevisionNotFoundError
 
 # ``lerobot.scripts.lerobot_annotate`` (and the ``_push_to_hub`` path it
 # exercises) imports ``lerobot.datasets``, which only ships under the
@@ -26,7 +28,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 
 def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
-    from lerobot.scripts.lerobot_annotate import _push_to_hub
+    from lerobot.scripts import lerobot_annotate
 
     root = tmp_path / "dataset"
     (root / "meta").mkdir(parents=True)
@@ -45,9 +47,6 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
             return SimpleNamespace(oid="abc123")
 
         def delete_tag(self, repo_id, **kwargs):
-            import requests
-            from huggingface_hub.errors import RevisionNotFoundError
-
             calls["delete_tag"] = {"repo_id": repo_id, **kwargs}
             # Simulate the common case: no stale tag to delete.
             raise RevisionNotFoundError("no such tag", response=requests.Response())
@@ -55,7 +54,7 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
         def create_tag(self, **kwargs):
             calls["create_tag"] = kwargs
 
-    monkeypatch.setattr("huggingface_hub.HfApi", FakeHfApi)
+    monkeypatch.setattr(lerobot_annotate, "HfApi", FakeHfApi)
 
     def fake_card_push(self, **kwargs):
         calls["card_push"] = {"content": str(self), **kwargs}
@@ -69,7 +68,7 @@ def test_push_to_hub_tags_uploaded_dataset_revision(tmp_path, monkeypatch):
         push_commit_message=None,
     )
 
-    _push_to_hub(root, cfg)
+    lerobot_annotate._push_to_hub(root, cfg)
 
     assert calls["create_repo"] == {
         "repo_id": "annotated/dataset",

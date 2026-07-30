@@ -23,8 +23,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
-import packaging
-import safetensors
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -34,14 +32,23 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .utils import log_model_loading_keys
 
-T = TypeVar("T", bound="PreTrainedPolicy")
+if TYPE_CHECKING or _peft_available:
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+else:
+    PEFT_TYPE_TO_CONFIG_MAPPING = None
+    PeftType = None
+    get_peft_model = None
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+T = TypeVar("T", bound="PreTrainedPolicy")
 
 
 def _build_card_context(
@@ -221,26 +228,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
-
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = load_model_as_safetensor(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
         log_model_loading_keys(missing_keys, unexpected_keys)
-
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
         return model
 
     @abc.abstractmethod
@@ -257,6 +248,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Does things like clearing caches.
         """
         raise NotImplementedError
+
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
@@ -401,7 +396,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             peft_cli_overrides: Optional dict of CLI overrides (method_type, target_modules, r, etc.)
                 These are merged with policy defaults to build the final config.
         """
-        from peft import get_peft_model
+        require_package("peft", extra="peft")
 
         # If user provided a complete config, use it directly (with overrides)
         if peft_config is not None:
@@ -472,7 +467,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Returns:
             Preprocessed dict with renamed keys and init_type mapped to method-specific key.
         """
-        from peft import PeftType
+        require_package("peft", extra="peft")
 
         cli_overrides = cli_overrides.copy()
 
@@ -497,7 +492,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _build_peft_config(self, cli_overrides: dict):
         """Build a PEFT config from policy defaults and CLI overrides."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Determine PEFT method type (default to LORA)
         method_type_str = cli_overrides.get("method_type") or "lora"
@@ -524,7 +519,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _apply_peft_cli_overrides(self, peft_config, cli_overrides: dict):
         """Apply CLI overrides to an existing PEFT config."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Get method type from existing config or CLI override
         method_type_str = cli_overrides.get("method_type")
