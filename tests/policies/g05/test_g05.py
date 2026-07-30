@@ -105,6 +105,55 @@ class GroupedTinyG05Backend(TinyG05Backend):
         ]
 
 
+class TinyLanguageTrainingBackend(G05NativeBackend):
+    def __init__(self, *, ce_weight: float, z_loss_scale: float = 0.0):
+        nn.Module.__init__(self)
+        self.model_config = {
+            "ar": {"ce_weight": ce_weight, "ce_z_loss_scale": z_loss_scale},
+            "continuous_action": False,
+            "discrete_action": True,
+            "predict_cot": True,
+        }
+        self.head = nn.Linear(2, 3, bias=False)
+        self.head.weight.data.copy_(
+            torch.tensor(
+                [
+                    [1.0, -0.5],
+                    [-0.25, 0.75],
+                    [0.5, 0.25],
+                ]
+            )
+        )
+        self.model = SimpleNamespace(vlm=SimpleNamespace(logits=self.head))
+        self.hidden = nn.Parameter(
+            torch.tensor(
+                [
+                    [0.5, -0.5],
+                    [1.0, 0.25],
+                    [-0.25, 0.75],
+                ]
+            )
+        )
+        self.processor = SimpleNamespace(
+            encode_train=lambda samples, device, action_codec: SimpleNamespace(
+                labels=torch.tensor([[-100, 0, 2]], device=device),
+                token_types=torch.zeros(1, 3, device=device),
+                split_index=3,
+            )
+        )
+        self.action_tokenizer = None
+
+    def _proprio(self, samples, device):
+        return torch.zeros(len(samples), 1, 2, device=device)
+
+    def _prefill(self, sequence, pixel_values, proprio):
+        return (
+            self.hidden.unsqueeze(0),
+            object(),
+            torch.zeros(3, 1, 3, dtype=torch.long),
+        )
+
+
 def _features():
     return {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
@@ -498,6 +547,41 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
     system2 = backend.predict_action({**batch, G05_RUNTIME_PREDICT_COT: True})
     assert backend.generated == 1
     assert system2["cot_text"] == ["Subtask: pick"]
+
+
+def test_native_training_applies_ar_loss_config_and_reaches_language_head():
+    ce_weight = 0.25
+    z_loss_scale = 0.2
+    backend = TinyLanguageTrainingBackend(ce_weight=ce_weight, z_loss_scale=z_loss_scale)
+    batch = {
+        "samples": [{}],
+        "pixel_values": {"camera": torch.zeros(1, 1, 3, 2, 2)},
+    }
+
+    loss, metrics = backend(batch)
+
+    logits = backend.head(backend.hidden[:2])
+    labels = torch.tensor([0, 2])
+    expected = (
+        ce_weight
+        * (
+            torch.nn.functional.cross_entropy(logits, labels, reduction="none")
+            + z_loss_scale * torch.logsumexp(logits, dim=-1).square()
+        ).mean()
+    )
+    torch.testing.assert_close(loss, expected)
+    torch.testing.assert_close(metrics["ce_loss"], expected)
+    loss.backward()
+    language_head_grad = backend.head.weight.grad
+    assert language_head_grad is not None
+    assert torch.isfinite(language_head_grad).all()
+    assert language_head_grad.abs().sum() > 0
+
+    disabled = TinyLanguageTrainingBackend(ce_weight=0.0)
+    disabled_loss, disabled_metrics = disabled(batch)
+    assert disabled_loss.requires_grad
+    torch.testing.assert_close(disabled_loss, torch.zeros_like(disabled_loss))
+    torch.testing.assert_close(disabled_metrics["ce_loss"], torch.zeros_like(disabled_loss))
 
 
 def test_author_action_payload_fills_required_tokenizer_metadata():

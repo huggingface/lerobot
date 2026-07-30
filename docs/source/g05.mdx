@@ -151,6 +151,9 @@ G0.5 implements LeRobot's training surface natively: `forward` computes
 assistant-token cross entropy and flow-matching loss, the policy exposes
 VLM/vision/action optimizer groups, and the checkpoint can be saved, resumed,
 and loaded by the normal LeRobot scripts.
+The objective preserves the packaged `ar.ce_weight`, optional
+`ar.ce_z_loss_scale`, and `fm.fm_weight`; the autoregressive loss jointly covers
+CoT text and ActionCodec targets.
 For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
 
 ### Training Command Example

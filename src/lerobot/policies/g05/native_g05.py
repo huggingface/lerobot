@@ -50,6 +50,34 @@ from .processing_g05 import IGNORE_INDEX, G05SequenceBatch, G05Tokenizer, G05Tok
 G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
 
 
+def _autoregressive_ce_loss(
+    logits: Tensor,
+    labels: Tensor,
+    *,
+    ce_weight: float,
+    z_loss_scale: float,
+) -> Tensor:
+    """Apply G0.5's checkpoint-configured autoregressive objective."""
+
+    if ce_weight < 0:
+        raise ValueError("G0.5 ar.ce_weight must be non-negative.")
+    if z_loss_scale < 0:
+        raise ValueError("G0.5 ar.ce_z_loss_scale must be non-negative.")
+    if logits.ndim != 2 or labels.ndim != 1 or logits.shape[0] != labels.shape[0]:
+        raise ValueError(
+            "G0.5 autoregressive CE expects logits [N,V] and labels [N], "
+            f"got {tuple(logits.shape)} and {tuple(labels.shape)}."
+        )
+    if logits.shape[0] == 0 or ce_weight == 0:
+        return logits.sum() * 0
+
+    token_loss = functional.cross_entropy(logits, labels, reduction="none")
+    if z_loss_scale:
+        log_z = torch.logsumexp(logits.float(), dim=-1)
+        token_loss = token_loss.float() + z_loss_scale * log_z.square()
+    return token_loss.mean() * ce_weight
+
+
 def _qwen_text_config(values: Mapping[str, Any], *, vocab_size: int | None = None):
     """Translate the serialized G0.5 Qwen config into a Transformers config."""
 
@@ -1171,6 +1199,13 @@ class G05NativeBackend(nn.Module):
         hidden_states, cache, positions = self._prefill(sequence, pixel_values, proprio)
         loss_dict: dict[str, Tensor] = {}
 
+        ar_config = self.model_config.get("ar") or {}
+        ce_weight = float(ar_config.get("ce_weight", 1.0))
+        z_loss_scale = float(ar_config.get("ce_z_loss_scale", 0.0))
+        if ce_weight < 0:
+            raise ValueError("G0.5 ar.ce_weight must be non-negative.")
+        if z_loss_scale < 0:
+            raise ValueError("G0.5 ar.ce_z_loss_scale must be non-negative.")
         skip_ce = (
             bool(self.model_config.get("continuous_action", False))
             and not bool(self.model_config.get("discrete_action", False))
@@ -1179,12 +1214,15 @@ class G05NativeBackend(nn.Module):
         if not skip_ce:
             shift_labels = sequence.labels[:, 1:]
             valid = shift_labels != IGNORE_INDEX
-            if valid.any():
-                logits = self.model.vlm.logits(hidden_states[:, :-1])
-                loss_dict["ce_loss"] = functional.cross_entropy(
-                    logits.reshape(-1, logits.shape[-1]),
-                    shift_labels.reshape(-1),
-                    ignore_index=IGNORE_INDEX,
+            if valid.any() and ce_weight:
+                shift_hidden = hidden_states[:, :-1].reshape(-1, hidden_states.shape[-1])
+                valid_hidden = shift_hidden[valid.reshape(-1)]
+                valid_labels = shift_labels.reshape(-1)[valid.reshape(-1)]
+                loss_dict["ce_loss"] = _autoregressive_ce_loss(
+                    self.model.vlm.logits(valid_hidden),
+                    valid_labels,
+                    ce_weight=ce_weight,
+                    z_loss_scale=z_loss_scale,
                 )
             else:
                 loss_dict["ce_loss"] = hidden_states.sum() * 0
