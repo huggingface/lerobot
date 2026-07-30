@@ -215,6 +215,11 @@ async function refresh() {
     $("#subtask").textContent = state.language_context?.subtask || "Waiting for policy";
     $("#memory").textContent = state.language_context?.memory || "No observations yet";
     $("#policy").selectedOptions[0].textContent = data.policy_path || "Connected checkpoint";
+    const planner = data.capabilities?.planner;
+    if (planner?.model) {
+      document.querySelector(".planner-card small").childNodes[0].textContent = `${planner.model} · every `;
+    }
+    $("#planner-enabled").disabled = planner?.available === false;
     if (data.blog_url && !$("#blog-frame").src) $("#blog-frame").src = data.blog_url;
   } catch {
     activateDemoMode();

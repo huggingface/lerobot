@@ -214,6 +214,23 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="Optional article URL shown in the Playground's collapsible Blog panel.",
     )
     p.add_argument(
+        "--planner.path",
+        dest="planner_path",
+        type=str,
+        default="Qwen/Qwen3.5-2B",
+        help=(
+            "Optional visual high-level planner used by the Playground. "
+            "The default Qwen3.5-2B weights load lazily only after enabling the planner."
+        ),
+    )
+    p.add_argument(
+        "--planner.device",
+        dest="planner_device",
+        type=str,
+        default=None,
+        help="Device for the optional high-level planner (default: cuda when available, otherwise cpu).",
+    )
+    p.add_argument(
         "--chunk_hz",
         type=float,
         default=1.0,
@@ -633,11 +650,24 @@ def _process_playground_commands(
                 continue
             image_url = str(payload.get("image_url") or "").strip() or None
             controller.add_message("user", text, image_url=image_url, kind=command.kind)
+            planner_prompt = str(payload.get("planner_prompt") or "").strip()
             if command.kind == "planner":
-                planner_prompt = str(payload.get("planner_prompt") or "").strip()
-                if planner_prompt:
-                    text = f"{planner_prompt}\n\nHigh-level goal: {text}\nReturn the next subtask only."
-            answer = _ask_runtime(runtime, text, image_url=image_url)
+                planner = getattr(controller, "planner", None)
+                if planner is None:
+                    raise ValueError("no high-level planner is configured")
+                observation = runtime._current_observation()
+                if image_url:
+                    from .playground import replace_observation_image_from_url  # noqa: PLC0415
+
+                    observation = replace_observation_image_from_url(observation, image_url)
+                answer = planner.plan(
+                    text,
+                    observation,
+                    system_prompt=planner_prompt
+                    or "You are a high-level robot planner. Return only the next concrete subtask.",
+                )
+            else:
+                answer = _ask_runtime(runtime, text, image_url=image_url)
             controller.add_message("assistant", answer or "The policy returned no answer.", kind=command.kind)
             if command.kind == "planner" and answer:
                 runtime.state.set_context("subtask", answer)
@@ -861,7 +891,11 @@ def run(
     sim_holder: dict[str, Any] = {"backend": None}
     playground_controller = None
     if sim_mode:
-        from lerobot.runtime.playground import PlaygroundController, start_playground_server  # noqa: PLC0415
+        from lerobot.runtime.playground import (  # noqa: PLC0415
+            LazyQwenPlanner,
+            PlaygroundController,
+            start_playground_server,
+        )
         from lerobot.runtime.sim_robocasa import create_sim_env  # noqa: PLC0415
 
         # Start the live viewer first so the port listens during the ~60s model
@@ -871,6 +905,9 @@ def run(
                 policy_path=args.policy_path,
                 benchmark="robocasa",
                 blog_url=args.sim_blog_url,
+                planner=LazyQwenPlanner(args.planner_path, device=args.planner_device)
+                if args.planner_path
+                else None,
             )
             sim_stream_server = start_playground_server(
                 args.sim_stream_port,

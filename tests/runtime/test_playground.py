@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import sys
 import threading
 from types import SimpleNamespace
 from urllib.request import urlopen
@@ -10,6 +11,7 @@ import torch
 from PIL import Image
 
 from lerobot.runtime.playground import (
+    LazyQwenPlanner,
     PlaygroundController,
     replace_observation_image_from_url,
     start_playground_server,
@@ -28,7 +30,11 @@ def test_controller_exposes_runtime_state_and_messages():
             "revision": 3,
         }.get(key, default),
     )
-    controller = PlaygroundController(policy_path="lerobot/test-policy", blog_url="/blog/")
+    controller = PlaygroundController(
+        policy_path="lerobot/test-policy",
+        blog_url="/blog/",
+        planner=LazyQwenPlanner(),
+    )
     controller.attach(SimpleNamespace(state=state), SimpleNamespace())
     controller.add_message("user", "What is open?")
 
@@ -39,6 +45,11 @@ def test_controller_exposes_runtime_state_and_messages():
     assert snapshot["state"]["queued_actions"] == 2
     assert snapshot["messages"][0]["text"] == "What is open?"
     assert snapshot["blog_url"] == "/blog/"
+    assert snapshot["capabilities"]["planner"] == {
+        "available": True,
+        "model": "Qwen/Qwen3.5-2B",
+        "loaded": False,
+    }
 
 
 def test_command_queue_round_trip():
@@ -68,6 +79,70 @@ def test_server_serves_playground_and_state():
 
     assert "<title>LeRobot Playground</title>" in page
     assert '"policy_path":"lerobot/test-policy"' in state
+
+
+def test_qwen_planner_loads_lazily_and_generates_subtask(monkeypatch):
+    calls = {}
+
+    class Inputs(dict):
+        def to(self, device):
+            calls["input_device"] = str(device)
+            return self
+
+    class Processor:
+        @classmethod
+        def from_pretrained(cls, path):
+            calls["processor_path"] = path
+            return cls()
+
+        def apply_chat_template(self, messages, **kwargs):
+            calls["messages"] = messages
+            calls["template_kwargs"] = kwargs
+            return Inputs(input_ids=torch.zeros((1, 3), dtype=torch.long))
+
+        def decode(self, tokens, **kwargs):
+            calls["decoded_tokens"] = tokens
+            calls["decode_kwargs"] = kwargs
+            return "grasp the refrigerator handle"
+
+    class Model:
+        device = torch.device("cpu")
+
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            calls["model_path"] = path
+            calls["model_kwargs"] = kwargs
+            return cls()
+
+        def to(self, device):
+            self.device = torch.device(device)
+            return self
+
+        def eval(self):
+            calls["eval"] = True
+
+        def generate(self, **kwargs):
+            calls["generate_kwargs"] = kwargs
+            return torch.tensor([[0, 0, 0, 7]])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(AutoModelForMultimodalLM=Model, AutoProcessor=Processor),
+    )
+    planner = LazyQwenPlanner(device="cpu")
+
+    answer = planner.plan(
+        "close the fridge",
+        {"observation.images.main": torch.zeros((1, 3, 8, 8))},
+        system_prompt="Return the next subtask.",
+    )
+
+    assert answer == "grasp the refrigerator handle"
+    assert planner.loaded is True
+    assert calls["model_path"] == "Qwen/Qwen3.5-2B"
+    assert calls["messages"][1]["content"][0]["url"].startswith("data:image/png;base64,")
+    assert calls["generate_kwargs"]["max_new_tokens"] == 80
 
 
 def test_remote_image_replaces_first_observation_image(monkeypatch):

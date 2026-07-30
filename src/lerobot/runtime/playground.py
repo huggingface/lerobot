@@ -29,6 +29,7 @@ import queue
 import socket
 import threading
 import time
+from base64 import b64encode
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,10 +57,18 @@ class PlaygroundCommand:
 class PlaygroundController:
     """Thread-safe bridge between the HTTP server and a live runtime."""
 
-    def __init__(self, *, policy_path: str, benchmark: str = "robocasa", blog_url: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        policy_path: str,
+        benchmark: str = "robocasa",
+        blog_url: str = "",
+        planner: Any | None = None,
+    ) -> None:
         self.policy_path = policy_path
         self.benchmark = benchmark
         self.blog_url = blog_url
+        self.planner = planner
         self.runtime: Any | None = None
         self.sim_backend: Any | None = None
         self._commands: queue.Queue[PlaygroundCommand] = queue.Queue()
@@ -142,7 +151,11 @@ class PlaygroundController:
                 },
                 "vqa": True,
                 "remote_image": True,
-                "planner": True,
+                "planner": {
+                    "available": self.planner is not None,
+                    "model": getattr(self.planner, "model_path", None),
+                    "loaded": bool(getattr(self.planner, "loaded", False)),
+                },
             },
         }
 
@@ -153,6 +166,103 @@ def _json_bytes(payload: Any) -> bytes:
 
 def _asset_bytes(name: str) -> bytes:
     return files("lerobot.runtime.playground_assets").joinpath(name).read_bytes()
+
+
+def _observation_image(observation: dict[str, Any] | None) -> Image.Image:
+    """Convert the first image tensor in a policy observation to RGB."""
+    if not observation:
+        raise ValueError("the runtime has no current observation")
+    source = next(
+        (
+            value
+            for key, value in observation.items()
+            if isinstance(key, str)
+            and ("image" in key or "pixel" in key)
+            and isinstance(value, torch.Tensor)
+            and value.ndim in {3, 4}
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError("this policy observation has no image input")
+    sample = source[0] if source.ndim == 4 else source
+    if sample.shape[0] in {1, 3, 4}:
+        sample = sample[:3].permute(1, 2, 0)
+    sample = sample.detach().to(device="cpu", dtype=torch.float32)
+    if float(sample.max()) > 1.5:
+        sample = sample / 255
+    if float(sample.min()) < 0:
+        sample = (sample + 1) / 2
+    array = (sample.clamp(0, 1).numpy() * 255).astype(np.uint8)
+    if array.shape[-1] == 1:
+        array = np.repeat(array, 3, axis=-1)
+    return Image.fromarray(array, mode="RGB")
+
+
+class LazyQwenPlanner:
+    """Lazily load Qwen3.5 as an optional visual high-level planner."""
+
+    def __init__(self, model_path: str = "Qwen/Qwen3.5-2B", *, device: str | None = None) -> None:
+        self.model_path = model_path
+        self.device = device
+        self.model: Any | None = None
+        self.processor: Any | None = None
+        self._lock = threading.RLock()
+
+    @property
+    def loaded(self) -> bool:
+        return self.model is not None and self.processor is not None
+
+    def _ensure_loaded(self) -> None:
+        if self.loaded:
+            return
+        with self._lock:
+            if self.loaded:
+                return
+            from transformers import AutoModelForMultimodalLM, AutoProcessor  # noqa: PLC0415
+
+            device = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
+            self.processor = AutoProcessor.from_pretrained(self.model_path)
+            self.model = AutoModelForMultimodalLM.from_pretrained(self.model_path, dtype="auto").to(device)
+            self.model.eval()
+
+    def plan(
+        self,
+        goal: str,
+        observation: dict[str, Any] | None,
+        *,
+        system_prompt: str,
+    ) -> str:
+        """Return the next low-level subtask from the current view and goal."""
+        self._ensure_loaded()
+        image = _observation_image(observation)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        image_url = f"data:image/png;base64,{b64encode(buffer.getvalue()).decode()}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "url": image_url},
+                    {
+                        "type": "text",
+                        "text": f"High-level goal: {goal}\nReturn only the next concrete robot subtask.",
+                    },
+                ],
+            },
+        ]
+        inputs = self.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(self.model.device)
+        with torch.inference_mode():
+            outputs = self.model.generate(**inputs, max_new_tokens=80, do_sample=False)
+        prompt_length = inputs["input_ids"].shape[-1]
+        return self.processor.decode(outputs[0][prompt_length:], skip_special_tokens=True).strip()
 
 
 def _validate_remote_image_url(image_url: str) -> str:
@@ -220,6 +330,8 @@ def replace_observation_image_from_url(
     )
     rgb = rgb.resize((int(width), int(height)), Image.Resampling.LANCZOS)
     replacement = torch.from_numpy(np.asarray(rgb).copy()).to(dtype=torch.float32) / 255
+    if torch.is_floating_point(target) and float(target.min()) < 0:
+        replacement = replacement * 2 - 1
     if channel_first:
         replacement = replacement.permute(2, 0, 1)
     replacement = replacement.to(device=target.device, dtype=target.dtype)
@@ -322,7 +434,7 @@ def start_playground_server(
                 if kind not in {"action", "pause", "reset", "chat", "vqa", "planner"}:
                     raise ValueError(f"unsupported command: {kind!r}")
                 command = controller.enqueue(kind, payload)
-                timeout = 180 if kind in {"chat", "vqa", "planner"} else 15
+                timeout = 600 if kind == "planner" else (180 if kind in {"chat", "vqa"} else 15)
                 if not command.completed.wait(timeout):
                     self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "runtime did not respond"})
                     return

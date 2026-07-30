@@ -242,8 +242,10 @@ simulator with task controls and a collapsible chat panel. The chat can pause or
 steer the rollout, ask the policy grounded questions about the current view,
 and attach a public image URL as the visual input for VQA. Its optional
 high-level planner periodically turns the current goal and view into the next
-subtask. The Blog button embeds the language-policy article; override its URL
-with `--sim.blog_url`.
+subtask. It defaults to `Qwen/Qwen3.5-2B`, remains unloaded until you enable it,
+and can be changed or disabled with `--planner.path` (pass an empty value to
+disable) and `--planner.device`. The Blog button embeds the language-policy
+article; override its URL with `--sim.blog_url`.
 
 Add `--sim.direct_subtask` to bypass the language planner and make each typed
 prompt the action policy's current subtask. The initial browser UI supports the
