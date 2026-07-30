@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,12 +32,7 @@ from lerobot.integrations.wandb_artifacts.store import (
 
 
 class _FakeArtifact:
-    """Stand-in for ``wandb.Artifact`` / the object ``Run.use_artifact`` returns.
-
-    Mirrors the real SDK's documented behavior: ``.name`` carries no alias/version until the
-    artifact is logged and committed (simulated by ``wait()`` baking the version in), and
-    ``.qualified_name`` is always just ``entity/project/name`` (never appends a second version).
-    """
+    """Small stand-in for ``wandb.Artifact`` and ``Run.use_artifact`` results."""
 
     def __init__(self, name=None, type=None, metadata=None, **_kwargs):  # noqa: A002
         self.name = name
@@ -145,97 +141,180 @@ def test_upload_directory_waits_for_commit(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_download_artifact_declares_input_and_downloads(tmp_path):
-    fake = _FakeArtifact(name="pick-cube:v2", type="dataset")
-    fake.version = "v2"  # already-resolved artifact: name and version agree, as the real SDK guarantees
-
+def _run_with(artifact):
     run = MagicMock()
-    run.use_artifact.return_value = fake
+    run.use_artifact.return_value = artifact
+    return run
+
+
+def test_download_artifact_declares_input_and_atomically_materializes(tmp_path):
+    fake = _FakeArtifact(name="pick-cube:v2", type="dataset")
+    fake.version = "v2"
+    run = _run_with(fake)
+    destination = tmp_path / "materialized"
 
     result = download_artifact(
         run,
         "my-team/my-project/pick-cube:latest",
         expected_type="dataset",
-        download_root=tmp_path,
+        download_root=destination,
     )
 
     run.use_artifact.assert_called_once_with("my-team/my-project/pick-cube:latest")
-    assert fake._download_root == str(tmp_path)
+    assert Path(fake._download_root).parent == tmp_path
+    assert Path(fake._download_root).name.startswith(".materialized.download-")
+    assert not Path(fake._download_root).exists()
+    assert destination.is_dir()
     assert isinstance(result, MaterializedArtifact)
     assert result.requested_ref == "my-team/my-project/pick-cube:latest"
     assert result.resolved_ref == "my-team/my-project/pick-cube:v2"
     assert result.version == "v2"
-    assert result.local_path == tmp_path
+    assert result.local_path == destination
 
 
 def test_download_artifact_accepts_parsed_ref(tmp_path):
-    fake = _FakeArtifact(name="pick-cube", type="dataset")
-    run = MagicMock()
-    run.use_artifact.return_value = fake
+    fake = _FakeArtifact(name="pick-cube:v2", type="dataset")
+    fake.version = "v2"
+    run = _run_with(fake)
+    destination = tmp_path / "materialized"
 
     ref = parse_artifact_ref("my-team/my-project/pick-cube:v2")
-    result = download_artifact(run, ref, expected_type="dataset", download_root=tmp_path)
+    result = download_artifact(run, ref, expected_type="dataset", download_root=destination)
 
     run.use_artifact.assert_called_once_with("my-team/my-project/pick-cube:v2")
     assert result.requested_ref == "my-team/my-project/pick-cube:v2"
 
 
 def test_download_artifact_rejects_type_mismatch_without_downloading(tmp_path):
-    fake = _FakeArtifact(name="candidate-model", type="model")
-    run = MagicMock()
-    run.use_artifact.return_value = fake
+    fake = _FakeArtifact(name="candidate-model:v0", type="model")
+    run = _run_with(fake)
 
     with pytest.raises(ArtifactTypeMismatchError):
         download_artifact(
-            run, "my-team/my-project/candidate-model:v0", expected_type="dataset", download_root=tmp_path
+            run,
+            "my-team/my-project/candidate-model:v0",
+            expected_type="dataset",
+            download_root=tmp_path / "materialized",
         )
 
-    assert fake._download_root is None  # download() must never have been called
+    assert fake._download_root is None
 
 
-def test_download_artifact_rejects_nonempty_destination_without_touching_it(tmp_path, monkeypatch):
-    # A nonempty destination could carry a stale file from a previously downloaded, different
-    # artifact version — reject it outright rather than silently downloading alongside it. The
-    # guard must fire (and leave the file alone) before use_artifact/download are ever reached.
-    import shutil
-
-    def _must_not_be_called(*args, **kwargs):
-        raise AssertionError("download_artifact must never delete anything itself")
-
-    monkeypatch.setattr(shutil, "rmtree", _must_not_be_called)
-
-    sentinel = tmp_path / "unrelated.txt"
+def test_download_artifact_rejects_nonempty_destination_without_touching_it(tmp_path):
+    destination = tmp_path / "materialized"
+    destination.mkdir()
+    sentinel = destination / "unrelated.txt"
     sentinel.write_text("keep me")
-
     run = MagicMock()
 
     with pytest.raises(DownloadDestinationNotEmptyError):
         download_artifact(
-            run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=tmp_path
+            run,
+            "my-team/my-project/pick-cube:v0",
+            expected_type="dataset",
+            download_root=destination,
         )
 
     run.use_artifact.assert_not_called()
     assert sentinel.read_text() == "keep me"
 
 
+def test_download_artifact_rejects_existing_file_destination(tmp_path):
+    destination = tmp_path / "materialized"
+    destination.write_text("keep me")
+    run = MagicMock()
+
+    with pytest.raises(DownloadDestinationNotEmptyError):
+        download_artifact(
+            run,
+            "my-team/my-project/pick-cube:v0",
+            expected_type="dataset",
+            download_root=destination,
+        )
+
+    run.use_artifact.assert_not_called()
+    assert destination.read_text() == "keep me"
+
+
 def test_download_artifact_accepts_empty_existing_destination(tmp_path):
-    fake = _FakeArtifact(name="pick-cube", type="dataset")
-    run = MagicMock()
-    run.use_artifact.return_value = fake
+    destination = tmp_path / "materialized"
+    destination.mkdir()
+    fake = _FakeArtifact(name="pick-cube:v0", type="dataset")
+    fake.version = "v0"
 
-    download_artifact(run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=tmp_path)
-
-    assert fake._download_root == str(tmp_path)
-
-
-def test_download_artifact_accepts_nonexistent_destination(tmp_path):
-    fake = _FakeArtifact(name="pick-cube", type="dataset")
-    run = MagicMock()
-    run.use_artifact.return_value = fake
-
-    destination = tmp_path / "not-created-yet"
-    download_artifact(
-        run, "my-team/my-project/pick-cube:v0", expected_type="dataset", download_root=destination
+    result = download_artifact(
+        _run_with(fake),
+        "my-team/my-project/pick-cube:v0",
+        expected_type="dataset",
+        download_root=destination,
     )
 
-    assert fake._download_root == str(destination)
+    assert destination.is_dir()
+    assert result.local_path == destination
+
+
+def test_download_artifact_validates_staging_before_promotion(tmp_path):
+    destination = tmp_path / "materialized"
+    fake = _FakeArtifact(name="pick-cube:v0", type="dataset")
+    fake.version = "v0"
+    validated = []
+
+    def _validate(path: Path):
+        validated.append(path)
+        assert path != destination
+        (path / "validated.txt").write_text("ok")
+
+    result = download_artifact(
+        _run_with(fake),
+        "my-team/my-project/pick-cube:v0",
+        expected_type="dataset",
+        download_root=destination,
+        validator=_validate,
+    )
+
+    assert len(validated) == 1
+    assert result.local_path == destination
+    assert (destination / "validated.txt").read_text() == "ok"
+
+
+def test_download_artifact_cleans_staging_after_download_failure(tmp_path):
+    destination = tmp_path / "materialized"
+
+    class _FailingArtifact(_FakeArtifact):
+        def download(self, root=None, **_kwargs):
+            self._download_root = root
+            Path(root, "partial.txt").write_text("partial")
+            raise RuntimeError("network failed")
+
+    fake = _FailingArtifact(name="pick-cube:v0", type="dataset")
+
+    with pytest.raises(RuntimeError, match="network failed"):
+        download_artifact(
+            _run_with(fake),
+            "my-team/my-project/pick-cube:v0",
+            expected_type="dataset",
+            download_root=destination,
+        )
+
+    assert not destination.exists()
+    assert not Path(fake._download_root).exists()
+
+
+def test_download_artifact_cleans_staging_after_validation_failure(tmp_path):
+    destination = tmp_path / "materialized"
+    fake = _FakeArtifact(name="pick-cube:v0", type="dataset")
+
+    def _reject(_path: Path):
+        raise ValueError("invalid dataset")
+
+    with pytest.raises(ValueError, match="invalid dataset"):
+        download_artifact(
+            _run_with(fake),
+            "my-team/my-project/pick-cube:v0",
+            expected_type="dataset",
+            download_root=destination,
+            validator=_reject,
+        )
+
+    assert not destination.exists()
+    assert not Path(fake._download_root).exists()
