@@ -44,12 +44,16 @@ class BiSOLeader(BimanualMixin, Teleoperator):
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
+            use_degrees=config.left_arm_config.use_degrees,
+            num_read_retries=config.left_arm_config.num_read_retries,
         )
 
         right_arm_config = SOLeaderTeleopConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
+            use_degrees=config.right_arm_config.use_degrees,
+            num_read_retries=config.right_arm_config.num_read_retries,
         )
 
         self.left_arm = SOLeader(left_arm_config)
