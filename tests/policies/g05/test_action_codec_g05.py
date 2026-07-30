@@ -16,7 +16,7 @@
 
 import torch
 
-from lerobot.policies.g05.action_codec_g05 import G05NativeActionCodec, _BinarySequenceCodec
+from lerobot.policies.g05.modeling_g05 import G05NativeActionCodec, _BinarySequenceCodec
 
 
 def _tiny_codec_config() -> dict:
