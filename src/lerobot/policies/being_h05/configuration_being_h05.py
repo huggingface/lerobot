@@ -107,7 +107,8 @@ class BeingH05Config(PreTrainedConfig):
             num_decay_steps=self.scheduler_decay_steps,
         )
 
-    def should_rebuild_pretrained_processors(self) -> bool:
+    @property
+    def rebuild_pretrained_processors(self) -> bool:
         return self.recipe_path is not None or any(
             self.normalization_mapping.get(feature, NormalizationMode.IDENTITY) != NormalizationMode.IDENTITY
             for feature in ("STATE", "ACTION")

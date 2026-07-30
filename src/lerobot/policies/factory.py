@@ -173,7 +173,7 @@ def make_pre_post_processors(
     if (
         pretrained_path
         and kwargs.get("dataset_stats") is not None
-        and policy_cfg.should_rebuild_pretrained_processors()
+        and getattr(policy_cfg, "rebuild_pretrained_processors", False)
     ):
         logging.info(
             "Building processor pipelines from the active policy config instead of loading them from %s.",

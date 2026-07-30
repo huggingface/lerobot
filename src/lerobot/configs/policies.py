@@ -102,10 +102,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
         return choice_name
 
-    def should_rebuild_pretrained_processors(self) -> bool:
-        """Whether active config options require processors built from the current config."""
-        return False
-
     @property
     @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
