@@ -24,6 +24,7 @@ from lerobot.policies.factory import get_policy_class, make_policy_config
 def test_hy_vla_factory_registration():
     config = make_policy_config("hy_vla", device="cpu")
     assert isinstance(config, HyVLAConfig)
+    pytest.importorskip("transformers", reason="Loading HyVLAPolicy requires the `hy_vla` extra")
     assert get_policy_class("hy_vla").__name__ == "HyVLAPolicy"
 
 
