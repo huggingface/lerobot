@@ -45,7 +45,6 @@ from ..g1_utils import (
     compute_pd_gains,
     get_gravity_orientation,
     lowstate_to_obs,
-    make_ort_session_options,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,7 +295,8 @@ class SonicRuntime:
     def __init__(self):
         decoder_path = hf_hub_download(repo_id="nvidia/GEAR-SONIC", filename="model_decoder.onnx")
 
-        so = make_ort_session_options()
+        so = ort.SessionOptions()
+        so.log_severity_level = 3  # quiet ORT logs
         decoder_sess = ort.InferenceSession(decoder_path, sess_options=so)
 
         self.kp, self.kd = compute_kp_kd()
