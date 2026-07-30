@@ -112,8 +112,9 @@ class _CodecFFN(nn.Module):
 class _CodecTransformerLayer(nn.Module):
     def __init__(self, dimension: int, config: Mapping[str, Any]) -> None:
         super().__init__()
-        self.ls1 = nn.Parameter(torch.empty(dimension))
-        self.ls2 = nn.Parameter(torch.empty(dimension))
+        layer_scale_init = float(config.get("layer_scale_init", 1.0))
+        self.ls1 = nn.Parameter(torch.full((dimension,), layer_scale_init))
+        self.ls2 = nn.Parameter(torch.full((dimension,), layer_scale_init))
         self.norm1 = nn.LayerNorm(dimension, eps=1e-6)
         self.attn = _CodecAttention(
             dimension,

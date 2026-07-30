@@ -42,6 +42,7 @@ def _tiny_codec_config() -> dict:
             "dim_heads": 64,
             "rope_base": 10_000,
             "ffn_mult": 2,
+            "layer_scale_init": 0.01,
             "n_codebooks": 2,
             "codebook_size": 16,
             "codebook_dim": 4,
@@ -64,6 +65,10 @@ def test_binary_sequence_codec_roundtrip_repairs_short_middle_runs() -> None:
 def test_native_action_codec_language_roundtrip_and_absent_groups() -> None:
     codec = G05NativeActionCodec(_tiny_codec_config(), action_token_begin=100)
     actions = torch.linspace(-1, 1, 8 * 8).reshape(8, 8)
+
+    for name, parameter in codec.module.named_parameters():
+        if name.endswith(("ls1", "ls2")):
+            torch.testing.assert_close(parameter, torch.full_like(parameter, 0.01))
 
     token_ids = codec.encode_for_language({"value": actions})
     decoded, absent = codec.decode_language_tokens(

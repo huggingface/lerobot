@@ -239,13 +239,13 @@ lerobot-eval \
   --policy.path=lerobot/g05_libero \
   --policy.device=cuda \
   --env.type=libero \
-  --env.task=libero_goal \
+  --env.task=libero_10 \
   --env.control_mode=relative \
   --env.observation_height=512 \
   --env.observation_width=512 \
   '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
   --eval.batch_size=1 \
-  --eval.n_episodes=50 \
+  --eval.n_episodes=5 \
   --seed=0 \
   --output_dir=outputs/g05-libero-lerobot-eval
 ```
