@@ -384,7 +384,7 @@ class RealSenseCamera(Camera):
         available = list(sensors.keys())
         raise RuntimeError(
             f"{self}: manual color controls require a dedicated 'RGB Camera' module, which this camera does not have. ",
-            f"Available sensors: {available}."
+            f"Available sensors: {available}.",
         )
 
     def _set_sensor_option(self, sensor: "rs.sensor", option: "rs.option", value: float, label: str) -> None:
