@@ -44,7 +44,6 @@ from ..g1_utils import (
     G1_29_JointIndex,
     get_gravity_orientation,
 )
-from ..unitree_g1 import lowstate_to_obs
 
 logger = logging.getLogger(__name__)
 
@@ -337,10 +336,9 @@ class SonicWholeBodyController:
             logger.info("SONIC startup blend complete -> full policy control")
         return blended
 
-    def run_step(self, action: dict, lowstate) -> dict:
-        if lowstate is None:
+    def run_step(self, action: dict, obs: dict) -> dict:
+        if not obs:
             return {}
-        obs = lowstate_to_obs(lowstate)
 
         # Token-only interface (token-output VLA): a dense 64-D ``motion_token.{i}`` command
         # is decoded directly, encoder bypassed.
