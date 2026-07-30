@@ -1,0 +1,104 @@
+{
+  "profile_id": "task1_real24_ready_pose_official_send_interpolated3s_tolerance3_v1",
+  "profile_version": 1,
+  "scope": "Task1 fixed-100k ACT pilot continuation with three-second ready/return outside the scored window",
+  "ready_pose": {
+    "profile_id": "task1_real24_ready_pose_reset_v1",
+    "joint_order": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "state": [
+      7.4285712242126465,
+      -98.32967376708984,
+      45.010990142822266,
+      92.21977996826172,
+      1.8461538553237915,
+      19.765840530395508
+    ],
+    "state_dtype": "float32",
+    "state_shape": [6],
+    "state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "source_dataset_tree_sha256": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+    "source_episode_index": 13,
+    "source_frame_index": 0
+  },
+  "ready_pose_movement": {
+    "profile_id": "task1_real24_ready_pose_interpolated3s_official_send_tolerance3_v1",
+    "before_every_trial": true,
+    "after_every_trial": true,
+    "target": "the same frozen ready_pose.state for every trial",
+    "command_path": "SO101Follower.send_action",
+    "trajectory": "time_parameterized_linear_interpolation",
+    "interpolation_duration_seconds": 3.0,
+    "interpolation_steps": 60,
+    "start": "observed joint state at movement start",
+    "post_interpolation_behavior": "hold exact frozen ready target until arrival tolerance is observed",
+    "custom_relative_step_limit": null,
+    "control_fps": 20,
+    "arrival_tolerance_degrees": 3.0,
+    "movement_timeout_seconds": 60.0,
+    "evidence": [
+      "requested_state",
+      "observed_state",
+      "delta_requested_minus_observed",
+      "requested_action",
+      "sent_action",
+      "trajectory_phase",
+      "interpolation_alpha",
+      "planned_interpolation_steps"
+    ]
+  },
+  "policy_start_order": [
+    "move_to_frozen_ready_pose",
+    "record_ready_pose_requested_observed_delta",
+    "reset_ACT_policy_action_queue",
+    "acquire_tick0_observation",
+    "start_policy_timing_and_inference"
+  ],
+  "action_path": {
+    "profile_id": "lerobot_so101_official_send_no_custom_clamp_v1",
+    "max_relative_target": null,
+    "custom_absolute_action_clamp": false,
+    "policy_command_flow": [
+      "ACT postprocessor output",
+      "SO101Follower.send_action",
+      "FeetechMotorsBus.sync_write Goal_Position"
+    ],
+    "recorded_fields": [
+      "raw_action",
+      "requested_action",
+      "sent_action",
+      "upstream_action_modified_mask"
+    ],
+    "upstream_behavior": {
+      "SO101Follower.send_action": "With max_relative_target=None, no relative goal clipping is applied.",
+      "FeetechMotorsBus_DEGREES": "Degree-mode body-joint values are converted to raw motor units without calibration-range clamping.",
+      "FeetechMotorsBus_RANGE_0_100": "The upstream gripper normalization bounds values to 0..100 before raw-unit conversion.",
+      "sent_action_semantics": "The returned sent_action is the normalized command returned by the official robot API, before internal raw-register conversion."
+    }
+  },
+  "policy_timing": {
+    "profile_id": "lerobot_per_tick_pacing_no_catchup_v1",
+    "control_fps": 20,
+    "period_seconds": 0.05,
+    "duration_seconds": 30,
+    "nominal_ticks_at_target_rate": 600,
+    "semantics": "For the 30-second wall-time window, each tick executes once, then sleeps max(period - tick_compute_time, 0). A slow tick does not advance an absolute deadline and does not trigger queued catch-up actions; actual tick count is recorded rather than backfilled."
+  },
+  "frozen_policy": {
+    "checkpoint_step": 100000,
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "inputs": [
+      "observation.state float32[6]",
+      "observation.images.front uint8[480,640,3]"
+    ],
+    "output": "action float32[6]",
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67
+  }
+}
