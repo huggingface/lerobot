@@ -10,7 +10,7 @@ from transformers import PretrainedConfig
 from lerobot.policies.hy_vla.modeling.hunyuan_vl_mot.modeling_hunyuan_vl_mot import (
     _eager_attention_forward_mot,
 )
-from lerobot.policies.hy_vla.modeling.modeling_dual_tower import HyDualTowerConfig
+from lerobot.policies.hy_vla.modeling_hy_vla import HyDualTowerConfig
 
 
 def _run_attention(visual_segments, padding_mask=None):
