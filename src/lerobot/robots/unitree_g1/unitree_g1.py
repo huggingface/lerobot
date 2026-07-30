@@ -149,12 +149,6 @@ class UnitreeG1(Robot):
 
         # Lower-body / whole-body controller loaded dynamically
         self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
-
-        # A SONIC whole-body controller always runs in token mode: it holds a neutral
-        # token until the first real one arrives, then holds the last token between ticks.
-        if self.controller is not None and hasattr(self.controller, "token_mode"):
-            self.controller.token_mode = True
-
         # Controller thread state
         self._controller_thread = None
         # When set, the controller loop stops publishing low commands so reset() can

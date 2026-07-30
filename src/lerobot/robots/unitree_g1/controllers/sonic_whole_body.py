@@ -299,13 +299,9 @@ class SonicWholeBodyController:
         self._init_step = 0
         self._start_pose: dict[str, float] = {}
 
-        # Token-interface state. ``token_mode`` is set True by the robot whenever a SONIC
-        # whole-body controller is selected (token-driven deploy): the controller then holds a
-        # stable *neutral* token until the first real token arrives, and afterwards holds the
-        # *last* token received between ticks (the async controller runs ~50 Hz while a token
-        # VLA streams ~30 Hz). This lives here (not in the entry-point script) so it applies
-        # uniformly to run_g1_server, lerobot-rollout and the sim replays.
-        self.token_mode = False
+        # Token-interface state. The controller holds a stable *neutral* token until the first
+        # real token arrives, and afterwards holds the *last* token received between ticks (the
+        # async controller runs ~50 Hz while a token VLA streams ~30 Hz).
         self._last_token: np.ndarray | None = None
 
         logger.info("SONIC ready (decoder, 64-D token command path)")
@@ -345,13 +341,10 @@ class SonicWholeBodyController:
         token = _extract_token_from_action(action)
         if token is not None:
             self._last_token = token
-        elif self._last_token is None and self.token_mode:
-            # Token-driven deploy, but no token has arrived yet: hold the checkpoint's neutral
-            # token, which the decoder maps to a stable, natural standing pose.
+        elif self._last_token is None:
+            # No token has arrived yet: hold the checkpoint's neutral token, which the decoder
+            # maps to a stable, natural standing pose.
             self._last_token = self._neutral_token.copy()
-        if self._last_token is None:
-            # No token yet and not in token_mode: hold (keep last target).
-            return {}
         # Either a fresh token this tick or the last one received (held between the ~30 Hz
         # token stream and the ~50 Hz control loop).
         return self._startup_blend(obs, self.controller.step(obs, self._last_token))
@@ -360,7 +353,7 @@ class SonicWholeBodyController:
         self._runtime.reset()
         self._init_step = 0  # re-run the startup blend after a reset
         self._start_pose = {}
-        # Drop the held token so token_mode re-seeds the neutral token after a reset.
+        # Drop the held token so the neutral token is re-seeded after a reset.
         self._last_token = None
 
     def shutdown(self):
