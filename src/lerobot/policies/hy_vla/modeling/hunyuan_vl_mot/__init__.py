@@ -1,4 +1,6 @@
-# Copyright (C) 2025 THL A29 Limited, a Tencent company and the HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2026 HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# Portions Copyright (C) 2025 THL A29 Limited, a Tencent company. All rights reserved.
+
 """HunYuanVL-MoT model classes used by the LeRobot Hy-VLA policy."""
 
 from .configuration_hunyuan_vl_mot import (
