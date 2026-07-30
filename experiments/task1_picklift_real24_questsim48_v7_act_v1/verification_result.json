@@ -1,0 +1,11 @@
+{
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim48_v7_act_v1/training_result_v1",
+  "hashes_sha256": "ef1e8c2639ec8ed86557bd566705a4a7dcb4fe8ef3f921793d4723c923f76afc",
+  "manifest_sha256": "ea1ba830d01536f1a38e2c5b5bcb8de4151dac4c528e38f0bb250e2cd146bb8a",
+  "offline_only_boundaries_all_false": true,
+  "run_summary_sha256": "beb7ef306db03ef3ef1555b73c17b1dd8288d6b5f81c4d4860af54d6a25fabc7",
+  "schema": "task1_picklift_real24_questsim48_v7_training_result_verification_v1",
+  "selected_model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03",
+  "status": "pass",
+  "verified_hash_entries": 22
+}

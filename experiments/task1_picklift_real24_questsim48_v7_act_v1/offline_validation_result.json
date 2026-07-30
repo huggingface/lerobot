@@ -1,0 +1,92 @@
+{
+  "all_outputs_shape_1x6_and_finite": true,
+  "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model",
+  "domains_validated": [
+    "real",
+    "simulation"
+  ],
+  "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/offline_validation_100k.json",
+  "evidence_sha256": "8a67af18be4f83ab0a1c7dfedc776d1f81fc03229eb66a46c31da513b642da61",
+  "hardware_accessed": false,
+  "model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03",
+  "samples": [
+    {
+      "episode_index": 0,
+      "input_shapes": {
+        "observation.images.front": [
+          1,
+          3,
+          480,
+          640
+        ],
+        "observation.state": [
+          1,
+          6
+        ]
+      },
+      "output_finite": true,
+      "output_shape": [
+        1,
+        6
+      ],
+      "raw_action": [
+        -3.7158870697021484,
+        -86.36627197265625,
+        42.17726135253906,
+        92.90924835205078,
+        -3.074477195739746,
+        21.028095245361328
+      ],
+      "sample_index": 0,
+      "source_domain": "real"
+    },
+    {
+      "episode_index": 24,
+      "input_shapes": {
+        "observation.images.front": [
+          1,
+          3,
+          480,
+          640
+        ],
+        "observation.state": [
+          1,
+          6
+        ]
+      },
+      "output_finite": true,
+      "output_shape": [
+        1,
+        6
+      ],
+      "raw_action": [
+        6.995777130126953,
+        -100.42071533203125,
+        46.03992462158203,
+        92.96614074707031,
+        2.115170478820801,
+        20.424692153930664
+      ],
+      "sample_index": 3790,
+      "source_domain": "simulation"
+    }
+  ],
+  "saved_visual_processor": {
+    "mean": [
+      0.48500001430511475,
+      0.4560000002384186,
+      0.4059999883174896
+    ],
+    "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+    "sha256": "0a9ff52f6b4e46bfdbad8e38d60427f3f521aaff048119acb0c2b6370f38a8af",
+    "status": "pass_imagenet_stats",
+    "std": [
+      0.2290000021457672,
+      0.2240000069141388,
+      0.22499999403953552
+    ]
+  },
+  "schema": "task1_picklift_real24_questsim48_v7_offline_validation_index_v1",
+  "simulation_rollout_started": false,
+  "status": "pass"
+}
