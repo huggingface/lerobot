@@ -11,48 +11,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""W&B Artifacts integration: reference parsing, upload/download primitives, dataset inspection.
+"""W&B Artifact references plus lazily loaded inspection and transfer helpers.
 
-New W&B-specific surface lives here (see ``docs/adr/0001-wandb-integration-package-boundary.md``).
-Per that ADR, the pre-existing, training-loop-embedded ``WandBLogger``
-(``lerobot/common/wandb_utils.py``) stays in place rather than being migrated into this package —
-a later ticket extends it in-line to import from this package's ``store`` module for dataset-artifact
-resolution during training, instead of duplicating the upload/download primitives defined here.
+Reference parsing has no optional dependencies. Dataset inspection is loaded only when requested,
+and SDK-backed store helpers are loaded only when requested, so each public surface retains its own
+dependency boundary.
 """
 
-from importlib.metadata import version
+from __future__ import annotations
 
-from packaging.version import Version
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
-from lerobot.utils.import_utils import require_package
+from .refs import ArtifactRef, parse_artifact_ref
 
-# Every module in this package assumes wandb is installed; guard once here so importing any of
-# them fails with an actionable message instead of a bare ModuleNotFoundError deep in a submodule.
-require_package("wandb", extra="training")
+_LAZY_EXPORTS = {
+    "DatasetDirectoryError": ".inspect",
+    "DatasetDirectoryMetadata": ".inspect",
+    "inspect_dataset_directory": ".inspect",
+    "validate_dataset_directory": ".inspect",
+    "ArtifactTypeMismatchError": ".store",
+    "DownloadDestinationNotEmptyError": ".store",
+    "MaterializedArtifact": ".store",
+    "download_artifact": ".store",
+    "upload_directory": ".store",
+}
 
-# W&B 0.24.0 was withdrawn because runs could silently fail to upload data. Keep this safety gate
-# local to the new durable-transfer integration rather than changing LeRobot's existing training
-# dependency and lockfile for unrelated W&B logging users.
-if Version(version("wandb")) < Version("0.24.1"):
-    raise RuntimeError(
-        "lerobot-wandb requires wandb>=0.24.1 because wandb 0.24.0 can silently fail to upload "
-        "run data. Upgrade the training extra before using artifact transfers."
+if TYPE_CHECKING:
+    from .inspect import (
+        DatasetDirectoryError,
+        DatasetDirectoryMetadata,
+        inspect_dataset_directory,
+        validate_dataset_directory,
+    )
+    from .store import (
+        ArtifactTypeMismatchError,
+        DownloadDestinationNotEmptyError,
+        MaterializedArtifact,
+        download_artifact,
+        upload_directory,
     )
 
-from .inspect import (  # noqa: E402
-    DatasetDirectoryError,
-    DatasetDirectoryMetadata,
-    inspect_dataset_directory,
-    validate_dataset_directory,
-)
-from .refs import ArtifactRef, parse_artifact_ref  # noqa: E402
-from .store import (  # noqa: E402
-    ArtifactTypeMismatchError,
-    DownloadDestinationNotEmptyError,
-    MaterializedArtifact,
-    download_artifact,
-    upload_directory,
-)
+
+def __getattr__(name: str) -> Any:
+    """Load optional-dependency-backed symbols only when callers request them."""
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    value = getattr(import_module(f"{__name__}{module_name}"), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "ArtifactRef",
