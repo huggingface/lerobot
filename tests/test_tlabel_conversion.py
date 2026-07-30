@@ -9,7 +9,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "examples", "tlabel"))
 
 from convert_tlabel_to_lerobot import (
-    DEFAULT_TACTILE_FEATURES,
     SENSOR_CONFIGS,
     _load_csv_episodes,
     _load_manual,
@@ -108,29 +107,52 @@ class TestFeatureExtraction:
         }
         result = extract_tactile_features(frame, "gelsight")
 
-        assert result["observation.tactile.contact"] == [1.0]
-        assert result["observation.tactile.force"] == [2.5, 0.3, 3.1]
-        assert result["observation.tactile.deformation"] == [0.1, 0.05]
-        assert result["observation.tactile.slip"] == [0.8, 1.0]
-        assert result["observation.tactile.texture"] == [0.2]
-        assert result["observation.tactile.contact_geometry"] == [100.0, 50.0, 75.0]
-        assert result["observation.tactile.field"] == [1.5, 0.1, 0.3, 1.2]
-        assert result["observation.tactile.dynamics"] == [0.2, 0.1, 0.7]
+        assert result["observation.tactile.contact"].tolist() == pytest.approx([1.0])
+        assert result["observation.tactile.force"].tolist() == pytest.approx(
+            [2.5, 0.3, 3.1]
+        )
+        assert result["observation.tactile.deformation"].tolist() == pytest.approx(
+            [0.1, 0.05]
+        )
+        assert result["observation.tactile.slip"].tolist() == pytest.approx(
+            [0.8, 1.0]
+        )
+        assert result["observation.tactile.texture"].tolist() == pytest.approx([0.2])
+        assert result["observation.tactile.contact_geometry"].tolist() == pytest.approx(
+            [100.0, 50.0, 75.0]
+        )
+        assert result["observation.tactile.field"].tolist() == pytest.approx(
+            [1.5, 0.1, 0.3, 1.2]
+        )
+        assert result["observation.tactile.dynamics"].tolist() == pytest.approx(
+            [0.2, 0.1, 0.7]
+        )
+
+    def test_returns_numpy_arrays(self):
+        """All feature values are np.ndarray with float32 dtype."""
+        result = extract_tactile_features({"contact": 1.0}, "paxini")
+        for key, value in result.items():
+            assert isinstance(value, np.ndarray), f"{key} is not np.ndarray: {type(value)}"
+            assert value.dtype == np.float32, f"{key} dtype is {value.dtype}, expected float32"
 
     def test_missing_values_default_to_zero(self):
         """Missing fields default to 0.0."""
         frame = {"contact": 1.0}
         result = extract_tactile_features(frame, "paxini")
 
-        assert result["observation.tactile.contact"] == [1.0]
-        assert result["observation.tactile.force"] == [0.0, 0.0, 0.0]
-        assert result["observation.tactile.deformation"] == [0.0, 0.0]
+        assert result["observation.tactile.contact"].tolist() == pytest.approx([1.0])
+        assert result["observation.tactile.force"].tolist() == pytest.approx(
+            [0.0, 0.0, 0.0]
+        )
+        assert result["observation.tactile.deformation"].tolist() == pytest.approx(
+            [0.0, 0.0]
+        )
 
     def test_empty_frame(self):
         """Empty frame returns all zeros."""
         result = extract_tactile_features({}, "gelsight")
         for key, value in result.items():
-            assert all(v == 0.0 for v in value), f"{key} has non-zero values: {value}"
+            assert np.allclose(value, 0.0), f"{key} has non-zero values: {value}"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -218,7 +240,6 @@ class TestImageDimensionDetection:
         except ImportError:
             pytest.skip("PIL not available")
 
-        # Create a test image
         img_array = np.zeros((100, 200, 3), dtype=np.uint8)
         img = Image.fromarray(img_array)
         img_path = tmp_path / "test_image.png"
@@ -303,12 +324,10 @@ class TestImageConsistencyValidation:
         except ImportError:
             pytest.skip("PIL not available")
 
-        # Create two valid RGB images
         for name in ["frame_000.png", "frame_001.png"]:
             img = Image.fromarray(np.zeros((100, 200, 3), dtype=np.uint8))
             img.save(tmp_path / name)
 
-        # Create one wrong-size image
         bad_img = Image.fromarray(np.zeros((50, 80, 3), dtype=np.uint8))
         bad_img.save(tmp_path / "frame_002.png")
 
@@ -336,16 +355,31 @@ class TestImageConsistencyValidation:
         assert "not found" in issues[0]
 
     def test_no_image_frames_no_issues(self, tmp_path):
-        """Frames without tactile_image produce no issues."""
+        """Frames without tactile_image key are skipped by validate_image_consistency."""
         episodes = {
             0: [{"contact": 1.0}, {"contact": 0.0}],
         }
         issues = validate_image_consistency(tmp_path, episodes, (100, 200))
         assert issues == []
 
+    def test_none_tactile_image_skipped(self, tmp_path):
+        """Frames with tactile_image=None are skipped by validate_image_consistency.
+
+        The convert() function performs its own pre-validation to reject missing
+        images before this function is called.
+        """
+        episodes = {
+            0: [
+                {"tactile_image": np.zeros((100, 200, 3), dtype=np.uint8)},
+                {"tactile_image": None},
+            ],
+        }
+        issues = validate_image_consistency(tmp_path, episodes, (100, 200))
+        assert issues == []
+
 
 # ──────────────────────────────────────────────────────────────────────
-# End-to-end round-trip test (requires lerobot; tlabel mocked)
+# End-to-end round-trip test (requires lerobot)
 # ──────────────────────────────────────────────────────────────────────
 class TestRoundTrip:
     """End-to-end round-trip: create dataset, add frames, finalize, reload."""
@@ -391,7 +425,8 @@ class TestRoundTrip:
 
     def test_roundtrip_no_image(self, sample_data, tmp_path):
         """Round-trip test without images (paxini sensor)."""
-        lerobot = pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot")
+        pytest.importorskip("av")
         from lerobot.datasets import LeRobotDataset
 
         from convert_tlabel_to_lerobot import convert
@@ -406,37 +441,23 @@ class TestRoundTrip:
             task="test task",
         )
 
-        # Reload and verify
-        dataset = LeRobotDataset(
-            "test/tactile_roundtrip",
-            root=output_dir,
-        )
-        dataset.finalize()  # ensure finalized for reading
+        dataset = LeRobotDataset("test/tactile_roundtrip", root=output_dir)
+        dataset.finalize()
 
         assert len(dataset) == 2
         assert dataset.fps == 30
         assert "observation.tactile.contact" in dataset.features
 
-        # Verify first frame data
         frame0 = dataset[0]
         assert frame0["observation.tactile.contact"].item() == pytest.approx(1.0)
         assert frame0["observation.tactile.force"][0].item() == pytest.approx(2.5)
 
     def test_roundtrip_with_numpy_images(self, sample_data, tmp_path):
         """Round-trip test with numpy array images (gelsight sensor)."""
-        lerobot = pytest.importorskip("lerobot")
+        pytest.importorskip("lerobot")
+        pytest.importorskip("av")
         from lerobot.datasets import LeRobotDataset
 
-        # Add image data to sample
-        json_file = sample_data / "tlabel_export.json"
-        data = json.loads(json_file.read_text())
-
-        # Replace with image data
-        for frame in data["frames"]:
-            frame["tactile_image"] = np.zeros((120, 160, 3), dtype=np.uint8)
-
-        # Need to use direct construction since images are numpy arrays
-        # Write as numpy references in a custom way
         from convert_tlabel_to_lerobot import (
             _load_manual,
             build_features,
@@ -444,9 +465,7 @@ class TestRoundTrip:
             extract_tactile_features,
         )
 
-        output_dir = str(tmp_path / "output_img")
-
-        # Load data manually
+        json_file = sample_data / "tlabel_export.json"
         json_file.write_text(
             json.dumps(
                 {
@@ -462,7 +481,6 @@ class TestRoundTrip:
         manual_data = _load_manual(sample_data)
         episodes = manual_data["episodes"]
 
-        # Add numpy images
         for ep_frames in episodes.values():
             for f in ep_frames:
                 f["tactile_image"] = np.zeros((120, 160, 3), dtype=np.uint8)
@@ -473,6 +491,7 @@ class TestRoundTrip:
         features = build_features("gelsight", has_image=True, image_shape=image_shape)
         assert features["observation.images.tactile"]["shape"] == [120, 160, 3]
 
+        output_dir = str(tmp_path / "output_img")
         dataset = LeRobotDataset.create(
             repo_id="test/tactile_img_roundtrip",
             fps=30,
@@ -494,31 +513,25 @@ class TestRoundTrip:
 
         dataset.finalize()
 
-        # Reload and verify
         reloaded = LeRobotDataset("test/tactile_img_roundtrip", root=output_dir)
         assert len(reloaded) == 2
         assert "observation.images.tactile" in reloaded.features
 
     def test_roundtrip_file_images_through_convert(self, tmp_path):
-        """End-to-end round-trip: file-backed images go through convert().
-
-        This test creates actual image files on disk and calls convert()
-        directly, exercising the full image loading + validation pipeline.
-        """
-        lerobot = pytest.importorskip("lerobot")
+        """End-to-end round-trip: file-backed images go through convert()."""
+        pytest.importorskip("lerobot")
+        pytest.importorskip("av")
         from lerobot.datasets import LeRobotDataset
         from PIL import Image
 
         from convert_tlabel_to_lerobot import convert
 
-        # Create image files
         img_dir = tmp_path / "images"
         img_dir.mkdir()
         for i in range(3):
             arr = np.random.randint(0, 255, (60, 80, 3), dtype=np.uint8)
             Image.fromarray(arr).save(img_dir / f"frame_{i:03d}.png")
 
-        # Create TLabel JSON with file-backed image references
         data = {
             "metadata": {"sensor": "gelsight", "fps": 30},
             "frames": [
@@ -534,7 +547,6 @@ class TestRoundTrip:
         json_file = tmp_path / "tlabel_export.json"
         json_file.write_text(json.dumps(data))
 
-        # Run full conversion
         output_dir = str(tmp_path / "output_file_rt")
         convert(
             input_dir=tmp_path,
@@ -545,13 +557,11 @@ class TestRoundTrip:
             task="file image round-trip test",
         )
 
-        # Reload and verify
         dataset = LeRobotDataset("test/tactile_file_roundtrip", root=output_dir)
         assert len(dataset) == 3
         assert "observation.images.tactile" in dataset.features
         assert dataset.fps == 30
 
-        # Verify tactile data survived the round-trip
         frame0 = dataset[0]
         assert frame0["observation.tactile.contact"].item() == pytest.approx(1.0)
         assert frame0["observation.tactile.force"][0].item() == pytest.approx(2.0)

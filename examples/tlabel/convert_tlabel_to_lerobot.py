@@ -18,16 +18,12 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 try:
     import yaml
 except ImportError:
     print("PyYAML is required: pip install pyyaml")
-    sys.exit(1)
-
-try:
-    import numpy as np
-except ImportError:
-    print("NumPy is required: pip install numpy")
     sys.exit(1)
 
 
@@ -104,6 +100,7 @@ def load_tlabel_data(input_dir: Path) -> dict:
     """
     try:
         import tlabel
+
         print(f"Loading TLabel data from {input_dir}...")
         dataset = tlabel.load(str(input_dir))
         return dataset
@@ -128,12 +125,10 @@ def _load_manual(input_dir: Path) -> dict:
     with open(data_file) as f:
         raw = json.load(f)
 
-    episodes = {}
+    episodes: dict[int, list] = {}
     for frame in raw.get("frames", []):
-        ep_idx = frame.get("episode_index", 0)
-        if ep_idx not in episodes:
-            episodes[ep_idx] = []
-        episodes[ep_idx].append(frame)
+        ep = frame.get("episode_index", 0)
+        episodes.setdefault(ep, []).append(frame)
 
     return {"episodes": episodes, "metadata": raw.get("metadata", {})}
 
@@ -142,21 +137,19 @@ def _load_csv_episodes(csv_files: list) -> dict:
     """Load episodes from CSV files."""
     import csv
 
-    episodes = {}
+    episodes: dict[int, list] = {}
     for csv_file in csv_files:
         with open(csv_file) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ep_idx = int(row.get("episode_index", 0))
-                if ep_idx not in episodes:
-                    episodes[ep_idx] = []
+                ep = int(row.get("episode_index", 0))
                 frame = {}
                 for k, v in row.items():
                     try:
                         frame[k] = float(v)
                     except (ValueError, TypeError):
                         frame[k] = v
-                episodes[ep_idx].append(frame)
+                episodes.setdefault(ep, []).append(frame)
 
     return {"episodes": episodes, "metadata": {}}
 
@@ -172,21 +165,19 @@ def detect_image_dimensions(input_dir: Path, episodes: dict) -> tuple | None:
             if img is None:
                 continue
 
-            # Handle numpy array
-            if isinstance(img, np.ndarray):
-                if img.ndim >= 2:
-                    return (img.shape[0], img.shape[1])
+            if isinstance(img, np.ndarray) and img.ndim >= 2:
+                return (img.shape[0], img.shape[1])
 
-            # Handle file path string
             if isinstance(img, str):
                 img_path = input_dir / img
                 if img_path.exists():
                     try:
                         from PIL import Image
+
                         with Image.open(img_path) as im:
                             w, h = im.size
                             return (h, w)
-                    except Exception as e:
+                    except OSError as e:
                         print(f"Warning: Could not read image {img_path}: {e}")
                         continue
 
@@ -198,10 +189,9 @@ def validate_image_consistency(
 ) -> list:
     """Validate all image frames for existence, shape consistency, and RGB channels.
 
-    Checks every frame that declares a tactile_image field:
-    - File must exist (for path-based images)
-    - Shape must match expected (H, W)
-    - Must have exactly 3 channels (RGB), not grayscale or RGBA
+    Only validates frames that have a 'tactile_image' key with a non-None value.
+    Frames without the key or with None are silently skipped (the caller decides
+    whether that constitutes an error).
 
     Args:
         input_dir: Base directory for resolving relative image paths.
@@ -224,7 +214,9 @@ def validate_image_consistency(
 
             if isinstance(img, np.ndarray):
                 if img.ndim < 2:
-                    issues.append(f"{prefix}: array has <2 dims, shape={img.shape}")
+                    issues.append(
+                        f"{prefix}: array has <2 dims, shape={img.shape}"
+                    )
                     continue
                 h, w = img.shape[0], img.shape[1]
                 channels = img.shape[2] if img.ndim == 3 else 1
@@ -257,13 +249,18 @@ def validate_image_consistency(
                         issues.append(
                             f"{prefix}: {img} mode='{mode}', expected 'RGB'"
                         )
-                except Exception as e:
+                except OSError as e:
                     issues.append(f"{prefix}: cannot read {img}: {e}")
 
     return issues
 
 
-def build_features(sensor_type: str, config_path: str = None, has_image: bool = False, image_shape: tuple = None) -> dict:
+def build_features(
+    sensor_type: str,
+    config_path: str | None = None,
+    has_image: bool = False,
+    image_shape: tuple | None = None,
+) -> dict:
     """Build the complete feature dict for LeRobotDataset.
 
     Args:
@@ -290,11 +287,10 @@ def build_features(sensor_type: str, config_path: str = None, has_image: bool = 
     if sensor_config.get("has_image") or has_image:
         image_key = sensor_config.get("image_key", "observation.images.tactile")
 
-        # Determine image shape dynamically or fall back to default
         if image_shape is not None:
             h, w = image_shape
         else:
-            h, w = 480, 640  # default fallback
+            h, w = 480, 640
 
         features[image_key] = {
             "dtype": "video",
@@ -309,51 +305,70 @@ def extract_tactile_features(frame_data: dict, sensor_type: str) -> dict:
     """Extract tactile feature values from a TLabel frame.
 
     Maps TLabel 22-dim schema to LeRobot feature keys.
+    All values are returned as np.ndarray (float32) as required by LeRobot.
     """
     features = {}
 
-    features["observation.tactile.contact"] = [
-        float(frame_data.get("contact", 0.0))
-    ]
+    features["observation.tactile.contact"] = np.asarray(
+        [float(frame_data.get("contact", 0.0))], dtype=np.float32
+    )
 
-    features["observation.tactile.force"] = [
-        float(frame_data.get("force_magnitude", 0.0)),
-        float(frame_data.get("force_direction", 0.0)),
-        float(frame_data.get("force_peak", 0.0)),
-    ]
+    features["observation.tactile.force"] = np.asarray(
+        [
+            float(frame_data.get("force_magnitude", 0.0)),
+            float(frame_data.get("force_direction", 0.0)),
+            float(frame_data.get("force_peak", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
-    features["observation.tactile.deformation"] = [
-        float(frame_data.get("deformation_magnitude", 0.0)),
-        float(frame_data.get("temporal_deformation_rate", 0.0)),
-    ]
+    features["observation.tactile.deformation"] = np.asarray(
+        [
+            float(frame_data.get("deformation_magnitude", 0.0)),
+            float(frame_data.get("temporal_deformation_rate", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
-    features["observation.tactile.slip"] = [
-        float(frame_data.get("slip_entropy", 0.0)),
-        float(frame_data.get("slip_event", 0.0)),
-    ]
+    features["observation.tactile.slip"] = np.asarray(
+        [
+            float(frame_data.get("slip_entropy", 0.0)),
+            float(frame_data.get("slip_event", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
-    features["observation.tactile.texture"] = [
-        float(frame_data.get("texture_energy", 0.0))
-    ]
+    features["observation.tactile.texture"] = np.asarray(
+        [float(frame_data.get("texture_energy", 0.0))], dtype=np.float32
+    )
 
-    features["observation.tactile.contact_geometry"] = [
-        float(frame_data.get("contact_area", 0.0)),
-        float(frame_data.get("centroid_x", 0.0)),
-        float(frame_data.get("centroid_y", 0.0)),
-    ]
+    features["observation.tactile.contact_geometry"] = np.asarray(
+        [
+            float(frame_data.get("contact_area", 0.0)),
+            float(frame_data.get("centroid_x", 0.0)),
+            float(frame_data.get("centroid_y", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
-    features["observation.tactile.field"] = [
-        float(frame_data.get("normal_mag", 0.0)),
-        float(frame_data.get("normal_var", 0.0)),
-        float(frame_data.get("shear_mag", 0.0)),
-        float(frame_data.get("shear_dir", 0.0)),
-    ]
+    features["observation.tactile.field"] = np.asarray(
+        [
+            float(frame_data.get("normal_mag", 0.0)),
+            float(frame_data.get("normal_var", 0.0)),
+            float(frame_data.get("shear_mag", 0.0)),
+            float(frame_data.get("shear_dir", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
-    features["observation.tactile.dynamics"] = [
-        float(frame_data.get("delta_normal", 0.0)),
-        float(frame_data.get("delta_shear", 0.0)),
-        float(frame_data.get("friction_cone_ratio", 0.0)),
-    ]
+    features["observation.tactile.dynamics"] = np.asarray(
+        [
+            float(frame_data.get("delta_normal", 0.0)),
+            float(frame_data.get("delta_shear", 0.0)),
+            float(frame_data.get("friction_cone_ratio", 0.0)),
+        ],
+        dtype=np.float32,
+    )
 
     return features
 
@@ -363,17 +378,13 @@ def convert(
     repo_id: str,
     fps: int = 30,
     sensor_type: str = "gelsight",
-    output_dir: str = None,
+    output_dir: str | None = None,
     push_to_hub: bool = False,
     task: str = "tactile manipulation",
-    config_path: str = None,
+    config_path: str | None = None,
 ):
     """Main conversion function."""
-    try:
-        from lerobot.datasets import LeRobotDataset
-    except ImportError:
-        print("lerobot not found. Install with: pip install lerobot")
-        sys.exit(1)
+    from lerobot.datasets import LeRobotDataset
 
     data = load_tlabel_data(input_dir)
     episodes = data["episodes"]
@@ -392,30 +403,44 @@ def convert(
     # Detect actual image dimensions from data if images are present
     image_shape = None
     if has_image:
-        detected = detect_image_dimensions(input_dir, episodes)
-        if detected is not None:
-            image_shape = detected
-            print(f"Detected image dimensions: {image_shape[0]}x{image_shape[1]}")
+        # Pre-check: ensure every frame has a tactile_image value
+        missing = []
+        for ep_idx, ep_frames in sorted(episodes.items()):
+            for frame_idx, frame_data in enumerate(ep_frames):
+                img = frame_data.get("tactile_image")
+                if img is None:
+                    missing.append(f"Episode {ep_idx}, frame {frame_idx}")
+        if missing:
+            raise ValueError(
+                f"Image feature is declared but {len(missing)} frame(s) have no "
+                f"tactile_image: {missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
 
-            # Validate all frames for consistency
-            issues = validate_image_consistency(input_dir, episodes, image_shape)
-            if issues:
-                print(f"Image validation found {len(issues)} issue(s):")
-                for issue in issues:
-                    print(f"  - {issue}")
-                raise ValueError(
-                    f"Inconsistent images detected ({len(issues)} issue(s)). "
-                    "All tactile images must be RGB with uniform (H, W)."
-                )
-        else:
-            print("Warning: Could not detect image dimensions, using default 480x640")
+        detected = detect_image_dimensions(input_dir, episodes)
+        if detected is None:
+            raise ValueError(
+                "Data declares tactile_image but no readable images were found. "
+                "Check that image file paths are correct and files exist."
+            )
+        image_shape = detected
+        print(f"Detected image dimensions: {image_shape[0]}x{image_shape[1]}")
+
+        # Validate all frames for consistency
+        issues = validate_image_consistency(input_dir, episodes, image_shape)
+        if issues:
+            print(f"Image validation found {len(issues)} issue(s):")
+            for issue in issues:
+                print(f"  - {issue}")
+            raise ValueError(
+                f"Inconsistent or missing images ({len(issues)} issue(s)). "
+                "All frames must have valid RGB tactile images with uniform (H, W)."
+            )
 
     features = build_features(sensor_type, config_path, has_image, image_shape)
-    use_videos = has_image
 
     print(f"Sensor: {sensor_type}")
     print(f"Features: {len(features)} keys")
-    print(f"Video features: {use_videos}")
+    print(f"Video features: {has_image}")
 
     root = output_dir or "./lerobot_data"
     dataset = LeRobotDataset.create(
@@ -424,7 +449,7 @@ def convert(
         features=features,
         robot_type=sensor_type,
         root=root,
-        use_videos=use_videos,
+        use_videos=has_image,
     )
 
     for ep_idx, frames in sorted(episodes.items()):
@@ -436,15 +461,24 @@ def convert(
             frame.update(tactile)
             frame["task"] = task
 
-            if has_image and "tactile_image" in frame_data:
-                img = frame_data["tactile_image"]
+            if has_image:
+                img = frame_data.get("tactile_image")
+                if img is None:
+                    raise ValueError(
+                        f"Episode {ep_idx}: frame has no tactile_image but image "
+                        "feature is declared. All frames must have images."
+                    )
                 if isinstance(img, str):
                     img_path = input_dir / img
-                    if img_path.exists():
-                        from PIL import Image
-                        frame["observation.images.tactile"] = np.array(
-                            Image.open(img_path)
+                    if not img_path.exists():
+                        raise FileNotFoundError(
+                            f"Episode {ep_idx}: image file not found: {img_path}"
                         )
+                    from PIL import Image
+
+                    frame["observation.images.tactile"] = np.array(
+                        Image.open(img_path)
+                    )
                 elif isinstance(img, np.ndarray):
                     frame["observation.images.tactile"] = img
 
@@ -466,37 +500,49 @@ def main():
         description="Convert TLabel tactile data to LeRobotDataset format"
     )
     parser.add_argument(
-        "--input-dir", type=str, required=True,
-        help="Path to TLabel exported dataset directory"
+        "--input-dir",
+        type=str,
+        required=True,
+        help="Path to TLabel exported dataset directory",
     )
     parser.add_argument(
-        "--repo-id", type=str, required=True,
-        help="LeRobot dataset repo ID (e.g., username/dataset_name)"
+        "--repo-id",
+        type=str,
+        required=True,
+        help="LeRobot dataset repo ID (e.g., username/dataset_name)",
     )
     parser.add_argument(
-        "--fps", type=int, default=30,
-        help="Sampling rate in Hz (default: 30)"
+        "--fps", type=int, default=30, help="Sampling rate in Hz (default: 30)"
     )
     parser.add_argument(
-        "--sensor-type", type=str, default="gelsight",
+        "--sensor-type",
+        type=str,
+        default="gelsight",
         choices=list(SENSOR_CONFIGS.keys()),
-        help="Tactile sensor type (default: gelsight)"
+        help="Tactile sensor type (default: gelsight)",
     )
     parser.add_argument(
-        "--output-dir", type=str, default=None,
-        help="Local output directory (default: ./lerobot_data/)"
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Local output directory (default: ./lerobot_data/)",
     )
     parser.add_argument(
-        "--push-to-hub", action="store_true",
-        help="Push dataset to Hugging Face Hub"
+        "--push-to-hub",
+        action="store_true",
+        help="Push dataset to Hugging Face Hub",
     )
     parser.add_argument(
-        "--task", type=str, default="tactile manipulation",
-        help="Task description string"
+        "--task",
+        type=str,
+        default="tactile manipulation",
+        help="Task description string",
     )
     parser.add_argument(
-        "--config", type=str, default=None,
-        help="Path to custom feature config YAML"
+        "--config",
+        type=str,
+        default=None,
+        help="Path to custom feature config YAML",
     )
 
     args = parser.parse_args()
