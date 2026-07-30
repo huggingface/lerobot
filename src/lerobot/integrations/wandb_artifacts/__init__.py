@@ -20,11 +20,24 @@ a later ticket extends it in-line to import from this package's ``store`` module
 resolution during training, instead of duplicating the upload/download primitives defined here.
 """
 
+from importlib.metadata import version
+
+from packaging.version import Version
+
 from lerobot.utils.import_utils import require_package
 
 # Every module in this package assumes wandb is installed; guard once here so importing any of
 # them fails with an actionable message instead of a bare ModuleNotFoundError deep in a submodule.
 require_package("wandb", extra="training")
+
+# W&B 0.24.0 was withdrawn because runs could silently fail to upload data. Keep this safety gate
+# local to the new durable-transfer integration rather than changing LeRobot's existing training
+# dependency and lockfile for unrelated W&B logging users.
+if Version(version("wandb")) < Version("0.24.1"):
+    raise RuntimeError(
+        "lerobot-wandb requires wandb>=0.24.1 because wandb 0.24.0 can silently fail to upload "
+        "run data. Upgrade the training extra before using artifact transfers."
+    )
 
 from .inspect import (  # noqa: E402
     DatasetDirectoryError,
