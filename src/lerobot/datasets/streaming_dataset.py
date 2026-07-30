@@ -58,6 +58,10 @@ class LookAheadError(Exception):
     pass
 
 
+class _ShardExhaustedError(Exception):
+    """Raised when a streaming dataset shard has no more items."""
+
+
 class Backtrackable[T]:
     """
     Wrap any iterator/iterable so you can step back up to `history` items
@@ -422,13 +426,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     else:
                         frames_buffer.append(frame)
                     break  # random shard sampled, switch shard
-            except RuntimeError as e:
-                # shard exhaustion appeared as a RuntimeError(PEP 479) with StopIteration as cause,
-                # any other RuntimeError(e.g. video decode failure) should be raised
-                if isinstance(e.__cause__, StopIteration):
-                    del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
-                else:
-                    raise
+            except _ShardExhaustedError:
+                del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
         rng.shuffle(frames_buffer)
@@ -505,7 +504,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
         """Makes a frame starting from a dataset iterator"""
-        item = next(dataset_iterator)
+        try:
+            item = next(dataset_iterator)
+        except StopIteration as e:
+            # Translate exhaustion here, before PEP 479 turns it into an indistinguishable RuntimeError.
+            raise _ShardExhaustedError from e
         item = item_to_torch(item)
 
         updates = []  # list of "updates" to apply to the item retrieved from hf_dataset (w/o camera features)
