@@ -16,6 +16,8 @@
 
 """Test script to verify Wall-X policy integration with LeRobot"""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -28,9 +30,10 @@ from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
-from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
+from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -74,6 +77,120 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
 
     assert len(output.hidden_states) == config.num_hidden_layers + 1
     assert len(output.attentions) == config.num_hidden_layers
+
+
+def _make_unloaded_policy(**config_values):
+    policy = WallXPolicy.__new__(WallXPolicy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(chunk_size=3, **config_values)
+    return policy
+
+
+def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervision():
+    policy = _make_unloaded_policy()
+    prompt, predicts_action = policy._format_recipe_text(
+        [
+            {"role": "user", "content": "What should the robot do?"},
+            {"role": "assistant", "content": "Reach for the cup."},
+        ],
+        ["high_level", "low_level"],
+        [1],
+        "pick up the cup",
+        ["observation.images.face_view"],
+    )
+
+    clean_prompt, spans = _extract_text_target_spans(prompt)
+    assert predicts_action
+    assert len(spans) == 1
+    assert clean_prompt[slice(*spans[0])] == "Reach for the cup.<|im_end|>"
+    assert clean_prompt.count("<|action|>") == 3
+    assert "Proprioception: <|propri|>" in clean_prompt
+
+
+def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatch):
+    policy = _make_unloaded_policy(flow_loss_weight=2.0, text_loss_weight=0.25)
+    policy.model = SimpleNamespace(
+        __call__=None,
+    )
+    outputs = SimpleNamespace(
+        loss=torch.tensor(99.0),
+        flow_loss=torch.tensor(3.0),
+        cross_entropy_loss=torch.tensor(4.0),
+        channel_loss_dict=None,
+    )
+    policy.model = lambda **kwargs: outputs
+    monkeypatch.setattr(policy, "preprocess_inputs", lambda batch, compute_position_ids: batch)
+
+    loss, metrics = policy.forward(
+        {"input_ids": torch.ones(1, 1, dtype=torch.long), "messages": [[{"role": "user"}]]}
+    )
+
+    assert loss.item() == 7.0
+    assert metrics["flow_loss"].item() == 3.0
+    assert metrics["cross_entropy_loss"].item() == 4.0
+
+
+def test_policy_preserves_original_action_only_loss(monkeypatch):
+    policy = _make_unloaded_policy(flow_loss_weight=2.0, text_loss_weight=0.25)
+    outputs = SimpleNamespace(
+        loss=torch.tensor(9.0),
+        flow_loss=torch.tensor(3.0),
+        cross_entropy_loss=torch.tensor(4.0),
+        channel_loss_dict=None,
+    )
+    policy.model = lambda **kwargs: outputs
+    monkeypatch.setattr(policy, "preprocess_inputs", lambda batch, compute_position_ids: batch)
+
+    loss, _ = policy.forward({"input_ids": torch.ones(1, 1, dtype=torch.long)})
+
+    assert loss.item() == 9.0
+
+
+def test_generation_preparation_synthesizes_cache_positions():
+    input_ids = torch.tensor([[1, 2, 3]])
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        attention_mask=torch.ones_like(input_ids),
+    )
+
+    assert torch.equal(prepared["cache_position"], torch.arange(3))
+
+
+def test_policy_exposes_text_generation(monkeypatch):
+    class Inputs(dict):
+        __getattr__ = dict.__getitem__
+
+    class Tokenizer:
+        eos_token_id = 2
+        pad_token_id = 0
+
+        @staticmethod
+        def batch_decode(token_ids, **kwargs):
+            del kwargs
+            assert torch.equal(token_ids, torch.tensor([[7, 8]]))
+            return ["move toward the cup"]
+
+    class Model:
+        processor = SimpleNamespace(tokenizer=Tokenizer())
+
+        @staticmethod
+        def generate(input_ids, **kwargs):
+            del kwargs
+            return torch.cat([input_ids, torch.tensor([[7, 8]])], dim=1)
+
+    policy = _make_unloaded_policy()
+    policy.model = Model()
+    inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
+    monkeypatch.setattr(policy, "_build_text_inputs", lambda *args, **kwargs: inputs)
+
+    output = policy.generate_text(
+        {"observation.state": torch.zeros(1, 7), "task": ["pick up the cup"]},
+        kind="subtask",
+    )
+
+    assert output == ["move toward the cup"]
 
 
 @require_cuda

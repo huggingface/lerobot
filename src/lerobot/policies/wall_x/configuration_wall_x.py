@@ -66,6 +66,12 @@ class WallXConfig(PreTrainedConfig):
     # otherwise falls back to the native per-chunk SDPA implementation.
     vision_attn_implementation: str = "auto"
 
+    # Optional language-recipe supervision.
+    recipe_path: str | None = None
+    tokenizer_max_length: int = 768
+    flow_loss_weight: float = 1.0
+    text_loss_weight: float = 0.01
+
     # ==================== Optimizer Presets ====================
     optimizer_lr: float = 2e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -101,6 +107,12 @@ class WallXConfig(PreTrainedConfig):
                 "vision_attn_implementation must be one of 'auto', 'sdpa', or 'varlen', got "
                 f"{self.vision_attn_implementation!r}"
             )
+        if self.tokenizer_max_length < self.chunk_size + 1:
+            raise ValueError("tokenizer_max_length must leave room for the WALL-OSS action chunk.")
+        if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("WALL-OSS loss weights must be non-negative.")
+        if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one WALL-OSS training loss must be enabled.")
 
         # Assign use_fast_tokenizer based on prediction_mode
         if self.prediction_mode == "fast":

@@ -24,6 +24,7 @@ _ADAPTERS: dict[str, str] = {
     "pi052": "lerobot.policies.pi052.inference.pi052_adapter:PI052PolicyAdapter",
     "pi05": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
     "molmoact2": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
+    "wall_x": "lerobot.policies.wall_x.inference.wall_x_adapter:WallXPolicyAdapter",
 }
 
 

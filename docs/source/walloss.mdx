@@ -40,6 +40,38 @@ To use WallX in LeRobot, specify the policy type as:
 policy.type=wall_x
 ```
 
+### Text generation and interactive control
+
+WALL-OSS exposes native text generation using the same batched images and task
+field used for action inference:
+
+```python
+answers = policy.generate_text(
+    batch,
+    kind="vqa",
+    user_text="Which object is closest to the right gripper?",
+)
+```
+
+Use `kind="caption"` for scene descriptions, `kind="grounding"` for spatial
+queries, or `kind="subtask"` for WALL-OSS's language-level next action. The
+text comes from the policy's own Qwen vision-language expert.
+
+The interactive language runtime can generate a subtask and then condition
+WALL-OSS action prediction on it:
+
+```bash
+lerobot-rollout \
+  --language \
+  --policy.path=your-org/your-wall-oss-checkpoint \
+  --policy.device=cuda \
+  --task="clear the table" \
+  --mode=action
+```
+
+Use `/ask <question>` for image-grounded VQA or `--direct_subtask` to bypass
+subtask generation and send the task directly to action inference.
+
 ## Training
 
 For training WallX, you can use the standard LeRobot training script with the appropriate configuration:
@@ -59,6 +91,32 @@ lerobot-train \
     --batch_size=32
 ```
 
+### Train with language annotations
+
+Set `recipe_path` to train from LeRobot's optional language columns:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_language_annotated_dataset \
+  --policy.type=wall_x \
+  --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
+  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+Targeted assistant turns receive next-token cross-entropy, while `low_level`
+recipe streams receive continuous flow-action supervision. A row may receive
+either objective or both. User prompts, images, proprioception, action-query
+tokens, and padding are excluded from text loss. Without `recipe_path`,
+WALL-OSS keeps its original action-only training path.
+
+See [Language columns and recipes](./language_and_recipes) for the annotation
+schema and available recipes.
+
 ### Training Arguments
 
 | Argument                       | Description                                                                                                                                                   |
@@ -74,6 +132,10 @@ lerobot-train \
 | `--steps`                      | Total number of training steps to run                                                                                                                         |
 | `--policy.device`              | Device to train on (`cuda` for GPU, `cpu` for CPU)                                                                                                            |
 | `--batch_size`                 | Number of samples per training batch                                                                                                                          |
+
+Language training additionally uses `policy.recipe_path`,
+`policy.text_loss_weight` (default `0.01`), `policy.flow_loss_weight` (default
+`1.0`), and `policy.tokenizer_max_length` (default `768`).
 
 ## License
 
