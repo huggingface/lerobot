@@ -27,20 +27,32 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
     # config, so host capture and client/dataset shapes stay in sync. NO_ROTATION keeps the declared
     # (height, width) equal to the received frame shape (the client does not rotate received frames).
     return {
-        "front": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=1280, height=720, rotation=Cv2Rotation.NO_ROTATION
-        ),
-        "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video2", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        ),
-        # USB "Web Camera", native 640x480, mounted rotated -> portrait (640, 480, 3) after ROTATE_90.
-        # Use the stable by-id path: the raw /dev/videoN number shuffles on replug.
-        "up": OpenCVCameraConfig(
-            index_or_path="/dev/v4l/by-id/usb-Web_Camera_Web_Camera_202512181-video-index0",
+        # Orbbec Gemini 335L color stream over UVC. The device exposes two UVC interfaces and MANY V4L2
+        # nodes; only the RGB function (USB interface "04") delivers a real color image, and it decodes
+        # cleanly as MJPG @ 1280x720 (the default YUYV path yields a dark/garbled frame). Neither /dev/
+        # v4l/by-id nor by-path is reliable here: by-id collides (the color node and a depth node both
+        # report V4L index 0, so they fight over the same "...-video-index0" symlink), and by-path
+        # changes whenever the camera moves to a different physical USB port. We therefore rely on a
+        # custom udev rule that pins a stable name to the color node by serial + interface. See the
+        # 99-lekiwi-cameras.rules snippet in the LeKiwi hardware docs; install it with:
+        #   sudo tee /etc/udev/rules.d/99-lekiwi-cameras.rules  (then udevadm control --reload && trigger)
+        "orbbec": OpenCVCameraConfig(
+            index_or_path="/dev/lekiwi_orbbec",
             fps=30,
-            width=480,
-            height=640,
-            rotation=Cv2Rotation.ROTATE_90,
+            width=1280,
+            height=720,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.NO_ROTATION,
+        ),
+        # Wrist camera (Sonix USB2.0_CAM1), native 640x480, mounted upside-down -> ROTATE_180
+        # (180deg keeps the 640x480 shape, so declared width/height still match the received frame).
+        # Pinned by the same udev rule to avoid /dev/videoN shuffling on replug.
+        "wrist": OpenCVCameraConfig(
+            index_or_path="/dev/lekiwi_wrist",
+            fps=30,
+            width=640,
+            height=480,
+            rotation=Cv2Rotation.ROTATE_180,
         ),
     }
 
