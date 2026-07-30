@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 import numpy as np
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
@@ -55,9 +54,9 @@ from lerobot.utils.constants import (
     ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
-    OPENPI_ATTENTION_MASK_VALUE,
 )
 
+from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
@@ -65,91 +64,6 @@ from .configuration_pi0_fast import PI0FastConfig
 
 class ActionSelectKwargs(TypedDict, total=False):
     temperature: float | None
-
-
-def pad_vector(vector, new_dim):
-    """Pad the last dimension of a vector to new_dim with zeros.
-
-    Can be (batch_size x sequence_length x features_dimension)
-    or (batch_size x features_dimension)
-    """
-    if vector.shape[-1] >= new_dim:
-        return vector
-    return F.pad(vector, (0, new_dim - vector.shape[-1]))
-
-
-def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
-    images: torch.Tensor,
-    height: int,
-    width: int,
-    mode: str = "bilinear",
-) -> torch.Tensor:
-    """PyTorch version of resize_with_pad. Resizes an image to a target height and width without distortion
-    by padding with black. If the image is float32, it must be in the range [-1, 1].
-
-    Args:
-        images: Tensor of shape [*b, h, w, c] or [*b, c, h, w]
-        height: Target height
-        width: Target width
-        mode: Interpolation mode ('bilinear', 'nearest', etc.)
-
-    Returns:
-        Resized and padded tensor with same shape format as input
-    """
-    # Check if input is in channels-last format [*b, h, w, c] or channels-first [*b, c, h, w]
-    if images.shape[-1] <= 4:  # Assume channels-last format
-        channels_last = True
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-        images = images.permute(0, 3, 1, 2)  # [b, h, w, c] -> [b, c, h, w]
-    else:
-        channels_last = False
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-
-    batch_size, channels, cur_height, cur_width = images.shape
-
-    # Calculate resize ratio
-    ratio = max(cur_width / width, cur_height / height)
-    resized_height = int(cur_height / ratio)
-    resized_width = int(cur_width / ratio)
-
-    # Resize
-    resized_images = F.interpolate(
-        images,
-        size=(resized_height, resized_width),
-        mode=mode,
-        align_corners=False if mode == "bilinear" else None,
-    )
-
-    # Handle dtype-specific clipping
-    if images.dtype == torch.uint8:
-        resized_images = torch.round(resized_images).clamp(0, 255).to(torch.uint8)
-    elif images.dtype == torch.float32:
-        resized_images = resized_images.clamp(0.0, 1.0)
-    else:
-        raise ValueError(f"Unsupported image dtype: {images.dtype}")
-
-    # Calculate padding
-    pad_h0, remainder_h = divmod(height - resized_height, 2)
-    pad_h1 = pad_h0 + remainder_h
-    pad_w0, remainder_w = divmod(width - resized_width, 2)
-    pad_w1 = pad_w0 + remainder_w
-
-    # Pad
-    constant_value = 0 if images.dtype == torch.uint8 else 0.0
-    padded_images = F.pad(
-        resized_images,
-        (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
-        mode="constant",
-        value=constant_value,
-    )
-
-    # Convert back to original format if needed
-    if channels_last:
-        padded_images = padded_images.permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
-
-    return padded_images
 
 
 class GemmaConfig:  # see openpi `gemma.py: Config`
@@ -357,14 +271,6 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         return func(*args, **kwargs)
 
-    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
-        """Helper method to prepare 4D attention masks for transformer."""
-        att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-        if dtype is not None:
-            result = result.to(dtype=dtype)
-        return result
-
     def embed_prefix_fast(
         self,
         images,
@@ -545,7 +451,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         input_att_masks = prefix_att_masks
 
         position_ids = torch.cumsum(input_pad_masks, dim=1) - 1
-        att_2d_4d = self._prepare_attention_masks_4d(input_att_masks, dtype=input_embs.dtype)
+        att_2d_4d = prepare_attention_masks_4d(input_att_masks, dtype=input_embs.dtype)
 
         # forward pass through paligemma (language model)
         (prefix_out, _), _ = self.paligemma_with_expert.forward(
@@ -638,7 +544,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         for t in range(max_decoding_steps):
             # always re-calculate position IDs from the current pad mask
             position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-            att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+            att_4d = prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
 
             # full forward pass (no kv cache)
             (prefix_out, _), _ = self.paligemma_with_expert.forward(
@@ -733,7 +639,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
         # Create 4D mask for the prefix
-        att_4d = self._prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
+        att_4d = prepare_attention_masks_4d(prefix_att_masks, dtype=prefix_embs.dtype)
 
         # Forward pass (Prefill) with use_cache=True
         # We only pass [prefix_embs, None] because we aren't using the suffix (expert) model yet
@@ -782,7 +688,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Create Attention Mask for the single new step
             # The new token attends to all valid tokens in history (captured by current_pad_mask).
             # Shape becomes (B, 1, 1, Total_Len) which works with HF's cache logic.
-            step_att_mask = self._prepare_attention_masks_4d(
+            step_att_mask = prepare_attention_masks_4d(
                 current_pad_mask.unsqueeze(1), dtype=next_token_emb.dtype
             )
 

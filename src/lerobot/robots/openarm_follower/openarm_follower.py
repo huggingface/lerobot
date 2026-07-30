@@ -20,9 +20,9 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras import make_cameras_from_configs
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -149,9 +149,6 @@ class OpenArmFollower(Robot):
             cam.connect()
 
         self.configure()
-
-        if self.is_calibrated:
-            self.bus.set_zero_position()
 
         self.bus.enable_torque()
 
