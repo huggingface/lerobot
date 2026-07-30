@@ -210,7 +210,8 @@ def _validate_episode_references(root: Path, info: DatasetInfo, episodes: Any | 
         return
 
     video_keys = tuple(key for key, feature in info.features.items() if feature["dtype"] == "video")
-    if video_keys and info.video_path is None:
+    video_path = info.video_path
+    if video_keys and video_path is None:
         raise DatasetDirectoryError(
             f"{root}/{INFO_PATH} declares video features but does not define a video_path template."
         )
@@ -228,9 +229,10 @@ def _validate_episode_references(root: Path, info: DatasetInfo, episodes: Any | 
                 )
             )
             for video_key in video_keys:
+                assert video_path is not None
                 referenced_videos.add(
                     Path(
-                        info.video_path.format(
+                        video_path.format(
                             video_key=video_key,
                             chunk_index=row[f"videos/{video_key}/chunk_index"],
                             file_index=row[f"videos/{video_key}/file_index"],
