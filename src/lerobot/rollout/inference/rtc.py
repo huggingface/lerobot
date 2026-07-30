@@ -251,7 +251,10 @@ class RTCInferenceEngine(InferenceEngine):
             time_per_chunk = 1.0 / self._fps
             policy_device = torch.device(self._device)
 
-            warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
+            # The first inference carries one-time lazy-initialization cost (CUDA graph
+            # capture, allocator warm-up, ...) regardless of torch.compile, so its latency
+            # is never representative — keep it out of the delay estimate in both modes.
+            warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 1
             inference_count = 0
             consecutive_errors = 0
 
@@ -315,7 +318,7 @@ class RTCInferenceEngine(InferenceEngine):
 
                         inference_count += 1
                         consecutive_errors = 0
-                        is_warmup = self._use_torch_compile and inference_count <= warmup_required
+                        is_warmup = inference_count <= warmup_required
                         if is_warmup:
                             latency_tracker.reset()
                         else:

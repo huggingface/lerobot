@@ -36,7 +36,6 @@ class LatencyTracker:
     def reset(self) -> None:
         """Clear all recorded latencies."""
         self._values.clear()
-        self.max_latency = 0.0
 
     def add(self, latency: float) -> None:
         """Add a latency sample (seconds)."""
@@ -46,14 +45,19 @@ class LatencyTracker:
         if val < 0:
             return
         self._values.append(val)
-        self.max_latency = max(self.max_latency, val)
 
     def __len__(self) -> int:
         return len(self._values)
 
-    def max(self) -> float | None:
-        """Return the maximum latency or None if empty."""
-        return self.max_latency
+    def max(self) -> float:
+        """Return the maximum latency within the sliding window, or 0.0 if empty.
+
+        Computed over the retained window so that a stale spike (e.g. a one-time
+        warm-up inference) stops inflating the delay estimate once it is evicted.
+        """
+        if not self._values:
+            return 0.0
+        return max(self._values)
 
     def percentile(self, q: float) -> float | None:
         """Return the q-quantile (q in [0,1]) of recorded latencies or None if empty."""
@@ -63,7 +67,7 @@ class LatencyTracker:
         if q <= 0.0:
             return min(self._values)
         if q >= 1.0:
-            return self.max_latency
+            return self.max()
         vals = np.array(list(self._values), dtype=np.float32)
         return float(np.quantile(vals, q))
 
