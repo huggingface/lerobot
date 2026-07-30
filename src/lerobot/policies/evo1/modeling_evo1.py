@@ -42,6 +42,9 @@ class Evo1Policy(PreTrainedPolicy):
     config_class = Evo1Config
     name = "evo1"
 
+    def supports_rtc(self) -> bool:
+        return True
+
     def __init__(self, config: Evo1Config, *, vlm_hub_kwargs: dict | None = None, **kwargs):
         super().__init__(config)
         config.validate_features()
