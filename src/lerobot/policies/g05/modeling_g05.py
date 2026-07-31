@@ -31,16 +31,19 @@ from typing import Any
 import torch
 import torch.nn.functional as functional
 from huggingface_hub import snapshot_download
+from safetensors.torch import load_file
 from torch import Tensor, nn
 from transformers import DynamicCache
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
     Qwen3_5DecoderLayer,
+    Qwen3_5GatedDeltaNet,
     Qwen3_5MLP,
     Qwen3_5RMSNorm,
     Qwen3_5TextRotaryEmbedding,
     Qwen3_5VisionModel,
+    Qwen3_5VisionRotaryEmbedding,
     apply_rotary_pos_emb_vision,
 )
 
@@ -49,6 +52,7 @@ from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import resolve_safetensors_device
 
 from .configuration_g05 import (
     G05_POLICY_PARTS,
@@ -57,6 +61,126 @@ from .configuration_g05 import (
     make_g05_prompt_template,
 )
 from .processor_g05 import IGNORE_INDEX, G05SequenceBatch, G05Tokenizer, G05TokenType
+
+
+class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
+    """Qwen3.5 linear attention with the numerical contract used by G0.5."""
+
+    def forward(
+        self,
+        hidden_states: Tensor,
+        cache_params: DynamicCache | None = None,
+        attention_mask: Tensor | None = None,
+    ) -> Tensor:
+        if attention_mask is not None and attention_mask.ndim == 2:
+            hidden_states = hidden_states * attention_mask[:, :, None]
+
+        batch_size, sequence_length, _ = hidden_states.shape
+        use_cached_state = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
+        if use_cached_state:
+            conv_state = cache_params.layers[self.layer_idx].conv_states
+            recurrent_state = cache_params.layers[self.layer_idx].recurrent_states
+
+        mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
+        gate = self.in_proj_z(hidden_states).reshape(
+            batch_size,
+            sequence_length,
+            self.num_v_heads,
+            self.head_v_dim,
+        )
+        beta = self.in_proj_b(hidden_states).sigmoid()
+        decay = self.in_proj_a(hidden_states)
+
+        if use_cached_state:
+            if sequence_length == 1:
+                mixed_qkv = self.causal_conv1d_update(
+                    mixed_qkv,
+                    conv_state,
+                    self.conv1d.weight.squeeze(1),
+                    self.conv1d.bias,
+                    self.activation,
+                )
+            else:
+                conv_input = torch.cat((conv_state[..., 1:], mixed_qkv), dim=-1)
+                mixed_qkv = functional.silu(
+                    functional.conv1d(
+                        conv_input,
+                        self.conv1d.weight,
+                        self.conv1d.bias,
+                        groups=self.conv1d.groups,
+                    )
+                )
+                cache_params.layers[self.layer_idx].conv_states.copy_(
+                    conv_input[..., -self.conv_kernel_size :]
+                )
+        else:
+            if cache_params is not None:
+                conv_state = functional.pad(
+                    mixed_qkv,
+                    (self.conv_kernel_size - mixed_qkv.shape[-1], 0),
+                )
+                cache_params.update_conv_state(conv_state, self.layer_idx)
+            if self.causal_conv1d_fn is not None:
+                mixed_qkv = self.causal_conv1d_fn(
+                    x=mixed_qkv,
+                    weight=self.conv1d.weight.squeeze(1),
+                    bias=self.conv1d.bias,
+                    activation=self.activation,
+                    seq_idx=None,
+                )
+            else:
+                mixed_qkv = functional.silu(self.conv1d(mixed_qkv)[:, :, :sequence_length])
+
+        query, key, value = torch.split(
+            mixed_qkv.transpose(1, 2),
+            (self.key_dim, self.key_dim, self.value_dim),
+            dim=-1,
+        )
+        query = query.reshape(batch_size, sequence_length, self.num_k_heads, self.head_k_dim)
+        key = key.reshape(batch_size, sequence_length, self.num_k_heads, self.head_k_dim)
+        value = value.reshape(batch_size, sequence_length, self.num_v_heads, self.head_v_dim)
+
+        with torch.autocast(hidden_states.device.type, enabled=False):
+            decay = -self.A_log.float().exp() * functional.softplus(decay.float() + self.dt_bias.float())
+        head_repeats = self.num_v_heads // self.num_k_heads
+        if head_repeats > 1:
+            query = query.repeat_interleave(head_repeats, dim=2)
+            key = key.repeat_interleave(head_repeats, dim=2)
+
+        if use_cached_state and sequence_length == 1:
+            attended, recurrent_state = self.recurrent_gated_delta_rule(
+                query,
+                key,
+                value,
+                g=decay,
+                beta=beta,
+                initial_state=recurrent_state,
+                output_final_state=cache_params is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            initial_state = recurrent_state.clone() if use_cached_state else None
+            attended, recurrent_state = self.chunk_gated_delta_rule(
+                query,
+                key,
+                value,
+                g=decay,
+                beta=beta,
+                chunk_size=32,
+                initial_state=initial_state,
+                output_final_state=cache_params is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+
+        if cache_params is not None:
+            cache_params.update_recurrent_state(recurrent_state, self.layer_idx)
+
+        attended = attended.reshape(-1, self.head_v_dim)
+        gate = gate.reshape(-1, self.head_v_dim)
+        with torch.autocast(hidden_states.device.type, enabled=False):
+            attended = self.norm(attended.float(), gate.float())
+        attended = attended.reshape(batch_size, sequence_length, self.value_dim)
+        return self.out_proj(attended)
 
 
 class _BlockDCT(nn.Module):
@@ -812,12 +936,13 @@ class G05QwenTextModel(nn.Module):
 
         self.config = _qwen_text_config(values, vocab_size=vocab_size)
         self.input_proj = nn.Embedding(vocab_size, self.config.hidden_size, self.config.pad_token_id)
-        self.layers = nn.ModuleList(
-            [
-                Qwen3_5DecoderLayer(self.config, layer_idx)
-                for layer_idx in range(self.config.num_hidden_layers)
-            ]
-        )
+        layers = []
+        for layer_idx in range(self.config.num_hidden_layers):
+            layer = Qwen3_5DecoderLayer(self.config, layer_idx)
+            if self.config.layer_types[layer_idx] == "linear_attention":
+                layer.linear_attn = G05GatedDeltaNet(self.config, layer_idx)
+            layers.append(layer)
+        self.layers = nn.ModuleList(layers)
         self.norm = Qwen3_5RMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
         self.rotary_emb = Qwen3_5TextRotaryEmbedding(self.config)
 
@@ -1034,12 +1159,36 @@ class G05NativeBackend(nn.Module):
         action_config = self.model_config.get("AT_CONFIG")
         if isinstance(action_config, Mapping):
             checkpoint = Path(str(action_config.get("ckpt_dir", "")))
-            if checkpoint.is_file():
+            if checkpoint.is_file() and not next(self.model.parameters()).is_meta:
                 self.action_tokenizer = G05NativeActionCodec.load(
                     action_config,
                     action_token_begin=self.processor.action_token_begin,
                 )
         self._last_vision_grids: list[tuple[int, int, int]] = []
+
+    def materialize_runtime_buffers(self, device: torch.device | str) -> None:
+        """Rebuild non-persistent Transformers buffers after meta construction."""
+
+        for module in self.modules():
+            if isinstance(module, Qwen3_5TextRotaryEmbedding) and module.inv_freq.is_meta:
+                # The Transformers initializer creates its arange before moving it
+                # to ``device``. Override the outer meta-device construction context
+                # so that intermediate is materialized on the final device as well.
+                with torch.device(device):
+                    inverse_frequency, attention_scaling = module.compute_default_rope_parameters(
+                        module.config,
+                        device,
+                    )
+                module.inv_freq = inverse_frequency
+                module.original_inv_freq = inverse_frequency.clone()
+                module.attention_scaling = attention_scaling
+            elif isinstance(module, Qwen3_5VisionRotaryEmbedding) and module.inv_freq.is_meta:
+                frequency = torch.arange(0, module.dim, 2, dtype=torch.float32, device=device)
+                module.inv_freq = 1.0 / (module.theta ** (frequency / module.dim))
+
+        remaining = [name for name, buffer in self.named_buffers() if buffer.is_meta]
+        if remaining:
+            raise RuntimeError(f"G0.5 meta loading left runtime buffers unmaterialized: {remaining}")
 
     def apply_fp32_params(self) -> None:
         """Restore the FP32 islands used by the released mixed-precision runtime."""
@@ -1941,6 +2090,29 @@ class G05Policy(PreTrainedPolicy):
         self._action_queue: deque[Tensor] = deque()
 
     @classmethod
+    def _load_as_safetensor(
+        cls,
+        model: G05Policy,
+        model_file: str,
+        map_location: str,
+        strict: bool,
+    ) -> G05Policy:
+        device = resolve_safetensors_device(map_location)
+        state_dict = load_file(model_file, device=device, backend="pread")
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
+        materialize = getattr(model.backend, "materialize_runtime_buffers", None)
+        if callable(materialize):
+            materialize(device)
+        remaining_meta = [name for name, parameter in model.named_parameters() if parameter.is_meta]
+        if remaining_meta:
+            raise RuntimeError(f"G0.5 checkpoint did not materialize model parameters: {remaining_meta}")
+        if strict and (missing_keys or unexpected_keys):
+            raise RuntimeError(
+                f"Error(s) loading G0.5 safetensors: missing={missing_keys}, unexpected={unexpected_keys}"
+            )
+        return model
+
+    @classmethod
     def from_pretrained(
         cls,
         pretrained_name_or_path: str | Path,
@@ -1976,11 +2148,20 @@ class G05Policy(PreTrainedPolicy):
         author_config["AT_CONFIG"] = at_config
         author_config["pretrained_model_path"] = None
         config.author_model_config = author_config
-        return super().from_pretrained(
-            resolved_path,
-            config=config,
-            **kwargs,
-        )
+        with torch.device("meta"):
+            policy = super().from_pretrained(
+                resolved_path,
+                config=config,
+                **kwargs,
+            )
+        if isinstance(policy.backend, G05NativeBackend) and policy.backend.action_tokenizer is None:
+            action_config = policy.backend.model_config.get("AT_CONFIG")
+            if isinstance(action_config, Mapping) and Path(str(action_config.get("ckpt_dir", ""))).is_file():
+                policy.backend.action_tokenizer = G05NativeActionCodec.load(
+                    action_config,
+                    action_token_begin=policy.backend.processor.action_token_begin,
+                ).to(next(policy.backend.parameters()).device)
+        return policy
 
     def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
         super()._save_pretrained(save_directory, state_dict=state_dict)

@@ -23,12 +23,23 @@ from types import SimpleNamespace
 import pytest
 import torch
 from torch import nn
+from transformers import DynamicCache
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5TextRotaryEmbedding,
+    Qwen3_5VisionRotaryEmbedding,
+)
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import G05_CAMERA_PROFILES, G05_EMBODIMENT_MAPPINGS, G05Config
-from lerobot.policies.g05.modeling_g05 import G05_RUNTIME_PREDICT_COT, G05NativeBackend, G05Policy
+from lerobot.policies.g05.modeling_g05 import (
+    G05_RUNTIME_PREDICT_COT,
+    G05GatedDeltaNet,
+    G05NativeBackend,
+    G05Policy,
+)
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -825,6 +836,85 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
     expected = policy.predict_action_chunk(_policy_batch("save"))
     actual = reloaded.predict_action_chunk(_policy_batch("save"))
     torch.testing.assert_close(actual, expected)
+
+
+def test_gated_delta_cached_suffix_matches_tokenwise_decode():
+    config = Qwen3_5TextConfig(
+        vocab_size=32,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        layer_types=["linear_attention"],
+        linear_conv_kernel_dim=4,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+    )
+    torch.manual_seed(1337)
+    layer = G05GatedDeltaNet(config, 0).eval()
+    prefix = torch.randn(2, 7, config.hidden_size)
+    suffix = torch.randn(2, 3, config.hidden_size)
+    bulk_cache = DynamicCache(config=config)
+    tokenwise_cache = DynamicCache(config=config)
+
+    with torch.inference_mode():
+        layer(prefix, bulk_cache)
+        layer(prefix, tokenwise_cache)
+        bulk = layer(suffix, bulk_cache)
+        tokenwise = torch.cat(
+            [layer(suffix[:, index : index + 1], tokenwise_cache) for index in range(suffix.shape[1])],
+            dim=1,
+        )
+
+    torch.testing.assert_close(bulk, tokenwise, atol=2e-7, rtol=2e-6)
+
+
+def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path, monkeypatch):
+    reference = G05Policy(_config(), backend=TinyG05Backend())
+    reference.save_pretrained(tmp_path)
+    constructed_on_meta = False
+
+    def make_tiny_backend(config):
+        nonlocal constructed_on_meta
+        backend = TinyG05Backend()
+        constructed_on_meta = next(backend.parameters()).is_meta
+        return backend
+
+    monkeypatch.setattr("lerobot.policies.g05.modeling_g05._native_backend", make_tiny_backend)
+    loaded = G05Policy.from_pretrained(tmp_path, local_files_only=True, strict=True)
+
+    assert constructed_on_meta
+    assert not next(loaded.parameters()).is_meta
+    assert next(loaded.parameters()).device.type == "cpu"
+    torch.testing.assert_close(loaded.backend.proj.weight, reference.backend.proj.weight)
+
+
+def test_meta_loader_materializes_transformers_rotary_buffers():
+    config = Qwen3_5TextConfig(
+        hidden_size=32,
+        num_attention_heads=2,
+        head_dim=16,
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 10_000.0,
+            "partial_rotary_factor": 0.25,
+            "mrope_section": [2, 1, 1],
+            "mrope_interleaved": True,
+        },
+    )
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    with torch.device("meta"):
+        backend.text_rotary = Qwen3_5TextRotaryEmbedding(config)
+        backend.vision_rotary = Qwen3_5VisionRotaryEmbedding(dim=8)
+
+    assert all(buffer.is_meta for buffer in backend.buffers())
+    backend.materialize_runtime_buffers("cpu")
+    assert all(not buffer.is_meta and buffer.device.type == "cpu" for buffer in backend.buffers())
 
 
 def test_training_forward_uses_policy_autocast_context(monkeypatch):
