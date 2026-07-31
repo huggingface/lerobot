@@ -20,8 +20,6 @@
       title: 语言列与配方
     - local: streaming_video_encoding
       title: 流式视频编码指南
-    - local: dataset_subtask
-      title: 在 LeRobot 数据集中使用子任务
   title: 数据集
 
 - sections:
