@@ -98,10 +98,6 @@ If a policy declares nothing and you pass neither flag, the run fails at startup
 
 Other sharding knobs: `--accelerator.fsdp.reshard_after_forward` (default `true`; set `false` to trade memory for one gather less per step), `--accelerator.fsdp.cpu_offload`, and `--accelerator.fsdp.ignored_modules` (a regex of module paths to keep unsharded).
 
-### Mixed precision
-
-`--accelerator.mixed_precision=bf16` selects torch AMP under DDP and the FSDP2 `MixedPrecisionPolicy` under sharding. Sharded runs accept `no` and `bf16` only (fp16's GradScaler path is not supported over sharded tensors, and the config validation says so up front). Note `--policy.use_amp` only affects standalone inference scripts such as `lerobot-eval`, and `--policy.dtype` only casts the model parameters — neither enables training autocast. Training precision is owned exclusively by `--accelerator.mixed_precision`: set it explicitly (e.g. together with `--policy.dtype=bfloat16`, pass `--accelerator.mixed_precision=bf16`).
-
 ### HSDP
 
 At larger scale, sharding across _all_ GPUs makes every gather cross the slow inter-node links. HSDP shards within a replica group (e.g. one node, over NVLink) and replicates across groups (DDP-style gradient sync over the slower links):
