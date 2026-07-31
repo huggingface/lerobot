@@ -104,6 +104,7 @@ class HolosomaLocomotionController:
         # Load policy and gains
         self.policy, self.kp, self.kd = load_policy()
 
+        self.default_angles = DEFAULT_ANGLES  # home pose (29,), for reset ease-in
         self.cmd = np.zeros(3, dtype=np.float32)
 
         # Robot state

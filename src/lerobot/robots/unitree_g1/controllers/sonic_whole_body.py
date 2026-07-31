@@ -54,9 +54,6 @@ TOKEN_DIM = 64  # decoder latent size
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
 TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, not a secret
 
-# Startup blend duration (s): ease from the initial pose into the policy target on start.
-INIT_RAMP_S = 3.0
-
 # SONIC decoder checkpoint. Deploy constants (kp/kd, default_angles, action_scale,
 # neutral_token) are baked into the ONNX metadata; see upload_sonic_decoder.py.
 DEFAULT_SONIC_REPO_ID = "lerobot/sonic_decoder"
@@ -145,7 +142,6 @@ class SonicWholeBodyController:
     """
 
     control_dt = CONTROL_DT
-    full_body = True
 
     def __init__(self, policy_type: str = "default"):
         self.decoder, self.kp, self.kd, self.default_angles, self.action_scale, self.neutral_token = (
@@ -153,12 +149,11 @@ class SonicWholeBodyController:
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
         self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
-        self._init_ramp_steps = max(1, round(INIT_RAMP_S / CONTROL_DT))
         self.reset()
         logger.info("SonicWholeBodyController initialized")
 
     def reset(self) -> None:
-        """Reset internal state for a new episode: held token, history buffers, startup blend."""
+        """Reset internal state for a new episode: held token and 10-frame history buffers."""
         self.last_action_mj = np.zeros(29, np.float32)
         self.h_q_mj = [np.zeros(29, np.float32)] * 10
         self.h_dq_mj = [np.zeros(29, np.float32)] * 10
@@ -166,8 +161,6 @@ class SonicWholeBodyController:
         self.h_act_mj = [np.zeros(29, np.float32)] * 10
         self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
         self._last_token = None  # neutral token is re-seeded on the first tick
-        self._init_step = 0  # re-run the startup blend
-        self._start_pose: dict[str, float] = {}
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -186,25 +179,6 @@ class SonicWholeBodyController:
         the loop on its own previous token."""
         token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
         return {token_state_key(i): float(v) for i, v in enumerate(token)}
-
-    def _startup_blend(self, lowstate, out: dict) -> dict:
-        """Ease into policy control: over the first ``INIT_RAMP_S`` seconds, interpolate from
-        the pose captured on the first tick to the live policy target so the handoff has no snap."""
-        if self._init_step >= self._init_ramp_steps or not out:
-            return out
-        if self._init_step == 0:
-            self._start_pose = {
-                f"{m.name}.q": float(lowstate.motor_state[m.value].q) for m in G1_29_JointIndex
-            }
-        self._init_step += 1
-        ratio = min(1.0, self._init_step / self._init_ramp_steps)
-        blended = {
-            k: self._start_pose.get(k, float(tgt)) * (1.0 - ratio) + float(tgt) * ratio
-            for k, tgt in out.items()
-        }
-        if self._init_step >= self._init_ramp_steps:
-            logger.info("SONIC startup blend complete -> full policy control")
-        return blended
 
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
@@ -251,5 +225,4 @@ class SonicWholeBodyController:
         )
         self.last_action_mj = action_mj.copy()
         target = self.default_angles + action_mj[ISAACLAB_TO_MUJOCO] * self.action_scale
-        out = {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
-        return self._startup_blend(lowstate, out)
+        return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
