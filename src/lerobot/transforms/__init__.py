@@ -29,6 +29,8 @@ from .transforms import (
     make_transform_from_config,
 )
 
+# An example of transforms effects can be found in: https://github.com/huggingface/lerobot/pull/4210
+
 __all__ = [
     "CoarseDropout",
     "GammaCorrection",
