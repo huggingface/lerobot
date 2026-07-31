@@ -51,6 +51,17 @@ logger = logging.getLogger(__name__)
 CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
 
+# Feature-key prefixes for the latent-token interface (see _extract_token_from_action): the
+# action carries the commanded token, and the robot echoes it back so lerobot-rollout
+# aggregates it into a 64-D observation.state.
+TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
+TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, not a secret
+
+# Startup blend duration: over the first control ticks, linearly interpolate every joint from
+# the robot's initial measured pose into the policy's commanded target, so control eases in
+# without a snap on the first command.
+INIT_RAMP_S = 3.0
+
 # SONIC decoder checkpoint: NVIDIA's decoder ONNX re-packaged with its deploy constants
 # (kp/kd PD gains, the standing pose default_angles, and the residual action_scale) embedded
 # in the ONNX metadata; see upload_sonic_decoder.py for provisioning. The runtime loads the
@@ -90,13 +101,6 @@ def load_sonic_decoder(repo_id: str = DEFAULT_SONIC_REPO_ID):
     return session, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
-# Action-feature prefix for the latent-token interface (see _extract_token_from_action).
-TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
-# Proprio-state prefix for the token interface: the robot echoes the last commanded token
-# here so ``lerobot-rollout`` aggregates it into a 64-D ``observation.state``.
-TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, not a secret
-
-
 def token_action_key(i: int) -> str:
     """Action-dict key for the i-th component of the 64-D SONIC latent token.
 
@@ -109,12 +113,6 @@ def token_action_key(i: int) -> str:
 def token_state_key(i: int) -> str:
     """Observation key for the i-th component of the 64-D SONIC latent token state."""
     return f"{TOKEN_STATE_PREFIX}.{i}.pos"
-
-
-# Startup blend duration: over the first control ticks, linearly interpolate every joint
-# from the robot's initial measured pose into the policy's commanded target, so control
-# eases in without a snap on the first command.
-INIT_RAMP_S = 3.0
 
 
 def _extract_token_from_action(action: dict | None) -> np.ndarray | None:
@@ -147,6 +145,10 @@ class SonicDecoder:
         self.default_angles = np.asarray(default_angles, np.float32)
         self.action_scale = np.asarray(action_scale, np.float32)
         self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
+        self._clear_history()
+
+    def _clear_history(self):
+        """Zero the token and the 10-frame proprioception history buffers."""
         self.token = np.zeros(TOKEN_DIM, np.float32)
         self.last_action_mj = np.zeros(29, np.float32)
         self.h_q_mj = [np.zeros(29, np.float32)] * 10
@@ -161,13 +163,7 @@ class SonicDecoder:
         ``UnitreeG1.reset()`` relies on this so the first decoder outputs of a new episode
         are not contaminated by the previous episode's state.
         """
-        self.token = np.zeros(TOKEN_DIM, np.float32)
-        self.last_action_mj = np.zeros(29, np.float32)
-        self.h_q_mj = [np.zeros(29, np.float32)] * 10
-        self.h_dq_mj = [np.zeros(29, np.float32)] * 10
-        self.h_ang = [np.zeros(3, np.float32)] * 10
-        self.h_act_mj = [np.zeros(29, np.float32)] * 10
-        self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
+        self._clear_history()
 
     def update_history(self, q, dq, ang, quat):
         """Push the latest proprioception (pos/vel/gyro/orientation) into the 10-frame buffers."""
@@ -203,13 +199,12 @@ class SonicDecoder:
         assert off == 994, f"Decoder obs mismatch: {off}"
         return obs
 
-    def step(self, robot_obs, token, debug=False):
+    def step(self, robot_obs, token):
         """One control tick: read robot obs, decode the supplied token -> joint targets.
 
         Args:
             robot_obs: dict with ``<joint>.q``/``.dq`` and ``imu.*`` fields.
             token: 64-D latent supplied by the policy (encoder bypassed).
-            debug: log action/delta norms.
 
         Returns:
             dict of ``<joint>.q`` target positions (rad) in IsaacLab joint order.
@@ -242,15 +237,6 @@ class SonicDecoder:
         )
         self.last_action_mj = action_mj.copy()
         target = self.default_angles + action_mj[ISAACLAB_TO_MUJOCO] * self.action_scale
-        if debug:
-            delta = target - q
-            logger.debug(
-                "token_norm=%.4f action_norm=%.4f delta_max=%.4f delta_rms=%.4f",
-                np.linalg.norm(self.token),
-                np.linalg.norm(action_mj),
-                np.max(np.abs(delta)),
-                np.sqrt(np.mean(delta**2)),
-            )
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
 
 
