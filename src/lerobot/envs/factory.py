@@ -45,13 +45,7 @@ def make_env_pre_post_processors(
     ``env_cfg.get_env_processors()``. Policy-specific overrides stay here when
     they depend on both the policy and environment configs.
     """
-    from lerobot.policies.g05.configuration_g05 import G05Config
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
-
-    if isinstance(policy_cfg, G05Config) and env_cfg.type == "libero":
-        from lerobot.policies.g05.processor_g05 import make_g05_libero_pre_post_processors
-
-        return make_g05_libero_pre_post_processors()
 
     if isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors

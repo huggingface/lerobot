@@ -5,6 +5,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
+
+import draccus
+from draccus.parsers.decoding import decode_dataclass
 
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -27,10 +31,8 @@ class G05Config(PreTrainedConfig):
         chunk_size: Number of future actions predicted by one model forward. It
             is part of the trained action-expert shape and dataset sampling.
         n_action_steps: Number of predicted actions consumed by ``select_action``
-            before the policy runs the model again. This is an inference policy
-            setting, not a neural-network dimension; it stays here because
-            LeRobot policies own their action queues and eval calls one action at
-            a time. It may be overridden without changing model weights.
+            before the policy runs the model again. It defaults to ``chunk_size``
+            and may be overridden at inference time without changing model weights.
         n_obs_steps: Number of observation frames supplied for each camera.
         camera_keys: Real LeRobot image feature keys expected by the checkpoint.
         dummy_camera_keys: Camera slots always filled with zero images.
@@ -52,6 +54,8 @@ class G05Config(PreTrainedConfig):
             or ``g05_stepwise`` for the fixed stats of post-trained checkpoints.
         relative_action_mask: Physical action dimensions represented relative to
             the current state. Unmarked dimensions, such as grippers, stay absolute.
+        joint_signs: Optional physical-arm to checkpoint-frame sign transform.
+        joint_offsets: Optional physical-arm to checkpoint-frame offset transform.
         embodiment: Prompt name serialized from the original checkpoint config.
         num_inference_steps: Euler steps used to solve the flow-matching action field.
         flow_sampling: Training-time flow-time distribution (``beta`` or ``uniform``).
@@ -59,7 +63,9 @@ class G05Config(PreTrainedConfig):
         flow_joint_training: Whether flow loss backpropagates through the VLM prefix.
         discrete_action: Enable the autoregressive action-token objective or inference path.
         continuous_action: Enable the flow-matching action objective or inference path.
-        action_attend_cot: Whether flow actions condition on generated chain-of-thought.
+        cot_prompt: Inference instruction placed immediately before the CoT boundary.
+        predict_cot: Deployment switch. When enabled, generate CoT before the
+            enabled action head; when disabled, use the direct-action prefix.
         dtype: Model autocast precision; checkpoint precision islands remain fp32.
         attn_implementation: Text and action-expert attention backend.
         vision_attn_implementation: Vision attention backend, configured separately
@@ -69,7 +75,7 @@ class G05Config(PreTrainedConfig):
     # Policy I/O horizons. Only chunk_size shapes the trained prediction target;
     # n_action_steps controls the inference action queue.
     chunk_size: int = 32
-    n_action_steps: int = 16
+    n_action_steps: int | None = None
     n_obs_steps: int = 1
 
     # Image layout serialized per embodiment.
@@ -89,6 +95,8 @@ class G05Config(PreTrainedConfig):
     normalization_strategy: str = "lerobot"
     relative_action_mask: list[bool] = field(default_factory=list)
     action_feature_names: list[str] = field(default_factory=list)
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
     embodiment: str = "unknown"
 
     # Tokenizer contract. Token IDs are serialized because converted artifacts
@@ -146,10 +154,16 @@ class G05Config(PreTrainedConfig):
     action_token_end_id: int | None = None
     max_cot_tokens: int = 300
     max_action_tokens: int = 300
+    ar_do_sample: bool = False
+    ar_temperature: float = 0.7
+    ar_top_k: int = 128
+    ar_top_p: float = 0.95
+    ar_repetition_penalty: float = 1.0
+    ar_no_repeat_ngram_size: int = 0
+    cot_prompt: str = ""
     predict_cot: bool = False
     discrete_action: bool = False
     continuous_action: bool = True
-    action_attend_cot: bool = False
 
     # Runtime numerical backends. Flash dependencies remain optional and local.
     dtype: str = "bfloat16"
@@ -179,6 +193,8 @@ class G05Config(PreTrainedConfig):
     action_tokenizer_subdir: str = "action_tokenizer"
 
     def __post_init__(self) -> None:
+        if self.n_action_steps is None:
+            self.n_action_steps = self.chunk_size
         super().__post_init__()
         if self.chunk_size <= 0 or self.n_action_steps <= 0:
             raise ValueError("chunk_size and n_action_steps must be positive")
@@ -200,10 +216,16 @@ class G05Config(PreTrainedConfig):
             raise ValueError("num_flow_samples must be positive")
         if self.max_cot_tokens <= 0 or self.max_action_tokens <= 0:
             raise ValueError("AR token limits must be positive")
+        if self.ar_temperature < 0:
+            raise ValueError("ar_temperature must be non-negative")
+        if self.ar_top_k < 0 or not 0 < self.ar_top_p <= 1:
+            raise ValueError("invalid AR top-k/top-p sampling configuration")
+        if self.ar_repetition_penalty <= 0 or self.ar_no_repeat_ngram_size < 0:
+            raise ValueError("invalid AR repetition configuration")
+        if self.predict_cot and not self.cot_prompt.strip():
+            raise ValueError("predict_cot=true requires the checkpoint's inference CoT prompt")
         if not self.discrete_action and not self.continuous_action:
             raise ValueError("at least one of discrete_action or continuous_action must be enabled")
-        if self.action_attend_cot and not self.continuous_action:
-            raise ValueError("action_attend_cot requires continuous_action=true")
         if self.dtype not in {"bfloat16", "float32"}:
             raise ValueError("dtype must be 'bfloat16' or 'float32'")
         supported_attention = {"eager", "sdpa", "flash_attention_2", "flash_attention_4"}
@@ -217,6 +239,21 @@ class G05Config(PreTrainedConfig):
             not self.action_normalization or not self.state_normalization
         ):
             raise ValueError("g05_stepwise requires serialized state and action statistics")
+        if (self.joint_signs is None) != (self.joint_offsets is None):
+            raise ValueError("joint_signs and joint_offsets must be configured together")
+        if self.joint_signs is not None:
+            # The postprocessor inverts the frame transform as
+            # ``signs * (action - offsets)``, which only undoes
+            # ``signs * state + offsets`` when every sign is +1 or -1.
+            if any(abs(sign) != 1 for sign in self.joint_signs):
+                raise ValueError("joint_signs entries must be +1 or -1 to stay invertible")
+            state = (self.input_features or {}).get(OBS_STATE)
+            action = (self.output_features or {}).get(ACTION)
+            physical_dims = {feature.shape[-1] for feature in (state, action) if feature is not None}
+            if len(self.joint_signs) != len(self.joint_offsets) or any(
+                len(self.joint_signs) > dimension for dimension in physical_dims
+            ):
+                raise ValueError("joint frame transform exceeds the physical state/action width")
         if (self.action_token_start_id is None) != (self.action_token_end_id is None):
             raise ValueError("action token range must define both start and end")
         action_dim = self.output_features.get(ACTION)
@@ -291,3 +328,10 @@ class G05Config(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
+
+
+@draccus.decode.register(G05Config)
+def _decode_g05_config(raw_value: dict[str, Any], path: tuple[str, ...]) -> G05Config:
+    config = dict(raw_value)
+    config.pop("action_attend_cot", None)
+    return decode_dataclass(G05Config, config, path)

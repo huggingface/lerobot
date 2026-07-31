@@ -138,8 +138,11 @@ class G05ActionTokenizer:
         self.config = model.config
         if not self.config.parts_meta:
             raise ValueError("ActionCodec config must include parts_meta")
-        self.neural_keys = [key for key in self.config.parts_meta if not self._is_rule_key(key)]
-        self.rule_keys = [key for key in self.config.parts_meta if self._is_rule_key(key)]
+        # Layout order comes from parts_order, not the parts_meta dict, whose
+        # key order does not survive PretrainedConfig JSON serialisation.
+        self.parts_meta = self.config.ordered_parts_meta
+        self.neural_keys = [key for key in self.parts_meta if not self._is_rule_key(key)]
+        self.rule_keys = [key for key in self.parts_meta if self._is_rule_key(key)]
         self.rule_tokenizer = ConstrainedSequenceTokenizer(
             self.config.horizon,
             self.config.rule_based_min_block_len,
@@ -169,13 +172,13 @@ class G05ActionTokenizer:
         return any(pattern in key for pattern in self.config.rule_based_key_patterns)
 
     def split_action(self, action: Tensor) -> dict[str, Tensor]:
-        expected_width = sum(self.config.parts_meta.values())
+        expected_width = sum(self.parts_meta.values())
         if action.ndim != 3 or action.shape[-1] < expected_width:
             raise ValueError(f"action must have shape [B,T,D] with D >= {expected_width}")
         return dict(
             zip(
-                self.config.parts_meta,
-                action[..., :expected_width].split(list(self.config.parts_meta.values()), -1),
+                self.parts_meta,
+                action[..., :expected_width].split(list(self.parts_meta.values()), -1),
                 strict=True,
             )
         )
@@ -249,10 +252,10 @@ class G05ActionTokenizer:
                     position += 1 + self.rule_tokenizer.num_tokens
                 else:
                     position += 1
-        decoded = self.model.decode(parsed_neural, self.config.parts_meta)
+        decoded = self.model.decode(parsed_neural, self.parts_meta)
         for key, tokens in parsed_rule.items():
             decoded[key] = torch.stack([self.rule_tokenizer.decode(row) for row in tokens]).unsqueeze(-1)
-        return torch.cat([decoded[key].to(rows.device) for key in self.config.parts_meta], dim=-1)
+        return torch.cat([decoded[key].to(rows.device) for key in self.parts_meta], dim=-1)
 
     def decode(self, rows: Tensor) -> Tensor:
         if self._text_to_local is None:

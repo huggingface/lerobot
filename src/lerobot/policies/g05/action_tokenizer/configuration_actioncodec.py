@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
-from transformers import PretrainedConfig
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import PretrainedConfig
+else:
+    # PretrainedConfig is a base class, so it cannot be bound to None the way a
+    # plain symbol can; fail here with the actionable install hint instead.
+    require_package("transformers", extra="g05")
 
 
 class G05ActionCodecConfig(PretrainedConfig):
-    """Configuration for the ActionCodec shipped with G0.5 checkpoints."""
+    """Configuration for the G0.5 action codec."""
 
     model_type = "g05_actioncodec"
 
@@ -41,7 +49,21 @@ class G05ActionCodecConfig(PretrainedConfig):
         use_rotation_trick: bool = False,
         commitment_loss_weight: float = 0.25,
         reconstruction_loss_weight: float = 1.0,
+        consistency_loss_weight: float = 1e-3,
+        consistency_loss_type: str = "action_time_contrastive",
+        consistency_delta_max_begin: int = 1,
+        consistency_delta_max_end: int = 3,
+        consistency_eps_begin: float = 0.02,
+        consistency_eps_end: float = 0.10,
+        consistency_layer_weights_begin: list[float] | None = None,
+        consistency_layer_weights_end: list[float] | None = None,
+        consistency_schedule_begin_fraction: float = 0.0,
+        consistency_schedule_end_fraction: float = 0.9,
+        action_time_contrastive_mode: str = "siglip",
+        action_time_contrastive_temperature_init: float = 0.07,
+        action_time_contrastive_bias_init: float = -10.0,
         parts_meta: dict[str, int] | None = None,
+        parts_order: list[str] | None = None,
         rule_based_key_patterns: list[str] | None = None,
         rule_based_min_block_len: int = 1,
         rule_based_binarize_threshold: float = 0.0,
@@ -78,7 +100,26 @@ class G05ActionCodecConfig(PretrainedConfig):
         self.use_rotation_trick = use_rotation_trick
         self.commitment_loss_weight = commitment_loss_weight
         self.reconstruction_loss_weight = reconstruction_loss_weight
+        self.consistency_loss_weight = consistency_loss_weight
+        self.consistency_loss_type = consistency_loss_type
+        self.consistency_delta_max_begin = consistency_delta_max_begin
+        self.consistency_delta_max_end = consistency_delta_max_end
+        self.consistency_eps_begin = consistency_eps_begin
+        self.consistency_eps_end = consistency_eps_end
+        self.consistency_layer_weights_begin = consistency_layer_weights_begin
+        self.consistency_layer_weights_end = consistency_layer_weights_end
+        self.consistency_schedule_begin_fraction = consistency_schedule_begin_fraction
+        self.consistency_schedule_end_fraction = consistency_schedule_end_fraction
+        self.action_time_contrastive_mode = action_time_contrastive_mode
+        self.action_time_contrastive_temperature_init = action_time_contrastive_temperature_init
+        self.action_time_contrastive_bias_init = action_time_contrastive_bias_init
         self.parts_meta = parts_meta or {}
+        # parts_meta's key order defines the checkpoint's flat action layout, but
+        # PretrainedConfig.to_json_string serialises with sort_keys=True, which
+        # silently alphabetises it. Keep the canonical order in a list, which
+        # JSON preserves. Artifacts written before this field existed fall back
+        # to the dict order, which is what they were already decoded with.
+        self.parts_order = list(parts_order) if parts_order else list(self.parts_meta)
         self.rule_based_key_patterns = rule_based_key_patterns or ["gripper"]
         self.rule_based_min_block_len = rule_based_min_block_len
         self.rule_based_binarize_threshold = rule_based_binarize_threshold
@@ -93,7 +134,18 @@ class G05ActionCodecConfig(PretrainedConfig):
         if not 1 <= self.num_residuals <= n_codebooks:
             raise ValueError("num_residuals must be between 1 and n_codebooks")
         if any(width > max_component_dim for width in self.parts_meta.values()):
-            raise ValueError("released G0.5 ActionCodec does not support parts wider than max_component_dim")
+            raise ValueError("ActionCodec does not support parts wider than max_component_dim")
+        if set(self.parts_order) != set(self.parts_meta):
+            raise ValueError("parts_order must list exactly the parts_meta keys")
+        if consistency_loss_type not in {"token_residual", "action_time_contrastive"}:
+            raise ValueError("consistency_loss_type must be 'token_residual' or 'action_time_contrastive'")
+        if action_time_contrastive_mode not in {"siglip", "infonce"}:
+            raise ValueError("action_time_contrastive_mode must be 'siglip' or 'infonce'")
+
+    @property
+    def ordered_parts_meta(self) -> dict[str, int]:
+        """parts_meta in the checkpoint's canonical layout order."""
+        return {name: self.parts_meta[name] for name in self.parts_order}
 
     @property
     def code_height(self) -> int:

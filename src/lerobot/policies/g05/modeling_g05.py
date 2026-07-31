@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import copy
+import logging
+import re
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 from einops import rearrange, repeat
@@ -52,6 +54,50 @@ else:
     G05GatedDeltaNet = None
     G05VisionPatchEmbed = None
     G05VisionPatchMerger = None
+
+
+_COT_SPECIAL_TOKEN = re.compile(r"<\|[a-z_]+\|>")
+_COT_RULE_WIDTH = 78
+
+
+def format_chain_of_thought(text: str) -> str:
+    """Render a generated chain of thought as a readable block.
+
+    G0.5 emits reasoning as ``|``-separated ``Label: value`` segments with
+    grounding markup interleaved, which is unreadable on a single log line. Each
+    segment gets its own row with labels aligned. The block has no right border,
+    so wide characters can never break the layout.
+    """
+    cleaned = _COT_SPECIAL_TOKEN.sub("", text or "").strip()
+    lines = ["╭─ G0.5 Chain of Thought " + "─" * (_COT_RULE_WIDTH - 24)]
+    segments = [part.strip() for part in cleaned.split("|") if part.strip()]
+    if not segments:
+        lines.append("│ (empty)")
+    else:
+        split = [segment.split(":", 1) for segment in segments]
+        width = max((len(pair[0]) for pair in split if len(pair) == 2), default=0)
+        for pair in split:
+            if len(pair) == 2:
+                lines.append(f"│ {pair[0].strip():<{width}} : {pair[1].strip()}".rstrip())
+            else:
+                lines.append(f"│ {pair[0].strip()}")
+    lines.append("╰" + "─" * (_COT_RULE_WIDTH - 1))
+    return "\n".join(lines)
+
+
+class CotGeneration(NamedTuple):
+    """Per-row state carried from the CoT stage into the AR action stage.
+
+    ``stop_tokens`` is the token that actually terminated each row. The AR stage
+    must commit that exact token rather than re-decoding the frozen hidden state,
+    which is not reproducible once ``ar_do_sample`` is enabled. ``history`` keeps
+    the CoT tokens visible to the repetition penalties during the action stage;
+    ``history_mask`` excludes padding added after shorter rows finish.
+    """
+
+    stop_tokens: Tensor
+    history: Tensor | None
+    history_mask: Tensor | None
 
 
 class G05Model(nn.Module):
@@ -284,10 +330,16 @@ class G05Model(nn.Module):
         )
         return outputs, position_ids, attention_mask
 
-    def prefill(self, batch: dict[str, Tensor]) -> tuple[DynamicCache, Tensor, Tensor, Tensor]:
+    def prefill(self, batch: dict[str, Tensor]) -> tuple[DynamicCache, Tensor, Tensor, Tensor, Tensor]:
         """Encode the multimodal prefix once for flow and token objectives."""
         outputs, position_ids, attention_mask = self.vlm_forward(batch, use_cache=True)
-        return outputs.past_key_values, position_ids, attention_mask, outputs.last_hidden_state[:, -1:]
+        return (
+            outputs.past_key_values,
+            position_ids,
+            attention_mask,
+            outputs.last_hidden_state[:, -1:],
+            batch[OBS_LANGUAGE_TOKENS],
+        )
 
     def copy_vlm_cache(self, source: DynamicCache) -> DynamicCache:
         """Clone mutable linear-attention state while sharing immutable prefix KV."""
@@ -300,34 +352,148 @@ class G05Model(nn.Module):
             destination.layers[index] = destination_layer
         return destination
 
+    def sample_next_token(
+        self,
+        logits: Tensor,
+        history: Tensor | None = None,
+        history_mask: Tensor | None = None,
+    ) -> Tensor:
+        """Apply the AR sampling contract serialized from the source checkpoint.
+
+        Greedy decoding deliberately ignores the repetition penalty and the
+        n-gram ban: the source decoder forces temperature to zero when
+        ``do_sample`` is false and returns a plain argmax before either
+        constraint is applied. Honouring the penalties here instead would
+        suppress the legitimately repeated ActionCodec tokens that released
+        checkpoints emit, and the AR chunk then diverges from the reference.
+        """
+        if not self.config.ar_do_sample or self.config.ar_temperature == 0:
+            return logits.float().argmax(dim=-1)
+
+        scores = logits.float().clone()
+        if history is not None and history.numel():
+            if history_mask is not None and history_mask.shape != history.shape:
+                raise ValueError("history_mask must have the same shape as history")
+            if self.config.ar_repetition_penalty != 1:
+                if history_mask is None:
+                    previous_scores = scores.gather(1, history)
+                    previous_scores = torch.where(
+                        previous_scores < 0,
+                        previous_scores * self.config.ar_repetition_penalty,
+                        previous_scores / self.config.ar_repetition_penalty,
+                    )
+                    scores.scatter_(1, history, previous_scores)
+                else:
+                    for batch_index in range(history.shape[0]):
+                        row = history[batch_index, history_mask[batch_index]]
+                        if not row.numel():
+                            continue
+                        previous_scores = scores[batch_index, row]
+                        previous_scores = torch.where(
+                            previous_scores < 0,
+                            previous_scores * self.config.ar_repetition_penalty,
+                            previous_scores / self.config.ar_repetition_penalty,
+                        )
+                        scores[batch_index].scatter_(0, row, previous_scores)
+
+            ngram_size = self.config.ar_no_repeat_ngram_size
+            if ngram_size > 0:
+                histories = (
+                    history.tolist()
+                    if history_mask is None
+                    else [history[index, history_mask[index]].tolist() for index in range(history.shape[0])]
+                )
+                for batch_index, row in enumerate(histories):
+                    if len(row) < ngram_size - 1:
+                        continue
+                    prefix = tuple(row[-(ngram_size - 1) :]) if ngram_size > 1 else ()
+                    banned = {
+                        row[index + ngram_size - 1]
+                        for index in range(len(row) - ngram_size + 1)
+                        if tuple(row[index : index + ngram_size - 1]) == prefix
+                    }
+                    if banned:
+                        scores[batch_index, list(banned)] = -torch.inf
+
+        scores /= self.config.ar_temperature
+        top_k = min(self.config.ar_top_k, scores.shape[-1])
+        if top_k > 0:
+            threshold = torch.topk(scores, top_k, dim=-1).values[:, -1:]
+            scores.masked_fill_(scores < threshold, -torch.inf)
+        if self.config.ar_top_p < 1:
+            sorted_scores, sorted_indices = torch.sort(scores, descending=True, dim=-1)
+            cumulative = sorted_scores.softmax(dim=-1).cumsum(dim=-1)
+            remove = cumulative > self.config.ar_top_p
+            remove[:, 1:] = remove[:, :-1].clone()
+            remove[:, 0] = False
+            scores.scatter_(1, sorted_indices, sorted_scores.masked_fill(remove, -torch.inf))
+        return torch.multinomial(scores.softmax(dim=-1), num_samples=1).squeeze(1)
+
     def generate_cot(
         self,
         batch: dict[str, Tensor],
-        prefix: tuple[DynamicCache, Tensor, Tensor, Tensor],
-    ) -> tuple[DynamicCache, Tensor, Tensor, Tensor]:
-        """Greedily extend the VLM prefix until every sample emits EOV or EOS.
+        prefix: tuple[DynamicCache, Tensor, Tensor, Tensor, Tensor],
+    ) -> tuple[tuple[DynamicCache, Tensor, Tensor, Tensor, Tensor], CotGeneration]:
+        """Extend the VLM prefix until every sample emits EOV or EOS.
 
         The released SO101 checkpoint conditions its flow expert on this generated
         context. Stop tokens are returned by the language head but are not committed
         to the cache, matching the source inference pipeline. Rows that finish early
         receive masked cache slots while other rows continue; their recurrent linear
         attention state is restored after each padded forward.
+
+        The returned :class:`CotGeneration` carries each row's stop token so the AR
+        action stage can commit it verbatim, and the CoT tokens so the repetition
+        penalties stay continuous across both stages. Rows that exhaust the token
+        budget without stopping report ``-1`` and are simply sampled onwards.
         """
-        cache, position_ids, attention_mask, last_hidden = prefix
-        input_ids = batch[OBS_LANGUAGE_TOKENS]
+        cache, position_ids, attention_mask, last_hidden, input_ids = prefix
+        prompt_length = input_ids.shape[1]
         finished = torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
+        stop_tokens = torch.full_like(input_ids[:, 0], -1)
         stop_ids = {self.config.eos_token_id}
         if self.config.eov_token_id is not None:
             stop_ids.add(self.config.eov_token_id)
+        generated_history = None
+        generated_history_mask = None
+        # The hardware-verified SO100 path predates per-row history masking.
+        # Preserve that exact sampling contract for SO100 artifacts; changing
+        # which prior tokens receive repetition penalties can change AR output.
+        track_history_mask = input_ids.shape[0] > 1 and self.config.embodiment not in {
+            "so100",
+            "so101",
+        }
 
         for _ in range(self.config.max_cot_tokens):
-            next_token = self.output_proj(last_hidden[:, -1]).argmax(dim=-1)
+            if generated_history_mask is None:
+                next_token = self.sample_next_token(self.output_proj(last_hidden[:, -1]), generated_history)
+            else:
+                next_token = self.sample_next_token(
+                    self.output_proj(last_hidden[:, -1]),
+                    generated_history,
+                    generated_history_mask,
+                )
             is_stop = torch.zeros_like(finished)
             for token_id in stop_ids:
                 is_stop |= next_token.eq(token_id)
+            stop_tokens = torch.where(is_stop & (~finished), next_token, stop_tokens)
             finished |= is_stop
             if bool(finished.all()):
                 break
+            history_token = next_token
+            if track_history_mask:
+                valid_history_token = ~finished
+                history_token = history_token.masked_fill(~valid_history_token, self.config.pad_token_id)
+                generated_history_mask = (
+                    valid_history_token.unsqueeze(1)
+                    if generated_history_mask is None
+                    else torch.cat((generated_history_mask, valid_history_token.unsqueeze(1)), dim=1)
+                )
+            generated_history = (
+                history_token.unsqueeze(1)
+                if generated_history is None
+                else torch.cat((generated_history, history_token.unsqueeze(1)), dim=1)
+            )
 
             # Stop tokens are not part of the action-conditioning prefix. Finished
             # rows use a masked pad slot so batched cache lengths remain rectangular.
@@ -365,18 +531,31 @@ class G05Model(nn.Module):
                 last_hidden,
                 outputs.last_hidden_state,
             )
-        return cache, position_ids, attention_mask, last_hidden
+        # Kept so deployments can surface the reasoning the chunk was conditioned
+        # on; the stop token is excluded because it is never committed.
+        self.last_cot_tokens = input_ids[:, prompt_length:].detach()
+        return (
+            (cache, position_ids, attention_mask, last_hidden, input_ids),
+            CotGeneration(
+                stop_tokens=stop_tokens,
+                history=generated_history,
+                history_mask=generated_history_mask,
+            ),
+        )
 
     @torch.no_grad()
     def sample_action_tokens(self, batch: dict[str, Tensor]) -> list[Tensor]:
-        """Greedily generate one serialized ActionCodec sequence per observation.
+        """Generate one serialized ActionCodec sequence per observation.
 
         This path only runs the vision/VLM prefix and language head. It never calls
         the flow-matching action expert, allowing AR and FM deployment costs to be
         measured independently.
         """
-        cache, _, attention_mask, last_hidden = self.prefill(batch)
-        input_ids = batch[OBS_LANGUAGE_TOKENS]
+        prefix = self.prefill(batch)
+        cot: CotGeneration | None = None
+        if self.config.predict_cot:
+            prefix, cot = self.generate_cot(batch, prefix)
+        cache, _, attention_mask, last_hidden, input_ids = prefix
         start = self.config.action_token_start_id
         end = self.config.action_token_end_id
         if start is None or end is None:
@@ -384,22 +563,57 @@ class G05Model(nn.Module):
 
         batch_size = input_ids.shape[0]
         finished = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
+        action_started = torch.zeros_like(finished)
         generated: list[list[Tensor]] = [[] for _ in range(batch_size)]
         full_ids = input_ids
+        # Repetition penalties stay continuous across the CoT and action stages.
+        generated_history = cot.history if cot is not None else None
+        generated_history_mask = cot.history_mask if cot is not None else None
+        eov_token_id = self.config.eov_token_id
 
-        for _ in range(self.config.max_action_tokens):
-            next_token = self.output_proj(last_hidden[:, -1]).argmax(dim=-1)
+        for step in range(self.config.max_action_tokens):
+            if generated_history_mask is None:
+                next_token = self.sample_next_token(self.output_proj(last_hidden[:, -1]), generated_history)
+            else:
+                next_token = self.sample_next_token(
+                    self.output_proj(last_hidden[:, -1]),
+                    generated_history,
+                    generated_history_mask,
+                )
+            if step == 0 and cot is not None:
+                # CoT stopped before committing its stop token. Re-decoding the
+                # frozen hidden state would draw a fresh sample under
+                # ar_do_sample, so commit the token the row actually emitted.
+                next_token = torch.where(cot.stop_tokens.ge(0), cot.stop_tokens, next_token)
             is_action = next_token.ge(start) & next_token.lt(end)
             live_action = (~finished) & is_action
             for batch_index in live_action.nonzero(as_tuple=False).flatten().tolist():
                 generated[batch_index].append(next_token[batch_index])
 
-            # The training suffix terminates with EOS. Treating any other token
-            # outside the ActionCodec vocabulary as terminal matches the source
-            # decoder's behavior for an absent or malformed action segment.
-            finished |= ~is_action
+            # CoT generation stops before committing EOV to the cache, exactly as
+            # the source pipeline does. The AR action stage consumes that one EOV
+            # transition token, then collects the contiguous ActionCodec payload.
+            transition_eov = (
+                torch.zeros_like(finished)
+                if eov_token_id is None
+                else self.config.predict_cot & (~action_started) & next_token.eq(eov_token_id)
+            )
+            finished |= ~(is_action | transition_eov)
+            action_started |= live_action
             if bool(finished.all()):
                 break
+            history_token = next_token
+            if generated_history_mask is not None:
+                valid_history_token = ~finished
+                history_token = history_token.masked_fill(~valid_history_token, self.config.pad_token_id)
+                generated_history_mask = torch.cat(
+                    (generated_history_mask, valid_history_token.unsqueeze(1)), dim=1
+                )
+            generated_history = (
+                history_token.unsqueeze(1)
+                if generated_history is None
+                else torch.cat((generated_history, history_token.unsqueeze(1)), dim=1)
+            )
 
             input_token = next_token.masked_fill(finished, self.config.pad_token_id).unsqueeze(1)
             full_ids = torch.cat((full_ids, input_token), dim=1)
@@ -436,12 +650,12 @@ class G05Model(nn.Module):
     def autoregressive_loss(
         self,
         batch: dict[str, Tensor],
-        prefill: tuple[DynamicCache, Tensor, Tensor, Tensor],
+        prefill: tuple[DynamicCache, Tensor, Tensor, Tensor, Tensor],
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Compute shifted CE and action/CoT accuracies over labeled suffix tokens."""
         if ACTION_TOKENS not in batch:
             raise ValueError("discrete G0.5 training requires action.tokens from the processor")
-        prefix_cache, _, _, prefix_last_hidden = prefill
+        prefix_cache, _, _, prefix_last_hidden, _ = prefill
         suffix_cache = self.copy_vlm_cache(prefix_cache)
         prefix_ids = batch[OBS_LANGUAGE_TOKENS]
         prefix_mask = batch[OBS_LANGUAGE_ATTENTION_MASK].bool()
@@ -482,18 +696,23 @@ class G05Model(nn.Module):
     def flow_loss(
         self,
         batch: dict[str, Tensor],
-        prefill: tuple[DynamicCache, Tensor, Tensor, Tensor] | None = None,
+        prefill: tuple[DynamicCache, Tensor, Tensor, Tensor, Tensor] | None = None,
     ) -> Tensor:
         """Compute the masked conditional-flow velocity objective."""
         actions = batch[ACTION]
-        prefix_cache, prefix_position_ids, prefix_attention_mask, _ = prefill or self.prefill(batch)
+        prefix_cache, prefix_position_ids, prefix_attention_mask, _, _ = prefill or self.prefill(batch)
         if not self.config.flow_joint_training:
-            # Post-training variants optimize only the expert; detaching cached KV
-            # avoids retaining the large VLM backward graph.
+            # Post-training variants optimize only the expert. Full-attention
+            # layers cache KV tensors, while linear-attention layers cache
+            # convolutional and recurrent state; detach both cache layouts so
+            # the flow objective cannot retain or backpropagate through the VLM.
             for layer in prefix_cache.layers:
-                if layer.is_initialized:
+                if hasattr(layer, "keys") and layer.is_initialized:
                     layer.keys = layer.keys.detach()
                     layer.values = layer.values.detach()
+                elif not hasattr(layer, "keys"):
+                    layer.conv_states = layer.conv_states.detach()
+                    layer.recurrent_states = layer.recurrent_states.detach()
 
         num_samples = self.config.num_flow_samples
         batch_size = actions.shape[0]
@@ -559,9 +778,9 @@ class G05Model(nn.Module):
     def sample_actions(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Integrate the learned velocity field from Gaussian noise to actions."""
         prefix = self.prefill(batch)
-        if self.config.action_attend_cot:
-            prefix = self.generate_cot(batch, prefix)
-        prefix_cache, prefix_position_ids, prefix_attention_mask, _ = prefix
+        if self.config.predict_cot:
+            prefix, _ = self.generate_cot(batch, prefix)
+        prefix_cache, prefix_position_ids, prefix_attention_mask, _, _ = prefix
         input_ids = batch[OBS_LANGUAGE_TOKENS]
         batch_size = input_ids.shape[0]
         if noise is None:
@@ -597,7 +816,22 @@ class G05Policy(PreTrainedPolicy):
     config_class = G05Config
     name = "g05"
 
-    def __init__(self, config: G05Config, **kwargs) -> None:
+    def __init__(
+        self,
+        config: G05Config,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        **kwargs,
+    ) -> None:
+        """Build the policy from a converted G0.5 configuration.
+
+        Args:
+            config: Architecture and data-boundary contract of the checkpoint.
+            dataset_stats: Unused. G0.5 normalization lives in the processor pipeline,
+                which either carries the checkpoint's fixed statistics or receives
+                dataset statistics directly. Accepted so the policy factory can pass
+                it uniformly.
+            **kwargs: Remaining factory arguments (such as ``dataset_meta``), unused.
+        """
         require_package("transformers", extra="g05")
         super().__init__(config)
         config.validate_features()
@@ -605,6 +839,21 @@ class G05Policy(PreTrainedPolicy):
         self._action_queue: deque[Tensor] = deque(maxlen=config.n_action_steps)
         self._physical_action_dim = config.output_features[ACTION].shape[-1]
         self._action_tokenizer = None
+        self._text_tokenizer = None
+
+    @property
+    def last_cot_text(self) -> list[str] | None:
+        """Chain of thought generated for the most recent chunk, one per batch row.
+
+        ``None`` until a CoT-enabled inference has run, or when the artifact's
+        text tokenizer was not loaded.
+        """
+        tokens = getattr(self.model, "last_cot_tokens", None)
+        if tokens is None or self._text_tokenizer is None:
+            return None
+        return [
+            self._text_tokenizer.decode(row, skip_special_tokens=False).strip() for row in tokens.tolist()
+        ]
 
     @classmethod
     def _load_as_safetensor(
@@ -643,7 +892,9 @@ class G05Policy(PreTrainedPolicy):
         # randomly initializing a throwaway full-size CPU model before loading.
         with torch.device("meta"):
             policy = super().from_pretrained(pretrained_name_or_path, **kwargs)
-        if not policy.config.discrete_action:
+        # The text tokenizer is also needed to render generated chain of thought,
+        # so it is loaded whenever either feature is enabled.
+        if not policy.config.discrete_action and not policy.config.predict_cot:
             return policy
 
         artifact_root = Path(pretrained_name_or_path)
@@ -663,12 +914,16 @@ class G05Policy(PreTrainedPolicy):
             )
         from transformers import AutoTokenizer
 
-        from .action_tokenizer import G05ActionCodecModel, G05ActionTokenizer
-
         text_tokenizer = AutoTokenizer.from_pretrained(
             artifact_root / policy.config.tokenizer_subdir,
             local_files_only=True,
         )
+        policy._text_tokenizer = text_tokenizer
+        if not policy.config.discrete_action:
+            return policy
+
+        from .action_tokenizer import G05ActionCodecModel, G05ActionTokenizer
+
         codec = G05ActionCodecModel.from_pretrained(
             artifact_root / policy.config.action_tokenizer_subdir,
             local_files_only=True,
@@ -732,8 +987,16 @@ class G05Policy(PreTrainedPolicy):
                     raise RuntimeError("AR inference requires the artifact's ActionCodec tokenizer")
                 token_rows = self.model.sample_action_tokens(batch)
                 decoded_rows = []
-                for row in token_rows:
+                for index, row in enumerate(token_rows):
                     if row.numel() == 0:
+                        # A zero chunk still commands the arm, so make the cause
+                        # visible instead of letting it look like a real action.
+                        logging.warning(
+                            "G0.5 AR inference produced no ActionCodec tokens for batch row %d; "
+                            "falling back to a zero action chunk. Check predict_cot, the "
+                            "action-token range, and the AR sampling configuration.",
+                            index,
+                        )
                         decoded = batch[OBS_STATE].new_zeros(
                             self.config.chunk_size, self.config.internal_action_dim
                         )
@@ -741,8 +1004,19 @@ class G05Policy(PreTrainedPolicy):
                         decoded = self._action_tokenizer.decode(row.unsqueeze(0))[0]
                     decoded_rows.append(decoded)
                 actions = torch.stack(decoded_rows)
+        self._log_chain_of_thought()
         indices = self.config.action_indices or list(range(self._physical_action_dim))
         return actions[..., indices]
+
+    def _log_chain_of_thought(self) -> None:
+        """Print the reasoning this chunk was conditioned on.
+
+        Lives here rather than in a runner so rollout, eval, and direct policy
+        calls show it without each caller having to know about G0.5.
+        """
+        for text in self.last_cot_text or []:
+            if text.strip():
+                logging.info("\n%s", format_chain_of_thought(text))
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:

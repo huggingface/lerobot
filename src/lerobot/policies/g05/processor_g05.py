@@ -13,7 +13,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 from torch.nn import functional
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -44,44 +44,34 @@ from lerobot.utils.import_utils import require_package
 from .configuration_g05 import G05Config
 
 
+@ProcessorStepRegistry.register(name="g05_libero_observation")
 @dataclass
 class G05LiberoObservationStep(ObservationProcessorStep):
-    """Match the released G0.5 LIBERO observation boundary."""
+    """Adapt LeRobot's standard LIBERO state to the released G0.5 checkpoint."""
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         observation = observation.copy()
-        for key, image in observation.items():
-            if key.startswith("observation.images."):
-                # LIBERO returns both cameras upside down relative to the training data.
-                observation[key] = torch.flip(image, dims=(-2, -1))
-
-        robot_state = observation.pop("observation.robot_state", None)
-        if robot_state is None:
+        state = observation.get(OBS_STATE)
+        if state is None:
             return observation
-        position = robot_state["eef"]["pos"]
-        axis_angle = self._quat2axisangle(robot_state["eef"]["quat"])
-        gripper = robot_state["gripper"]["qpos"][..., :1]
-        observation[OBS_STATE] = torch.cat((position, axis_angle, gripper), dim=-1).float()
+        if state.shape[-1] == 8:
+            state = state[..., :7]
+        elif state.shape[-1] != 7:
+            raise ValueError(f"G0.5 LIBERO state must have 7 or 8 values, got {state.shape[-1]}")
+        observation[OBS_STATE] = state.float()
         return observation
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         features = {feature_type: values.copy() for feature_type, values in features.items()}
-        features[PipelineFeatureType.STATE] = {
-            OBS_STATE: PolicyFeature(type=PipelineFeatureType.STATE, shape=(7,))
-        }
+        observation_features = features.get(PipelineFeatureType.OBSERVATION, {}).copy()
+        observation_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(7,))
+        features[PipelineFeatureType.OBSERVATION] = observation_features
         return features
 
-    @staticmethod
-    def _quat2axisangle(quaternion: Tensor) -> Tensor:
-        """Convert LIBERO xyzw quaternions to the axis-angle representation used in training."""
-        scalar = quaternion[..., 3:].clamp(-1, 1)
-        denominator = torch.sqrt((1 - scalar.square()).clamp_min(0))
-        scale = 2 * torch.acos(scalar) / denominator.clamp_min(1e-8)
-        return quaternion[..., :3] * torch.where(denominator > 1e-8, scale, scale.new_zeros(()))
 
-
+@ProcessorStepRegistry.register(name="g05_libero_action")
 @dataclass
 class G05LiberoActionStep(ProcessorStep):
     """Convert the trained [0, 1] gripper convention to LIBERO's {-1, +1} commands."""
@@ -101,14 +91,6 @@ class G05LiberoActionStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
-
-
-def make_g05_libero_pre_post_processors() -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Build the environment-side adapters required by the released LIBERO checkpoint."""
-    return (
-        PolicyProcessorPipeline(steps=[G05LiberoObservationStep()]),
-        PolicyProcessorPipeline(steps=[G05LiberoActionStep()]),
-    )
 
 
 def _apply_normalization(
@@ -218,6 +200,88 @@ class G05StepwiseNormalizerStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="g05_state_frame_transform")
+@dataclass
+class G05StateFrameTransformStep(ProcessorStep):
+    """Convert physical-arm state into the coordinate frame used for training."""
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None or self.joint_offsets is None:
+            return transition
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not isinstance(observation, dict) or OBS_STATE not in observation:
+            return transition
+        transition = transition.copy()
+        observation = observation.copy()
+        state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32).clone()
+        width = len(self.joint_signs)
+        signs = state.new_tensor(self.joint_signs)
+        offsets = state.new_tensor(self.joint_offsets)
+        state[..., :width] = signs * state[..., :width] + offsets
+        observation[OBS_STATE] = state
+        transition[TransitionKey.OBSERVATION] = observation
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {"joint_signs": self.joint_signs, "joint_offsets": self.joint_offsets}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register(name="g05_action_frame_transform")
+@dataclass
+class G05ActionFrameTransformStep(ProcessorStep):
+    """Move actions between the physical-arm and checkpoint coordinate frames.
+
+    ``inverse=True`` is the deployment direction and undoes
+    :class:`G05StateFrameTransformStep` on a predicted action. ``inverse=False``
+    is the training direction: dataset actions are recorded in the physical arm
+    frame, so they need the same forward transform as the state before the
+    relative-action step differences them. Inference transitions carry no action
+    on the input side, which makes the forward instance a no-op there.
+    """
+
+    joint_signs: list[float] | None = None
+    joint_offsets: list[float] | None = None
+    inverse: bool = True
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.joint_signs is None or self.joint_offsets is None:
+            return transition
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        transition = transition.copy()
+        action = torch.as_tensor(action, dtype=torch.float32).clone()
+        width = len(self.joint_signs)
+        signs = action.new_tensor(self.joint_signs)
+        offsets = action.new_tensor(self.joint_offsets)
+        if self.inverse:
+            action[..., :width] = signs * (action[..., :width] - offsets)
+        else:
+            action[..., :width] = signs * action[..., :width] + offsets
+        transition[TransitionKey.ACTION] = action
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "joint_signs": self.joint_signs,
+            "joint_offsets": self.joint_offsets,
+            "inverse": self.inverse,
+        }
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register(name="g05_prepare_inputs")
 @dataclass
 class G05PrepareInputsStep(ProcessorStep):
@@ -246,11 +310,15 @@ class G05PrepareInputsStep(ProcessorStep):
     camera_order: list[str] | None = None
     optional_camera_keys: list[str] | None = None
     append_eov: bool = True
+    predict_cot: bool = False
+    cot_prompt: str = ""
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="g05")
         if not self.tokenizer_path:
             raise ValueError("tokenizer_path must resolve inside the G0.5 artifact")
+        if self.predict_cot and not self.cot_prompt.strip():
+            raise ValueError("predict_cot=true requires the checkpoint's inference CoT prompt")
         from transformers import AutoTokenizer
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path, local_files_only=True)
@@ -295,11 +363,17 @@ class G05PrepareInputsStep(ProcessorStep):
             # Checking dtype avoids a GPU synchronization for every camera slot.
             value = value.float() / 255 if value.dtype == torch.uint8 else value.float()
             if (height, width) != tuple(self.image_size):
+                # antialias mirrors torchvision.transforms.Resize, which the G0.5
+                # training pipeline applies. Camera frames are downscaled by ~2x,
+                # so sampling without the low-pass filter aliases hard edges: on
+                # the released SO100 checkpoint that moved pixels by up to 0.27
+                # on the [-1, 1] scale and the predicted chunk by whole degrees.
                 value = functional.interpolate(
                     value.reshape(batch_size * steps, channels, height, width),
                     size=self.image_size,
                     mode="bilinear",
                     align_corners=False,
+                    antialias=True,
                 ).reshape(batch_size, steps, channels, *self.image_size)
             images.append(value * 2 - 1)
         return torch.stack(images, dim=1)
@@ -335,9 +409,14 @@ class G05PrepareInputsStep(ProcessorStep):
             row += task_ids[: self.max_task_tokens]
             row += self._tokenizer.encode(" State: ", add_special_tokens=False)
             row += [self.state_token_id] * self.n_obs_steps
-            assistant_prefix = (
-                ";<|im_end|>\n<|im_start|>robot\nAction: " if uses_chat_template else ";Action: "
-            )
+            assistant_prefix = ";<|im_end|>\n<|im_start|>robot\n" if uses_chat_template else ";"
+            if self.predict_cot and not append_eov:
+                # Source ``context_only`` inference ends immediately before EOC:
+                # ``... State: <state>;<cot_prompt>\n<EOC>...``. The model then
+                # generates the CoT tail, ``Action: ``, and finally EOV.
+                assistant_prefix += self.cot_prompt.rstrip("\n") + "\n"
+            else:
+                assistant_prefix += "Action: "
             row += self._tokenizer.encode(assistant_prefix, add_special_tokens=False)
             if append_eov:
                 row += [self.eov_token_id]
@@ -489,7 +568,9 @@ def make_g05_pre_post_processors(
         eos_token_id=config.eos_token_id,
         camera_order=config.camera_order,
         optional_camera_keys=config.optional_camera_keys,
-        append_eov=not config.action_attend_cot,
+        append_eov=not config.predict_cot,
+        predict_cot=config.predict_cot,
+        cot_prompt=config.cot_prompt,
     )
     if config.normalization_strategy == "lerobot":
         normalize_step = steps.normalize
@@ -503,10 +584,22 @@ def make_g05_pre_post_processors(
             action_normalization=config.action_normalization,
             action_horizon=config.n_action_steps,
         )
+    libero_input_steps = [G05LiberoObservationStep()] if config.embodiment == "libero" else []
+    libero_output_steps = [G05LiberoActionStep()] if config.embodiment == "libero" else []
     return make_policy_processor_pipelines(
         input_steps=[
+            *libero_input_steps,
             steps.rename_observations,
             steps.add_batch_dim,
+            G05StateFrameTransformStep(
+                joint_signs=config.joint_signs,
+                joint_offsets=config.joint_offsets,
+            ),
+            G05ActionFrameTransformStep(
+                joint_signs=config.joint_signs,
+                joint_offsets=config.joint_offsets,
+                inverse=False,
+            ),
             relative_step,
             steps.to_device,
             normalize_step,
@@ -517,7 +610,12 @@ def make_g05_pre_post_processors(
             AbsoluteActionsProcessorStep(
                 enabled=bool(config.relative_action_mask), relative_step=relative_step
             ),
+            G05ActionFrameTransformStep(
+                joint_signs=config.joint_signs,
+                joint_offsets=config.joint_offsets,
+            ),
             steps.to_cpu,
+            *libero_output_steps,
         ],
     )
 
@@ -567,17 +665,35 @@ def make_g05_pre_post_processors_from_pretrained(
             "g05_prepare_inputs": {
                 "tokenizer_path": str(tokenizer_path),
                 "action_tokenizer_path": str(action_tokenizer_path) if config.discrete_action else "",
+                # Keep CLI config overrides (notably --policy.predict_cot) in
+                # sync with the serialized processor from the artifact.
+                "predict_cot": config.predict_cot,
+                "cot_prompt": config.cot_prompt,
+                "append_eov": not config.predict_cot,
             }
         },
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
     )
+    postprocessor_overrides = {}
+    if config.normalization_strategy == "g05_stepwise":
+        postprocessor_overrides = {
+            "g05_stepwise_action_unnormalizer": {
+                "action_horizon": config.n_action_steps,
+            }
+        }
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=artifact_root,
         config_filename=postprocessor_config_filename,
+        overrides=postprocessor_overrides,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
+    if config.embodiment == "libero":
+        if not any(isinstance(step, G05LiberoObservationStep) for step in preprocessor.steps):
+            preprocessor.steps.insert(0, G05LiberoObservationStep())
+        if not any(isinstance(step, G05LiberoActionStep) for step in postprocessor.steps):
+            postprocessor.steps.append(G05LiberoActionStep())
     if config.normalization_strategy == "lerobot" and dataset_stats is not None:
         preprocessor = hotswap_stats(preprocessor, dataset_stats)
         postprocessor = hotswap_stats(postprocessor, dataset_stats)
