@@ -359,6 +359,11 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[joint].kd = self.kd[joint.value]
             self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
+        # Ease into the controller's home pose before it takes over, so the first commands
+        # don't snap from the connect-time pose.
+        if self.controller is not None and hasattr(self.controller, "default_angles"):
+            self.reset(default_positions=self.controller.default_angles)
+
         # Start controller thread if enabled
         if self.controller is not None:
             self._controller_thread = threading.Thread(target=self._controller_loop, daemon=True)
@@ -487,13 +492,10 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
-            # Controller thread owns legs/waist. Here we only update joystick inputs
-            # and publish arm targets from the teleoperator.
+            # The controller thread owns legs/waist (and for full-body controllers like SONIC,
+            # the arms too). Here we only publish arm targets from the teleoperator; full-body
+            # controllers carry no <joint>.q in their action, so this is empty for them.
             self._update_controller_action(action)
-            # Full-body controllers (SONIC) own the whole 29-DoF command; the controller
-            # thread is the sole publisher, so there is nothing to publish here.
-            if getattr(self.controller, "full_body", False):
-                return action
             arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
                 key: value
@@ -517,7 +519,8 @@ class UnitreeG1(Robot):
                 local_idx = joint.value - arm_start_idx
                 tau[joint.value] = arm_tau[local_idx]
 
-        self.publish_lowcmd(action_to_publish, tau=tau)
+        if action_to_publish:
+            self.publish_lowcmd(action_to_publish, tau=tau)
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
@@ -573,6 +576,11 @@ class UnitreeG1(Robot):
             for motor in G1_29_JointIndex:
                 init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
+            # Publish the whole-body pose directly (bypass send_action, which only forwards
+            # arm targets when a controller is active) with the controller's gains if any.
+            ctrl_kp = getattr(self.controller, "kp", None)
+            ctrl_kd = getattr(self.controller, "kd", None)
+
             # Interpolate to default position
             for step in range(num_steps):
                 start_time = time.time()
@@ -584,7 +592,7 @@ class UnitreeG1(Robot):
                     interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
                     action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-                self.send_action(action_dict)
+                self.publish_lowcmd(action_dict, kp=ctrl_kp, kd=ctrl_kd)
 
                 # Maintain constant control rate
                 elapsed = time.time() - start_time
