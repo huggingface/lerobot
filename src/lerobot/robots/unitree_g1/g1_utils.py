@@ -23,9 +23,7 @@ import numpy as np
 
 NUM_MOTORS = 29
 
-# Joint-order permutations between the two 29-DoF layouts used across the G1 stack:
-# IsaacLab (policy/training order) and MuJoCo (deploy order). ``a[ISAACLAB_TO_MUJOCO]``
-# reorders an IsaacLab-ordered vector into MuJoCo order, and vice-versa.
+# Joint-order permutation between IsaacLab and Mujoco convention
 ISAACLAB_TO_MUJOCO = np.array(
     [
         0,
@@ -60,8 +58,6 @@ ISAACLAB_TO_MUJOCO = np.array(
     ],
     dtype=np.int32,
 )
-# The two orderings are inverses of each other, so derive one from the other (argsort) to
-# guarantee they can never drift out of sync.
 MUJOCO_TO_ISAACLAB = np.argsort(ISAACLAB_TO_MUJOCO).astype(np.int32)
 
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
