@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.groot.action_head.cross_attention_dit import AlternateVLDiT
 from lerobot.policies.groot.groot_n1_7 import GR00TN17
 from lerobot.policies.groot.processor_groot import (
@@ -30,7 +31,6 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17VLMEncodeStep,
     _transform_n1_7_image_for_vlm_albumentations,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 OSS_REFERENCE_COMMIT = "ab88b50c718f6528e1df9dcbaf75865d1b604760"

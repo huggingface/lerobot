@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lerobot.types import RobotAction
+from lerobot.lerobot_types import RobotAction
 
 from .base import IsaacTeleopTeleoperator, _isaacteleop_available
 from .config_isaac_teleop import XRControllerConfig
