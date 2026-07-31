@@ -128,10 +128,13 @@ class LiberoEnv(gym.Env):
         control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
+        hard_reset: bool = True,
     ):
         super().__init__()
         if control_freq <= 0:
             raise ValueError(f"control_freq must be positive, got {control_freq}")
+        if not hard_reset and not init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -158,6 +161,7 @@ class LiberoEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
         self.control_freq = control_freq
+        self.hard_reset = hard_reset
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
@@ -265,24 +269,9 @@ class LiberoEnv(gym.Env):
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
             control_freq=self.control_freq,
-            # LIBERO defaults to hard_reset=True, which makes every reset() free the
-            # MjSim, re-serialise the scene with model.get_xml(), recompile it with
-            # MjSim.from_xml_string(), build a fresh offscreen GL context and re-wire
-            # every observable. When init states are in use, reset() is immediately
-            # followed by set_init_state(), which overwrites the whole sim state, so
-            # all of that work is discarded. Measured 1.0-1.5 s/episode across the four
-            # suites. Without init states the randomisation performed by reset() is the
-            # only thing placing the objects, so it must be kept.
-            #
-            # Equivalence, measured: immediately after set_init_state, qpos, qvel, ctrl
-            # and act are bit-identical between the two paths. After the 10 settle steps
-            # 9 of 41 qpos entries differ -- robot0_joint1..7 and the two gripper finger
-            # joints -- by at most 2.1e-4 rad. No object joint differs on any suite. The
-            # drift comes from the settle action's gripper command ([0]*6 + [-1]); with a
-            # zero action the two paths stay bit-identical. Wrist-camera pixels can differ
-            # by up to ~87/255 because a sub-millimetre finger shift crosses rasterisation
-            # boundaries at 256x256, so pixel deltas overstate the physical difference.
-            hard_reset=not self.init_states,
+            # Soft resets skip LIBERO's model and renderer rebuild. They are opt-in
+            # because settle steps can make their observations differ from hard resets.
+            hard_reset=self.hard_reset,
         )
         env.reset()
         self._env = env
