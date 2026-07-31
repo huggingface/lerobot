@@ -377,11 +377,9 @@ class LiberoEnv(gym.Env):
             }
         )
         observation = self._format_raw_obs(raw_obs)
-        # No reset here. `observation` above is the terminal observation, so a reset's
-        # return value would be discarded -- and Gymnasium's vector envs default to
-        # AutoresetMode.NEXT_STEP, which resets this sub-env on the following step
-        # anyway. Resetting here made every termination pay two full resets and
-        # advance `init_state_id` twice, skipping an initial state per episode.
+        # Return the terminal observation unchanged. The caller owns resetting after
+        # termination; vector envs created below use NEXT_STEP autoreset. Resetting here
+        # would therefore reset twice and skip an initial state.
         truncated = False
         return observation, reward, terminated, truncated, info
 
@@ -479,6 +477,7 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     is_async = env_cls is gym.vector.AsyncVectorEnv
+    is_sync = env_cls is gym.vector.SyncVectorEnv
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
@@ -515,6 +514,8 @@ def create_libero_envs(
                     cached_act_space = lazy.action_space
                     cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
+            elif is_sync:
+                out[suite_name][tid] = env_cls(fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP)
             else:
                 out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
