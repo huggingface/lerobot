@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -25,14 +25,12 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
-from huggingface_hub.errors import RevisionNotFoundError
 
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.utils import create_lerobot_dataset_card, get_repo_versions, get_safe_version
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
-from tests.fixtures.constants import DUMMY_REPO_ID
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
@@ -184,19 +182,18 @@ def test_non_dict_passthrough_last_wins():
     assert out["misc"] == 456
 
 
-def test_get_safe_version_raises_on_repo_without_version_tags():
-    with (
-        patch("lerobot.datasets.utils.get_repo_versions", return_value=[]),
-        pytest.raises(RevisionNotFoundError, match="must be tagged with a codebase version"),
-    ):
-        get_safe_version(DUMMY_REPO_ID, "v3.0")
+def test_get_safe_version_raises_on_repo_without_version_tags(monkeypatch):
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
+
+    with pytest.raises(RuntimeError, match="must be tagged with a codebase version"):
+        get_safe_version("private/repo", "v3.0")
 
 
-def test_get_safe_version_error_reports_repo_id():
-    with (
-        patch("lerobot.datasets.utils.get_repo_versions", return_value=[]),
-        pytest.raises(RevisionNotFoundError) as exc_info,
-    ):
-        get_safe_version(DUMMY_REPO_ID, "v3.0")
+def test_get_safe_version_error_reports_repo_id(monkeypatch):
+    repo_id = "private/repo"
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
 
-    assert DUMMY_REPO_ID in str(exc_info.value)
+    with pytest.raises(RuntimeError) as exc_info:
+        get_safe_version(repo_id, "v3.0")
+
+    assert repo_id in str(exc_info.value)

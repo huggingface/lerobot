@@ -24,10 +24,8 @@ from pathlib import Path
 import datasets
 import numpy as np
 import packaging.version
-import requests
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -380,7 +378,7 @@ def get_safe_version(
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
 
     Raises:
-        RevisionNotFoundError: If the repo has no version tags.
+        RuntimeError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
     """
@@ -390,10 +388,7 @@ def get_safe_version(
     hub_versions = get_repo_versions(repo_id) if token is None else get_repo_versions(repo_id, token=token)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
-            MISSING_VERSION_TAG_MESSAGE.format(repo_id=repo_id),
-            response=requests.Response(),
-        )
+        raise RuntimeError(MISSING_VERSION_TAG_MESSAGE.format(repo_id=repo_id))
 
     if target_version in hub_versions:
         return f"v{target_version}"
