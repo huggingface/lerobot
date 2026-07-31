@@ -30,13 +30,13 @@ import torch
 from safetensors.torch import save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition
 from lerobot.processor.pipeline import (
     DataProcessorPipeline,
     ProcessorMigrationError,
     ProcessorStep,
     ProcessorStepRegistry,
 )
-from lerobot.types import EnvTransition
 
 # Simplified Config Loading Tests
 

@@ -50,6 +50,7 @@ if TYPE_CHECKING or _datasets_available:
 else:
     LeRobotDataset = None
 
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -66,7 +67,6 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,

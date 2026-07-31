@@ -28,6 +28,7 @@ from typing import Any, TypeVar, cast
 import draccus
 import yaml  # type: ignore[import-untyped]
 from draccus.help_formatter import SimpleHelpFormatter
+from draccus.utils import DecodingError
 from draccus.wrappers import DataclassWrapper
 from draccus.wrappers.choice_wrapper import ChoiceWrapper, UnionWrapper
 from draccus.wrappers.field_wrapper import FieldWrapper
@@ -368,17 +369,21 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                     # Also extract path fields from the YAML/JSON config file
                     if config_path_cli:
                         config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
-                if has_method(argtype, "from_pretrained") and config_path_cli:
-                    cli_args = filter_arg("config_path", cli_args)
-                    cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
-                else:
-                    if config_path_cli:
+                try:
+                    if has_method(argtype, "from_pretrained") and config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)
-                    cfg = draccus.parse(
-                        config_class=argtype,
-                        config_path=config_path_cli or config_path,
-                        args=cli_args,
-                    )
+                        cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
+                    else:
+                        if config_path_cli:
+                            cli_args = filter_arg("config_path", cli_args)
+                        cfg = draccus.parse(
+                            config_class=argtype,
+                            config_path=config_path_cli or config_path,
+                            args=cli_args,
+                        )
+                except DecodingError as e:
+                    print(f"error: {e}", file=sys.stderr)
+                    sys.exit(1)
             response = fn(cfg, *args, **kwargs)
             return response
 
