@@ -329,15 +329,17 @@ class LeKiwiClient(Robot):
         if self.camera_tilt_target is None:
             self.camera_tilt_target = float(self.last_remote_state.get("camera_tilt.pos", 0.0) or 0.0)
 
+        # Signs chosen so the key labels match the physical motion for this servo mounting:
+        # j = pan left, l = pan right, i = tilt up, k = tilt down.
         step = self.config.camera_step_deg
         if self.teleop_keys.get("camera_pan_left") in pressed_keys:
-            self.camera_pan_target += step
-        if self.teleop_keys.get("camera_pan_right") in pressed_keys:
             self.camera_pan_target -= step
+        if self.teleop_keys.get("camera_pan_right") in pressed_keys:
+            self.camera_pan_target += step
         if self.teleop_keys.get("camera_tilt_up") in pressed_keys:
-            self.camera_tilt_target += step
-        if self.teleop_keys.get("camera_tilt_down") in pressed_keys:
             self.camera_tilt_target -= step
+        if self.teleop_keys.get("camera_tilt_down") in pressed_keys:
+            self.camera_tilt_target += step
 
         pan_range = self.config.camera_pan_range_deg
         tilt_range = self.config.camera_tilt_range_deg
