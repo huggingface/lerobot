@@ -5,9 +5,15 @@ together to judge the camera, not any single moment.
 Do two things and return them as one JSON object.
 
 1. QUALITY. Decide whether this camera view is usable for training a policy.
-   Mark it UNUSABLE if it is blurry / out of focus, badly over- or
-   under-exposed, mostly occluded, static/frozen, corrupted, or otherwise does
-   not clearly show the scene. Otherwise it is usable.
+   Mark it UNUSABLE only for a genuine capture defect: blurry / out of focus,
+   badly over- or under-exposed, static/frozen, corrupted, or otherwise not
+   showing the scene clearly. Otherwise it is usable.
+
+   Do NOT mark a view unusable because the robot's own gripper, arm, or
+   end-effector is visible or partially blocks the view — that is EXPECTED,
+   especially for a wrist-mounted camera where the gripper is normally in frame.
+   Only true image-quality problems count; the robot occluding its own
+   workspace does not.
 
 2. VIEW LABEL. Choose the single best label for where this camera is mounted /
    what it looks at, using ONLY this closed vocabulary:

@@ -124,6 +124,15 @@ def test_curate_cameras_parses_and_validates(tmp_path):
     assert verdicts["observation.images.c"].view_label is None  # no frames
 
 
+def test_curate_cameras_canonicalizes_combo_order():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    frames = {"observation.images.a": [_tiny_image()]}
+    # VLM emits the combo in the "wrong" order; we normalize to <side>_wrist.
+    vlm = _queued_vlm([{"usable": True, "blur_reason": None, "view_label": "wrist_left"}])
+    (verdict,) = curate_cameras(frames, cfg, vlm)
+    assert verdict.view_label == "left_wrist"
+
+
 def test_build_name_mapping_and_collision():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     existing = {"observation.images.cam_0": {}, "observation.images.cam_1": {}, "observation.images.top": {}}

@@ -104,6 +104,10 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
     raw_label = result.get("view_label")
     label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
     view_label = label if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos) else None
+    if view_label is not None:
+        # Canonicalize combo order (``wrist_left`` -> ``left_wrist``) so the set
+        # of possible keys is deterministic regardless of the VLM's word order.
+        view_label = _order_combo(view_label.split("_"), cfg.view_vocabulary)
     if raw_label and view_label is None:
         logger.warning(
             "camera %s: VLM returned view_label=%r which is not in the vocabulary %s; leaving unlabeled",
