@@ -240,6 +240,7 @@ Using JSON config file:
 
 import abc
 import logging
+import os
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -384,24 +385,35 @@ def _resolve_io_paths(
     return output_repo_id, input_path, output_path
 
 
+def _is_in_place(input_path: Path, output_path: Path) -> bool:
+    """Whether both paths point to the same dataset directory.
+
+    Uses os.path.samefile (device+inode) which is robust to case-insensitive filesystems, hardlinks
+    and symlinks.
+    """
+    try:
+        return os.path.samefile(input_path, output_path)
+    except OSError:
+        return False
+
+
 def get_output_path(
     repo_id: str,
     new_repo_id: str | None,
     root: Path | str | None,
     new_root: Path | str | None,
-) -> tuple[str, Path]:
+) -> tuple[str, Path, Path | None]:
     output_repo_id, input_path, output_path = _resolve_io_paths(repo_id, new_repo_id, root, new_root)
 
-    # In case of in-place modification, create a backup of the original dataset (if it exists)
-    if output_path == input_path:
+    # In case of in-place modification, create a backup of the original dataset (if it exists).
+    backup_path: Path | None = None
+    if _is_in_place(input_path, output_path):
         backup_path = input_path.with_name(input_path.name + "_old")
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        shutil.move(input_path, backup_path)
 
-        if input_path.exists():
-            if backup_path.exists():
-                shutil.rmtree(backup_path)
-            shutil.move(input_path, backup_path)
-
-    return output_repo_id, output_path
+    return output_repo_id, output_path, backup_path
 
 
 def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
@@ -412,7 +424,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         raise ValueError("episode_indices must be specified for delete_episodes operation")
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-    output_repo_id, output_dir = get_output_path(
+    output_repo_id, output_dir, backup_path = get_output_path(
         cfg.repo_id,
         new_repo_id=cfg.new_repo_id,
         root=cfg.root,
@@ -420,8 +432,8 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     )
 
     # In case of in-place modification, make the dataset point to the backup directory
-    if output_dir == dataset.root:
-        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+    if backup_path is not None:
+        dataset.root = backup_path
 
     logging.info(f"Deleting episodes {cfg.operation.episode_indices} from {cfg.repo_id}")
     new_dataset = delete_episodes(
@@ -525,7 +537,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         raise ValueError("feature_names must be specified for remove_feature operation")
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
-    output_repo_id, output_dir = get_output_path(
+    output_repo_id, output_dir, backup_path = get_output_path(
         cfg.repo_id,
         new_repo_id=cfg.new_repo_id,
         root=cfg.root,
@@ -533,8 +545,8 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
     )
 
     # In case of in-place modification, make the dataset point to the backup directory
-    if output_dir == dataset.root:
-        dataset.root = dataset.root.with_name(dataset.root.name + "_old")
+    if backup_path is not None:
+        dataset.root = backup_path
 
     logging.info(f"Removing features {cfg.operation.feature_names} from {cfg.repo_id}")
     new_dataset = remove_feature(
@@ -671,7 +683,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{cfg.repo_id}_recomputed_stats",
     )
-    in_place = output_root == input_root
+    in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
         raise ValueError(
@@ -731,7 +743,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{cfg.repo_id}_reencoded",
     )
-    in_place = output_root == input_root
+    in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
         raise ValueError(
