@@ -241,12 +241,14 @@ class UnitreeG1(Robot):
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
-        # Controllers may define their own action space (e.g. SONIC's 64-D latent token).
+        # Whole-body controllers (SONIC): 64-D latent token.
         controller_ft = getattr(self.controller, "action_features", None)
         if controller_ft is not None:
             return dict(controller_ft)
 
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
+        # TODO: have GR00T/Holosoma advertise their own action_features too, so every
+        # controller declares its action space and this fallthrough can be dropped.
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
         remote_features = dict.fromkeys(REMOTE_AXES, float)
         return {**arm_features, **remote_features}
@@ -278,12 +280,8 @@ class UnitreeG1(Robot):
                 with self._controller_action_lock:
                     controller_input = dict(self.controller_input)
 
-                # Full-body controllers (SONIC) consume the full observation dict; others
-                # take the raw lowstate. get_observation() is the single lowstate -> obs builder.
-                controller_state = (
-                    self.get_observation() if getattr(self.controller, "full_body", False) else lowstate
-                )
-                controller_action = self.controller.run_step(controller_input, controller_state)
+                # Run controller step
+                controller_action = self.controller.run_step(controller_input, lowstate)
 
                 # Write controller output snapshot
                 with self._controller_action_lock:
