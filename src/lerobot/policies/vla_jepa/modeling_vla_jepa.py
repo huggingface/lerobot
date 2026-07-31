@@ -399,7 +399,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         state = batch.get(OBS_STATE)
         if state is not None:
             if state.ndim > 2:
-                state = state[:, -1, :]
+                # deltas are forward-looking here, so index 0 is the current observation, not -1.
+                state = state[:, 0, :]
             inputs["state"] = (state.unsqueeze(1) if state.ndim == 2 else state).float()  # [B, 1, dim]
 
         return inputs
