@@ -1,0 +1,177 @@
+# 备忘单
+
+这里汇总了所有 LeRobot 命令。如果你忘记了某个命令的用法，或者想了解新命令，可以从这里快速查找。
+
+> [!WARNING]
+> 对下面列出的所有命令，请记得把端口、名称、ID 等参数改成你自己的值！
+
+> [!TIP]
+> 另一个很好的方式是使用这个 [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) 查看全部命令，并按你的设备配置进行调整。
+
+### 环境准备与安装
+
+安装请参考 [LeRobot Installation](https://huggingface.co/docs/lerobot/main/en/installation)。
+
+### 常用工具
+
+###### 查找端口
+
+使用此命令识别机器人连接到的串口。按终端提示操作：你会被要求拔下 USB 线并按 Enter。脚本随后会检测并打印该机器人的正确串口。
+
+```bash
+lerobot-find-port
+```
+
+###### 查找相机
+
+快速查找相机索引并验证输出。该命令会在终端打印相机信息，并将每个检测到的相机测试帧保存到 `lerobot/outputs/captured_images`。
+
+```bash
+lerobot-find-cameras
+```
+
+### 标定
+
+在大多数情况下，每台机器人和每个遥操作设备只需要标定一次。开始标定前，请确保所有关节大致位于中间位置。
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm
+```
+
+请确保后续脚本使用与标定时相同的 ID。LeRobot 通过这些 ID 查找标定文件。
+
+### 遥操作
+
+使用两个相机进行遥操作，并通过 Rerun 显示数据。
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --display_data=true
+```
+
+### 录制数据集
+
+数据集会自动上传到服务器并按 repo_id 保存，请确保你已通过 CLI 登录 HF 账号：
+`hf auth login`
+
+你可以在这里获取 token：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --dataset.num_episodes=30 \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.streaming_encoding=true \
+    --display_data=true
+```
+
+在采集数据集过程中，你可以用键盘控制流程：
+使用以下快捷键控制数据录制流程：
+
+- 按 **右方向键 (`→`)**：保存当前 episode 并进入下一个。
+- 按 **左方向键 (`←`)**：删除当前 episode 并重试。
+- 按 **Escape (`ESC`)**：停止、编码视频并上传。
+
+### 录制深度
+
+Intel RealSense 相机（`type: intelrealsense`）在设置 `use_depth: true` 时会录制深度流。深度会量化为 12-bit 编码并作为独立视频存储。
+
+```bash
+lerobot-record \
+    ... \
+    --robot.cameras="{ head: {type: intelrealsense, serial_number_or_name: \"0123456789\", width: 640, height: 480, fps: 30, use_depth: true} }" \
+    --dataset.repo_id=${HF_USER}/so101_depth_test \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.depth_encoder.depth_min=0.01 \
+    --dataset.depth_encoder.depth_max=10.0 \
+    --dataset.depth_encoder.shift=0.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+### 视频编码参数
+
+RGB 与深度流会通过 `--dataset.rgb_encoder.*` 和 `--dataset.depth_encoder.*` 参数分别编码。
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.pix_fmt=yuv420p \
+    --dataset.rgb_encoder.crf=23 \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.extra_options='{"x265-params": "lossless=1"}'
+```
+
+### 训练
+
+根据你的硬件配置，训练策略可能需要数小时。下面是训练简单 `ACT` 策略的方式：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.type=act \
+    --output_dir=outputs/train/act_so101_test \
+    --job_name=act_so101_test \
+    --policy.device=cuda \
+    --wandb.enable=true \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --steps=20000
+```
+
+- 策略类型：`act`、`diffusion`、`smolvla`、`pi05`
+- 设备：`cuda`（NVIDIA）、`mps`（Apple Silicon）、`cpu`
+
+如果你想微调指定模型，可以直接提供模型路径。此时仅路径即可，`type` 可省略。
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.path=username/the_policy_to_finetune \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --output_dir=outputs/train/act_so101_test \
+    --steps=20000
+```
+
+没有本地 GPU？可在任一命令增加 `--job.target=<flavor>`（例如 `a10g-small`），`lerobot-train` 就会改为在 [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 上运行。它会帮你上传仅本地存在的数据集并推送训练后的模型。可用硬件规格可通过 `hf jobs hardware` 查看。
+
+要恢复训练，把 `--config_path` 指向某个 checkpoint，并添加 `--resume=true`。它支持本地路径或 Hub repo id（会抓取最新 checkpoint），本地运行和 Jobs 运行都支持（Jobs 需要额外加 `--job.target=<flavor>`）：
+
+```bash
+lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a10g-small
+```
+
+### 推理
+
+推理是指让训练好的策略/模型在机器人上运行。我们使用 `lerobot-rollout`。你需要提供策略路径，可以是本地路径，也可以是 Hugging Face 上的路径，例如 "lerobot/folding_latest"。你的相机配置需要与采集数据集时保持一致。`duration` 单位为秒；如果不指定，会一直运行。
+
+> [!TIP]
+> 如果你使用的是上一个版本 V0.5.1，则不是 `lerobot-rollout`，而是需要使用 `lerobot-record`。更多信息见[这里](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy)。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM1 \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the transparent box" \
+    --duration=60
+```

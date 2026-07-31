@@ -3,6 +3,8 @@
       title: LeRobot
     - local: installation
       title: 安装
+    - local: cheat-sheet
+      title: 备忘单
 
 
   title: 开始使用
