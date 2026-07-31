@@ -1801,7 +1801,7 @@ class MolmoAct2VisionBackbone(nn.Module):
         valid = pooled_patches_idx >= 0
         valid_token = torch.any(valid, -1)
 
-        # Use `pooled_patches_idx` to arange the features for image pooling
+        # Use `pooled_patches_idx` to arrange the features for image pooling
         batch_idx = torch.arange(
             pooled_patches_idx.shape[0],
             dtype=torch.long,
