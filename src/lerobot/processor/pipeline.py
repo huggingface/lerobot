@@ -42,10 +42,9 @@ from typing import Any, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download
-from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
@@ -875,9 +874,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
             except Exception as e:
                 if cls._hub_model_requires_migration(model_id, hub_download_kwargs):
+                    revision = hub_download_kwargs.get("revision")
                     cls._suggest_processor_migration(
                         model_id,
                         f"Config file '{config_filename}' not found on the Hugging Face Hub",
+                        revision=revision if isinstance(revision, str) else None,
                     )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
@@ -1370,14 +1371,33 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             )
             with open(config_path) as f:
                 config = json.load(f)
-        except (HfHubHTTPError, json.JSONDecodeError, OSError):
+        except Exception:
+            # This is a best-effort diagnostic called while handling the original
+            # processor lookup failure, which must remain the visible error.
             return False
+
+        feature_types = {feature_type.value for feature_type in FeatureType}
+
+        def is_policy_feature_mapping(features: Any) -> bool:
+            return (
+                isinstance(features, dict)
+                and bool(features)
+                and all(
+                    isinstance(name, str)
+                    and isinstance(feature, dict)
+                    and feature.get("type") in feature_types
+                    and isinstance(feature.get("shape"), list)
+                    and all(isinstance(dimension, int) for dimension in feature["shape"])
+                    for name, feature in features.items()
+                )
+            )
 
         return (
             isinstance(config, dict)
             and isinstance(config.get("type"), str)
-            and isinstance(config.get("input_features"), dict)
-            and isinstance(config.get("output_features"), dict)
+            and bool(config["type"])
+            and is_policy_feature_mapping(config.get("input_features"))
+            and is_policy_feature_mapping(config.get("output_features"))
         )
 
     @classmethod
@@ -1453,7 +1473,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
-    def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
+    def _suggest_processor_migration(
+        cls,
+        model_path: str | Path,
+        original_error: str,
+        *,
+        revision: str | None = None,
+    ) -> None:
         """Raise migration error when we detect JSON files but no processor configs.
 
         This method is called when migration detection determines that a model
@@ -1488,6 +1514,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             model_path: Path to the model directory needing migration
             original_error: The error that triggered migration detection (for context)
+            revision: Optional Hub revision containing the legacy checkpoint.
 
         Raises:
             ProcessorMigrationError: Always raised (this method never returns normally)
@@ -1495,6 +1522,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         migration_command = (
             f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
         )
+        if revision is not None:
+            migration_command += f" --revision {revision}"
 
         raise ProcessorMigrationError(model_path, migration_command, original_error)
 
