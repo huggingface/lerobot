@@ -20,7 +20,7 @@ pip install 'lerobot[training]'
 
 ## Launching
 
-Accelerate is now used only as a _launcher_: it no longer manages the training configuration — every distributed setting lives in LeRobot's own parameter system (`--parallelism.*`, `--accelerator.*`) and is applied internally. Since a launcher only spawns the processes and sets the rendezvous environment, `torchrun` and `accelerate launch` are interchangeable.
+Distributed training can be launched through both `torchrun` and `accelerate launch`. Accelerate is used as a plain launcher: it does not manage the training configuration, and every distributed training setting lives in LeRobot's own config system.
 
 With `torchrun`:
 
@@ -34,7 +34,7 @@ torchrun --nproc-per-node=2 $(which lerobot-train) \
   --wandb.enable=true
 ```
 
-With `accelerate launch` (as a plain launcher — no `--config_file`):
+With `accelerate launch` (as a plain launcher):
 
 ```bash
 accelerate launch --num_processes=2 $(which lerobot-train) \
@@ -46,10 +46,10 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --wandb.enable=true
 ```
 
-With no `--parallelism.*` flags, a multi-process launch runs plain DDP — the same out-of-the-box behavior as before. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or their `accelerate launch --num_machines/--machine_rank/--main_process_ip` equivalents).
+With no `--parallelism.*` flags, a multi-process launch runs plain DDP. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or their `accelerate launch --num_machines/--machine_rank/--main_process_ip` equivalents).
 
 > [!WARNING]
-> The `accelerate launch --config_file some.yaml` / `accelerate config` flow is superseded. Accelerate yaml files configure the engine through environment variables behind the config system's back, which would make `train_config.json` lie about what actually ran — so `lerobot-train` refuses to start when such variables (`FSDP_*`, `PARALLELISM_CONFIG_*`, ...) are set, and the error names the offending variables. Move the settings to `--parallelism.*` / `--accelerator.*` flags, or set `LEROBOT_ALLOW_ACCELERATE_ENV=1` to acknowledge the override and proceed anyway.
+> Accelerate's yaml config files (`accelerate launch --config_file some.yaml`, `accelerate config`) are not supported. They configure the engine through environment variables, bypassing LeRobot's configuration system, so `train_config.json` would no longer describe the settings a run actually used. `lerobot-train` therefore refuses to start when [accelerate's environment variables](https://huggingface.co/docs/accelerate/usage_guides/fsdp) are set. Put the settings in `--parallelism.*` / `--accelerator.*` flags instead, or set `LEROBOT_ALLOW_ACCELERATE_ENV=1` to acknowledge the override and proceed anyway.
 
 ## Batch semantics, learning rate, and steps
 
@@ -87,7 +87,7 @@ torchrun --nproc-per-node=4 $(which lerobot-train) \
 
 ### Wrap units
 
-FSDP shards the model in units — typically the repeated transformer block — and gathers one unit at a time during forward/backward. Policies declare their wrap units on the policy class via `_fsdp_wrap_modules` — currently ACT (`["ACTEncoderLayer", "ACTDecoderLayer"]`) and FastWAM (`["MoTLayer"]`) ship declarations, so they shard with no extra flags; for other policies pass one of the flags below. You can override the declaration, or use a size-based policy instead:
+FSDP shards the model in units (typically the repeated transformer block) and gathers one unit at a time during forward/backward. Policies declare their wrap units via `_fsdp_wrap_modules` on the policy class. For example, ACT declares `["ACTEncoderLayer", "ACTDecoderLayer"]` and FastWAM declares `["MoTLayer"]`. For a policy without a `_fsdp_wrap_modules` declaration, pass one of the flags below. You can specify the module class name explicitly, or use a size-based policy instead:
 
 ```bash
 --accelerator.fsdp.wrap_modules='["MyTransformerBlock"]'   # explicit class names
@@ -149,11 +149,11 @@ Resume with `--resume=true --config_path=.../checkpoints/last/pretrained_model/t
 The data sampler resumes at the right epoch and offset in all cases, but is only _sample-exact_ when the world size and batch size match the original run (a warning is logged otherwise); model and optimizer state are unaffected.
 
 > [!NOTE]
-> FSDP checkpoints written by lerobot ≤ 0.6.x used a different on-disk layout (a gathered full optimizer state) and are **not resumable** with this version — pin `lerobot==0.6.x` to finish those runs. Their `model.safetensors` remains loadable with `from_pretrained` as usual.
+> FSDP checkpoints written by lerobot ≤ 0.6.x used a different on-disk layout (a gathered full optimizer state) and **cannot be resumed**.
 
 ## Notes
 
-- Checkpoint saves and end-of-training publishes are collective: every rank enters them (sharded weights are gathered across ranks), and only the main process writes files, uploads, or logs — so call sites still need no rank branches. wandb and console logging are main-process-only.
+- Checkpoint saves and end-of-training publishes are collective: every rank enters them (sharded weights are gathered across ranks), and only the main process writes files, uploads, or logs, so call sites need no rank branches.
 - Metrics are reduced across ranks before logging: losses are averaged, timing takes the slowest rank (which is what actually gates the next step), and `samples/s` reports cluster-wide throughput. The gradient norm is not reduced — after gradient sync it is identical on every rank.
 - Learning-rate scheduling is stepped once per training step regardless of the number of processes (`step_scheduler_with_optimizer=False` is baked in).
 - When saving or publishing, LeRobot unwraps the model from accelerate's wrapper and, if sharded, gathers the full state dict — published models and safetensors-bearing checkpoints load with plain `from_pretrained` (a `dcp`-format checkpoint first needs `lerobot-convert-dcp`, per the table above).
