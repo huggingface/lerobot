@@ -1,4 +1,3 @@
-from logging import raiseExceptions
 import einops
 import numpy as np
 import torch
@@ -277,14 +276,10 @@ class FixQwen2RMSNorm(nn.Module):
         self.variance_epsilon = eps
 
     def forward(self, hidden_states):
-        # print(f'self.weight dtype is {self.weight.dtype}')
         input_dtype = hidden_states.dtype
-        # print(f'input_dtype is {input_dtype}')
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        # print(f'hidden_states dtype is {hidden_states.dtype}')
-        # print(f'output dtype is {(self.weight * hidden_states.to(input_dtype)).dtype}')
         return self.weight * hidden_states.to(input_dtype)
 
     def extra_repr(self):

@@ -83,7 +83,6 @@ class Normalizer:
         for key, value in data.items():
             if key in self.norm_stats:
                 norm_type = self.norm_type.get(key, "identity")
-                # print(f'===Normalizing with {norm_type} for {key}===')
                 if norm_type == "meanstd":
                     mean = self._get_stat(key, "mean", value)
                     std = self._get_stat(key, "std", value)
@@ -384,7 +383,6 @@ def prepare_images(
         # pil_images = np.stack(pil_images, axis=0)
         # pil_images = [pil_images[i].transpose(1,2,0) for i in range(pil_images.shape[0])]
         # pil_images = np.concatenate(pil_images, axis=1)
-        # print(pil_images.shape)#(224, 672, 3)
         pil_images = torch.from_numpy(np.stack(pil_images, axis=0))  # (n, c, h, w)
     else:
         pil_images = []
@@ -477,7 +475,6 @@ def prepare_language(config, language_tokenizer, observation: dict[str, Tensor])
         else:
             prompt = [p if p.startswith("<bos>") else f"<bos>{p}" for p in prompt]
             prompt = [p if p.endswith("\n") else f"{p}\n" for p in prompt]
-        # print(prompt)
         tokenized_prompt = language_tokenizer.__call__(
             prompt,
             padding="max_length",
