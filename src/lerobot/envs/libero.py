@@ -329,14 +329,30 @@ class LiberoEnv(gym.Env):
             "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
         )
 
-    def reset(self, seed=None, **kwargs):
+    def reset(self, seed=None, options: Mapping[str, Any] | None = None):
         self._ensure_env()
-        super().reset(seed=seed)
+        assert self._env is not None
+        super().reset(seed=seed, options=options)
         self._env.seed(seed)
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
-            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
-            self.init_state_id += self._reset_stride  # Change init_state_id when reset
+            initial_state_index = self.init_state_id
+
+            if options is not None and "initial_state_indices" in options:
+                initial_state_indices = options["initial_state_indices"]
+
+                if self.episode_index >= len(initial_state_indices):
+                    raise ValueError(
+                        "Missing initial state index for LIBERO vector slot "
+                        f"{self.episode_index}. Received {len(initial_state_indices)} indices."
+                    )
+
+                initial_state_index = int(initial_state_indices[self.episode_index])
+
+            raw_obs = self._env.set_init_state(
+                self._init_states[initial_state_index % len(self._init_states)]
+            )
+            self.init_state_id = initial_state_index + self._reset_stride
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
         # Step the simulator with a no-op action for a few frames so everything settles.

@@ -171,6 +171,7 @@ def rollout(
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     seeds: list[int] | None = None,
+    initial_state_indices: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
     recording_dir: Path | None = None,
@@ -203,6 +204,8 @@ def rollout(
         policy: The policy. Must be a PyTorch nn module.
         seeds: The environments are seeded once at the start of the rollout. If provided, this argument
             specifies the seeds for each of the environments.
+        initial_state_indices: Optional initial-state indices for each vector environment slot. They are
+            forwarded through the environment reset options.
         return_observations: Whether to include all observations in the returned rollout data. Observations
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
@@ -217,7 +220,10 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    reset_options = (
+        {"initial_state_indices": initial_state_indices} if initial_state_indices is not None else None
+    )
+    observation, info = env.reset(seed=seeds, options=reset_options)
     if render_callback is not None:
         render_callback(env)
 
@@ -528,6 +534,9 @@ def eval_policy(
             seeds = range(
                 start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
+
+        initial_state_indices = list(range(batch_ix * env.num_envs, (batch_ix + 1) * env.num_envs))
+
         rollout_data = rollout(
             env=env,
             policy=policy,
@@ -536,6 +545,7 @@ def eval_policy(
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             seeds=list(seeds) if seeds else None,
+            initial_state_indices=initial_state_indices,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
             recording_dir=recording_dir,
