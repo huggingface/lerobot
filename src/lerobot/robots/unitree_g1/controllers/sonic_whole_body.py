@@ -199,36 +199,21 @@ class SonicDecoder:
         assert off == 994, f"Decoder obs mismatch: {off}"
         return obs
 
-    def step(self, robot_obs, token):
-        """One control tick: read robot obs, decode the supplied token -> joint targets.
+    def step(self, lowstate, token):
+        """One control tick: read robot lowstate, decode the supplied token -> joint targets.
 
         Args:
-            robot_obs: dict with ``<joint>.q``/``.dq`` and ``imu.*`` fields.
+            lowstate: Unitree lowstate with ``motor_state[i].q/.dq`` and ``imu_state`` fields.
             token: 64-D latent supplied by the policy (encoder bypassed).
 
         Returns:
             dict of ``<joint>.q`` target positions (rad) in IsaacLab joint order.
         """
         self.token = np.asarray(token, np.float32)
-        jnames = [m.name for m in G1_29_JointIndex]
-        q = np.array(
-            [
-                robot_obs.get(f"{n}.q", self.default_angles[m.value])
-                for m, n in zip(G1_29_JointIndex, jnames, strict=False)
-            ],
-            np.float32,
-        )
-        dq = np.array([robot_obs.get(f"{n}.dq", 0.0) for n in jnames], np.float32)
-        quat = np.array(
-            [
-                robot_obs.get("imu.quat.w", 1),
-                robot_obs.get("imu.quat.x", 0),
-                robot_obs.get("imu.quat.y", 0),
-                robot_obs.get("imu.quat.z", 0),
-            ],
-            np.float32,
-        )
-        ang = np.array([robot_obs.get(f"imu.gyro.{a}", 0) for a in "xyz"], np.float32)
+        q = np.array([lowstate.motor_state[m.value].q for m in G1_29_JointIndex], np.float32)
+        dq = np.array([lowstate.motor_state[m.value].dq for m in G1_29_JointIndex], np.float32)
+        quat = np.array(lowstate.imu_state.quaternion, np.float32)  # (w, x, y, z)
+        ang = np.array(lowstate.imu_state.gyroscope, np.float32)
         self.update_history(q, dq, ang, quat)
         action_mj = (
             self.decoder.run(None, {self.decoder_input: self.build_decoder_obs().reshape(1, -1)})[0]
@@ -294,7 +279,7 @@ class SonicWholeBodyController:
         token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
         return {token_state_key(i): float(v) for i, v in enumerate(token)}
 
-    def _startup_blend(self, obs: dict, out: dict) -> dict:
+    def _startup_blend(self, lowstate, out: dict) -> dict:
         """Ease into policy control at startup: for the first ``INIT_RAMP_S`` seconds,
         interpolate between the robot's pose captured on the first tick and the policy's
         live commanded target, so the handoff has no snap.
@@ -307,8 +292,7 @@ class SonicWholeBodyController:
         if self._init_step == 0:
             # Capture the robot's actual pose as the interpolation start point.
             self._start_pose = {
-                f"{m.name}.q": float(obs.get(f"{m.name}.q", self._default_angles[m.value]))
-                for m in G1_29_JointIndex
+                f"{m.name}.q": float(lowstate.motor_state[m.value].q) for m in G1_29_JointIndex
             }
         self._init_step += 1
         ratio = min(1.0, self._init_step / self._init_ramp_steps)
@@ -320,8 +304,8 @@ class SonicWholeBodyController:
             logger.info("SONIC startup blend complete -> full policy control")
         return blended
 
-    def run_step(self, action: dict, obs: dict) -> dict:
-        if not obs:
+    def run_step(self, action: dict, lowstate) -> dict:
+        if lowstate is None:
             return {}
 
         # Token-only interface (token-output VLA): a dense 64-D ``motion_token.{i}`` command
@@ -335,7 +319,7 @@ class SonicWholeBodyController:
             self._last_token = self._neutral_token.copy()
         # Either a fresh token this tick or the last one received (held between the ~30 Hz
         # token stream and the ~50 Hz control loop).
-        return self._startup_blend(obs, self.controller.step(obs, self._last_token))
+        return self._startup_blend(lowstate, self.controller.step(lowstate, self._last_token))
 
     def reset(self):
         self.controller.reset()
