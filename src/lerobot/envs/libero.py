@@ -128,10 +128,13 @@ class LiberoEnv(gym.Env):
         control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
+        hard_reset: bool = True,
     ):
         super().__init__()
         if control_freq <= 0:
             raise ValueError(f"control_freq must be positive, got {control_freq}")
+        if not hard_reset and not init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -158,6 +161,7 @@ class LiberoEnv(gym.Env):
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
         self.control_freq = control_freq
+        self.hard_reset = hard_reset
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
@@ -265,6 +269,9 @@ class LiberoEnv(gym.Env):
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
             control_freq=self.control_freq,
+            # Soft resets skip LIBERO's model and renderer rebuild. They are opt-in
+            # because settle steps can make their observations differ from hard resets.
+            hard_reset=self.hard_reset,
         )
         env.reset()
         self._env = env
