@@ -491,9 +491,8 @@ def _fractions_to_episode_indices(
     """Convert split fractions to episode indices.
 
     Every episode is assigned to exactly one split, and every split with a positive
-    fraction receives at least one episode. Truncating ``total_episodes * fraction``
-    with ``int()`` can round a small split down to zero, which previously dropped both
-    the split and its episodes; those episodes are instead redistributed here.
+    fraction receives at least one episode, so a small fraction can no longer round
+    down to zero and drop both its split and its episodes.
     """
     for name, fraction in splits.items():
         if fraction < 0:
@@ -501,8 +500,6 @@ def _fractions_to_episode_indices(
     if sum(splits.values()) > 1.0:
         raise ValueError("Split fractions must sum to <= 1.0")
 
-    # An explicit zero fraction is a valid way to disable a split, but it must not
-    # disappear quietly (the same silent-drop this function exists to prevent).
     for name, fraction in splits.items():
         if fraction == 0:
             logging.warning(f"Split '{name}' has a fraction of 0 and will be skipped.")
@@ -516,13 +513,9 @@ def _fractions_to_episode_indices(
             "there are fewer episodes than requested splits."
         )
 
-    # Allocate by floor, then hand the leftover to the last split so fractions summing
-    # to 1.0 stay lossless (this preserves the historical distribution).
     counts = {name: int(total_episodes * fraction) for name, fraction in splits.items()}
     counts[positive_splits[-1]] += total_episodes - sum(counts.values())
 
-    # A requested split must never round down to zero and silently disappear. Borrow a
-    # single episode from the currently largest split to fill each empty one.
     for name in positive_splits:
         if counts[name] == 0:
             donor = max(positive_splits, key=lambda n: counts[n])
