@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_replication_v1",
+  "status": "software_preparation_only_hardware_not_authorized",
+  "purpose": "Minimal fresh-session replication of the fixed Real24-only versus Real24+QuestSim48-v7 paired Eval-v2 comparison with per-pose first-model order reversed.",
+  "paper_result": false,
+  "comparison_role": "paired replication engineering evidence; the first-run result is not reused as trials and does not alter poses, checkpoints, or scoring",
+  "research_contract": {
+    "source_thread_id": "019fa271-0268-7763-a05c-523c3b221f2e",
+    "research_repo_commit": "126bf299662aa8d0bc195a0ce3bd2d8b77e9ac94",
+    "training_run_manifest": {
+      "path": "manifests/task1-picklift-real24-questsim48-v7-act100k-run-v1.json",
+      "sha256": "5a897eac537ee6f438074ea162ac5846d516926b2eacf4e339a4643359a3a6ba"
+    },
+    "training_decision": {
+      "path": "decision-log/2026-07-31-task1-picklift-real24-questsim48-v7-act-v1.md",
+      "sha256": "3159029b7044f0f9641a28b4f9fa8276ff2d94cc56e754f6a2a73443efbce058"
+    },
+    "first_run_result_manifest": {
+      "path": "manifests/task1-picklift-real24-vs-questsim48-v7-offcenter-yaw-paired-eval24-v1.json",
+      "sha256": "9244f34c2e2e141d65b0c1ad19aee51fe7176dad1703068129f347a05d84425f"
+    },
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v2.json",
+      "sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97"
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v2.json",
+      "sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200"
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v2.json",
+      "sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3"
+    },
+    "alignment_manifest": {
+      "alignment_id": "task1_picklift_sim_real_geometry_alignment_v1",
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "joint_geometry_profile_id": "picklift_real_to_mujoco_joint_geometry_v1",
+      "sim_camera_profile_id": "picklift_real_canonical_12cell_camera_v6",
+      "real_camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1"
+    },
+    "return_amendment": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-return3s-amendment-v1.json",
+      "sha256": "c32c8f7e8040309b06b6bbb717299945f6bd06f8eb1f72b5b0860edc758e3fae"
+    },
+    "pose_selection": "Exact copy of the frozen 12-pose v2 manifest: 15 mm per-axis offsets, 3/3/3/3 quadrant balance, 6/6 yaw balance, and exact source order. The first-run outcome did not select or modify any pose."
+  },
+  "execution_engine": {
+    "owning_commit": "34cc7ac5e43d029a81f5089d76a811e5a59014b1",
+    "path": "experiments/task1_picklift_real24_act_v1/evaluate_real.py",
+    "source_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96"
+  },
+  "evaluation_profile": {
+    "profile_id": "task1_real24_ready_pose_official_send_interpolated3s_tolerance3_v1",
+    "path": "experiments/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval_replication_v1/real_evaluation_profile_return3s_v1.json",
+    "sha256": "243ef491eda81c38ceba85f7bc01c63c7dc7c14e39e5b4261a109f8a00736525"
+  },
+  "protocol_revision": {
+    "revision_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_replication_v1",
+    "predecessor_evaluation_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1",
+    "predecessor_plan_sha256": "f3f6e797ce001752b46f5f278dcb94df712a29d3e1e29708228810a82074406e",
+    "fresh_evidence": true,
+    "historical_trial_evidence_reused": false,
+    "historical_results_used_for_pose_selection": false,
+    "source_pose_count": 12,
+    "paired_trial_count": 24,
+    "pairing_rule": "Reverse the first-run first-model order at every source pose: for odd source-pose order use QuestSim48-v7 then Real24-only; for even source-pose order use Real24-only then QuestSim48-v7.",
+    "only_intentional_change_from_predecessor": "per-pose first-model order is reversed",
+    "poses_or_checkpoints_changed_after_first_run_results": false,
+    "adaptive_order_or_checkpoint_change_allowed": false,
+    "scored_window_changed": false
+  },
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_replication_v1",
+  "models": {
+    "real24_only": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+      "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+      "config_sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4",
+      "train_config_sha256": "c71d41ad7a8279ee835a675a3614dd6158f3c03bf0c73dd3c58da89f38c891dd",
+      "policy_preprocessor_sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a",
+      "normalizer_stats_sha256": "265c9a2e893e2f5fa30410ae938049dba217f8bd9cf9d31455a3ed3b662e98d0",
+      "use_imagenet_stats": true
+    },
+    "questsim48_v7": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model",
+      "model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03",
+      "config_sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4",
+      "train_config_sha256": "d8ecc5ad671ec92675834b4dc2fe2287f1d478165b09a9cdc583f1f551f96a7c",
+      "policy_preprocessor_sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a",
+      "normalizer_stats_sha256": "0a9ff52f6b4e46bfdbad8e38d60427f3f521aaff048119acb0c2b6370f38a8af",
+      "use_imagenet_stats": true
+    }
+  },
+  "setup": {
+    "task_id": "PickLift-Nexus-v1",
+    "task_contract_revision": 15,
+    "real_world_setup_version": "picklift_real_setup_spawn_v4_5cm_grid_camera_aligned_task_grid_v2_reference_v2",
+    "task_frame_id": "picklift_task_grid",
+    "camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1",
+    "canonical_rgb_width": 640,
+    "canonical_rgb_height": 480,
+    "robot_id": "so101_follower_main",
+    "control_fps": 20,
+    "maximum_trial_seconds": 30,
+    "nominal_policy_ticks_at_target_rate": 600,
+    "stop_on_success": false,
+    "max_relative_target": null,
+    "custom_absolute_action_clamp": false,
+    "custom_relative_step_limit_degrees": null,
+    "action_path_profile_id": "lerobot_so101_official_send_no_custom_clamp_v1",
+    "policy_timing_profile_id": "lerobot_per_tick_pacing_no_catchup_v1",
+    "ready_pose_profile_id": "task1_real24_ready_pose_reset_v1",
+    "ready_pose_state": [
+      7.4285712242126465,
+      -98.32967376708984,
+      45.010990142822266,
+      92.21977996826172,
+      1.8461538553237915,
+      19.765840530395508
+    ],
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "ready_pose_arrival_tolerance_degrees": 3.0,
+    "ready_pose_before_every_trial": true,
+    "ready_pose_after_every_trial": true,
+    "policy_reset_after_ready_pose": true,
+    "ready_pose_movement_profile_id": "task1_real24_ready_pose_interpolated3s_official_send_tolerance3_v1",
+    "ready_pose_interpolation_duration_seconds": 3.0,
+    "ready_pose_interpolation_steps": 60,
+    "ready_pose_post_interpolation_hold_until_tolerance": true,
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67
+  },
+  "success_contract": {
+    "criterion": "At any time inside the scored window: visible bilateral grasp without table support, approximately at least 0.05 m lift, continuously held for at least 0.5 seconds.",
+    "must_remain_held_until_timeout": false,
+    "changes_policy_action_window": false,
+    "automatic_visual_judgement": false,
+    "adjudication": "operator field label followed by immutable canonical-video review",
+    "failure_categories": [
+      "missed_grasp",
+      "insufficient_lift",
+      "dropped_before_0p5s",
+      "timeout",
+      "unknown"
+    ]
+  },
+  "placement_contract": {
+    "position_instruction": "Place the cube center at the frozen 10 mm task-grid coordinate named by the trial.",
+    "yaw_0_instruction": "Align cube edges parallel to task-grid lines.",
+    "yaw_45_instruction": "Keep the center at the named grid coordinate and rotate the cube 45 degrees.",
+    "operator_numeric_coordinate_entry_required": true,
+    "nominal_center_offset_from_cell_center_m": 0.015,
+    "nominal_center_lattice_m": 0.01,
+    "manual_pose_is_measurement_truth": false,
+    "placement_evidence": "Capture canonical pre-action frame 0 before every policy window."
+  },
+  "gripper_nuisance": {
+    "status": "recorded_versioned_non_blocking",
+    "safe_open_added": false,
+    "allowed_range": [0, 100]
+  },
+  "retry_contract": {
+    "policy_failure_retry_allowed": false,
+    "infrastructure_invalid_replacement_limit": 1,
+    "replacement_requires_preserved_original_evidence": true,
+    "replacement_requires_explicit_link": true,
+    "adaptive_checkpoint_or_order_change_allowed": false
+  },
+  "evidence_contract": {
+    "per_trial": [
+      "checkpoint_and_model_identity",
+      "pose_and_pair_order",
+      "requested_and_observed_ready_before_and_after",
+      "policy_reset_then_tick0",
+      "canonical_video_640x480",
+      "per_tick_observation_raw_requested_official_sent",
+      "actual_policy_ticks_and_wall_duration",
+      "operator_label",
+      "canonical_video_review_label",
+      "return_trajectory",
+      "torque_disable"
+    ],
+    "canonical_pre_action_frame_required": true,
+    "large_evidence_committed_to_git": false
+  },
+  "authorization": {
+    "hardware_authorized": false,
+    "first_hardware_action_requires_later_explicit_go": true,
+    "serial_accessed_during_preparation": false,
+    "camera_accessed_during_preparation": false,
+    "robot_accessed_during_preparation": false,
+    "torque_accessed_during_preparation": false,
+    "rollout_executed_during_preparation": false
+  },
+  "trials": [
+    {"order": 1, "trial_id": "t01", "spawn_region": "t01_r3c3_questsim48_v7", "source_pose_order": 1, "source_pose_id": "evalv2_pilot_v2_r3c3", "source_order_sha256": "3f34bc6c09882362563b1e5852fef3ccd0377e87e08d77c48a0d462df2a9c41d", "cell_id": "r3c3", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.31, "nominal_y_lateral_m": 0.04, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r3c3：红色方块中心放在 X=31 cm、Y=+4 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 2, "trial_id": "t02", "spawn_region": "t02_r3c3_real24_only", "source_pose_order": 1, "source_pose_id": "evalv2_pilot_v2_r3c3", "source_order_sha256": "3f34bc6c09882362563b1e5852fef3ccd0377e87e08d77c48a0d462df2a9c41d", "cell_id": "r3c3", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.31, "nominal_y_lateral_m": 0.04, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r3c3：红色方块中心放在 X=31 cm、Y=+4 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 3, "trial_id": "t03", "spawn_region": "t03_r3c4_real24_only", "source_pose_order": 2, "source_pose_id": "evalv2_pilot_v2_r3c4", "source_order_sha256": "4c0f68324f69fff5977d398ba5295b62db7516268b60e538fb92a198f3462d02", "cell_id": "r3c4", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.31, "nominal_y_lateral_m": 0.06, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r3c4：红色方块中心放在 X=31 cm、Y=+6 cm 的网格交点，方块旋转 45°。"},
+    {"order": 4, "trial_id": "t04", "spawn_region": "t04_r3c4_questsim48_v7", "source_pose_order": 2, "source_pose_id": "evalv2_pilot_v2_r3c4", "source_order_sha256": "4c0f68324f69fff5977d398ba5295b62db7516268b60e538fb92a198f3462d02", "cell_id": "r3c4", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.31, "nominal_y_lateral_m": 0.06, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r3c4：红色方块中心放在 X=31 cm、Y=+6 cm 的网格交点，方块旋转 45°。"},
+    {"order": 5, "trial_id": "t05", "spawn_region": "t05_r2c4_questsim48_v7", "source_pose_order": 3, "source_pose_id": "evalv2_pilot_v2_r2c4", "source_order_sha256": "5d2a69883b7331b8dc2e381002a5714d9e4043e318794affa46273e29e600bf7", "cell_id": "r2c4", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.26, "nominal_y_lateral_m": 0.09, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r2c4：红色方块中心放在 X=26 cm、Y=+9 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 6, "trial_id": "t06", "spawn_region": "t06_r2c4_real24_only", "source_pose_order": 3, "source_pose_id": "evalv2_pilot_v2_r2c4", "source_order_sha256": "5d2a69883b7331b8dc2e381002a5714d9e4043e318794affa46273e29e600bf7", "cell_id": "r2c4", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.26, "nominal_y_lateral_m": 0.09, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r2c4：红色方块中心放在 X=26 cm、Y=+9 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 7, "trial_id": "t07", "spawn_region": "t07_r2c1_real24_only", "source_pose_order": 4, "source_pose_id": "evalv2_pilot_v2_r2c1", "source_order_sha256": "695204f1cdd4ead9c0e6e78f544fcfe169c5fd0bb94d31fae3decb515e6031fd", "cell_id": "r2c1", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.29, "nominal_y_lateral_m": -0.09, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r2c1：红色方块中心放在 X=29 cm、Y=-9 cm 的网格交点，方块旋转 45°。"},
+    {"order": 8, "trial_id": "t08", "spawn_region": "t08_r2c1_questsim48_v7", "source_pose_order": 4, "source_pose_id": "evalv2_pilot_v2_r2c1", "source_order_sha256": "695204f1cdd4ead9c0e6e78f544fcfe169c5fd0bb94d31fae3decb515e6031fd", "cell_id": "r2c1", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.29, "nominal_y_lateral_m": -0.09, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r2c1：红色方块中心放在 X=29 cm、Y=-9 cm 的网格交点，方块旋转 45°。"},
+    {"order": 9, "trial_id": "t09", "spawn_region": "t09_r2c2_questsim48_v7", "source_pose_order": 5, "source_pose_id": "evalv2_pilot_v2_r2c2", "source_order_sha256": "76c4b78171b8bddccd8968a015b4571eb38af641a7617a409a3c1b5f91c88ce3", "cell_id": "r2c2", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.29, "nominal_y_lateral_m": -0.01, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r2c2：红色方块中心放在 X=29 cm、Y=-1 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 10, "trial_id": "t10", "spawn_region": "t10_r2c2_real24_only", "source_pose_order": 5, "source_pose_id": "evalv2_pilot_v2_r2c2", "source_order_sha256": "76c4b78171b8bddccd8968a015b4571eb38af641a7617a409a3c1b5f91c88ce3", "cell_id": "r2c2", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.29, "nominal_y_lateral_m": -0.01, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r2c2：红色方块中心放在 X=29 cm、Y=-1 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 11, "trial_id": "t11", "spawn_region": "t11_r2c3_real24_only", "source_pose_order": 6, "source_pose_id": "evalv2_pilot_v2_r2c3", "source_order_sha256": "bc44fe2daf77be5cf6871e08d929de469729066aafdc3e70e74f9c3960c2a2ff", "cell_id": "r2c3", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.26, "nominal_y_lateral_m": 0.01, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r2c3：红色方块中心放在 X=26 cm、Y=+1 cm 的网格交点，方块旋转 45°。"},
+    {"order": 12, "trial_id": "t12", "spawn_region": "t12_r2c3_questsim48_v7", "source_pose_order": 6, "source_pose_id": "evalv2_pilot_v2_r2c3", "source_order_sha256": "bc44fe2daf77be5cf6871e08d929de469729066aafdc3e70e74f9c3960c2a2ff", "cell_id": "r2c3", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.26, "nominal_y_lateral_m": 0.01, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r2c3：红色方块中心放在 X=26 cm、Y=+1 cm 的网格交点，方块旋转 45°。"},
+    {"order": 13, "trial_id": "t13", "spawn_region": "t13_r1c2_questsim48_v7", "source_pose_order": 7, "source_pose_id": "evalv2_pilot_v2_r1c2", "source_order_sha256": "c1b2919020207fb03db137604a8d6d597709d0c7020b463ec6d72df97ace5233", "cell_id": "r1c2", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.21, "nominal_y_lateral_m": -0.01, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r1c2：红色方块中心放在 X=21 cm、Y=-1 cm 的网格交点，方块旋转 45°。"},
+    {"order": 14, "trial_id": "t14", "spawn_region": "t14_r1c2_real24_only", "source_pose_order": 7, "source_pose_id": "evalv2_pilot_v2_r1c2", "source_order_sha256": "c1b2919020207fb03db137604a8d6d597709d0c7020b463ec6d72df97ace5233", "cell_id": "r1c2", "quadrant": "x_minus_y_plus", "nominal_x_forward_m": 0.21, "nominal_y_lateral_m": -0.01, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r1c2：红色方块中心放在 X=21 cm、Y=-1 cm 的网格交点，方块旋转 45°。"},
+    {"order": 15, "trial_id": "t15", "spawn_region": "t15_r1c4_real24_only", "source_pose_order": 8, "source_pose_id": "evalv2_pilot_v2_r1c4", "source_order_sha256": "d344f91581d838bf733184d3ea96e0201fd5ce4d4a4d412f6430a122d498af1f", "cell_id": "r1c4", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.24, "nominal_y_lateral_m": 0.09, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r1c4：红色方块中心放在 X=24 cm、Y=+9 cm 的网格交点，方块旋转 45°。"},
+    {"order": 16, "trial_id": "t16", "spawn_region": "t16_r1c4_questsim48_v7", "source_pose_order": 8, "source_pose_id": "evalv2_pilot_v2_r1c4", "source_order_sha256": "d344f91581d838bf733184d3ea96e0201fd5ce4d4a4d412f6430a122d498af1f", "cell_id": "r1c4", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.24, "nominal_y_lateral_m": 0.09, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r1c4：红色方块中心放在 X=24 cm、Y=+9 cm 的网格交点，方块旋转 45°。"},
+    {"order": 17, "trial_id": "t17", "spawn_region": "t17_r1c1_questsim48_v7", "source_pose_order": 9, "source_pose_id": "evalv2_pilot_v2_r1c1", "source_order_sha256": "e063bdbfca2b5bb20cd7b7f45007b3a05e334841f93c46b1853fc30a5e4c72ce", "cell_id": "r1c1", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.21, "nominal_y_lateral_m": -0.09, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r1c1：红色方块中心放在 X=21 cm、Y=-9 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 18, "trial_id": "t18", "spawn_region": "t18_r1c1_real24_only", "source_pose_order": 9, "source_pose_id": "evalv2_pilot_v2_r1c1", "source_order_sha256": "e063bdbfca2b5bb20cd7b7f45007b3a05e334841f93c46b1853fc30a5e4c72ce", "cell_id": "r1c1", "quadrant": "x_minus_y_minus", "nominal_x_forward_m": 0.21, "nominal_y_lateral_m": -0.09, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r1c1：红色方块中心放在 X=21 cm、Y=-9 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 19, "trial_id": "t19", "spawn_region": "t19_r1c3_real24_only", "source_pose_order": 10, "source_pose_id": "evalv2_pilot_v2_r1c3", "source_order_sha256": "e61861c808609f9a53688058321fe638b9b0fd9740c3b195cfbea88143921f86", "cell_id": "r1c3", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.24, "nominal_y_lateral_m": 0.01, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r1c3：红色方块中心放在 X=24 cm、Y=+1 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 20, "trial_id": "t20", "spawn_region": "t20_r1c3_questsim48_v7", "source_pose_order": 10, "source_pose_id": "evalv2_pilot_v2_r1c3", "source_order_sha256": "e61861c808609f9a53688058321fe638b9b0fd9740c3b195cfbea88143921f86", "cell_id": "r1c3", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.24, "nominal_y_lateral_m": 0.01, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r1c3：红色方块中心放在 X=24 cm、Y=+1 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 21, "trial_id": "t21", "spawn_region": "t21_r3c2_questsim48_v7", "source_pose_order": 11, "source_pose_id": "evalv2_pilot_v2_r3c2", "source_order_sha256": "f59f658cb3b251f0429a1002865868a653df5cea5412272557a419debbc2b76a", "cell_id": "r3c2", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.34, "nominal_y_lateral_m": -0.04, "nominal_yaw_degrees_modulo_90": 45, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r3c2：红色方块中心放在 X=34 cm、Y=-4 cm 的网格交点，方块旋转 45°。"},
+    {"order": 22, "trial_id": "t22", "spawn_region": "t22_r3c2_real24_only", "source_pose_order": 11, "source_pose_id": "evalv2_pilot_v2_r3c2", "source_order_sha256": "f59f658cb3b251f0429a1002865868a653df5cea5412272557a419debbc2b76a", "cell_id": "r3c2", "quadrant": "x_plus_y_minus", "nominal_x_forward_m": 0.34, "nominal_y_lateral_m": -0.04, "nominal_yaw_degrees_modulo_90": 45, "model_id": "real24_only", "operator_placement_prompt_zh": "r3c2：红色方块中心放在 X=34 cm、Y=-4 cm 的网格交点，方块旋转 45°。"},
+    {"order": 23, "trial_id": "t23", "spawn_region": "t23_r3c1_real24_only", "source_pose_order": 12, "source_pose_id": "evalv2_pilot_v2_r3c1", "source_order_sha256": "fcf5867ddbd5261cca000a205ac3084979f465d0503161da823f00f633842f17", "cell_id": "r3c1", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.34, "nominal_y_lateral_m": -0.06, "nominal_yaw_degrees_modulo_90": 0, "model_id": "real24_only", "operator_placement_prompt_zh": "r3c1：红色方块中心放在 X=34 cm、Y=-6 cm 的网格交点，方块边与网格线平行（0°）。"},
+    {"order": 24, "trial_id": "t24", "spawn_region": "t24_r3c1_questsim48_v7", "source_pose_order": 12, "source_pose_id": "evalv2_pilot_v2_r3c1", "source_order_sha256": "fcf5867ddbd5261cca000a205ac3084979f465d0503161da823f00f633842f17", "cell_id": "r3c1", "quadrant": "x_plus_y_plus", "nominal_x_forward_m": 0.34, "nominal_y_lateral_m": -0.06, "nominal_yaw_degrees_modulo_90": 0, "model_id": "questsim48_v7", "operator_placement_prompt_zh": "r3c1：红色方块中心放在 X=34 cm、Y=-6 cm 的网格交点，方块边与网格线平行（0°）。"}
+  ],
+  "next_hardware_gate": {
+    "status": "blocked_until_later_explicit_go",
+    "first_trial_id": "t01",
+    "first_model_id": "questsim48_v7",
+    "first_placement_prompt_zh": "确认原 Real 相机和网格 setup 不变，打开 Follower 12V；然后在 r3c3 将红色方块中心放在 X=31 cm、Y=+4 cm 的网格交点，方块边与网格线平行（0°）。"
+  }
+}
