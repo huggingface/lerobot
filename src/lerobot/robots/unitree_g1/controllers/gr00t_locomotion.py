@@ -86,7 +86,7 @@ class GrootLocomotionController:
         # Load policies
         self.policy_balance, self.policy_walk = load_groot_policies()
 
-        self.default_angles = GROOT_DEFAULT_ANGLES  # home pose (29,), for reset ease-in
+        self.default_angles = GROOT_DEFAULT_ANGLES
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
         # Robot state
