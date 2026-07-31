@@ -147,7 +147,7 @@ class UnitreeG1(Robot):
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
-        # Lower-body / whole-body controller loaded dynamically
+        # Controller loaded dynamically
         self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
         # Controller thread state
         self._controller_thread = None
