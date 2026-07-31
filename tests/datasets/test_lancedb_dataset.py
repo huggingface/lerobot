@@ -151,54 +151,40 @@ def assert_items_equal(actual: dict, expected: dict) -> None:
             torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=0, msg=key)
 
 
-def test_item_parity(dataset_roots):
+def test_tabular_parity(dataset_roots):
+    """Items, delta windows + pads, batched==single, and episode subsets vs upstream."""
     src_root, lance_root = dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LanceDBDataset(root=lance_root)
-
     assert len(lance_ds) == len(upstream)
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
 
-
-def test_delta_timestamps_parity(dataset_roots):
-    src_root, lance_root = dataset_roots
-    fps = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.fps
-    delta_timestamps = {
-        "state": [-2 / fps, -1 / fps, 0.0],
-        "action": [0.0, 1 / fps, 2 / fps, 3 / fps],
-    }
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
-    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
-
-    # First/last frames of an episode exercise clamping and padding masks.
-    ep_start = int(upstream.meta.episodes[1]["dataset_from_index"])
-    ep_end = int(upstream.meta.episodes[1]["dataset_to_index"])
+    # delta windows: first/last frames of an episode exercise clamping + pads
+    fps = upstream.meta.fps
+    delta_timestamps = {"state": [-2 / fps, -1 / fps, 0.0], "action": [0.0, 1 / fps, 2 / fps, 3 / fps]}
+    upstream_d = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
+    lance_d = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    ep_start = int(upstream_d.meta.episodes[1]["dataset_from_index"])
+    ep_end = int(upstream_d.meta.episodes[1]["dataset_to_index"])
     for idx in [ep_start, ep_start + 5, ep_end - 1]:
-        expected = upstream[idx]
-        actual = lance_ds[idx]
+        expected = upstream_d[idx]
+        actual = lance_d[idx]
         assert actual["state_is_pad"].any() == expected["state_is_pad"].any()
         assert_items_equal(actual, expected)
 
-
-def test_batched_matches_single(dataset_roots):
-    _, lance_root = dataset_roots
-    lance_ds = LanceDBDataset(root=lance_root)
+    # batched fetch must equal singles (duplicates included)
     indices = [3, 3, 17, 55]
-    batched = lance_ds.__getitems__(indices)
-    for idx, item in zip(indices, batched, strict=True):
+    for idx, item in zip(indices, lance_ds.__getitems__(indices), strict=True):
         assert_items_equal(item, lance_ds[idx])
 
-
-def test_episode_subset(dataset_roots):
-    src_root, lance_root = dataset_roots
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1])
-    lance_ds = LanceDBDataset(root=lance_root, episodes=[1])
-
-    assert len(lance_ds) == len(upstream)
-    assert lance_ds.absolute_to_relative_idx == upstream.reader._absolute_to_relative_idx
-    for idx in [0, len(upstream) - 1]:
-        assert_items_equal(lance_ds[idx], upstream[idx])
+    # episode subset: relative/absolute mapping mirrors upstream
+    upstream_s = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1])
+    lance_s = LanceDBDataset(root=lance_root, episodes=[1])
+    assert len(lance_s) == len(upstream_s)
+    assert lance_s.absolute_to_relative_idx == upstream_s.reader._absolute_to_relative_idx
+    for idx in [0, len(upstream_s) - 1]:
+        assert_items_equal(lance_s[idx], upstream_s[idx])
 
 
 @pytest.fixture
@@ -210,44 +196,41 @@ def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     return src_root, lance_root
 
 
-def test_video_item_parity(video_dataset_roots):
+def test_video_parity(video_dataset_roots):
+    """Video items, delta windows, one-element squeeze semantics, and uint8 mode vs upstream."""
     src_root, lance_root = video_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec")
     lance_ds = LanceDBDataset(root=lance_root)
-
-    assert len(lance_ds) == len(upstream)
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
 
-
-def test_video_delta_timestamps_parity(video_dataset_roots):
-    src_root, lance_root = video_dataset_roots
-    fps = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.fps
-    video_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys[0]
-    delta_timestamps = {
-        video_key: [-1 / fps, 0.0, 1 / fps],
-        "action": [0.0, 1 / fps],
-    }
-    upstream = LeRobotDataset(
+    fps = upstream.meta.fps
+    video_key = upstream.meta.video_keys[0]
+    delta_timestamps = {video_key: [-1 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
+    upstream_d = LeRobotDataset(
         DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
     )
-    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
-
-    ep_start = int(upstream.meta.episodes[1]["dataset_from_index"])
+    lance_d = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    ep_start = int(upstream_d.meta.episodes[1]["dataset_from_index"])
     for idx in [0, ep_start - 1, ep_start]:
-        expected = upstream[idx]
-        actual = lance_ds[idx]
+        expected = upstream_d[idx]
+        actual = lance_d[idx]
         assert actual[f"{video_key}_is_pad"].tolist() == expected[f"{video_key}_is_pad"].tolist()
         assert_items_equal(actual, expected)
 
-    # One-element window: squeeze semantics must match upstream's shape.
+    # one-element window: squeeze semantics must match upstream's shape
     single = {video_key: [0.0]}
-    upstream_single = LeRobotDataset(
+    upstream_1 = LeRobotDataset(
         DUMMY_REPO_ID, root=src_root, delta_timestamps=single, video_backend="torchcodec"
     )
-    lance_single = LanceDBDataset(root=lance_root, delta_timestamps=single)
-    for idx in [0, len(upstream_single) - 1]:
-        assert_items_equal(lance_single[idx], upstream_single[idx])
+    lance_1 = LanceDBDataset(root=lance_root, delta_timestamps=single)
+    for idx in [0, len(upstream_1) - 1]:
+        assert_items_equal(lance_1[idx], upstream_1[idx])
+
+    # return_uint8: raw frames, no normalization
+    lance_u8 = LanceDBDataset(root=lance_root, return_uint8=True)
+    item = lance_u8[0]
+    assert item[video_key].dtype == torch.uint8
 
 
 @pytest.mark.skipif(
@@ -274,35 +257,18 @@ def test_remote_ranged_path_parity(video_dataset_roots, monkeypatch, tmp_path):
         assert_items_equal(item, upstream[idx])
 
 
-def test_video_return_uint8(video_dataset_roots):
-    _, lance_root = video_dataset_roots
-    lance_ds = LanceDBDataset(root=lance_root, return_uint8=True)
-    item = lance_ds[0]
-    video_key = lance_ds.meta.video_keys[0]
-    assert item[video_key].dtype == torch.uint8
-
-
-def test_factory_autodetection(video_dataset_roots):
+def test_factory_autodetect_and_train_e2e(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
+    # autodetection: lance layout -> LanceDBDataset, parquet layout -> LeRobotDataset
     assert is_lance_dataset(root=lance_root)
     assert not is_lance_dataset(root=src_root)
-
-    lance_cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(lance_root)),
-        policy=make_policy_config("act"),
-    )
-    assert isinstance(make_dataset(lance_cfg), LanceDBDataset)
-
     parquet_cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(src_root)),
         policy=make_policy_config("act"),
     )
     assert isinstance(make_dataset(parquet_cfg), LeRobotDataset)
 
-
-def test_train_pipeline_e2e(video_dataset_roots):
-    """Build the training dataloader exactly as lerobot_train does and consume batches."""
-    _, lance_root = video_dataset_roots
+    # e2e: build the training dataloader exactly as lerobot_train does and consume batches
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(lance_root)),
         policy=make_policy_config("act"),
