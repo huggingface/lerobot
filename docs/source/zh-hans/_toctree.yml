@@ -27,6 +27,8 @@
 - sections:
     - local: act
       title: act
+    - local: smolvla
+      title: SmolVLA
   title: 策略
 
 - sections:
