@@ -68,10 +68,6 @@ class UnitreeG1Config(RobotConfig):
     # Compensates for gravity on the unitree's arms using the arm ik solver
     gravity_compensation: bool = False
 
-    # Locomotion controller class name, e.g. "GrootLocomotionController",
-    # "HolosomaLocomotionController", or "SonicWholeBodyController". None disables it.
-    # Selecting "SonicWholeBodyController" implicitly switches the robot to the 64-D
-    # latent-token action/observation interface (``motion_token.{i}.pos`` action and a
-    # ``motion_token_state.{i}.pos`` state echo) so ``lerobot-rollout`` can drive a
-    # policy trained on SONIC motion tokens (e.g. nepyope/sonic_walk).
+    # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
+    # SonicWholeBodyController. None disables it.
     controller: str | None = None
