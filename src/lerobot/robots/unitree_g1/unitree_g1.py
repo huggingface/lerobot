@@ -350,8 +350,14 @@ class UnitreeG1(Robot):
         logger.info("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        self.kp = np.array(self.config.kp, dtype=np.float32)
-        self.kd = np.array(self.config.kd, dtype=np.float32)
+        # Prefer the active controller's gains (e.g. SONIC loads kp/kd from its ONNX);
+        # otherwise fall back to the config defaults.
+        if self.controller is not None and hasattr(self.controller, "kp"):
+            self.kp = np.array(self.controller.kp, dtype=np.float32)
+            self.kd = np.array(self.controller.kd, dtype=np.float32)
+        else:
+            self.kp = np.array(self.config.kp, dtype=np.float32)
+            self.kd = np.array(self.config.kd, dtype=np.float32)
 
         for joint in G1_29_JointIndex:
             self.msg.motor_cmd[joint].mode = 1
@@ -576,12 +582,8 @@ class UnitreeG1(Robot):
             for motor in G1_29_JointIndex:
                 init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-            # Publish the whole-body pose directly (bypass send_action, which only forwards
-            # arm targets when a controller is active) with the controller's gains if any.
-            ctrl_kp = getattr(self.controller, "kp", None)
-            ctrl_kd = getattr(self.controller, "kd", None)
-
-            # Interpolate to default position
+            # Interpolate to default position. Publish directly so the whole body moves:
+            # send_action() would arm-filter this to the arms while a controller is active.
             for step in range(num_steps):
                 start_time = time.time()
 
@@ -592,7 +594,7 @@ class UnitreeG1(Robot):
                     interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
                     action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-                self.publish_lowcmd(action_dict, kp=ctrl_kp, kd=ctrl_kd)
+                self.publish_lowcmd(action_dict)
 
                 # Maintain constant control rate
                 elapsed = time.time() - start_time
