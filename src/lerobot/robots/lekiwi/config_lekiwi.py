@@ -60,7 +60,10 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
-    port: str = "/dev/ttyACM0"  # port to connect to the bus
+    # Stable serial-port symlink created by examples/lekiwi/install_udev_rules.sh (pins the WCH
+    # motor-bus adapter regardless of the /dev/ttyACM* number). Override with --robot.port=/dev/ttyACM0
+    # if you haven't installed the udev rules.
+    port: str = "/dev/lekiwi_bus"  # port to connect to the bus
 
     disable_torque_on_disconnect: bool = True
 
