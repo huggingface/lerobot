@@ -73,3 +73,20 @@ The next onsite instruction, after a later explicit hardware authorization,
 is: keep the original Real camera/grid setup, open Follower 12 V, then place
 the red cube center at `r3c3`, `X=31 cm`, `Y=+4 cm`, with cube edges parallel
 to the grid (`0°`).
+
+## Completed result
+
+The fresh paired session completed all 24 scored trials. One original `t09`
+window had an operator placement mismatch; that evidence remains preserved
+and unscored, and its single linked replacement is the scored row.
+
+Canonical-video review agreed with all 24 operator labels:
+
+- `real24_only`: 0/12 reviewed successes; 12 `missed_grasp`
+- `questsim48_v7`: 3/12 reviewed successes (`t10`, `t19`, `t22`);
+  9 `missed_grasp`
+- paired poses: 9 both-failure, 3 QuestSim48-v7-only
+
+This is a single-session engineering result on the frozen 12-pose set, not a
+paper-scale causal or generalization estimate. Large videos and tick evidence
+remain under the immutable artifact root and are not committed to Git.
