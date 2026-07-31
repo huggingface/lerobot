@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import threading
 import time
@@ -27,6 +29,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.types import RobotAction, RobotObservation
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
 from ..robot import Robot
@@ -118,24 +121,32 @@ class UnitreeG1(Robot):
         self.config = config
         self.control_dt = config.control_dt
 
+        # Three mutually-exclusive roles:
+        #   * simulation : local DDS + controller run in-process against a MuJoCo world.
+        #   * onboard    : local DDS + controller run in-process on the robot NX.
+        #   * client     : thin laptop client. No DDS, no controller. It PUSHes high-level
+        #                  actions to ``run_g1_server --onboard`` and reads back state +
+        #                  cameras over ZMQ. The controller *always* runs on the robot.
+        self._client = not config.is_simulation and not config.onboard
+
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
-        # Import channel classes based on mode
-        if config.is_simulation:
+        # DDS channels are only needed by the in-process control roles (sim / onboard),
+        # which both drive the real Unitree SDK. The thin client never touches DDS.
+        if config.is_simulation or config.onboard:
             self._ChannelFactoryInitialize = _SDKChannelFactoryInitialize
             self._ChannelPublisher = _SDKChannelPublisher
             self._ChannelSubscriber = _SDKChannelSubscriber
         else:
-            from .unitree_sdk2_socket import (
-                ChannelFactoryInitialize,
-                ChannelPublisher,
-                ChannelSubscriber,
-            )
+            self._ChannelFactoryInitialize = None
+            self._ChannelPublisher = None
+            self._ChannelSubscriber = None
 
-            self._ChannelFactoryInitialize = ChannelFactoryInitialize
-            self._ChannelPublisher = ChannelPublisher
-            self._ChannelSubscriber = ChannelSubscriber
+        # Client-side ZMQ handles (populated in connect()).
+        self._client_action_sock = None
+        self._client_state_sock = None
+        self._client_state_latest: dict[str, float] = {}
 
         # Initialize state variables
         self.sim_env = None
@@ -147,13 +158,28 @@ class UnitreeG1(Robot):
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
-        # Controller loaded dynamically
-        self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
+        # Controller loaded dynamically. GUARDRAIL: the controller must never be built or
+        # run on the laptop client -- it always runs onboard (or in sim).
+        if self._client:
+            self.controller: LocomotionController | None = None
+        else:
+            self.controller = make_locomotion_controller(config.controller)
         # Controller thread state
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
         self.controller_output = {}
+
+    @property
+    def _sonic_token(self) -> bool:
+        """Whether the SONIC whole-body decoder is active.
+
+        A SONIC controller consumes a 64-D latent motion token as its action and echoes
+        the last commanded token as ``observation.state``. Keyed purely off the selected
+        controller so the token interface is implicit -- no separate config flag, and the
+        thin client (which has no controller instance) can still advertise the schema.
+        """
+        return self.config.controller == "SonicWholeBodyController"
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -232,19 +258,33 @@ class UnitreeG1(Robot):
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
         # Controllers may contribute their own proprio features (e.g. SONIC's token state).
+        # The thin client has no controller instance, so mirror the onboard token schema
+        # by controller name (SONIC echoes its last token as observation.state).
         controller_ft = getattr(self.controller, "observation_ft", {})
+        if self._client and self._sonic_token:
+            from .controllers.sonic_whole_body import TOKEN_DIM, TOKEN_STATE_PREFIX
+
+            controller_ft = {f"{TOKEN_STATE_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
         return {**self._motors_ft, **controller_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        # Role-agnostic: the schema is a pure function of the configured controller name,
+        # so the thin client advertises the same action space as the onboard robot.
+
         # No controller configured at all: raw 29-DoF joint teleop.
-        if self.controller is None:
+        if self.config.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
-        # Whole-body controllers (SONIC): 64-D latent token.
+        # Whole-body controllers (SONIC): 64-D latent token. On the thin client there is
+        # no controller instance, so advertise the same token schema by controller name.
         controller_ft = getattr(self.controller, "action_ft", None)
         if controller_ft is not None:
             return dict(controller_ft)
+        if self._client and self._sonic_token:
+            from .controllers.sonic_whole_body import TOKEN_ACTION_PREFIX, TOKEN_DIM
+
+            return {f"{TOKEN_ACTION_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
 
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
         # TODO: have GR00T/Holosoma advertise their own action_features too, so every
@@ -302,7 +342,124 @@ class UnitreeG1(Robot):
     def configure(self) -> None:
         pass
 
+    def _release_motion_control(self) -> None:
+        """Release the robot's built-in motion services so we can send raw lowcmd.
+
+        Onboard-only. Mirrors run_g1_server.py: on the real robot the factory
+        locomotion/hand services must relinquish control before our controller can
+        write to ``rt/lowcmd``, otherwise commands are ignored or fought.
+        """
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+
+        msc = MotionSwitcherClient()
+        msc.SetTimeout(5.0)
+        msc.Init()
+        _, result = msc.CheckMode()
+        while result is not None and "name" in result and result["name"]:
+            logger.info("[UnitreeG1] Releasing built-in mode '%s'...", result["name"])
+            msc.ReleaseMode()
+            _, result = msc.CheckMode()
+            time.sleep(1.0)
+
+    # ------------------------------------------------------------------ #
+    # Thin-client role (laptop): no DDS, no controller. Talks to run_g1_server
+    # over ZMQ. The controller ALWAYS runs onboard; we only relay high-level
+    # actions and read back the state echo + camera frames.
+    # ------------------------------------------------------------------ #
+    def _connect_client(self) -> None:
+        import zmq
+
+        from .run_g1_server import ACTION_PORT, STATE_PORT
+
+        server_ip = self.config.robot_ip
+        if not server_ip:
+            raise ValueError("client mode requires config.robot_ip (the G1 running run_g1_server)")
+
+        ctx = zmq.Context.instance()
+
+        # Action PUSH: ship compact high-level actions to the onboard controller. The
+        # server runs the controller selected by its own ``--controller`` flag; both
+        # sides use ``config.controller`` to agree on the action schema (no handshake).
+        self._client_action_sock = ctx.socket(zmq.PUSH)
+        self._client_action_sock.setsockopt(zmq.SNDHWM, 2)
+        self._client_action_sock.setsockopt(zmq.LINGER, 0)
+        self._client_action_sock.connect(f"tcp://{server_ip}:{ACTION_PORT}")
+
+        # State SUB: read the onboard observation.state echo (last token / joints).
+        self._client_state_sock = ctx.socket(zmq.SUB)
+        self._client_state_sock.setsockopt(zmq.CONFLATE, 1)
+        self._client_state_sock.setsockopt_string(zmq.SUBSCRIBE, "")
+        self._client_state_sock.connect(f"tcp://{server_ip}:{STATE_PORT}")
+
+        # Cameras (ZMQ ImageServer served by run_g1_server) - same as any client.
+        for cam in self._cameras.values():
+            if not cam.is_connected:
+                cam.connect()
+        logger.info(
+            "[client] connected to %s: actions ->:%d, state <-:%d, %d camera(s).",
+            server_ip,
+            ACTION_PORT,
+            STATE_PORT,
+            len(self._cameras),
+        )
+
+    def _recv_client_state(self) -> None:
+        """Drain the state SUB (CONFLATE keeps only the freshest) into the latest cache."""
+        import zmq
+
+        if self._client_state_sock is None:
+            return
+        while True:
+            try:
+                state = self._client_state_sock.recv_json(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                break
+            except (ValueError, zmq.ZMQError):
+                break
+            if isinstance(state, dict):
+                self._client_state_latest = {k: float(v) for k, v in state.items()}
+
+    def _get_observation_client(self) -> RobotObservation:
+        self._recv_client_state()
+        obs: dict = dict(self._client_state_latest)
+        for cam_name, cam in self._cameras.items():
+            if getattr(cam, "use_rgb", True):
+                obs[cam_name] = cam.read_latest()
+            if getattr(cam, "use_depth", False):
+                obs[f"{cam_name}_depth"] = cam.read_latest_depth()
+        return obs
+
+    def _send_action_client(self, action: RobotAction) -> RobotAction:
+        """Relay the raw action straight to the onboard controller. NO processing here:
+        the onboard controller interprets it (token / wb / arm)."""
+        import zmq
+
+        if self._client_action_sock is None:
+            raise DeviceNotConnectedError("UnitreeG1 client is not connected")
+        payload = json.dumps({k: float(v) for k, v in action.items()}).encode("utf-8")
+        with contextlib.suppress(zmq.Again):
+            self._client_action_sock.send(payload, zmq.NOBLOCK)
+        return action
+
+    def _disconnect_client(self) -> None:
+        for sock in (self._client_action_sock, self._client_state_sock):
+            if sock is not None:
+                with contextlib.suppress(Exception):
+                    sock.close(linger=0)
+        self._client_action_sock = None
+        self._client_state_sock = None
+        for cam in self._cameras.values():
+            with contextlib.suppress(Exception):
+                cam.disconnect()
+
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        # Thin-client role: no DDS, no controller. Open the high-level ZMQ links to
+        # run_g1_server --onboard (which runs the controller): PUSH actions on
+        # :ACTION_PORT, SUB state echo on :STATE_PORT, cameras via ZMQ.
+        if self._client:
+            self._connect_client()
+            return
+
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
@@ -311,8 +468,12 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
-        else:
-            self._ChannelFactoryInitialize(0, config=self.config)
+        elif self.config.onboard:
+            # Real robot, controller running onboard against local DDS. Initialize the
+            # real SDK channel factory, then take low-level control from the built-in
+            # motion services before we start writing lowcmd.
+            self._ChannelFactoryInitialize(0)
+            self._release_motion_control()
 
         # Initialize direct motor control interface
         self.lowcmd_publisher = self._ChannelPublisher(kTopicLowCommand_Debug, hg_LowCmd)
@@ -392,6 +553,10 @@ class UnitreeG1(Robot):
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
     def disconnect(self):
+        if self._client:
+            self._disconnect_client()
+            return
+
         # Put robot in passive mode before stopping threads
         if not self.config.is_simulation:
             self._send_zero_torque()
@@ -437,6 +602,9 @@ class UnitreeG1(Robot):
             cam.disconnect()
 
     def get_observation(self) -> RobotObservation:
+        if self._client:
+            return self._get_observation_client()
+
         with self._lowstate_lock:
             lowstate = self._lowstate
         if lowstate is None:
@@ -496,6 +664,9 @@ class UnitreeG1(Robot):
         return obs
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        if self._client:
+            return self._send_action_client(action)
+
         action_to_publish = action
         if self.controller is not None:
             # Controller thread owns legs/waist. Here we only update joystick inputs
@@ -541,6 +712,8 @@ class UnitreeG1(Robot):
 
     @property
     def is_connected(self) -> bool:
+        if self._client:
+            return self._client_action_sock is not None
         with self._lowstate_lock:
             return self._lowstate is not None
 
