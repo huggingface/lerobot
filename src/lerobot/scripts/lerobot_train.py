@@ -244,14 +244,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
         # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32 -> full precision).
+        has_policy_dtype = hasattr(cfg.trainable_config, "dtype")
         policy_dtype = getattr(cfg.trainable_config, "dtype", None)
         mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
         # Policies without a `dtype` field fall back to `use_amp`, which would otherwise be
-        # silently ignored here while lerobot-eval honors it (bf16 where supported, else fp16
-        # to match torch.autocast's cuda default).
-        if mixed_precision is None and getattr(cfg.trainable_config, "use_amp", False):
-            use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-            mixed_precision = "bf16" if use_bf16 else "fp16"
+        # silently ignored here while lerobot-eval honors it. Follow torch.autocast's default
+        # for the configured device so training and evaluation use the same precision.
+        if not has_policy_dtype and getattr(cfg.trainable_config, "use_amp", False):
+            device_type = torch.device(cfg.trainable_config.device).type
+            autocast_dtype = torch.get_autocast_dtype(device_type)
+            mixed_precision = {torch.bfloat16: "bf16", torch.float16: "fp16"}[autocast_dtype]
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
