@@ -69,7 +69,7 @@ POLICY_FILES = {
 def load_policy(
     repo_id: str = DEFAULT_SONIC_REPO_ID,
     policy_type: str = "default",
-) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray, np.ndarray]:
     """Load the SONIC decoder and its baked-in deploy constants from ONNX metadata.
 
     Args:
@@ -77,8 +77,9 @@ def load_policy(
         policy_type: Either "default" (full decoder) or "low_latency" (distilled)
 
     Returns:
-        (decoder, kp, kd, default_angles, action_scale, neutral_token) tuple. The gains/pose/
-        scale are (29,) float32 in IsaacLab joint order; neutral_token is the (64,) idle latent.
+        (decoder, default_angles, action_scale, neutral_token) tuple. The pose/scale are (29,)
+        float32 in IsaacLab joint order; neutral_token is the (64,) idle latent. PD gains are
+        not read here -- SONIC uses the robot's config gains, which equal the derived defaults.
     """
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
@@ -94,14 +95,14 @@ def load_policy(
     model = onnx.load(decoder_path, load_external_data=False)
     metadata = {prop.key: prop.value for prop in model.metadata_props}
 
-    required = ("kp", "kd", "default_angles", "action_scale", "neutral_token")
+    required = ("default_angles", "action_scale", "neutral_token")
     missing = [k for k in required if k not in metadata]
     if missing:
         raise ValueError(f"ONNX model must contain {list(required)} in metadata (missing {missing})")
 
     arr = {k: np.array(json.loads(metadata[k]), dtype=np.float32) for k in required}
-    logger.info(f"Loaded SONIC deploy constants from ONNX ({len(arr['kp'])} joints)")
-    return decoder, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
+    logger.info(f"Loaded SONIC deploy constants from ONNX ({len(arr['default_angles'])} joints)")
+    return decoder, arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
 class SonicWholeBodyController:
@@ -115,8 +116,8 @@ class SonicWholeBodyController:
     control_dt = CONTROL_DT
 
     def __init__(self, policy_type: str = "default"):
-        self.decoder, self.kp, self.kd, self.default_angles, self.action_scale, self.neutral_token = (
-            load_policy(policy_type=policy_type)
+        self.decoder, self.default_angles, self.action_scale, self.neutral_token = load_policy(
+            policy_type=policy_type
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
         self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
