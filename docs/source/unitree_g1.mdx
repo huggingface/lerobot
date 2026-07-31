@@ -290,6 +290,47 @@ lerobot-rollout \
 
 ---
 
+## Part 5: SONIC Whole-Body Control (Latent-Token Policies)
+
+LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://github.com/NVIDIA/sonic) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
+
+The controller loads its ONNX decoder and all deploy constants (PD gains, `default_angles`, `action_scale`, and the neutral token) from [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder). The repo also ships a distilled low-latency decoder, selectable with the controller's `policy_type="low_latency"` argument (defaults to `"default"`).
+
+### Test in Simulation
+
+Any token-output policy trained on SONIC motion tokens (e.g. [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)) can drive it:
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 15}}'
+```
+
+### Run on the Physical Robot
+
+Start the robot server (see Part 2), then point the rollout at the robot instead of the sim:
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=<ROBOT_IP> \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
+```
+
+On connect, the robot eases every joint to the decoder's `default_angles` before the controller takes over, so the first policy commands don't snap from the connect-time pose.
+
+---
+
 ## Additional Resources
 
 - [Unitree SDK Documentation](https://github.com/unitreerobotics/unitree_sdk2_python)
@@ -300,4 +341,4 @@ lerobot-rollout \
 
 ---
 
-_Last updated: March 2026_
+_Last updated: July 2026_
