@@ -335,16 +335,23 @@ def _is_remote_uri(path) -> bool:
     return "://" in str(path)
 
 
-def _connect(db_uri: str, storage_options: dict | None):
+def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
     options = dict(storage_options or {})
     if _is_remote_uri(db_uri):
         os.environ.setdefault("LANCE_IO_THREADS", "256")
-    if db_uri.startswith("hf://") and "token" not in options:
-        from huggingface_hub import get_token
+    if db_uri.startswith("hf://"):
+        if "token" not in options:
+            from huggingface_hub import get_token
 
-        token = get_token()
-        if token:
-            options["token"] = token
+            token = get_token()
+            if token:
+                options["token"] = token
+        # Read the tables from the SAME revision the metadata was loaded from,
+        # else a tag/commit request silently mixes meta and data from different
+        # revisions. (lance honors 'revision' in storage_options but not an
+        # '@rev' URI suffix, verified.)
+        if revision and "revision" not in options:
+            options["revision"] = revision
     return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
 
 
@@ -372,10 +379,17 @@ def _materialize_meta(db, local_root: Path) -> None:
     try:
         # Stream row groups: meta/ is usually small, but per-episode stats
         # reach hundreds of MB at droid scale (76k episodes = 566 MB).
+        tmp_resolved = tmp_dir.resolve()
         for batch in table.search().select(["path", "data"]).to_batches():
             paths = batch.column("path").to_pylist()
             for i, rel_path in enumerate(paths):
-                dst = tmp_dir / rel_path
+                # rel_path comes from a possibly-remote table: an absolute path
+                # or one containing '..' would escape tmp_dir (pathlib drops the
+                # base on an absolute join), letting a crafted dataset overwrite
+                # arbitrary files. Confine every write under tmp_dir.
+                dst = (tmp_dir / rel_path).resolve()
+                if not dst.is_relative_to(tmp_resolved):
+                    raise ValueError(f"meta table entry escapes the cache directory: {rel_path!r}")
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(batch.column("data")[i].as_py())
         try:
@@ -503,15 +517,27 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
         )
+        # For hub-hosted tables, read from the metadata's RESOLVED revision so
+        # tables and meta can never come from different revisions.
+        self._hub_revision = self.meta.revision if self._db_uri == f"hf://datasets/{repo_id}" else None
 
-        if set(self.meta.depth_keys) & set(self.meta.image_keys):
+        if self.meta.image_keys:
+            # Only video-backed camera features are supported: _tabular_keys
+            # excludes image_keys and the decode path handles video_keys only,
+            # so an image-backed dataset would silently drop its camera columns
+            # (or KeyError under image_transforms). This also covers image-backed
+            # depth. Re-encode images as video (the standard v3.0 recording path).
             raise NotImplementedError(
-                "Depth stored as raw images is not supported by LanceDBDataset; "
-                "re-encode depth as video (the standard v3.0 recording path)."
+                f"Image-backed features are not supported by LanceDBDataset: {self.meta.image_keys}. "
+                "Re-encode them as video."
             )
         # Depth videos carry 16-bit planes torchcodec cannot emit, so depth
         # keys decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
+        if self.meta.depth_keys:
+            # Frames dequantize to depth_output_unit; stats must match or the
+            # processor normalizes with a 1000x-off scale. Mirror LeRobotDataset.
+            self.meta.rescale_depth_stats(self._depth_output_unit)
         self._depth_encoder_configs = {
             key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
             for key in self.meta.depth_keys
@@ -621,7 +647,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             # One persistent pool per worker for decoder creation and frame
             # decoding; 16 matches the old per-batch decoder-creation cap.
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
-        db = _connect(self._db_uri, self._storage_options)
+        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision)
         table = db.open_table(FRAMES_TABLE)
         # Integrity: row position == absolute frame index requires exactly
         # total_frames rows. Catches truncated or over-appended tables at

@@ -458,3 +458,73 @@ def test_depth_remote_ranged_parity(depth_dataset_roots, monkeypatch, tmp_path):
     indices = [0, len(upstream) - 1]
     for item, idx in zip(remote_ds.__getitems__(indices), indices, strict=True):
         assert_items_equal(item, upstream[idx])
+
+
+def test_materialize_meta_rejects_escaping_paths(tmp_path):
+    """A meta table entry with an absolute or traversing path must not escape the cache."""
+    import lerobot.datasets.lancedb_dataset as module
+
+    for bad in ["/etc/passwd", "../../etc/passwd"]:
+        db = lancedb.connect(str(tmp_path / f"db_{abs(hash(bad))}"))
+        db.create_table(
+            module.META_TABLE,
+            pa.table(
+                {"path": [bad], "data": [b"x"]},
+                schema=pa.schema([("path", pa.string()), ("data", pa.large_binary())]),
+            ),
+        )
+        with pytest.raises(ValueError, match="escapes the cache directory"):
+            module._materialize_meta(db, tmp_path / f"root_{abs(hash(bad))}")
+
+
+def test_image_backed_features_rejected(tmp_path, lerobot_dataset_factory):
+    """Image-backed camera features (not video) must fail fast, not silently drop columns."""
+    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES
+
+    src_root = tmp_path / "src_img"
+    lerobot_dataset_factory(
+        root=src_root,
+        total_episodes=2,
+        total_frames=40,
+        use_videos=False,
+        camera_features=DUMMY_CAMERA_FEATURES,
+    )
+    lance_root = tmp_path / "lance_img"
+    convert_frames_to_lance(src_root, lance_root)
+    with pytest.raises(NotImplementedError, match="Image-backed features"):
+        LanceDBDataset(root=lance_root)
+
+
+def test_depth_stats_rescaled_to_output_unit(depth_dataset_roots):
+    """Depth stats must be rescaled to depth_output_unit, matching LeRobotDataset."""
+    src_root, lance_root = depth_dataset_roots
+    depth_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.depth_keys[0]
+    for unit in ("m", "mm"):
+        upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, depth_output_unit=unit)
+        lance_ds = LanceDBDataset(root=lance_root, depth_output_unit=unit)
+        torch.testing.assert_close(
+            lance_ds.meta.stats[depth_key]["mean"], upstream.meta.stats[depth_key]["mean"], rtol=0, atol=0
+        )
+
+
+def test_connect_passes_hub_revision(monkeypatch):
+    """_connect must forward a hub revision into storage_options (tables must match meta)."""
+    import lerobot.datasets.lancedb_dataset as module
+
+    captured = {}
+
+    def fake_connect(uri, **kwargs):
+        captured["uri"] = uri
+        captured["storage_options"] = kwargs.get("storage_options", {})
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(module.lancedb, "connect", fake_connect)
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        module._connect("hf://datasets/org/name", {"token": "t"}, revision="v3.0")
+    assert captured["storage_options"].get("revision") == "v3.0"
+
+    # non-hub URIs must NOT get a revision key
+    captured.clear()
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        module._connect("s3://bucket/path", None, revision="v3.0")
+    assert "revision" not in captured["storage_options"]
