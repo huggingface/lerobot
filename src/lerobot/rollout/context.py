@@ -22,7 +22,8 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+from copy import copy
+from dataclasses import dataclass, field
 from threading import Event
 from typing import TYPE_CHECKING
 
@@ -69,13 +70,17 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _compile_predict_action_chunk(
+def _wrap_predict_action_chunk_with_torch_compile(
     policy: PreTrainedPolicy,
     *,
     backend: str,
     mode: str,
 ) -> bool:
-    """Compile a policy action function and report whether compilation was applied."""
+    """Install the JIT wrapper and report whether it was configured successfully.
+
+    ``torch.compile`` compiles lazily on the first invocation, so success here
+    does not guarantee that backend compilation will succeed during warm-up.
+    """
     if not hasattr(torch, "compile"):
         logger.warning("torch.compile is not available in this PyTorch build")
         return False
@@ -87,10 +92,10 @@ def _compile_predict_action_chunk(
             mode=mode,
         )
     except Exception as exc:
-        logger.warning("Failed to apply torch.compile: %s", exc)
+        logger.warning("Failed to configure torch.compile: %s", exc)
         return False
 
-    logger.info("torch.compile applied to predict_action_chunk")
+    logger.info("torch.compile configured for predict_action_chunk")
     return True
 
 
@@ -268,14 +273,17 @@ def build_rollout_context(
 
     torch_compile_active = cfg.use_torch_compile
     if cfg.use_torch_compile and policy.type not in ("pi0", "pi05"):
-        torch_compile_active = _compile_predict_action_chunk(
+        torch_compile_active = _wrap_predict_action_chunk_with_torch_compile(
             policy,
             backend=cfg.torch_compile_backend,
             mode=cfg.torch_compile_mode,
         )
 
     if cfg.use_torch_compile and not torch_compile_active:
-        cfg = replace(cfg, use_torch_compile=False)
+        # RolloutConfig.__post_init__ reloads the policy configuration, so avoid
+        # dataclasses.replace when carrying the effective state downstream.
+        cfg = copy(cfg)
+        cfg.use_torch_compile = False
 
     # --- 2. Robot-side processors (user-supplied or defaults) --------
     if (

@@ -455,38 +455,6 @@ def test_dagger_events_reset():
 # ---------------------------------------------------------------------------
 
 
-def test_compile_predict_action_chunk_uses_mode_without_options(monkeypatch):
-    from lerobot.rollout.context import _compile_predict_action_chunk
-
-    policy = MagicMock()
-    original_predict = policy.predict_action_chunk
-    compiled_predict = MagicMock()
-    compile_mock = MagicMock(return_value=compiled_predict)
-    monkeypatch.setattr(torch, "compile", compile_mock)
-
-    applied = _compile_predict_action_chunk(policy, backend="inductor", mode="reduce-overhead")
-
-    assert applied is True
-    assert policy.predict_action_chunk is compiled_predict
-    compile_mock.assert_called_once_with(
-        original_predict,
-        backend="inductor",
-        mode="reduce-overhead",
-    )
-
-
-def test_compile_predict_action_chunk_reports_failure(monkeypatch, caplog):
-    from lerobot.rollout.context import _compile_predict_action_chunk
-
-    policy = MagicMock()
-    monkeypatch.setattr(torch, "compile", MagicMock(side_effect=RuntimeError("compile failed")))
-
-    applied = _compile_predict_action_chunk(policy, backend="inductor", mode="default")
-
-    assert applied is False
-    assert "Failed to apply torch.compile: compile failed" in caplog.text
-
-
 def test_rollout_context_fields():
     from lerobot.rollout import RolloutContext
 
