@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _unitree_sdk_available
 
 if TYPE_CHECKING or _unitree_sdk_available:
@@ -208,7 +209,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        remote_features = dict.fromkeys(self.remote_controller.remote_action, float)
+        remote_features: dict[str, type] = dict.fromkeys(self.remote_controller.remote_action, float)
         if not self._arm_control_enabled:
             return remote_features
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
@@ -269,10 +270,13 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        joint_action = {}
+        joint_action: dict[str, float] = {}
         left_raw = None
         right_raw = None
         if self._arm_control_enabled:
+            if self.ik_helper is None:
+                raise DeviceNotConnectedError(f"{self} arm control is enabled but the IK helper is missing.")
+
             left_raw = self.left_arm.read_raw()
             right_raw = self.right_arm.read_raw()
 

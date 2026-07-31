@@ -33,13 +33,18 @@ from .configuration_keyboard import (
 )
 
 PYNPUT_AVAILABLE = _pynput_available
-keyboard = None
+# `pynput` is an optional dependency, so the module object is only bound when the
+# import succeeds. Importing under an alias and assigning afterwards keeps a single
+# binding for `keyboard` (no redefinition) while still allowing it to stay None.
+keyboard: Any = None
 if PYNPUT_AVAILABLE:
     try:
-        from pynput import keyboard
+        from pynput import keyboard as _pynput_keyboard
     except Exception as e:
         PYNPUT_AVAILABLE = False
         logging.info("Could not import pynput keyboard backend: %s", e)
+    else:
+        keyboard = _pynput_keyboard
 
 
 class KeyboardTeleop(Teleoperator):
@@ -56,18 +61,17 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
+        self.event_queue: Queue[tuple[Any, bool]] = Queue()
+        self.current_pressed: dict[Any, bool] = {}
+        self.listener: Any = None
+        self.logs: dict[str, Any] = {}
 
     @property
     def action_features(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+        # `get_action` returns one entry per key that is currently held down, so the
+        # set of action names is not known ahead of time. Subclasses that emit a fixed
+        # action vector (end-effector, rover) override this with a concrete spec.
+        return {}
 
     @property
     def feedback_features(self) -> dict:
@@ -79,7 +83,8 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        """Keyboard teleop doesn't require calibration."""
+        return True
 
     @check_if_already_connected
     def connect(self) -> None:
@@ -158,7 +163,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue[Any] = Queue()
 
     @property
     def action_features(self) -> dict:
@@ -219,7 +224,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, Any]:
         """
         Get extra control events from the keyboard such as intervention status,
         episode termination, success indicators, etc.

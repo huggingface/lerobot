@@ -17,6 +17,7 @@
 import logging
 import threading
 from collections import deque
+from collections.abc import Mapping
 from pprint import pformat
 from typing import TYPE_CHECKING
 
@@ -65,7 +66,7 @@ class HomunculusArm(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: dict[str, deque[int]] = {
+        self._buffers: dict[str, deque[float]] = {
             joint: deque(maxlen=n)
             for joint in (
                 "shoulder_pitch",
@@ -166,8 +167,8 @@ class HomunculusArm(Teleoperator):
         display_len = max(len(key) for key in joints)
 
         start_positions = self._read(joints, normalize=False)
-        mins = start_positions.copy()
-        maxes = start_positions.copy()
+        mins = {joint: int(v) for joint, v in start_positions.items()}
+        maxes = {joint: int(v) for joint, v in start_positions.items()}
 
         user_pressed_enter = False
         while not user_pressed_enter:
@@ -200,7 +201,7 @@ class HomunculusArm(Teleoperator):
         pass
 
     # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
-    def _normalize(self, values: dict[str, int]) -> dict[str, float]:
+    def _normalize(self, values: Mapping[str, float]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -220,7 +221,7 @@ class HomunculusArm(Teleoperator):
 
         return normalized_values
 
-    def _apply_ema(self, raw: dict[str, int]) -> dict[str, float]:
+    def _apply_ema(self, raw: Mapping[str, float]) -> dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict."""
         smoothed: dict[str, float] = {}
         for joint, value in raw.items():
@@ -228,12 +229,13 @@ class HomunculusArm(Teleoperator):
             self._buffers[joint].append(value)
 
             # initialise on first run
-            if self._ema[joint] is None:
+            previous = self._ema[joint]
+            if previous is None:
                 self._ema[joint] = float(value)
             else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+                self._ema[joint] = self.alpha * value + (1 - self.alpha) * previous
 
-            smoothed[joint] = self._ema[joint]
+            smoothed[joint] = float(self._ema[joint] or 0.0)
         return smoothed
 
     def _read(

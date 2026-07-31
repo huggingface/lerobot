@@ -200,11 +200,11 @@ class OpenArmLeader(Teleoperator):
         # Use sync_read_all_states to get pos/vel/torque in one go
         states = self.bus.sync_read_all_states()
         for motor in self.bus.motors:
-            state = states.get(motor, {})
-            action_dict[f"{motor}.pos"] = state.get("position")
+            state = states.get(motor)
+            action_dict[f"{motor}.pos"] = state.get("position") if state else None
             if self.config.use_velocity_and_torque:
-                action_dict[f"{motor}.vel"] = state.get("velocity")
-                action_dict[f"{motor}.torque"] = state.get("torque")
+                action_dict[f"{motor}.vel"] = state.get("velocity") if state else None
+                action_dict[f"{motor}.torque"] = state.get("torque") if state else None
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
