@@ -232,7 +232,7 @@ class UnitreeG1(Robot):
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
         # Controllers may contribute their own proprio features (e.g. SONIC's token state).
-        controller_ft = getattr(self.controller, "observation_features", {})
+        controller_ft = getattr(self.controller, "observation_ft", {})
         return {**self._motors_ft, **controller_ft, **self._cameras_ft}
 
     @cached_property
@@ -242,7 +242,7 @@ class UnitreeG1(Robot):
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
         # Whole-body controllers (SONIC): 64-D latent token.
-        controller_ft = getattr(self.controller, "action_features", None)
+        controller_ft = getattr(self.controller, "action_ft", None)
         if controller_ft is not None:
             return dict(controller_ft)
 
@@ -498,9 +498,8 @@ class UnitreeG1(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         action_to_publish = action
         if self.controller is not None:
-            # The controller thread owns legs/waist (and for full-body controllers like SONIC,
-            # the arms too). Here we only publish arm targets from the teleoperator; full-body
-            # controllers carry no <joint>.q in their action, so this is empty for them.
+            # Controller thread owns legs/waist. Here we only update joystick inputs
+            # and publish arm targets from the teleoperator.
             self._update_controller_action(action)
             arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
             action_to_publish = {
@@ -525,8 +524,7 @@ class UnitreeG1(Robot):
                 local_idx = joint.value - arm_start_idx
                 tau[joint.value] = arm_tau[local_idx]
 
-        if action_to_publish:
-            self.publish_lowcmd(action_to_publish, tau=tau)
+        self.publish_lowcmd(action_to_publish, tau=tau)
         return action
 
     def _update_controller_action(self, action: RobotAction) -> None:
@@ -582,8 +580,7 @@ class UnitreeG1(Robot):
             for motor in G1_29_JointIndex:
                 init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-            # Interpolate to default position. Publish directly so the whole body moves:
-            # send_action() would arm-filter this to the arms while a controller is active.
+            # Interpolate to default position
             for step in range(num_steps):
                 start_time = time.time()
 
