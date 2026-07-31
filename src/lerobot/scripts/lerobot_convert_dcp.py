@@ -132,6 +132,7 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
     logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
 
+@parser.wrap()
 def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
     """Merge a checkpoint's DCP shards into `model.safetensors`, then optionally publish it.
 
@@ -157,29 +158,16 @@ def convert_checkpoint(cfg: ConvertDcpConfig) -> Path:
             "saved with checkpoint_format=dcp (or safetensors_dcp)."
         )
     logging.info(f"Merging {dcp_dir} -> {pretrained_dir / 'model.safetensors'}")
-    safetensors_path = dcp_to_safetensors(dcp_dir, pretrained_dir, keep_dcp=not cfg.delete_dcp)
+    safetensors_path = dcp_to_safetensors(dcp_dir, pretrained_dir, delete_dcp=cfg.delete_dcp)
     if cfg.push_to_hub:
         _publish_converted(pretrained_dir, cfg.push_to_hub, cfg.private)
     return safetensors_path
 
 
-@parser.wrap()
-def convert_dcp(cfg: ConvertDcpConfig) -> Path:
-    """Parser-wrapped CLI entry: run `convert_checkpoint` on the draccus-parsed config.
-
-    Args:
-        cfg (ConvertDcpConfig): The conversion config parsed from the command line.
-
-    Returns:
-        Path: The path to the merged `model.safetensors` file.
-    """
-    return convert_checkpoint(cfg)
-
-
 def main() -> None:
     """`lerobot-convert-dcp` console entry point: set up logging and run the conversion."""
     init_logging()
-    convert_dcp()
+    convert_checkpoint()
 
 
 if __name__ == "__main__":

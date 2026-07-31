@@ -16,6 +16,7 @@
 """lerobot-convert-dcp: locating, converting, and graceful-degradation publishing."""
 
 import logging
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,9 +39,12 @@ def fake_merge(monkeypatch):
     """Stand in for accelerate.utils.merge_fsdp_weights: writes a marker safetensors file."""
     import accelerate.utils
 
-    def merge(checkpoint_dir, output_path, safe_serialization=True):
+    def merge(checkpoint_dir, output_path, safe_serialization=True, remove_checkpoint_dir=False):
         assert isinstance(checkpoint_dir, str) and isinstance(output_path, str)  # str, not Path
         (Path(output_path) / "model.safetensors").write_bytes(b"merged")
+        # Mirror accelerate: the shard directory is removed by the merge itself, when asked.
+        if remove_checkpoint_dir:
+            shutil.rmtree(checkpoint_dir)
 
     monkeypatch.setattr(accelerate.utils, "merge_fsdp_weights", merge)
 
@@ -114,6 +118,6 @@ class TestPublishGracefulDegradation:
         """accelerate 1.14's DCP helpers do string containment checks."""
         dcp_dir = tmp_path / "pytorch_model_fsdp_0"
         dcp_dir.mkdir()
-        out = dist_checkpoint.dcp_to_safetensors(dcp_dir, tmp_path, keep_dcp=False)
+        out = dist_checkpoint.dcp_to_safetensors(dcp_dir, tmp_path, delete_dcp=True)
         assert out == tmp_path / "model.safetensors"
         assert not dcp_dir.exists()

@@ -27,7 +27,6 @@ Two artifact channels with distinct owners:
 Every function that touches sharded state is a collective and must run on ALL ranks.
 """
 
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -172,24 +171,25 @@ def load_sharded_optimizer(
     )
 
 
-def dcp_to_safetensors(dcp_dir: Path, output_dir: Path, *, keep_dcp: bool = True) -> Path:
+def dcp_to_safetensors(dcp_dir: Path, output_dir: Path, *, delete_dcp: bool = False) -> Path:
     """Merge a DCP shard directory into a single `model.safetensors` (offline, single process).
 
     Thin wrapper over `accelerate.utils.merge_fsdp_weights`, which loads the shards without a
-    process group and writes safetensors directly.
+    process group, writes safetensors directly, and — when asked — removes the merged shard
+    directory itself, only on the main process and only once the merge has succeeded.
 
     Args:
         dcp_dir (Path): The DCP shard directory to merge (e.g. `.../pytorch_model_fsdp_0`).
         output_dir (Path): The directory the merged `model.safetensors` is written into.
-        keep_dcp (bool): Whether to keep the shard directory after merging; when False it is
-            deleted. Defaults to True.
+        delete_dcp (bool): Whether to remove the shard directory once it has been merged.
+            Defaults to False.
 
     Returns:
         Path: The written `model.safetensors` file's path.
     """
     from accelerate.utils import merge_fsdp_weights
 
-    merge_fsdp_weights(str(dcp_dir), str(output_dir), safe_serialization=True)
-    if not keep_dcp:
-        shutil.rmtree(dcp_dir)
+    merge_fsdp_weights(
+        str(dcp_dir), str(output_dir), safe_serialization=True, remove_checkpoint_dir=delete_dcp
+    )
     return output_dir / "model.safetensors"
