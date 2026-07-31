@@ -31,6 +31,7 @@ pytest.importorskip("transformers")
 pytest.importorskip("scipy")
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.policies import get_policy_class, make_policy_config
 from lerobot.policies.molmoact2 import (
     modeling_molmoact2 as molmoact2_modeling,
@@ -57,7 +58,6 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
     make_molmoact2_pre_post_processors,
 )
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 

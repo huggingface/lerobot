@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import OBS_STATE
 
 
 @PreTrainedConfig.register_subclass("vla_jepa")
@@ -121,6 +123,13 @@ class VLAJEPAConfig(PreTrainedConfig):
         self.action_dim = self.action_feature.shape[0]
         if self.robot_state_feature is not None:
             self.state_dim = self.robot_state_feature.shape[0]
+
+    def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
+        """Add `observation.state` to `input_features` if missing, so it gets normalized."""
+        if OBS_STATE in self.input_features or OBS_STATE not in dataset_features:
+            return
+        shape = tuple(dataset_features[OBS_STATE]["shape"])
+        self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

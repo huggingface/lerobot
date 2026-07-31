@@ -749,6 +749,9 @@ class PI0Policy(PreTrainedPolicy):
     config_class = PI0Config
     name = "pi0"
 
+    def supports_rtc(self) -> bool:
+        return True
+
     def __init__(
         self,
         config: PI0Config,
