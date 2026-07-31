@@ -45,6 +45,7 @@ from lerobot.common.train_utils import (
     load_training_state,
     push_checkpoint_to_hub,
     save_checkpoint,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
@@ -242,9 +243,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
-        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32/absent -> launcher default).
+        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32 -> full precision).
+        has_policy_dtype = hasattr(cfg.trainable_config, "dtype")
         policy_dtype = getattr(cfg.trainable_config, "dtype", None)
         mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
+        # Policies without a `dtype` field fall back to `use_amp`, which would otherwise be
+        # silently ignored here while lerobot-eval honors it. Follow torch.autocast's default
+        # for the configured device so training and evaluation use the same precision.
+        if not has_policy_dtype and getattr(cfg.trainable_config, "use_amp", False):
+            device_type = torch.device(cfg.trainable_config.device).type
+            autocast_dtype = torch.get_autocast_dtype(device_type)
+            mixed_precision = {torch.bfloat16: "bf16", torch.float16: "fp16"}[autocast_dtype]
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
@@ -348,7 +357,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -356,11 +364,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
         }
+        # On resume, the checkpoint's saved processor stats are authoritative: they may have
+        # been adapted by the policy (e.g. EVO1 pads state/action stats to max_state_dim),
+        # and force-feeding raw dataset stats over them crashes normalization (#4006).
+        # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
+        if not cfg.resume:
+            preprocessor_overrides["normalizer_processor"]["stats"] = dataset.meta.stats
+            postprocessor_overrides["unnormalizer_processor"]["stats"] = dataset.meta.stats
         if getattr(active_cfg, "use_relative_actions", False):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
@@ -611,7 +625,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
+        is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 

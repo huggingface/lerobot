@@ -21,6 +21,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -40,7 +41,6 @@ from lerobot.processor.converters import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     DONE,

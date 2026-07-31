@@ -325,15 +325,16 @@ def test_get_color_sensor_prefers_rgb_camera():
     assert camera._get_color_sensor() is rgb
 
 
-def test_get_color_sensor_falls_back_to_stereo_module():
-    """D405 has no separate RGB module; color comes from Stereo Module."""
+def test_get_color_sensor_raises_without_dedicated_rgb_module():
+    """D405 has no separate RGB module; we refuse to touch the shared Stereo Module."""
     config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     stereo = _make_mock_sensor("Stereo Module")
     _attach_mock_color_sensor(camera, stereo)
 
-    assert camera._get_color_sensor() is stereo
+    with pytest.raises(RuntimeError, match="dedicated 'RGB Camera' module"):
+        camera._get_color_sensor()
 
 
 def test_get_color_sensor_raises_with_available_sensors():
