@@ -604,6 +604,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
     ) -> torch.Tensor:
         """
         Optimized autoregressive decoding for FAST tokens using KV Caching.
+
+        Greedy decoding stops once every sequence emits the end-of-action marker. The
+        returned tensor keeps its fixed shape, with positions not generated after the
+        batch-wide stop left zero-filled. Stochastic decoding always runs to
+        ``max_decoding_steps`` so early stopping does not change the RNG state used by
+        subsequent calls.
         """
         if max_decoding_steps is None:
             max_decoding_steps = self.config.max_action_tokens
@@ -612,10 +618,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
-        # detokenize_actions() cuts at the first "|", so anything generated past it is
-        # discarded anyway.
-        pipe_id = self._paligemma_tokenizer.convert_tokens_to_ids("|")
-        finished = torch.zeros(bsize, dtype=torch.bool, device=device)
+        # detokenize_actions() cuts at the first "|", so greedy decoding can stop once
+        # every sequence has emitted it. Keep stochastic decoding unchanged because
+        # skipping multinomial calls would shift the RNG state for subsequent calls.
+        end_of_action_token_id = self._paligemma_tokenizer.convert_tokens_to_ids("|")
+        finished = torch.zeros(bsize, dtype=torch.bool, device=device) if temperature == 0 else None
 
         # --- 1. PREFILL PHASE ---
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
@@ -668,7 +675,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Initialize storage for generated tokens
         generated_action_tokens = torch.zeros((bsize, max_decoding_steps), dtype=torch.long, device=device)
         generated_action_tokens[:, 0] = next_token.squeeze(-1)
-        finished |= next_token.squeeze(-1) == pipe_id
+        if finished is not None:
+            finished |= next_token.squeeze(-1) == end_of_action_token_id
+            if bool(finished.all()):
+                return generated_action_tokens
 
         # Track valid tokens mask (0 for pad, 1 for valid)
         # We need this to tell the new token what it can attend to (images + text + past actions)
@@ -719,9 +729,10 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             generated_action_tokens[:, t] = next_token.squeeze(-1)
 
-            finished |= next_token.squeeze(-1) == pipe_id
-            if bool(finished.all()):
-                break
+            if finished is not None:
+                finished |= next_token.squeeze(-1) == end_of_action_token_id
+                if bool(finished.all()):
+                    break
 
         return generated_action_tokens
 
