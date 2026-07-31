@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import draccus
 import pytest
 from conftest import ACTION_DIM, ACTION_HORIZON, IMAGE_SIZE, NUM_VIDEO_FRAMES, STATE_DIM, make_config
 
@@ -55,3 +56,42 @@ def test_validate_features_sets_action_dim_from_feature() -> None:
     config = make_config(action_dim=6, state_dim=10)
     assert config.action_dim == 6
     assert config.state_dim == 10
+
+
+def test_legacy_config_omission_disables_multihorizon() -> None:
+    config = draccus.decode(VLAJEPAConfig, {"device": "cpu"})
+    assert config.prediction_horizons is None
+    assert config.temporal_consistency_weight == 0.0
+
+
+def test_multihorizon_tuple_serializes_as_json_list() -> None:
+    config = VLAJEPAConfig(device="cpu", prediction_horizons=[1, 2])
+    assert config.prediction_horizons == (1, 2)
+    assert draccus.encode(config)["prediction_horizons"] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"prediction_horizons": []}, "must not be empty"),
+        ({"prediction_horizons": [0, 1]}, "positive integers"),
+        ({"prediction_horizons": [1.5]}, "positive integers"),
+        ({"prediction_horizons": [True]}, "positive integers"),
+        ({"prediction_horizons": [2, 1]}, "strictly increasing"),
+        ({"prediction_horizons": [1, 1]}, "strictly increasing"),
+        ({"prediction_horizons": [1, 3]}, "Only encoded temporal horizons 1 and 2"),
+        ({"prediction_horizons": [1], "enable_world_model": False}, "enable_world_model"),
+        ({"prediction_horizons": [1], "num_video_frames": 5}, "divisible"),
+        ({"prediction_horizons": [1, 2], "num_video_frames": 4}, "encoded video length"),
+        ({"temporal_consistency_weight": -0.1}, "finite and >= 0"),
+        ({"temporal_consistency_weight": float("nan")}, "finite and >= 0"),
+        ({"temporal_consistency_weight": 0.1}, "requires `prediction_horizons`"),
+        (
+            {"prediction_horizons": [1], "temporal_consistency_weight": 0.1},
+            "requires prediction horizons 1 and 2",
+        ),
+    ],
+)
+def test_multihorizon_config_validation(kwargs: dict, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        VLAJEPAConfig(device="cpu", **kwargs)

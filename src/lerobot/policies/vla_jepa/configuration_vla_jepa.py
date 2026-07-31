@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
+from numbers import Integral
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -81,6 +83,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     predictor_dropout: float = 0.0
     world_model_loss_weight: float = 0.1
     jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
+    prediction_horizons: tuple[int, ...] | None = None
+    temporal_consistency_weight: float = 0.0
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
 
     resize_images_to: tuple[int, int] | None = None
@@ -112,6 +116,39 @@ class VLAJEPAConfig(PreTrainedConfig):
                 f"`video_horizon` ({self.num_video_frames}) must be >= 2 * `jepa_tubelet_size` "
                 f"({self.jepa_tubelet_size}) to have at least one context and one GT temporal position."
             )
+        if not math.isfinite(self.temporal_consistency_weight) or self.temporal_consistency_weight < 0:
+            raise ValueError("`temporal_consistency_weight` must be finite and >= 0.")
+        if self.prediction_horizons is None:
+            if self.temporal_consistency_weight > 0:
+                raise ValueError("Positive temporal consistency requires `prediction_horizons`.")
+            return
+
+        self.prediction_horizons = tuple(self.prediction_horizons)
+        if not self.enable_world_model:
+            raise ValueError("`prediction_horizons` requires `enable_world_model=True`.")
+        if not self.prediction_horizons:
+            raise ValueError("`prediction_horizons` must not be empty when enabled.")
+        if any(
+            isinstance(horizon, bool) or not isinstance(horizon, Integral)
+            for horizon in self.prediction_horizons
+        ):
+            raise ValueError("`prediction_horizons` must contain only positive integers.")
+        self.prediction_horizons = tuple(int(horizon) for horizon in self.prediction_horizons)
+        if any(horizon <= 0 for horizon in self.prediction_horizons):
+            raise ValueError("`prediction_horizons` must contain only positive integers.")
+        if tuple(sorted(set(self.prediction_horizons))) != self.prediction_horizons:
+            raise ValueError("`prediction_horizons` must be strictly increasing and unique.")
+        if self.prediction_horizons[-1] > 2:
+            raise ValueError("Only encoded temporal horizons 1 and 2 are supported.")
+        if self.num_video_frames % self.jepa_tubelet_size != 0:
+            raise ValueError(
+                "`num_video_frames` must be divisible by `jepa_tubelet_size` in multi-horizon mode."
+            )
+        num_encoded_frames = self.num_video_frames // self.jepa_tubelet_size
+        if self.prediction_horizons[-1] >= num_encoded_frames:
+            raise ValueError("Every prediction horizon must be smaller than the encoded video length.")
+        if self.temporal_consistency_weight > 0 and not {1, 2}.issubset(self.prediction_horizons):
+            raise ValueError("Positive temporal consistency requires prediction horizons 1 and 2.")
 
     def validate_features(self) -> None:
         if not self.image_features:
