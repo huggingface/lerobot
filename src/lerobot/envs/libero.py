@@ -515,7 +515,9 @@ def create_libero_envs(
                     cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
             elif is_sync:
-                out[suite_name][tid] = env_cls(fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP)
+                out[suite_name][tid] = gym.vector.SyncVectorEnv(
+                    fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP
+                )
             else:
                 out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
