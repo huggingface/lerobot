@@ -30,7 +30,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.types import RobotObservation
+from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
@@ -384,7 +384,12 @@ class LiberoEnv(gym.Env):
 
     def close(self):
         if self._env is not None:
-            self._env.close()
+            try:
+                self._env.close()
+            finally:
+                # LIBERO deletes its inner env on close, so this wrapper must
+                # be recreated before the next reset.
+                self._env = None
 
 
 def _make_env_fns(

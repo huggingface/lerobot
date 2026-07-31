@@ -67,8 +67,8 @@ dependencies = [
     "einops>=0.8.0,<0.9.0",
 
     # Config & Hub
-    "draccus==0.10.0", # TODO: Relax version constraint
-    "huggingface-hub>=1.0.0,<2.0.0",
+    "draccus>=0.11.6,<0.12.0",
+    "huggingface-hub>=1.6.0,<2.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments
@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.7.0,<5.0.0",
+    "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -494,6 +494,19 @@ ignore_errors = true
 module = "lerobot.envs.*"
 ignore_errors = false
 
+[[tool.mypy.overrides]]
+module = "lerobot.annotations.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.transforms.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.utils.*"
