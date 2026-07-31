@@ -104,35 +104,6 @@ def load_policy(
     return decoder, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
-def token_action_key(i: int) -> str:
-    """Action-dict key for the i-th component of the 64-D SONIC latent token.
-
-    The ``.pos`` suffix is required so the value flows through ``lerobot-rollout``, which
-    only routes ``.pos`` scalar features onto the policy action vector.
-    """
-    return f"{TOKEN_ACTION_PREFIX}.{i}.pos"
-
-
-def token_state_key(i: int) -> str:
-    """Observation key for the i-th component of the 64-D SONIC latent token state."""
-    return f"{TOKEN_STATE_PREFIX}.{i}.pos"
-
-
-def _extract_token_from_action(action: dict | None) -> np.ndarray | None:
-    """Reassemble a dense (64,) latent token from ``motion_token.{i}`` keys, or None.
-
-    The token-only interface: the caller supplies the 64-D encoder latent directly (e.g. a
-    token-output VLA's action), which the decoder consumes with the encoder bypassed.
-    Requires the full dense token; a partial one is ignored (returns None).
-    """
-    if not action:
-        return None
-    keys = [token_action_key(i) for i in range(TOKEN_DIM)]
-    if any(key not in action for key in keys):
-        return None
-    return np.fromiter((float(action[key]) for key in keys), dtype=np.float32, count=TOKEN_DIM)
-
-
 class SonicWholeBodyController:
     """Full-body SONIC decoder controller for UnitreeG1's background controller thread.
 
@@ -149,6 +120,12 @@ class SonicWholeBodyController:
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
         self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
+
+        # 64-D latent-token action space; rollout maps the policy's 64-D output onto these keys.
+        self.action_ft = {f"{TOKEN_ACTION_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
+        # 64-D token proprio state, aggregated by rollout into observation.state (last token).
+        self.observation_ft = {f"{TOKEN_STATE_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
+
         self.reset()
         logger.info("SonicWholeBodyController initialized")
 
@@ -162,33 +139,23 @@ class SonicWholeBodyController:
         self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
         self._last_token = None  # neutral token is re-seeded on the first tick
 
-    @property
-    def action_features(self) -> dict[str, type]:
-        """64-D latent-token action space (``motion_token.{i}.pos``); rollout maps the policy's
-        64-D output straight onto these keys."""
-        return {token_action_key(i): float for i in range(TOKEN_DIM)}
-
-    @property
-    def observation_features(self) -> dict[str, type]:
-        """64-D latent-token proprio state (``motion_token_state.{i}.pos``), aggregated by the
-        rollout into a 64-D ``observation.state`` (the last token decoded)."""
-        return {token_state_key(i): float for i in range(TOKEN_DIM)}
-
     def observation_state(self) -> dict[str, float]:
         """Echo the last decoded token as ``observation.state`` so a token-output VLA closes
         the loop on its own previous token."""
         token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
-        return {token_state_key(i): float(v) for i, v in enumerate(token)}
+        return {f"{TOKEN_STATE_PREFIX}.{i}.pos": float(v) for i, v in enumerate(token)}
 
     def run_step(self, action: dict, lowstate) -> dict:
         if lowstate is None:
             return {}
 
-        # Token: fresh from the policy this tick, else hold the last one (neutral until the
-        # first real token arrives, which decodes to a stable standing pose).
-        token = _extract_token_from_action(action)
-        if token is not None:
-            self._last_token = token
+        # Token: reassemble the dense 64-D latent from motion_token.{i}.pos (all keys required);
+        # else hold the last one (neutral until the first real token, which decodes to a stand).
+        keys = [f"{TOKEN_ACTION_PREFIX}.{i}.pos" for i in range(TOKEN_DIM)]
+        if action and all(k in action for k in keys):
+            self._last_token = np.fromiter(
+                (float(action[k]) for k in keys), dtype=np.float32, count=TOKEN_DIM
+            )
         elif self._last_token is None:
             self._last_token = self.neutral_token.copy()
 
