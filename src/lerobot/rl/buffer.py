@@ -18,7 +18,7 @@ import functools
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -36,7 +36,7 @@ class BatchTransition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: torch.Tensor
     truncated: torch.Tensor
-    complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    complementary_info: NotRequired[dict[str, torch.Tensor | float | int] | None]
 
 
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:

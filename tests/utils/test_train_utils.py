@@ -30,6 +30,7 @@ from lerobot.common.train_utils import (
     save_checkpoint,
     save_training_state,
     save_training_step,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.utils.constants import (
@@ -48,6 +49,18 @@ def test_get_step_identifier():
     assert get_step_identifier(5, 1000) == "000005"
     assert get_step_identifier(123, 100_000) == "000123"
     assert get_step_identifier(456789, 1_000_000) == "0456789"
+
+
+def test_should_save_checkpoint():
+    # Periodic checkpoints land on multiples of save_freq.
+    assert should_save_checkpoint(10, save_freq=10, total_steps=100) is True
+    assert should_save_checkpoint(5, save_freq=10, total_steps=100) is False
+    # The final step always saves, even when it is not a multiple of save_freq.
+    assert should_save_checkpoint(100, save_freq=30, total_steps=100) is True
+    # save_freq <= 0 disables periodic saving without raising ZeroDivisionError.
+    assert should_save_checkpoint(1, save_freq=0, total_steps=100) is False
+    assert should_save_checkpoint(100, save_freq=0, total_steps=100) is True
+    assert should_save_checkpoint(1, save_freq=-1, total_steps=100) is False
 
 
 def test_get_step_checkpoint_dir():
