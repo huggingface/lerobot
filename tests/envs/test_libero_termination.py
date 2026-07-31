@@ -67,12 +67,10 @@ def _make_env(monkeypatch: pytest.MonkeyPatch, *, n_envs: int = 1) -> Any:
         camera_name="agentview_image",
         camera_name_mapping={"agentview_image": "image"},
     )
-    # Not redundant with the monkeypatched factory above: `LiberoEnv.__init__` defers
-    # simulator creation (`self._env = None`), so nothing is constructed until
-    # `_ensure_env()` runs on first use. Pre-binding it here keeps `_ensure_env()` a
-    # no-op, so `step()` is exercised without a stray `env.reset()` on the mock
-    # polluting the call counts these tests assert on.
-    env._env = inner
+    # No need to bind `env._env` here. `LiberoEnv.__init__` defers simulator creation
+    # (`self._env = None`, libero.py:180) so each worker subprocess gets its own EGL
+    # context; the monkeypatched factory above supplies `inner` when `_ensure_env()`
+    # runs on the first `step()`.
     return env
 
 
