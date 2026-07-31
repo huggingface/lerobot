@@ -240,6 +240,15 @@ def test_video_delta_timestamps_parity(video_dataset_roots):
         assert actual[f"{video_key}_is_pad"].tolist() == expected[f"{video_key}_is_pad"].tolist()
         assert_items_equal(actual, expected)
 
+    # One-element window: squeeze semantics must match upstream's shape.
+    single = {video_key: [0.0]}
+    upstream_single = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, delta_timestamps=single, video_backend="torchcodec"
+    )
+    lance_single = LanceDBDataset(root=lance_root, delta_timestamps=single)
+    for idx in [0, len(upstream_single) - 1]:
+        assert_items_equal(lance_single[idx], upstream_single[idx])
+
 
 @pytest.mark.skipif(
     not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"),
@@ -434,19 +443,6 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
         )
 
 
-def test_video_single_element_window_parity(video_dataset_roots):
-    """A one-element delta window must match upstream's shape (squeeze semantics)."""
-    src_root, lance_root = video_dataset_roots
-    video_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys[0]
-    delta_timestamps = {video_key: [0.0]}
-    upstream = LeRobotDataset(
-        DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
-    )
-    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
-    for idx in [0, len(upstream) - 1]:
-        assert_items_equal(lance_ds[idx], upstream[idx])
-
-
 @pytest.fixture
 def depth_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     from tests.fixtures.constants import DUMMY_CAMERA_FEATURES_WITH_DEPTH
@@ -464,7 +460,8 @@ def depth_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     return src_root, lance_root
 
 
-def test_depth_item_parity(depth_dataset_roots):
+def test_depth_parity(depth_dataset_roots):
+    """Depth items and depth delta windows, both bit-exact vs upstream."""
     src_root, lance_root = depth_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LanceDBDataset(root=lance_root)
@@ -472,16 +469,13 @@ def test_depth_item_parity(depth_dataset_roots):
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
 
-
-def test_depth_delta_window_parity(depth_dataset_roots):
-    src_root, lance_root = depth_dataset_roots
-    meta = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta
+    meta = upstream.meta
     fps, depth_key = meta.fps, meta.depth_keys[0]
     delta_timestamps = {depth_key: [-1 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
-    lance_ds = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
-    for idx in [0, 7, len(upstream) - 1]:
-        assert_items_equal(lance_ds[idx], upstream[idx])
+    upstream_d = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
+    lance_d = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
+    for idx in [0, 7, len(upstream_d) - 1]:
+        assert_items_equal(lance_d[idx], upstream_d[idx])
 
 
 @pytest.mark.skipif(
