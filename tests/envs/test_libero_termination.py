@@ -22,6 +22,7 @@ initial state per episode.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 from unittest.mock import Mock
 
@@ -66,6 +67,11 @@ def _make_env(monkeypatch: pytest.MonkeyPatch, *, n_envs: int = 1) -> Any:
         camera_name="agentview_image",
         camera_name_mapping={"agentview_image": "image"},
     )
+    # Not redundant with the monkeypatched factory above: `LiberoEnv.__init__` defers
+    # simulator creation (`self._env = None`), so nothing is constructed until
+    # `_ensure_env()` runs on first use. Pre-binding it here keeps `_ensure_env()` a
+    # no-op, so `step()` is exercised without a stray `env.reset()` on the mock
+    # polluting the call counts these tests assert on.
     env._env = inner
     return env
 
@@ -94,5 +100,21 @@ def test_termination_does_not_skip_an_initial_state(monkeypatch: pytest.MonkeyPa
 
 
 def test_gymnasium_vector_envs_autoreset_on_the_next_step() -> None:
-    """Pins the assumption this fix relies on, so a Gymnasium bump can't silently break it."""
-    assert gym.vector.AutoresetMode.NEXT_STEP.value == "NextStep"
+    """Pins the assumption this fix relies on, so a Gymnasium bump can't silently break it.
+
+    The assumption is that vector envs *default* to `NEXT_STEP` -- not that the enum
+    member is spelled a particular way. Asserting `NEXT_STEP.value == "NextStep"` would
+    keep passing if a future Gymnasium flipped the default to `SAME_STEP`, and the bug
+    this fixes would come back as a *missing* reset instead of a double one.
+    """
+    env = gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")])
+    try:
+        assert env.metadata["autoreset_mode"] is gym.vector.AutoresetMode.NEXT_STEP
+    finally:
+        env.close()
+
+    # AsyncVectorEnv is what the LIBERO path actually uses, but constructing one spawns
+    # subprocesses; its constructor default carries the same guarantee.
+    for cls in (gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv):
+        default = inspect.signature(cls.__init__).parameters["autoreset_mode"].default
+        assert default is gym.vector.AutoresetMode.NEXT_STEP, f"{cls.__name__} default changed"
