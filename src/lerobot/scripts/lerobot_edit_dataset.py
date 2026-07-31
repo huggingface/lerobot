@@ -210,6 +210,7 @@ Using JSON config file:
 
 import abc
 import logging
+import os
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -342,6 +343,18 @@ def _resolve_io_paths(
     return output_repo_id, input_path, output_path
 
 
+def _is_in_place(input_path: Path, output_path: Path) -> bool:
+    """Whether both paths point to the same dataset directory.
+
+    Uses os.path.samefile (device+inode) which is robust to case-insensitive filesystems, hardlinks
+    and symlinks.
+    """
+    try:
+        return os.path.samefile(input_path, output_path)
+    except OSError:
+        return False
+
+
 def get_output_path(
     repo_id: str,
     new_repo_id: str | None,
@@ -350,15 +363,13 @@ def get_output_path(
 ) -> tuple[str, Path, Path | None]:
     output_repo_id, input_path, output_path = _resolve_io_paths(repo_id, new_repo_id, root, new_root)
 
-    # In case of in-place modification, create a backup of the original dataset (if it exists)
+    # In case of in-place modification, create a backup of the original dataset (if it exists).
     backup_path: Path | None = None
-    if output_path == input_path:
+    if _is_in_place(input_path, output_path):
         backup_path = input_path.with_name(input_path.name + "_old")
-
-        if input_path.exists():
-            if backup_path.exists():
-                shutil.rmtree(backup_path)
-            shutil.move(input_path, backup_path)
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        shutil.move(input_path, backup_path)
 
     return output_repo_id, output_path, backup_path
 
@@ -378,6 +389,7 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
         new_root=cfg.new_root,
     )
 
+    # In case of in-place modification, make the dataset point to the backup directory
     if backup_path is not None:
         dataset.root = backup_path
 
@@ -488,6 +500,7 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
         new_root=cfg.new_root,
     )
 
+    # In case of in-place modification, make the dataset point to the backup directory
     if backup_path is not None:
         dataset.root = backup_path
 
@@ -619,7 +632,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{cfg.repo_id}_recomputed_stats",
     )
-    in_place = output_root == input_root
+    in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
         raise ValueError(
@@ -679,7 +692,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         cfg.new_root,
         default_new_repo_id=f"{cfg.repo_id}_reencoded",
     )
-    in_place = output_root == input_root
+    in_place = _is_in_place(input_root, output_root)
 
     if in_place and not cfg.operation.overwrite:
         raise ValueError(
