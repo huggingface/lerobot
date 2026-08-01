@@ -16,6 +16,7 @@
 import logging
 import os
 import re
+from collections.abc import Sequence
 from glob import glob
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from typing import TYPE_CHECKING
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
+from lerobot.__version__ import __version__
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
@@ -192,6 +194,62 @@ class WandBLogger:
             return
 
         self._wandb.log_artifact(artifact)
+
+    def log_final_model(
+        self,
+        checkpoint_dir: Path,
+        *,
+        step: int,
+        robot_type: str | None = None,
+        camera_keys: Sequence[str] = (),
+        dataset_artifact: "MaterializedArtifact | None" = None,
+    ) -> "MaterializedArtifact":
+        """Publish the final checkpoint's complete model directory as its own versioned Artifact.
+
+        Distinct from `log_policy`'s periodic per-checkpoint uploads: this is invoked exactly once,
+        at the end of training, uploads the *whole* `PRETRAINED_MODEL_DIR` (never just the weights
+        file), and applies `self.cfg.model_artifact_aliases` only to this version. The collection is
+        named `self.cfg.model_artifact_name`, or — when only `self.cfg.registered_model_name` is
+        set — a safe default derived from this run's group, since a Registry link still needs a
+        project-level collection to link from. When `self.cfg.registered_model_name` is set, the
+        committed version is also linked into that Registry collection; `store.upload_directory`
+        performs the upload, waits for it to be committed, and only then does the link (in that
+        order), so the caller never has to guess whether the artifact is durably logged.
+        """
+        from lerobot.integrations.wandb_artifacts import inspect_model_directory, upload_directory
+
+        pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+        model_metadata = inspect_model_directory(pretrained_model_dir)
+
+        metadata = model_metadata.to_wandb_metadata()
+        metadata.update(
+            {
+                "final_step": step,
+                "lerobot_version": __version__,
+                "robot_type": robot_type,
+                "camera_keys": list(camera_keys),
+            }
+        )
+        if dataset_artifact is not None:
+            metadata.update(
+                {
+                    "dataset_artifact_requested_ref": dataset_artifact.requested_ref,
+                    "dataset_artifact_resolved_ref": dataset_artifact.resolved_ref,
+                    "dataset_artifact_digest": dataset_artifact.digest,
+                }
+            )
+
+        collection_name = get_safe_wandb_artifact_name(self.cfg.model_artifact_name or self._group)
+
+        return upload_directory(
+            self._run,
+            pretrained_model_dir,
+            name=collection_name,
+            artifact_type="model",
+            aliases=self.cfg.model_artifact_aliases,
+            metadata=metadata,
+            registry_collection=self.cfg.registered_model_name,
+        )
 
     def log_dict(
         self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None

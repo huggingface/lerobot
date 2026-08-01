@@ -286,6 +286,18 @@ class TrainPipelineConfig(HubMixin):
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
+        if self.wandb.model_artifact_name or self.wandb.registered_model_name:
+            feature = (
+                "wandb.model_artifact_name"
+                if self.wandb.model_artifact_name
+                else "wandb.registered_model_name"
+            )
+            self._require_online_wandb(feature)
+            if not self.save_checkpoint:
+                raise ValueError(
+                    f"`{feature}` requires `save_checkpoint=True`: there would be no final checkpoint to publish."
+                )
+
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
         elif self.use_policy_training_preset and not self.resume:
