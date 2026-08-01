@@ -31,18 +31,25 @@ in short:
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
-uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
+uv pip install -e ".[isaac-teleop,feetech,dataset]" "huggingface_hub>=1.5"
 ```
 
-`isaacteleop` is published on public PyPI (Linux only). The `cloudxr` extra brings the CloudXR
-runtime bindings; `retargeters-lite` is the scipy-based retargeter path that resolves on both
-x86_64 and ARM (on aarch64 — e.g. a DGX Spark — the full `retargeters` extra does not resolve
-because of its `dex-retargeting`/`nlopt` pins, which is why it is not the default here). On
-x86_64 you can additionally install the full retargeter stack:
+The `isaac-teleop` extra pulls `isaacteleop[cloudxr,retargeters-lite]~=1.5` together with
+`lerobot[kinematics]` (Placo IK) and `scipy`. The `cloudxr` extra brings the CloudXR runtime
+bindings. `retargeters-lite` is the scipy-only retargeter tier: this example runs no Isaac
+retargeter at all — both devices expose their source nodes directly and IK is LeRobot's Placo
+pipeline — so the full `retargeters` extra (`dex-retargeting`, `nlopt`, `torch`) would add
+several packages nothing here imports. Install it alongside if you want the hand retargeters.
+
+`isaacteleop` ships manylinux wheels only (glibc ≥ 2.35), so the extra installs it on Linux and
+skips it elsewhere — on macOS/Windows the extra still resolves, but the example cannot run. The
+1.5 line is currently a **pre-release** whose wheels are published on the NVIDIA index rather
+than public PyPI; `pyproject.toml` declares that index and routes only `isaacteleop` to it, so
+`uv` picks it up automatically. With plain `pip`:
 
 ```bash
-uv pip install "isaacteleop[retargeters]~=1.3.131"
+pip install "isaacteleop[cloudxr,retargeters-lite]~=1.5" \
+    --extra-index-url https://pypi.nvidia.com --pre
 ```
 
 ### Set up CloudXR and connect a headset
@@ -360,7 +367,7 @@ adapting the pipeline to other robots.
 
 - **`ModuleNotFoundError: isaacteleop`** — the `isaacteleop` package is not installed in the
   active environment. Re-run the install command at the top of this guide:
-  `uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131"`.
+  `uv pip install -e ".[isaac-teleop]"`.
 - **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
   whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac

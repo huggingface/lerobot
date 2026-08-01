@@ -32,20 +32,24 @@ This example lives in the LeRobot repository and is not part of the `lerobot` pi
 work from a source checkout. From the repo root:
 
 ```bash
-# LeRobot with the extras this example uses:
-#   feetech    - SO-101 serial motor bus
-#   kinematics - Placo IK solver (XR controller path)
-#   dataset    - dataset recording (record.py)
+# The extras this example uses:
+#   isaac-teleop - isaacteleop[cloudxr,retargeters-lite] + kinematics (Placo IK) + scipy
+#   feetech      - SO-101 serial motor bus
+#   dataset      - dataset recording (record.py)
 # huggingface_hub >= 1.5 is needed by the automatic URDF fetch (Buckets API).
-uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
+uv pip install -e ".[isaac-teleop,feetech,dataset]" "huggingface_hub>=1.5"
+```
 
-# Isaac Teleop from public PyPI. `cloudxr` brings the CloudXR runtime bindings;
-# `retargeters-lite` is the scipy-based retargeter path that resolves on both
-# x86_64 and ARM (the full `retargeters` extra does not resolve on aarch64).
-uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
+`isaacteleop` is pinned to the 1.5 line, which is currently a **pre-release** whose wheels
+(manylinux only, glibc ≥ 2.35) are published on the NVIDIA index rather than public PyPI, which
+carries a source distribution that does not build. `pyproject.toml` declares that index as
+`nvidia` and routes only `isaacteleop` to it, so `uv` needs no extra flags; the extra is marked
+`sys_platform == 'linux'`, so on macOS/Windows it resolves without `isaacteleop` (and the example
+cannot run there). With plain `pip`, which does not read `[tool.uv]`, install it explicitly:
 
-# Optional, x86_64 only: the full retargeter stack.
-uv pip install "isaacteleop[retargeters]~=1.3.131"
+```bash
+pip install "isaacteleop[cloudxr,retargeters-lite]~=1.5" \
+    --extra-index-url https://pypi.nvidia.com --pre
 ```
 
 One-time CloudXR EULA (the auto-launch prompts on stdin and would hang on a headless machine):
