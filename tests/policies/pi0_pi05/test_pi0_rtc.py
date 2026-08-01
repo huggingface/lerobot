@@ -21,6 +21,10 @@ import os
 import pytest
 import torch
 
+# PI0/PI05 need `lerobot[pi]`; without it these tests error at policy construction rather than
+# skipping, the same guard every sibling pi0_pi05 test file already carries.
+pytest.importorskip("transformers")
+
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
