@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import builtins
+import copy
 import datetime as dt
 import json
 import multiprocessing
@@ -218,6 +219,19 @@ class TrainPipelineConfig(HubMixin):
         if self.reward_model is not None:
             self.reward_model.pretrained_path = str(policy_dir)
 
+    def _require_online_wandb(self, feature: str) -> None:
+        """Raise unless W&B is configured to actually reach the backend (used, project, online).
+
+        Shared precondition for any feature that talks to W&B during `validate()` (currently
+        `dataset.artifact_ref`; PR #14's publishing options reuse this too). Deliberately doesn't
+        cover `job.is_remote` — that rejection is feature-specific, not a generic "is W&B usable"
+        precondition, so callers apply it themselves when it matters.
+        """
+        if not (self.wandb.enable and self.wandb.project):
+            raise ValueError(f"`{feature}` requires `wandb.enable=true` and `wandb.project` to be set.")
+        if self.wandb.mode not in (None, "online"):
+            raise ValueError(f"`{feature}` requires `wandb.mode=online` or an unset mode.")
+
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()
         if (
@@ -261,6 +275,14 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
+        if (self.dataset.repo_id is None) == (self.dataset.artifact_ref is None):
+            raise ValueError("Exactly one of `dataset.repo_id` or `dataset.artifact_ref` must be set.")
+
+        if self.dataset.artifact_ref is not None:
+            self._require_online_wandb("dataset.artifact_ref")
+            if self.job.is_remote:
+                raise ValueError("`dataset.artifact_ref` is not supported for remote (HF Jobs) runs.")
+
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
@@ -295,8 +317,17 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        persisted_cfg = self
+        if self.dataset.artifact_ref is not None:
+            # Artifact materialization derives repo_id only to satisfy local dataset constructors.
+            # Keep that runtime detail out of checkpoints so the serialized source remains exclusive
+            # and passes the same validation when the run is resumed.
+            persisted_cfg = copy.copy(self)
+            persisted_cfg.dataset = copy.copy(self.dataset)
+            persisted_cfg.dataset.repo_id = None
+
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+            draccus.dump(persisted_cfg, f, indent=4)
 
     @classmethod
     def from_pretrained(

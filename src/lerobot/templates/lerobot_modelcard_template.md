@@ -119,17 +119,18 @@ The policy consumes these observation features and produces these action feature
 {% if dataset %}
 ## Training Dataset
 
-- **Repository:** [{{ dataset.repo_id }}](https://huggingface.co/datasets/{{ dataset.repo_id }})
-- **Episodes:** {{ dataset.episodes }}
+{% if dataset_artifact_ref %}- **W&B Artifact:** `{{ dataset_artifact_ref }}`
+{% else %}- **Repository:** [{{ dataset.repo_id }}](https://huggingface.co/datasets/{{ dataset.repo_id }})
+{% endif %}- **Episodes:** {{ dataset.episodes }}
 - **Frames:** {{ dataset.frames }}
 - **Frame rate:** {{ dataset.fps }} FPS
 {% if dataset.tasks %}- **Task(s):** {% for task in dataset.tasks %}"{{ task }}"{% if not loop.last %}, {% endif %}{% endfor %}
 {% endif %}
-<a class="flex" href="https://huggingface.co/spaces/lerobot/visualize_dataset?path={{ dataset.repo_id }}">
+{% if not dataset_artifact_ref %}<a class="flex" href="https://huggingface.co/spaces/lerobot/visualize_dataset?path={{ dataset.repo_id }}">
 <img class="block dark:hidden" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl.svg"/>
 <img class="hidden dark:block" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl-dark.svg"/>
 </a>
-{% endif %}
+{% endif %}{% endif %}
 {% if training %}
 ## Training Configuration
 

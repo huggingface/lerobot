@@ -18,12 +18,16 @@ import os
 import re
 from glob import glob
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+
+if TYPE_CHECKING:
+    from lerobot.integrations.wandb_artifacts import MaterializedArtifact
 
 
 def cfg_to_group(
@@ -50,7 +54,9 @@ def cfg_to_group(
         f"seed:{cfg.seed}",
     ]
     if cfg.dataset is not None:
-        lst.append(f"dataset:{cfg.dataset.repo_id}")
+        # `repo_id` may still be unset here when `artifact_ref` is used: the WandBLogger is
+        # constructed before the dataset artifact is resolved and repo_id populated.
+        lst.append(f"dataset:{cfg.dataset.repo_id or cfg.dataset.artifact_ref}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
     if truncate_tags:
@@ -96,7 +102,7 @@ class WandBLogger:
             if cfg.resume
             else None
         )
-        wandb.init(
+        self._run = wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
             entity=self.cfg.entity,
@@ -112,15 +118,43 @@ class WandBLogger:
             resume="must" if cfg.resume else None,
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
-        run_id = wandb.run.id
+        run_id = self._run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
         cfg.wandb.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+        logging.info(f"Track this run --> {colored(self._run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
+
+    def download_dataset_artifact(self, ref: str, download_root: Path) -> "MaterializedArtifact":
+        """Resolve and download the dataset Artifact `ref`, materializing it at `download_root`.
+
+        Declares the artifact as an input of this run and validates the downloaded directory is a
+        loadable LeRobot dataset before it is promoted to `download_root` (see `download_artifact`).
+        """
+        from lerobot.integrations.wandb_artifacts import download_artifact, validate_dataset_directory
+
+        return download_artifact(
+            self._run,
+            ref,
+            expected_type="dataset",
+            download_root=download_root,
+            validator=validate_dataset_directory,
+        )
+
+    def record_dataset_artifact_lineage(self, requested_ref: str, resolved_ref: str) -> None:
+        """Record the requested and resolved dataset Artifact refs on the run, for lineage."""
+        self._run.config.update(
+            {
+                "dataset_artifact_requested_ref": requested_ref,
+                "dataset_artifact_resolved_ref": resolved_ref,
+            },
+            allow_val_change=True,
+        )
+        self._run.summary["dataset_artifact_requested_ref"] = requested_ref
+        self._run.summary["dataset_artifact_resolved_ref"] = resolved_ref
 
     def log_policy(self, checkpoint_dir: Path):
         """Checkpoints the policy to wandb."""

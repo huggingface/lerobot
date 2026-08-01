@@ -51,6 +51,26 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound="PreTrainedPolicy")
 
 
+def _resolved_dataset_artifact_ref(cfg: TrainPipelineConfig) -> str:
+    """Prefer the immutable resolved ref for `cfg.dataset.artifact_ref`, falling back to the
+    requested ref when it isn't available.
+
+    The resolved ref lives in the `.wandb_artifact.json` sidecar `_materialize_dataset_artifact`
+    writes next to the materialized dataset at `cfg.dataset.root` (see
+    `lerobot.integrations.wandb_artifacts.sidecar`) — already reachable from `cfg` alone, no W&B
+    call or extra plumbing needed. Falls back to the requested ref if the sidecar is absent,
+    unparsable, or (defensively) records a different artifact than `cfg.dataset.artifact_ref`.
+    """
+    requested_ref = cfg.dataset.artifact_ref
+    if cfg.dataset.root is not None:
+        from lerobot.integrations.wandb_artifacts.sidecar import read_sidecar
+
+        sidecar = read_sidecar(Path(cfg.dataset.root))
+        if sidecar is not None and sidecar.requested_ref == requested_ref:
+            return sidecar.resolved_ref
+    return requested_ref
+
+
 def _build_card_context(
     cfg: TrainPipelineConfig | None,
     dataset_meta: LeRobotDatasetMetadata | None,
@@ -69,6 +89,7 @@ def _build_card_context(
         "input_features": input_features or {},
         "output_features": output_features or {},
         "dataset": None,
+        "dataset_artifact_ref": None,
         "robot_type": None,
         "cameras": [],
     }
@@ -83,6 +104,13 @@ def _build_card_context(
             "lr": getattr(optimizer, "lr", None) if optimizer else None,
             "lerobot_version": __version__,
         }
+
+    if cfg is not None and cfg.dataset is not None and cfg.dataset.artifact_ref is not None:
+        # The run trained from a W&B dataset Artifact, not a Hub dataset repo: `dataset_meta.repo_id`
+        # below is only the artifact's collection name (derived to satisfy the local dataset
+        # constructor; see `_materialize_dataset_artifact`), not a real Hub dataset. Surface the
+        # artifact ref instead so the card never claims a Hub dataset that doesn't exist.
+        context["dataset_artifact_ref"] = _resolved_dataset_artifact_ref(cfg)
 
     if dataset_meta is not None:
         context["dataset"] = {
@@ -350,13 +378,19 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             "xvla": "lerobot/xvla-base",
         }
 
+        # `dataset_repo_id` is only the artifact's collection name for artifact-backed runs (see
+        # `_materialize_dataset_artifact`), not a real Hub dataset repo — never claim it as one.
+        is_artifact_backed = (
+            cfg is not None and cfg.dataset is not None and cfg.dataset.artifact_ref is not None
+        )
+
         card_data = ModelCardData(
             license=license or "apache-2.0",
             library_name="lerobot",
             pipeline_tag="robotics",
             tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
-            datasets=dataset_repo_id,
+            datasets=None if is_artifact_backed else dataset_repo_id,
             base_model=base_model_mapping.get(model_type),
         )
 

@@ -53,6 +53,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
+from lerobot.integrations.wandb_artifacts import parse_artifact_ref
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -99,6 +100,60 @@ def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
         "persistent_workers": cfg.persistent_workers and workers_enabled,
         "multiprocessing_context": cfg.dataloader_multiprocessing_context if workers_enabled else None,
     }
+
+
+def _materialize_dataset_artifact(
+    cfg: TrainPipelineConfig, wandb_logger: "WandBLogger | None", is_main_process: bool
+) -> None:
+    """Resolve `cfg.dataset.artifact_ref` into a local directory and repoint the dataset config at it.
+
+    Only the main process talks to W&B; `download_root` is derived from `cfg.output_dir` alone so
+    every rank computes the same path without any inter-process communication. Callers must run this
+    under the same `accelerator.wait_for_everyone()` barrier that already separates the main
+    process's dataset creation from every other rank's, so non-main ranks only ever read a fully
+    materialized directory.
+    """
+    download_root = cfg.output_dir / "wandb_dataset"
+    if is_main_process:
+        from lerobot.integrations.wandb_artifacts import validate_dataset_directory
+        from lerobot.integrations.wandb_artifacts.sidecar import ArtifactSidecar, read_sidecar, write_sidecar
+
+        if cfg.resume and download_root.is_dir() and any(download_root.iterdir()):
+            # Resuming into the same output_dir: reuse the copy materialized by the original run
+            # instead of re-downloading (download_artifact rejects a non-empty destination).
+            # Structural validity alone doesn't prove *this* directory holds the artifact we were
+            # asked for, so the sidecar written by the original download is the source of truth for
+            # identity: an absent/mismatched sidecar fails fast rather than silently training on
+            # unrelated data and recording the wrong lineage.
+            logging.info(f"Reusing previously materialized dataset artifact at {download_root}")
+            validate_dataset_directory(download_root)
+            sidecar = read_sidecar(download_root)
+            if sidecar is None or sidecar.requested_ref != cfg.dataset.artifact_ref:
+                recorded = sidecar.requested_ref if sidecar is not None else "<none>"
+                raise ValueError(
+                    f"{download_root} is a previously materialized dataset directory, but its "
+                    f"sidecar records artifact {recorded!r} while cfg.dataset.artifact_ref is "
+                    f"{cfg.dataset.artifact_ref!r}. Refusing to train on data that may not match: "
+                    f"remove {download_root} or point --output_dir elsewhere."
+                )
+            wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, sidecar.resolved_ref)
+        else:
+            logging.info(f"Materializing dataset artifact {cfg.dataset.artifact_ref!r}")
+            materialized = wandb_logger.download_dataset_artifact(cfg.dataset.artifact_ref, download_root)
+            wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, materialized.resolved_ref)
+            write_sidecar(
+                download_root,
+                ArtifactSidecar(
+                    requested_ref=materialized.requested_ref,
+                    resolved_ref=materialized.resolved_ref,
+                    version=materialized.version,
+                    digest=materialized.digest,
+                ),
+            )
+
+    cfg.dataset.root = download_root
+    if not cfg.dataset.repo_id:
+        cfg.dataset.repo_id = parse_artifact_ref(cfg.dataset.artifact_ref).name
 
 
 def update_policy(
@@ -269,6 +324,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         wandb_logger = None
         if is_main_process:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    # Materialize a dataset Artifact, if requested, before any dataset object is built: a bad or
+    # missing artifact must fail before policy/optimizer allocation and before any HF Hub call.
+    if cfg.dataset.artifact_ref is not None:
+        _materialize_dataset_artifact(cfg, wandb_logger, is_main_process)
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
