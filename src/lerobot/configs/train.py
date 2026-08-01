@@ -219,6 +219,19 @@ class TrainPipelineConfig(HubMixin):
         if self.reward_model is not None:
             self.reward_model.pretrained_path = str(policy_dir)
 
+    def _require_online_wandb(self, feature: str) -> None:
+        """Raise unless W&B is configured to actually reach the backend (used, project, online).
+
+        Shared precondition for any feature that talks to W&B during `validate()` (currently
+        `dataset.artifact_ref`; PR #14's publishing options reuse this too). Deliberately doesn't
+        cover `job.is_remote` — that rejection is feature-specific, not a generic "is W&B usable"
+        precondition, so callers apply it themselves when it matters.
+        """
+        if not (self.wandb.enable and self.wandb.project):
+            raise ValueError(f"`{feature}` requires `wandb.enable=true` and `wandb.project` to be set.")
+        if self.wandb.mode not in (None, "online"):
+            raise ValueError(f"`{feature}` requires `wandb.mode=online` or an unset mode.")
+
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()
         if (
@@ -266,12 +279,7 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError("Exactly one of `dataset.repo_id` or `dataset.artifact_ref` must be set.")
 
         if self.dataset.artifact_ref is not None:
-            if not (self.wandb.enable and self.wandb.project):
-                raise ValueError(
-                    "`dataset.artifact_ref` requires `wandb.enable=true` and `wandb.project` to be set."
-                )
-            if self.wandb.mode not in (None, "online"):
-                raise ValueError("`dataset.artifact_ref` requires `wandb.mode=online` or an unset mode.")
+            self._require_online_wandb("dataset.artifact_ref")
             if self.job.is_remote:
                 raise ValueError("`dataset.artifact_ref` is not supported for remote (HF Jobs) runs.")
 

@@ -157,22 +157,34 @@ def _resume_cfg(output_dir: Path) -> TrainPipelineConfig:
     )
 
 
-def test_materialize_dataset_artifact_resume_prefers_recorded_resolved_ref(tmp_path):
-    """A resumed run's `self._run.config` already carries the original run's resolved ref (W&B
-    merges it in on `resume="must"`): reuse it and never re-resolve the (possibly-moved) alias.
+def test_materialize_dataset_artifact_resume_reuses_matching_sidecar_with_no_wandb_call(tmp_path):
+    """A resumed run whose sidecar's `requested_ref` matches `cfg.dataset.artifact_ref` reuses the
+    materialized copy and takes `resolved_ref`/`digest` straight from the sidecar: no W&B call (no
+    re-resolving a possibly-moved alias) is needed to verify or restore lineage.
     """
+    from lerobot.integrations.wandb_artifacts.sidecar import ArtifactSidecar, write_sidecar
+
     output_dir = tmp_path / "run"
     download_root = output_dir / "wandb_dataset"
     _build_local_dataset(download_root)
+    write_sidecar(
+        download_root,
+        ArtifactSidecar(
+            requested_ref="team/proj/pick-cube:latest",
+            resolved_ref="team/proj/pick-cube:v3",
+            version="v3",
+            digest="deadbeef",
+        ),
+    )
     cfg = _resume_cfg(output_dir)
 
     fake_logger = MagicMock()
-    fake_logger.recorded_dataset_artifact_resolved_ref.return_value = "team/proj/pick-cube:v3"
 
     train_module._materialize_dataset_artifact(cfg, fake_logger, is_main_process=True)
 
     fake_logger.download_dataset_artifact.assert_not_called()
-    fake_logger.resolve_dataset_artifact.assert_not_called()
+    # No W&B call at all beyond recording lineage from the sidecar (e.g. no re-resolve).
+    assert [call[0] for call in fake_logger.method_calls] == ["record_dataset_artifact_lineage"]
     fake_logger.record_dataset_artifact_lineage.assert_called_once_with(
         "team/proj/pick-cube:latest", "team/proj/pick-cube:v3"
     )
@@ -180,9 +192,39 @@ def test_materialize_dataset_artifact_resume_prefers_recorded_resolved_ref(tmp_p
     assert cfg.dataset.repo_id == "pick-cube"
 
 
-def test_materialize_dataset_artifact_resume_falls_back_to_reresolving_when_nothing_recorded(tmp_path):
-    """No recorded resolved ref (e.g. the local copy predates this lineage feature): fall back to
-    re-resolving the ref, visibly, rather than recording no lineage at all.
+def test_materialize_dataset_artifact_resume_fails_fast_on_sidecar_mismatch(tmp_path):
+    """The sidecar records a different artifact than `cfg.dataset.artifact_ref` now asks for (e.g.
+    `--dataset.artifact_ref` or `--output_dir` changed between runs): refuse to train on the stale
+    copy instead of silently reusing unrelated data.
+    """
+    from lerobot.integrations.wandb_artifacts.sidecar import ArtifactSidecar, write_sidecar
+
+    output_dir = tmp_path / "run"
+    download_root = output_dir / "wandb_dataset"
+    _build_local_dataset(download_root)
+    write_sidecar(
+        download_root,
+        ArtifactSidecar(
+            requested_ref="team/proj/other-dataset:latest",
+            resolved_ref="team/proj/other-dataset:v1",
+            version="v1",
+            digest="c0ffee",
+        ),
+    )
+    cfg = _resume_cfg(output_dir)
+
+    fake_logger = MagicMock()
+
+    with pytest.raises(ValueError, match="team/proj/other-dataset:latest.*team/proj/pick-cube:latest"):
+        train_module._materialize_dataset_artifact(cfg, fake_logger, is_main_process=True)
+
+    fake_logger.download_dataset_artifact.assert_not_called()
+    fake_logger.record_dataset_artifact_lineage.assert_not_called()
+
+
+def test_materialize_dataset_artifact_resume_fails_fast_when_sidecar_absent(tmp_path):
+    """A materialized directory with no sidecar at all (e.g. left over from before this identity
+    check existed) can't be proven to hold the right artifact either: fail fast rather than guess.
     """
     output_dir = tmp_path / "run"
     download_root = output_dir / "wandb_dataset"
@@ -190,18 +232,12 @@ def test_materialize_dataset_artifact_resume_falls_back_to_reresolving_when_noth
     cfg = _resume_cfg(output_dir)
 
     fake_logger = MagicMock()
-    fake_logger.recorded_dataset_artifact_resolved_ref.return_value = None
-    fake_logger.resolve_dataset_artifact.return_value = "team/proj/pick-cube:v3"
 
-    train_module._materialize_dataset_artifact(cfg, fake_logger, is_main_process=True)
+    with pytest.raises(ValueError, match=str(download_root)):
+        train_module._materialize_dataset_artifact(cfg, fake_logger, is_main_process=True)
 
     fake_logger.download_dataset_artifact.assert_not_called()
-    fake_logger.resolve_dataset_artifact.assert_called_once_with("team/proj/pick-cube:latest")
-    fake_logger.record_dataset_artifact_lineage.assert_called_once_with(
-        "team/proj/pick-cube:latest", "team/proj/pick-cube:v3"
-    )
-    assert cfg.dataset.root == download_root
-    assert cfg.dataset.repo_id == "pick-cube"
+    fake_logger.record_dataset_artifact_lineage.assert_not_called()
 
 
 def test_train_skips_materialization_entirely_when_artifact_ref_unset(monkeypatch, tmp_path):

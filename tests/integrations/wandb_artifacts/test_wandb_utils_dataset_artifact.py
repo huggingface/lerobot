@@ -96,36 +96,3 @@ def test_record_dataset_artifact_lineage_writes_config_and_summary():
     )
     assert run.summary["dataset_artifact_requested_ref"] == "team/proj/pick-cube:latest"
     assert run.summary["dataset_artifact_resolved_ref"] == "team/proj/pick-cube:v3"
-
-
-def test_resolve_dataset_artifact_uses_artifact_without_downloading():
-    run = MagicMock()
-    run.use_artifact.return_value.qualified_name = "team/proj/pick-cube:v3"
-    logger = _make_logger(run)
-
-    resolved = logger.resolve_dataset_artifact("team/proj/pick-cube:latest")
-
-    assert resolved == "team/proj/pick-cube:v3"
-    run.use_artifact.assert_called_once_with("team/proj/pick-cube:latest")
-    run.use_artifact.return_value.download.assert_not_called()
-
-
-def test_recorded_dataset_artifact_resolved_ref_reads_run_config_without_a_call():
-    # Real `wandb.init(resume="must")` merges the previous run's persisted config into
-    # `run.config` before returning (Run._set_run_obj -> Config._update), so this is a plain
-    # local read, not a use_artifact/network round trip.
-    run = MagicMock()
-    run.config.get.return_value = "team/proj/pick-cube:v3"
-    logger = _make_logger(run)
-
-    assert logger.recorded_dataset_artifact_resolved_ref() == "team/proj/pick-cube:v3"
-    run.config.get.assert_called_once_with("dataset_artifact_resolved_ref")
-    run.use_artifact.assert_not_called()
-
-
-def test_recorded_dataset_artifact_resolved_ref_missing_returns_none():
-    run = MagicMock()
-    run.config.get.return_value = None
-    logger = _make_logger(run)
-
-    assert logger.recorded_dataset_artifact_resolved_ref() is None

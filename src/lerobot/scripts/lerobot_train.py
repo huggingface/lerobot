@@ -116,29 +116,40 @@ def _materialize_dataset_artifact(
     download_root = cfg.output_dir / "wandb_dataset"
     if is_main_process:
         from lerobot.integrations.wandb_artifacts import validate_dataset_directory
+        from lerobot.integrations.wandb_artifacts.sidecar import ArtifactSidecar, read_sidecar, write_sidecar
 
         if cfg.resume and download_root.is_dir() and any(download_root.iterdir()):
             # Resuming into the same output_dir: reuse the copy materialized by the original run
-            # instead of re-downloading (download_artifact rejects a non-empty destination). Prefer
-            # the resolved ref the original run already recorded: re-resolving a mutable alias (e.g.
-            # ":latest") here could return a newer version than what's actually on disk, which would
-            # silently record wrong lineage rather than fix it.
+            # instead of re-downloading (download_artifact rejects a non-empty destination).
+            # Structural validity alone doesn't prove *this* directory holds the artifact we were
+            # asked for, so the sidecar written by the original download is the source of truth for
+            # identity: an absent/mismatched sidecar fails fast rather than silently training on
+            # unrelated data and recording the wrong lineage.
             logging.info(f"Reusing previously materialized dataset artifact at {download_root}")
             validate_dataset_directory(download_root)
-            resolved_ref = wandb_logger.recorded_dataset_artifact_resolved_ref()
-            if resolved_ref is None:
-                logging.warning(
-                    "No dataset_artifact_resolved_ref recorded on the resumed run; re-resolving "
-                    f"{cfg.dataset.artifact_ref!r}. If this is a mutable alias, it may have moved "
-                    f"since the local copy at {download_root} was materialized, so the recorded "
-                    "lineage may not match what's actually on disk."
+            sidecar = read_sidecar(download_root)
+            if sidecar is None or sidecar.requested_ref != cfg.dataset.artifact_ref:
+                recorded = sidecar.requested_ref if sidecar is not None else "<none>"
+                raise ValueError(
+                    f"{download_root} is a previously materialized dataset directory, but its "
+                    f"sidecar records artifact {recorded!r} while cfg.dataset.artifact_ref is "
+                    f"{cfg.dataset.artifact_ref!r}. Refusing to train on data that may not match: "
+                    f"remove {download_root} or point --output_dir elsewhere."
                 )
-                resolved_ref = wandb_logger.resolve_dataset_artifact(cfg.dataset.artifact_ref)
-            wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, resolved_ref)
+            wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, sidecar.resolved_ref)
         else:
             logging.info(f"Materializing dataset artifact {cfg.dataset.artifact_ref!r}")
             materialized = wandb_logger.download_dataset_artifact(cfg.dataset.artifact_ref, download_root)
             wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, materialized.resolved_ref)
+            write_sidecar(
+                download_root,
+                ArtifactSidecar(
+                    requested_ref=materialized.requested_ref,
+                    resolved_ref=materialized.resolved_ref,
+                    version=materialized.version,
+                    digest=materialized.digest,
+                ),
+            )
 
     cfg.dataset.root = download_root
     if not cfg.dataset.repo_id:

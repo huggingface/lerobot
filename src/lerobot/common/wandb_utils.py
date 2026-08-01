@@ -144,24 +144,6 @@ class WandBLogger:
             validator=validate_dataset_directory,
         )
 
-    def resolve_dataset_artifact(self, ref: str) -> str:
-        """Resolve `ref` to its immutable `entity/project/name:vN` form and declare it as a run
-        input, without downloading it (`Run.use_artifact` alone never fetches file contents; see
-        `download_artifact`, which calls the same method before its own `.download()` call).
-        """
-        return self._run.use_artifact(ref).qualified_name
-
-    def recorded_dataset_artifact_resolved_ref(self) -> str | None:
-        """The `dataset_artifact_resolved_ref` already on this run's config, if any.
-
-        On a resumed run (`resume="must"`), `wandb.init` merges the previous run's persisted
-        config into `self._run.config` before returning (`Run._set_run_obj` calls
-        `self._config._update(...)` with the backend's stored config), so a value written by an
-        earlier `record_dataset_artifact_lineage` call is already present here with no extra
-        network round trip.
-        """
-        return self._run.config.get("dataset_artifact_resolved_ref")
-
     def record_dataset_artifact_lineage(self, requested_ref: str, resolved_ref: str) -> None:
         """Record the requested and resolved dataset Artifact refs on the run, for lineage."""
         self._run.config.update(
