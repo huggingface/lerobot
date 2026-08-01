@@ -129,13 +129,14 @@ lerobot-train --resume=true \
   --config_path=outputs/train/act_pick_cube/checkpoints/last/pretrained_model/train_config.json
 ```
 
-The already-materialized dataset copy under that `--output_dir` is reused, and its identity is
-verified against the sidecar written by the original download before any training resumes.
+The already-materialized dataset copy under the original run's `--output_dir` is reused, and its
+identity is verified against the sidecar written by the first download before training resumes.
 
-> **PEFT/LoRA runs:** an adapter-only checkpoint is uploaded but **not** linked into the Registry —
-> it cannot be rolled out on its own, since its base model is resolved at load time and is not in
-> the artifact. The reason is recorded in the artifact's metadata as `registry_link_refused_reason`.
-> Publish a merged checkpoint to register a deployable version.
+> **PEFT/LoRA runs:** an adapter-only checkpoint is uploaded but **not** linked into the Registry.
+> Its base model is read verbatim from `adapter_config.json` at load time and is never rebased on
+> the downloaded directory, so the artifact cannot be rolled out on its own — and copying the base
+> model into the checkpoint does not change that. The reason is recorded in the artifact's metadata
+> as `registry_link_refused_reason`. Publish a merged checkpoint to register a deployable version.
 
 ## 4. Fetch the trained policy on the robot machine
 
