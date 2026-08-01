@@ -18,6 +18,7 @@ import json
 import draccus
 import pytest
 
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401  (registers --policy.type act)
 
@@ -111,7 +112,10 @@ def test_artifact_ref_with_wandb_enabled_and_local_job_passes_validation():
     assert cfg.dataset.artifact_ref == "team/proj/name:latest"
 
 
-def test_runtime_repo_id_is_not_persisted_for_artifact_checkpoint(tmp_path):
+def test_artifact_checkpoint_round_trips_without_special_casing(tmp_path):
+    """A checkpoint written mid-run resumes and re-validates as-is: nothing materialization does to
+    the config can make it fail its own exclusive-source validation.
+    """
     cfg = _parse(
         "--dataset.artifact_ref",
         "team/proj/name:latest",
@@ -122,8 +126,7 @@ def test_runtime_repo_id_is_not_persisted_for_artifact_checkpoint(tmp_path):
     )
     cfg.validate()
 
-    # Materialization fills these runtime fields before save_checkpoint serializes the config.
-    cfg.dataset.repo_id = "name"
+    # Materialization repoints `root` at the downloaded copy; `repo_id` is never written.
     cfg.dataset.root = tmp_path / "run" / "wandb_dataset"
     cfg.save_pretrained(tmp_path)
 
@@ -132,10 +135,21 @@ def test_runtime_repo_id_is_not_persisted_for_artifact_checkpoint(tmp_path):
     assert saved["dataset"]["artifact_ref"] == "team/proj/name:latest"
     assert saved["dataset"]["repo_id"] is None
 
-    # Serialization must not disturb the live runtime config used by the active training process.
-    assert cfg.dataset.repo_id == "name"
-
     reloaded = TrainPipelineConfig.from_pretrained(tmp_path)
     reloaded.validate()
     assert reloaded.dataset.repo_id is None
     assert reloaded.dataset.artifact_ref == "team/proj/name:latest"
+
+
+def test_local_id_derives_a_constructor_name_only_for_artifact_runs():
+    """`local_id` is what `LeRobotDataset` gets constructed with: the Hub repo when there is one,
+    the artifact's collection name when there isn't, and never a value written back to `repo_id`.
+    """
+    hub = DatasetConfig(repo_id="user/dataset")
+    assert hub.local_id == "user/dataset"
+
+    artifact = DatasetConfig(artifact_ref="team/proj/pick-cube:latest")
+    assert artifact.local_id == "pick-cube"
+    assert artifact.repo_id is None
+
+    assert DatasetConfig().local_id is None

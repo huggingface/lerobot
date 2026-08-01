@@ -57,7 +57,7 @@ class _FakeDatasetMeta:
         self.repo_id = repo_id
 
 
-def _generate(cfg: TrainPipelineConfig | None, dataset_repo_id: str, dataset_meta) -> str:
+def _generate(cfg: TrainPipelineConfig | None, dataset_repo_id: str | None, dataset_meta) -> str:
     return str(
         PreTrainedPolicy.generate_model_card(
             _FakeSelf(), dataset_repo_id, "act", None, None, cfg=cfg, dataset_meta=dataset_meta
@@ -110,7 +110,8 @@ def test_artifact_backed_model_card_omits_datasets_and_names_the_artifact_ref(tm
     dataset_meta = _FakeDatasetMeta(repo_id="pick-cube")  # the derived collection name
     cfg = _cfg(artifact_ref="team/proj/pick-cube:latest", repo_id=None, root=tmp_path)
 
-    card = _generate(cfg, "pick-cube", dataset_meta)
+    # `push_model_to_hub` passes `cfg.dataset.repo_id`, which stays unset for artifact-backed runs.
+    card = _generate(cfg, cfg.dataset.repo_id, dataset_meta)
 
     assert "datasets:" not in card
     assert "**W&B Artifact:** `team/proj/pick-cube:v3`" in card
@@ -126,7 +127,7 @@ def test_artifact_backed_model_card_falls_back_to_requested_ref_without_a_sideca
     dataset_meta = _FakeDatasetMeta(repo_id="pick-cube")
     cfg = _cfg(artifact_ref="team/proj/pick-cube:latest", repo_id=None, root=tmp_path)
 
-    card = _generate(cfg, "pick-cube", dataset_meta)
+    card = _generate(cfg, cfg.dataset.repo_id, dataset_meta)
 
     assert "datasets:" not in card
     assert "**W&B Artifact:** `team/proj/pick-cube:latest`" in card

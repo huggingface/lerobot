@@ -82,14 +82,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
-    if isinstance(cfg.dataset.repo_id, str):
+    if isinstance(cfg.dataset.local_id, str):
         ds_meta = LeRobotDatasetMetadata(
-            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+            cfg.dataset.local_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         if not cfg.dataset.streaming:
             dataset = LeRobotDataset(
-                cfg.dataset.repo_id,
+                cfg.dataset.local_id,
                 root=cfg.dataset.root,
                 episodes=cfg.dataset.episodes,
                 delta_timestamps=delta_timestamps,
@@ -102,7 +102,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             )
         else:
             dataset = StreamingLeRobotDataset(
-                cfg.dataset.repo_id,
+                cfg.dataset.local_id,
                 root=cfg.dataset.root,
                 episodes=cfg.dataset.episodes,
                 delta_timestamps=delta_timestamps,
@@ -115,7 +115,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
         dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
+            cfg.dataset.local_id,
             # TODO(aliberts): add proper support for multi dataset
             # delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
@@ -182,7 +182,7 @@ def make_train_eval_datasets(
     )
 
     train_dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
+        cfg.dataset.local_id,
         root=cfg.dataset.root,
         episodes=train_episodes,
         delta_timestamps=delta_timestamps,
@@ -194,7 +194,7 @@ def make_train_eval_datasets(
     )
 
     eval_dataset = LeRobotDataset(
-        cfg.dataset.repo_id,
+        cfg.dataset.local_id,
         root=cfg.dataset.root,
         episodes=eval_episodes,
         delta_timestamps=delta_timestamps,

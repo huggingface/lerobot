@@ -107,9 +107,8 @@ def _build_card_context(
 
     if cfg is not None and cfg.dataset is not None and cfg.dataset.artifact_ref is not None:
         # The run trained from a W&B dataset Artifact, not a Hub dataset repo: `dataset_meta.repo_id`
-        # below is only the artifact's collection name (derived to satisfy the local dataset
-        # constructor; see `_materialize_dataset_artifact`), not a real Hub dataset. Surface the
-        # artifact ref instead so the card never claims a Hub dataset that doesn't exist.
+        # below is only the artifact's collection name (see `DatasetConfig.local_id`), not a real
+        # Hub dataset. Surface the artifact ref so the card carries the real provenance.
         context["dataset_artifact_ref"] = _resolved_dataset_artifact_ref(cfg)
 
     if dataset_meta is not None:
@@ -363,7 +362,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def generate_model_card(
         self,
-        dataset_repo_id: str,
+        dataset_repo_id: str | None,
         model_type: str,
         license: str | None,
         tags: list[str] | None,
@@ -378,19 +377,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             "xvla": "lerobot/xvla-base",
         }
 
-        # `dataset_repo_id` is only the artifact's collection name for artifact-backed runs (see
-        # `_materialize_dataset_artifact`), not a real Hub dataset repo — never claim it as one.
-        is_artifact_backed = (
-            cfg is not None and cfg.dataset is not None and cfg.dataset.artifact_ref is not None
-        )
-
         card_data = ModelCardData(
             license=license or "apache-2.0",
             library_name="lerobot",
             pipeline_tag="robotics",
             tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
-            datasets=None if is_artifact_backed else dataset_repo_id,
+            # `None` for artifact-backed runs (`cfg.dataset.repo_id` is unset there): the card must
+            # never claim a Hub dataset that doesn't exist. The artifact ref is surfaced instead,
+            # via `dataset_artifact_ref` in the template context below.
+            datasets=dataset_repo_id,
             base_model=base_model_mapping.get(model_type),
         )
 
