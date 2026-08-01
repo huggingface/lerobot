@@ -47,6 +47,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
+from lerobot.common.control_utils import smooth_follower_to_action
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.processor import (
@@ -70,7 +71,6 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1,
 )
-from lerobot.common.control_utils import smooth_follower_to_action
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
@@ -123,19 +123,13 @@ def replay(cfg: ReplayConfig):
     if cfg.smooth_handover_duration_s > 0 and dataset.num_frames > 0:
         robot_obs = robot.get_observation()
         action_keys = getattr(robot, "action_features", {}) or {}
-        pre_replay_pose = {
-            k: robot_obs[k]
-            for k in action_keys
-            if k in robot_obs
-        }
+        pre_replay_pose = {k: robot_obs[k] for k in action_keys if k in robot_obs}
         if not pre_replay_pose:
             pre_replay_pose = {
                 k: v for k, v in robot_obs.items() if isinstance(k, str) and k.endswith(".pos")
             }
         action_array0 = actions[0][ACTION]
-        action0 = {
-            name: action_array0[i] for i, name in enumerate(dataset.features[ACTION]["names"])
-        }
+        action0 = {name: action_array0[i] for i, name in enumerate(dataset.features[ACTION]["names"])}
         first_processed = robot_action_processor((action0, robot_obs))
         logging.info(
             "Smooth handover to episode start (%.2fs @ %d Hz)",
@@ -168,11 +162,7 @@ def replay(cfg: ReplayConfig):
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))
     finally:
-        if (
-            cfg.smooth_handover_duration_s > 0
-            and pre_replay_pose
-            and robot.is_connected
-        ):
+        if cfg.smooth_handover_duration_s > 0 and pre_replay_pose and robot.is_connected:
             logging.info(
                 "Smooth return to pre-replay pose (%.2fs @ %d Hz)",
                 cfg.smooth_handover_duration_s,

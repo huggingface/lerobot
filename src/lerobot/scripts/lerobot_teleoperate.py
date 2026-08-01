@@ -77,6 +77,7 @@ from pprint import pformat
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.common.control_utils import smooth_teleop_session_start
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -121,7 +122,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.common.control_utils import smooth_teleop_session_start
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
