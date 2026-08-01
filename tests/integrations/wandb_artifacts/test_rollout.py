@@ -71,7 +71,6 @@ def _metadata(*, episodes: int, frames: int, fps: int = 10) -> DatasetDirectoryM
         total_tasks=1,
         camera_keys=(),
         video_keys=(),
-        source_path=Path("/tmp/rollout"),
         git_commit=None,
     )
 

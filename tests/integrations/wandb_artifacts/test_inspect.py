@@ -338,7 +338,6 @@ def test_inspect_extracts_metadata(tmp_path):
     assert metadata.total_episodes == metadata.total_frames == metadata.total_tasks == 0
     assert set(metadata.video_keys) == {video_key}
     assert set(metadata.camera_keys) == {video_key, image_key}
-    assert metadata.source_path == root.resolve()
 
 
 def test_inspect_git_commit_matches_lerobot_checkout_head(tmp_path):
@@ -412,7 +411,6 @@ def test_to_wandb_metadata_is_json_safe(tmp_path):
     root = _write_empty_dataset(tmp_path / "dataset")
     payload = inspect_dataset_directory(root).to_wandb_metadata()
     json.dumps(payload)
-    assert payload["source_path"] == str(root.resolve())
     assert isinstance(payload["camera_keys"], list)
 
 
@@ -511,7 +509,6 @@ def test_inspect_model_directory_extracts_metadata(tmp_path):
     assert metadata.has_full_weights is True
     assert metadata.has_adapter_weights is False
     assert metadata.policy_type == "diffusion"
-    assert metadata.source_path == root.resolve()
 
 
 def test_inspect_model_directory_reports_adapter_weights(tmp_path):
@@ -558,7 +555,6 @@ def test_model_to_wandb_metadata_is_json_safe(tmp_path):
     (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
     payload = inspect_model_directory(root).to_wandb_metadata()
     json.dumps(payload)
-    assert payload["source_path"] == str(root.resolve())
     assert payload["policy_type"] == "act"
 
 

@@ -74,7 +74,6 @@ class DatasetDirectoryMetadata:
     total_tasks: int
     camera_keys: tuple[str, ...]
     video_keys: tuple[str, ...]
-    source_path: Path
     git_commit: str | None
 
     def to_wandb_metadata(self) -> dict[str, Any]:
@@ -88,7 +87,6 @@ class DatasetDirectoryMetadata:
             "total_tasks": self.total_tasks,
             "camera_keys": list(self.camera_keys),
             "video_keys": list(self.video_keys),
-            "source_path": str(self.source_path),
             "git_commit": self.git_commit,
         }
 
@@ -133,7 +131,6 @@ def inspect_dataset_directory(root: Path | str) -> DatasetDirectoryMetadata:
         total_tasks=info.total_tasks,
         camera_keys=camera_keys,
         video_keys=video_keys,
-        source_path=root.resolve(),
         git_commit=_current_git_commit(),
     )
 
@@ -149,7 +146,6 @@ class ModelDirectoryMetadata:
     has_full_weights: bool
     has_adapter_weights: bool
     policy_type: str | None
-    source_path: Path
     git_commit: str | None
     # A PEFT adapter alone can't be rolled out: the base model it was trained against is resolved
     # from `base_model_name_or_path` in adapter_config.json, not bundled in this artifact. These two
@@ -164,7 +160,6 @@ class ModelDirectoryMetadata:
             "has_full_weights": self.has_full_weights,
             "has_adapter_weights": self.has_adapter_weights,
             "policy_type": self.policy_type,
-            "source_path": str(self.source_path),
             "git_commit": self.git_commit,
             "is_self_contained": self.is_self_contained,
             "base_model_name_or_path": self.base_model_name_or_path,
@@ -267,7 +262,6 @@ def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
         has_full_weights=has_full_weights,
         has_adapter_weights=has_adapter_weights,
         policy_type=policy_type if isinstance(policy_type, str) else None,
-        source_path=root.resolve(),
         git_commit=_current_git_commit(),
         is_self_contained=is_self_contained,
         base_model_name_or_path=base_model_name_or_path,
