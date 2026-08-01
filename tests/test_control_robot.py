@@ -58,6 +58,7 @@ def test_teleoperate(cadence_log):
         teleop=teleop_cfg,
         fps=30,
         teleop_time_s=0.1,
+        smooth_handover_duration_s=0.0,
     )
     teleoperate(cfg)
 
@@ -86,6 +87,7 @@ def test_record_and_resume(tmp_path):
         dataset=dataset_cfg,
         teleop=teleop_cfg,
         play_sounds=False,
+        smooth_handover_duration_s=0.0,
     )
 
     dataset = record(cfg)
@@ -136,6 +138,7 @@ def test_record_and_replay(tmp_path, cadence_log):
         robot=robot_cfg,
         dataset=replay_dataset_cfg,
         play_sounds=False,
+        smooth_handover_duration_s=0.0,
     )
 
     record(record_cfg)
