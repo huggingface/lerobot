@@ -146,7 +146,30 @@ class LeRobotDatasetMetadata:
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
-        table = pa.Table.from_pydict(combined_dict)
+        # On the first flush there is no writer yet, so let pyarrow infer the schema from the
+        # values (as before) and use it to create the writer below. On later flushes, pass the
+        # already-committed file schema so values are coerced to it instead of re-inferred —
+        # re-inference can drift (e.g. int64 vs double) and `write_table` then fails with an
+        # opaque "schema does not match" error. Do not remove this schema argument.
+        #
+        # Coercion can only reconcile *types*, never a differing set of columns, and
+        # `from_pydict` silently ignores mapping keys the schema lacks. A later episode can
+        # legitimately carry columns the first did not — `stats/<video_key>/...` only appears
+        # once the streaming encoder actually produced video statistics — so without this guard
+        # those columns would be dropped and the metadata written to disk incomplete. A parquet
+        # file's schema is fixed once its first row group is committed, so this cannot be
+        # reconciled here: fail loudly rather than persist silently-truncated metadata.
+        schema = self._pq_writer.schema if self._pq_writer else None
+        if schema is not None:
+            committed, present = set(schema.names), set(combined_dict)
+            if committed != present:
+                raise ValueError(
+                    f"Episode metadata columns changed between flushes of {self._pq_writer.where}: "
+                    f"unexpected {sorted(present - committed)}, "
+                    f"missing {sorted(committed - present)}. Every episode written to one "
+                    "metadata file must carry an identical set of columns."
+                )
+        table = pa.Table.from_pydict(combined_dict, schema=schema)
 
         if not self._pq_writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))

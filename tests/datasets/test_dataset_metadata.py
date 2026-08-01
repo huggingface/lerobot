@@ -428,6 +428,85 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
     assert len(parquet_files) > 0
 
 
+def test_flush_metadata_buffer_reuses_schema_across_episodes_of_different_length(tmp_path):
+    """A second flush must not re-infer a schema that conflicts with the first.
+
+    Regression test: with metadata_buffer_size=1, every save_episode() call triggers
+    its own flush. If pyarrow re-infers the schema per-flush instead of reusing the
+    one already committed to the parquet writer, an episode whose per-frame stats
+    happen to infer a slightly different type than the first raises
+    ``ValueError: Table schema does not match schema used to create file``.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = tmp_path / "buffer_schema_ds"
+    dataset = LeRobotDataset.create(
+        repo_id="test/buffer_schema",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        robot_type=DUMMY_ROBOT_TYPE,
+        use_videos=False,
+        metadata_buffer_size=1,  # flush after every single episode
+    )
+
+    for episode_index, num_frames in enumerate((2, 1)):  # different lengths per episode
+        for _ in range(num_frames):
+            dataset.add_frame(
+                {
+                    "state": np.zeros(6, dtype=np.float32),
+                    "action": np.zeros(6, dtype=np.float32),
+                    "task": f"task-{episode_index}",
+                }
+            )
+        dataset.save_episode()
+
+    dataset.finalize()  # must not raise ValueError: Table schema does not match ...
+
+    meta = LeRobotDatasetMetadata(repo_id="test/buffer_schema", root=root)
+    assert meta.episodes["episode_index"] == [0, 1]
+    assert meta.episodes["length"] == [2, 1]
+
+
+def test_flush_metadata_buffer_rejects_columns_absent_from_committed_schema(tmp_path):
+    """A later flush carrying new columns must fail loudly, not drop them.
+
+    `pa.Table.from_pydict(..., schema=...)` silently ignores mapping keys the schema does
+    not contain. Episodes can legitimately differ in columns — `stats/<video_key>/...` only
+    appears once the streaming encoder produced video statistics — and a parquet file's
+    schema is fixed once its first row group is committed, so the extra columns cannot be
+    added to this file. Persisting silently-truncated metadata is the one unacceptable
+    outcome; this must raise instead.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = tmp_path / "buffer_extra_cols_ds"
+    dataset = LeRobotDataset.create(
+        repo_id="test/buffer_extra_cols",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=root,
+        robot_type=DUMMY_ROBOT_TYPE,
+        use_videos=False,
+        metadata_buffer_size=1,
+    )
+    dataset.add_frame(
+        {"state": np.zeros(6, dtype=np.float32), "action": np.zeros(6, dtype=np.float32), "task": "t"}
+    )
+    dataset.save_episode()  # first flush commits the file schema
+
+    meta = dataset.meta
+    assert meta._pq_writer is not None, "first save_episode should have opened the parquet writer"
+
+    # A subsequent episode carrying a column the committed schema lacks.
+    buffered = dict(meta.latest_episode)
+    buffered["stats/observation.images.cam/mean"] = [[0.5]]
+    meta._metadata_buffer.append(buffered)
+
+    with pytest.raises(ValueError, match="columns changed between flushes"):
+        meta._flush_metadata_buffer()
+
+
 # ── Tools accessor ───────────────────────────────────────────────────
 
 
