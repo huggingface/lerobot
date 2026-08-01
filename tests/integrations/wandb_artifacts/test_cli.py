@@ -20,10 +20,12 @@ import pytest
 pytest.importorskip("wandb", reason="wandb is required (install lerobot[training])")
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
+
 from lerobot.datasets.io_utils import write_info
 from lerobot.datasets.utils import STATS_PATH, DatasetInfo
 from lerobot.integrations.wandb_artifacts import cli
-from lerobot.integrations.wandb_artifacts.inspect import DatasetDirectoryError
+from lerobot.integrations.wandb_artifacts.inspect import DatasetDirectoryError, ModelDirectoryError
 from lerobot.integrations.wandb_artifacts.store import MaterializedArtifact
 
 
@@ -36,6 +38,14 @@ def _write_minimal_dataset(root: Path) -> None:
     )
     (root / STATS_PATH).write_text("{}")
     (root / "data").mkdir(parents=True, exist_ok=True)
+
+
+def _write_minimal_model(root: Path) -> None:
+    import json
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / CONFIG_NAME).write_text(json.dumps({"type": "act"}))
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
 
 
 def _fake_run():
@@ -298,4 +308,183 @@ def test_dataset_download_rejects_result_missing_required_files(tmp_path, monkey
     with pytest.raises(DatasetDirectoryError):
         cli.main(["dataset", "download", "--ref", "my-team/my-project/pick-cube:latest", "--root", str(dest)])
 
+    run.finish.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# model upload / download
+# ---------------------------------------------------------------------------
+
+
+def _materialized_model_upload_result(registry_collection=None):
+    return MaterializedArtifact(
+        requested_ref="my-team/my-project/pick-cube-policy",
+        resolved_ref="my-team/my-project/pick-cube-policy:v0",
+        local_path=Path("/tmp/does-not-matter"),
+        version="v0",
+        digest="digest",
+        metadata={},
+        registry_collection=registry_collection,
+    )
+
+
+def test_model_upload_validates_before_touching_wandb(tmp_path, monkeypatch):
+    def _boom(**kwargs):
+        raise AssertionError("wandb.init should not be called before validation")
+
+    monkeypatch.setattr(cli.wandb, "init", _boom)
+
+    not_a_model = tmp_path / "not-a-model"
+    not_a_model.mkdir()
+
+    with pytest.raises(ModelDirectoryError):
+        cli.main(["model", "upload", "--root", str(not_a_model), "--project", "p", "--name", "n"])
+
+
+def test_model_upload_happy_path_without_registry(tmp_path, monkeypatch, capsys):
+    model_root = tmp_path / "model"
+    _write_minimal_model(model_root)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    upload_calls = []
+
+    def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None, **kwargs):
+        upload_calls.append(
+            {"artifact_type": artifact_type, "registry_collection": kwargs.get("registry_collection")}
+        )
+        return _materialized_model_upload_result()
+
+    monkeypatch.setattr(cli, "upload_directory", _fake_upload)
+
+    cli.main(["model", "upload", "--root", str(model_root), "--project", "p", "--entity", "e", "--name", "n"])
+
+    run.finish.assert_called_once()
+    assert upload_calls[0]["artifact_type"] == "model"
+    assert upload_calls[0]["registry_collection"] is None
+
+    out = capsys.readouterr().out
+    assert "my-team/my-project/pick-cube-policy:v0" in out
+    assert "Linked into registry collection" not in out
+
+
+def test_model_upload_happy_path_with_registry(tmp_path, monkeypatch, capsys):
+    model_root = tmp_path / "model"
+    _write_minimal_model(model_root)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    upload_calls = []
+
+    def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None, **kwargs):
+        upload_calls.append(kwargs.get("registry_collection"))
+        return _materialized_model_upload_result(registry_collection="pick-cube-policy")
+
+    monkeypatch.setattr(cli, "upload_directory", _fake_upload)
+
+    cli.main(
+        [
+            "model",
+            "upload",
+            "--root",
+            str(model_root),
+            "--project",
+            "p",
+            "--name",
+            "n",
+            "--registry-collection",
+            "pick-cube-policy",
+        ]
+    )
+
+    assert upload_calls == ["pick-cube-policy"]
+    out = capsys.readouterr().out
+    assert "Linked into registry collection: pick-cube-policy" in out
+
+
+def test_model_upload_finishes_run_even_on_upload_failure(tmp_path, monkeypatch):
+    model_root = tmp_path / "model"
+    _write_minimal_model(model_root)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("upload failed")
+
+    monkeypatch.setattr(cli, "upload_directory", _boom)
+
+    with pytest.raises(RuntimeError):
+        cli.main(["model", "upload", "--root", str(model_root), "--project", "p", "--name", "n"])
+
+    run.finish.assert_called_once()
+
+
+def test_model_download_rejects_malformed_ref_before_touching_wandb(tmp_path, monkeypatch):
+    init_calls = []
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or _fake_run())
+
+    with pytest.raises(ValueError):
+        cli.main(["model", "download", "--ref", "not-a-valid-ref", "--root", str(tmp_path)])
+
+    assert init_calls == []
+
+
+def test_model_download_happy_path(tmp_path, monkeypatch, capsys):
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+
+    dest = tmp_path / "materialized"
+    download_calls = []
+
+    def _fake_download(passed_run, ref, *, expected_type, download_root, **kwargs):
+        download_calls.append(expected_type)
+        _write_minimal_model(Path(download_root))
+        return MaterializedArtifact(
+            requested_ref=str(ref),
+            resolved_ref="my-team/my-project/pick-cube-policy:v3",
+            local_path=Path(download_root),
+            version="v3",
+            digest="digest",
+            metadata={},
+        )
+
+    monkeypatch.setattr(cli, "download_artifact", _fake_download)
+
+    cli.main(
+        ["model", "download", "--ref", "my-team/my-project/pick-cube-policy:latest", "--root", str(dest)]
+    )
+
+    assert download_calls == ["model"]
+    run.finish.assert_called_once()
+    out = capsys.readouterr().out
+    assert "my-team/my-project/pick-cube-policy:v3" in out
+    assert str(dest) in out
+
+
+def test_model_download_rejects_result_missing_required_files(tmp_path, monkeypatch):
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+
+    dest = tmp_path / "materialized"
+
+    def _fake_download_incomplete(passed_run, ref, *, expected_type, download_root, **kwargs):
+        Path(download_root).mkdir(parents=True, exist_ok=True)
+        return MaterializedArtifact(
+            requested_ref=str(ref),
+            resolved_ref="my-team/my-project/pick-cube-policy:v0",
+            local_path=Path(download_root),
+            version="v0",
+            digest="digest",
+            metadata={},
+        )
+
+    monkeypatch.setattr(cli, "download_artifact", _fake_download_incomplete)
+
+    with pytest.raises(ModelDirectoryError):
+        cli.main(
+            ["model", "download", "--ref", "my-team/my-project/pick-cube-policy:latest", "--root", str(dest)]
+        )
+
+    # Validation happens after the run is finished, so a bad result still finishes the run.
     run.finish.assert_called_once()

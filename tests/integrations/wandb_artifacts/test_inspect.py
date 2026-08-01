@@ -26,6 +26,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from datasets import Dataset
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
 from lerobot.datasets.io_utils import load_episodes, load_info, write_info, write_tasks
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -39,9 +40,14 @@ from lerobot.datasets.utils import (
 )
 from lerobot.integrations.wandb_artifacts import inspect as inspect_module
 from lerobot.integrations.wandb_artifacts.inspect import (
+    PEFT_ADAPTER_CONFIG_NAME,
+    PEFT_ADAPTER_WEIGHTS_NAME,
     DatasetDirectoryError,
+    ModelDirectoryError,
     inspect_dataset_directory,
+    inspect_model_directory,
     validate_dataset_directory,
+    validate_model_directory,
 )
 from lerobot.utils.constants import DEFAULT_FEATURES
 
@@ -408,3 +414,149 @@ def test_to_wandb_metadata_is_json_safe(tmp_path):
     json.dumps(payload)
     assert payload["source_path"] == str(root.resolve())
     assert isinstance(payload["camera_keys"], list)
+
+
+# ---------------------------------------------------------------------------
+# model directory validation/inspection
+# ---------------------------------------------------------------------------
+
+
+def _write_model_config(root: Path, *, policy_type: str | None = "act") -> None:
+    import json
+
+    root.mkdir(parents=True, exist_ok=True)
+    payload = {"type": policy_type} if policy_type is not None else {}
+    (root / CONFIG_NAME).write_text(json.dumps(payload))
+
+
+def test_validate_model_directory_accepts_full_weights(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+    validate_model_directory(root)
+
+
+def test_validate_model_directory_accepts_peft_adapter_weights(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    (root / PEFT_ADAPTER_CONFIG_NAME).write_text("{}")
+    (root / PEFT_ADAPTER_WEIGHTS_NAME).write_bytes(b"adapter")
+    validate_model_directory(root)
+
+
+def test_validate_model_directory_tolerates_extra_files(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+    (root / "train_config.json").write_text("{}")
+    (root / "policy_preprocessor").mkdir()
+    (root / "policy_preprocessor" / "preprocessor.json").write_text("{}")
+    (root / "README.md").write_text("hello")
+    validate_model_directory(root)
+
+
+def test_validate_model_directory_rejects_missing_config(tmp_path):
+    root = tmp_path / "model"
+    root.mkdir()
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+    with pytest.raises(ModelDirectoryError, match=CONFIG_NAME):
+        validate_model_directory(root)
+
+
+def test_validate_model_directory_rejects_config_without_weights(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    with pytest.raises(ModelDirectoryError, match="no model weights"):
+        validate_model_directory(root)
+
+
+def test_validate_model_directory_rejects_adapter_config_without_adapter_weights(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    (root / PEFT_ADAPTER_CONFIG_NAME).write_text("{}")
+    with pytest.raises(ModelDirectoryError, match="no model weights"):
+        validate_model_directory(root)
+
+
+def test_validate_model_directory_rejects_non_directory(tmp_path):
+    root = tmp_path / "not-a-dir"
+    root.write_text("nope")
+    with pytest.raises(ModelDirectoryError, match="not a directory"):
+        validate_model_directory(root)
+
+
+def test_validate_model_directory_never_opens_weights_file(tmp_path, monkeypatch):
+    root = tmp_path / "model"
+    _write_model_config(root)
+    weights_path = root / SAFETENSORS_SINGLE_FILE
+    weights_path.write_bytes(b"weights")
+
+    real_open = Path.open
+
+    def _guarded_open(self, *args, **kwargs):
+        if self == weights_path:
+            raise AssertionError("validate_model_directory must not open weight files")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _guarded_open)
+    validate_model_directory(root)
+
+
+def test_inspect_model_directory_extracts_metadata(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="diffusion")
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+
+    metadata = inspect_model_directory(root)
+    assert metadata.has_full_weights is True
+    assert metadata.has_adapter_weights is False
+    assert metadata.policy_type == "diffusion"
+    assert metadata.source_path == root.resolve()
+
+
+def test_inspect_model_directory_reports_adapter_weights(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="act")
+    (root / PEFT_ADAPTER_CONFIG_NAME).write_text("{}")
+    (root / PEFT_ADAPTER_WEIGHTS_NAME).write_bytes(b"adapter")
+
+    metadata = inspect_model_directory(root)
+    assert metadata.has_full_weights is False
+    assert metadata.has_adapter_weights is True
+    assert metadata.policy_type == "act"
+
+
+def test_inspect_model_directory_tolerates_corrupt_config(tmp_path):
+    root = tmp_path / "model"
+    root.mkdir()
+    (root / CONFIG_NAME).write_text("{not valid json")
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+
+    metadata = inspect_model_directory(root)
+    assert metadata.policy_type is None
+
+
+def test_inspect_model_directory_tolerates_missing_type_key(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type=None)
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+
+    metadata = inspect_model_directory(root)
+    assert metadata.policy_type is None
+
+
+def test_inspect_model_directory_raises_on_invalid_directory(tmp_path):
+    with pytest.raises(ModelDirectoryError):
+        inspect_model_directory(tmp_path / "missing")
+
+
+def test_model_to_wandb_metadata_is_json_safe(tmp_path):
+    import json
+
+    root = tmp_path / "model"
+    _write_model_config(root)
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+    payload = inspect_model_directory(root).to_wandb_metadata()
+    json.dumps(payload)
+    assert payload["source_path"] == str(root.resolve())
+    assert payload["policy_type"] == "act"

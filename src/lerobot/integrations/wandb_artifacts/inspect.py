@@ -20,6 +20,7 @@ stay inside the artifact root, and frame/task/episode indices must agree.
 
 from __future__ import annotations
 
+import json
 import math
 import subprocess
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from typing import Any
 
 import datasets
 import pandas as pd
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.feature_utils import get_hf_features_from_features
@@ -45,6 +47,12 @@ from lerobot.datasets.utils import (
 from lerobot.utils.constants import DEFAULT_FEATURES
 
 _TIMESTAMP_TOLERANCE_S = 1e-4
+
+# PEFT saves an adapter, not a full model, via `peft_model.save_pretrained(...)`. These filenames
+# are hardcoded rather than imported from `peft` because `peft` is an optional `lerobot[peft]`
+# extra, and importing it here would break directory inspection for every base-install user.
+PEFT_ADAPTER_CONFIG_NAME = "adapter_config.json"
+PEFT_ADAPTER_WEIGHTS_NAME = "adapter_model.safetensors"
 
 
 class DatasetDirectoryError(ValueError):
@@ -127,6 +135,84 @@ def inspect_dataset_directory(root: Path | str) -> DatasetDirectoryMetadata:
     )
 
 
+class ModelDirectoryError(ValueError):
+    """A local directory is not a loadable LeRobot policy checkpoint."""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDirectoryMetadata:
+    """Metadata extracted from a validated local model directory."""
+
+    has_full_weights: bool
+    has_adapter_weights: bool
+    policy_type: str | None
+    source_path: Path
+    git_commit: str | None
+
+    def to_wandb_metadata(self) -> dict[str, Any]:
+        """JSON-safe dict form, suitable for a W&B Artifact's ``metadata`` argument."""
+        return {
+            "has_full_weights": self.has_full_weights,
+            "has_adapter_weights": self.has_adapter_weights,
+            "policy_type": self.policy_type,
+            "source_path": str(self.source_path),
+            "git_commit": self.git_commit,
+        }
+
+
+def validate_model_directory(root: Path | str) -> dict[str, Any] | None:
+    """Prove that ``root`` is a locally loadable LeRobot policy checkpoint.
+
+    Checks only file *existence*, never opening or parsing a weights file: ``root`` must contain
+    ``config.json`` plus either full weights (``model.safetensors``) or a complete PEFT adapter pair
+    (``adapter_config.json`` and ``adapter_model.safetensors``). Optional processor files and
+    ``train_config.json`` — and any other extra content — are tolerated and ignored.
+
+    Returns the parsed contents of ``config.json`` (best-effort — ``None`` if it isn't valid JSON or
+    isn't a JSON object), so a caller like :func:`inspect_model_directory` doesn't need to re-read it.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        raise ModelDirectoryError(f"{root} is not a directory.")
+
+    config_path = root / CONFIG_NAME
+    if not config_path.is_file():
+        raise ModelDirectoryError(f"{root} is missing required model config file: {CONFIG_NAME}.")
+
+    has_full_weights = (root / SAFETENSORS_SINGLE_FILE).is_file()
+    has_adapter_weights = (root / PEFT_ADAPTER_CONFIG_NAME).is_file() and (
+        root / PEFT_ADAPTER_WEIGHTS_NAME
+    ).is_file()
+    if not has_full_weights and not has_adapter_weights:
+        raise ModelDirectoryError(
+            f"{root} has {CONFIG_NAME} but no model weights: expected either {SAFETENSORS_SINGLE_FILE} "
+            f"(full weights) or both {PEFT_ADAPTER_CONFIG_NAME} and {PEFT_ADAPTER_WEIGHTS_NAME} "
+            "(PEFT adapter weights)."
+        )
+
+    try:
+        with config_path.open() as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return config if isinstance(config, dict) else None
+
+
+def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
+    """Validate ``root`` and extract its self-describing metadata."""
+    root = Path(root)
+    config = validate_model_directory(root)
+    policy_type = config.get("type") if config is not None else None
+    return ModelDirectoryMetadata(
+        has_full_weights=(root / SAFETENSORS_SINGLE_FILE).is_file(),
+        has_adapter_weights=(root / PEFT_ADAPTER_CONFIG_NAME).is_file()
+        and (root / PEFT_ADAPTER_WEIGHTS_NAME).is_file(),
+        policy_type=policy_type if isinstance(policy_type, str) else None,
+        source_path=root.resolve(),
+        git_commit=_current_git_commit(),
+    )
+
+
 def _read_info(root: Path) -> DatasetInfo:
     try:
         info = load_info(root)
@@ -174,9 +260,7 @@ def _read_stats(root: Path) -> None:
 
 def _read_tasks(root: Path, info: DatasetInfo) -> pd.DataFrame | None:
     if info.total_frames > 0 and info.total_tasks == 0:
-        raise DatasetDirectoryError(
-            f"{root} declares total_frames={info.total_frames} but total_tasks=0."
-        )
+        raise DatasetDirectoryError(f"{root} declares total_frames={info.total_frames} but total_tasks=0.")
     if info.total_tasks == 0:
         return None
     try:

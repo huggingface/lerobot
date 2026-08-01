@@ -28,12 +28,17 @@ from .refs import ArtifactRef, parse_artifact_ref
 _LAZY_EXPORTS = {
     "DatasetDirectoryError": ".inspect",
     "DatasetDirectoryMetadata": ".inspect",
+    "ModelDirectoryError": ".inspect",
+    "ModelDirectoryMetadata": ".inspect",
     "inspect_dataset_directory": ".inspect",
+    "inspect_model_directory": ".inspect",
     "validate_dataset_directory": ".inspect",
+    "validate_model_directory": ".inspect",
     "ArtifactTypeMismatchError": ".store",
     "DownloadDestinationNotEmptyError": ".store",
     "MaterializedArtifact": ".store",
     "download_artifact": ".store",
+    "link_to_registry": ".store",
     "upload_directory": ".store",
 }
 
@@ -41,14 +46,19 @@ if TYPE_CHECKING:
     from .inspect import (
         DatasetDirectoryError,
         DatasetDirectoryMetadata,
+        ModelDirectoryError,
+        ModelDirectoryMetadata,
         inspect_dataset_directory,
+        inspect_model_directory,
         validate_dataset_directory,
+        validate_model_directory,
     )
     from .store import (
         ArtifactTypeMismatchError,
         DownloadDestinationNotEmptyError,
         MaterializedArtifact,
         download_artifact,
+        link_to_registry,
         upload_directory,
     )
 
@@ -71,9 +81,14 @@ __all__ = [
     "DatasetDirectoryMetadata",
     "DownloadDestinationNotEmptyError",
     "MaterializedArtifact",
+    "ModelDirectoryError",
+    "ModelDirectoryMetadata",
     "download_artifact",
     "inspect_dataset_directory",
+    "inspect_model_directory",
+    "link_to_registry",
     "parse_artifact_ref",
     "upload_directory",
     "validate_dataset_directory",
+    "validate_model_directory",
 ]

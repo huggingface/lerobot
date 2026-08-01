@@ -56,7 +56,9 @@ class MaterializedArtifact:
     possibly-mutable-alias reference string for a download). ``resolved_ref`` is always the
     immutable ``entity/project/name:vN`` W&B actually resolved to. ``local_path`` is the directory
     that now holds (or, for an upload, already held) the artifact's contents on disk — the source
-    directory for an upload, the download destination for a download.
+    directory for an upload, the download destination for a download. ``registry_collection`` is
+    the unified-Registry collection name the artifact was linked into (see :func:`link_to_registry`),
+    or ``None`` when the caller didn't request a registry link.
     """
 
     requested_ref: str
@@ -65,6 +67,7 @@ class MaterializedArtifact:
     version: str
     digest: str
     metadata: dict[str, Any]
+    registry_collection: str | None = None
 
 
 def _wandb_sdk() -> Any:
@@ -81,6 +84,26 @@ def _wandb_sdk() -> Any:
     return wandb
 
 
+def link_to_registry(
+    run: wandb.sdk.wandb_run.Run,
+    artifact: wandb.Artifact,
+    *,
+    collection: str,
+    aliases: Sequence[str] = (),
+) -> str:
+    """Link an already-logged ``artifact`` into the ``collection`` of W&B's unified Registry.
+
+    Uses ``Run.link_artifact(artifact, target_path="wandb-registry-model/<collection>")`` — the
+    unified Registry — rather than ``Run.link_model()``, which hardcodes W&B's legacy, sunsetting
+    Model Registry (``project="model-registry"``). See ``docs/adr/0003-use-unified-wandb-registry.md``.
+
+    Returns the ``target_path`` the artifact was linked into.
+    """
+    target_path = f"wandb-registry-model/{collection}"
+    run.link_artifact(artifact, target_path=target_path, aliases=list(aliases) if aliases else None)
+    return target_path
+
+
 def upload_directory(
     run: wandb.sdk.wandb_run.Run,
     directory: Path | str,
@@ -89,12 +112,15 @@ def upload_directory(
     artifact_type: str,
     aliases: Sequence[str] = (),
     metadata: Mapping[str, Any] | None = None,
+    registry_collection: str | None = None,
 ) -> MaterializedArtifact:
     """Upload ``directory`` as a new version of the ``name`` Artifact collection.
 
     Waits for W&B to confirm the upload is fully committed before returning, so a caller that
     gets a result back knows the artifact genuinely exists in W&B, not just that local files were
-    queued for upload.
+    queued for upload. When ``registry_collection`` is given, the committed version is additionally
+    linked into that unified-Registry collection via :func:`link_to_registry`, after the commit
+    (``.wait()``) — never before — so only a durably-logged version is ever linked.
     """
     directory = Path(directory)
     requested_ref = f"{run.entity}/{run.project}/{name}"
@@ -106,6 +132,9 @@ def upload_directory(
     logged = run.log_artifact(artifact, aliases=list(aliases) if aliases else None)
     logged.wait()
 
+    if registry_collection is not None:
+        link_to_registry(run, logged, collection=registry_collection, aliases=aliases)
+
     return MaterializedArtifact(
         requested_ref=requested_ref,
         resolved_ref=logged.qualified_name,
@@ -113,6 +142,7 @@ def upload_directory(
         version=logged.version,
         digest=logged.digest,
         metadata=dict(logged.metadata or {}),
+        registry_collection=registry_collection,
     )
 
 
@@ -158,9 +188,7 @@ def download_artifact(
         )
 
     download_root.parent.mkdir(parents=True, exist_ok=True)
-    staging_root = Path(
-        tempfile.mkdtemp(prefix=f".{download_root.name}.download-", dir=download_root.parent)
-    )
+    staging_root = Path(tempfile.mkdtemp(prefix=f".{download_root.name}.download-", dir=download_root.parent))
     removed_empty_destination = False
 
     try:
