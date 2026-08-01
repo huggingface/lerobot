@@ -20,13 +20,6 @@ IMAGE_KEYS = (
 )
 IGNORE_INDEX = -100
 
-
-def _as_debug_list(value):
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().tolist()
-    return value
-
-
 def dict_apply(func, d):
     """
     Apply a function to all values in a dictionary recursively.

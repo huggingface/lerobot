@@ -240,7 +240,6 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla2 = [
     "lerobot[transformers-dep]",
-    "lerobot[peft-dep]",
     "lerobot[scipy-dep]",
     "lerobot[qwen-vl-utils-dep]",
 ]

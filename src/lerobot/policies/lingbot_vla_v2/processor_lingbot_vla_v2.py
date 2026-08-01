@@ -28,6 +28,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -41,7 +42,6 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_STATE,

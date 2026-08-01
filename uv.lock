@@ -3095,7 +3095,6 @@ libero = [
     { name = "transformers" },
 ]
 lingbot_vla2 = [
-    { name = "peft" },
     { name = "qwen-vl-utils" },
     { name = "scipy" },
     { name = "transformers" },
@@ -3381,7 +3380,6 @@ requires-dist = [
     { name = "lerobot", extras = ["openarms"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'groot'" },
-    { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'lingbot_vla2'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'peft'" },
     { name = "lerobot", extras = ["peft-dep"], marker = "extra == 'robometer'" },
