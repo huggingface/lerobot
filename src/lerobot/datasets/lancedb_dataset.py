@@ -13,17 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Read-only loader for LeRobot datasets stored as LanceDB tables.
-
-Layout (video datasets): meta/ (standard v3.0 metadata), frames.lance (one row
-per frame, tabular features only), videos.lance (one row per source video: blob
-v2 bytes + byte-index columns), meta.lance (meta/ files as path+bytes, the
-transport for object-store roots).
-
-Feature keys with dots are stored with dots replaced by underscores. Metadata is
-byte-identical to the standard format. Hub tables stream over ``hf://`` (set
-``HF_TOKEN`` for private repos); only ``meta/`` is downloaded.
-"""
 
 from __future__ import annotations
 
@@ -61,16 +50,11 @@ FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
 META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
-# Byte-index columns on the videos table, written at conversion time by
-# ``build_video_byte_index``. Map a frame window to its byte ranges so a batch's
-# video bytes travel in one ``fetch_blob_ranges`` call. Keyframe columns assume
-# constant frame rate; moov columns are mp4-only (0/0 otherwise).
+# Byte-index columns on the videos table Map a frame window to its byte ranges so a batch's
+# bytes fetch can be batched . Keyframe columns assume constant frame rate. mp4-only
 VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "kf_positions")
-# ffmpeg reads more bytes than the frames requested (head probe at open,
-# first-packet priming, one avio buffer of readahead). Padding each prefetched
-# range to cover those known reads keeps them off the slow fallback path; any
-# byte still missed is served correctly by a fallback ``read_range``. Sized at
-# 2-4x measured, since these are stable ffmpeg behaviors, not tunables.
+# ffmpeg reads more bytes than the frames requested. Padding each prefetched range
+# to cover those known reads keeps them off the slow fallback path.
 _HEAD_BYTES = 256 * 1024
 _OPEN_READAHEAD = 256 * 1024
 _RANGE_SLACK = 64 * 1024
@@ -106,10 +90,7 @@ def _find_moov(read_at, file_size: int) -> tuple[int, int]:
 
 def build_video_byte_index(path: str | Path) -> dict:
     """Compute the byte-index columns for one video file.
-
-    Converters store the result with the video's blob row; the reader uses it to
-    translate frame windows into byte ranges. Works for any container/codec pyav
-    can demux; frame indices assume constant frame rate. moov fields are mp4-only.
+    Works for any container/codec pyav can demux; frame indices assume constant frame rate. mp4-only.
     """
     import av
 
@@ -141,15 +122,7 @@ def build_video_byte_index(path: str | Path) -> dict:
 
 
 class _SparseBlobSource(io.RawIOBase):
-    """Adapter between lance's batched range fetches and the decoders' file API.
-
-    lance serves video bytes as batched parallel range fetches; torchcodec and
-    pyav want a seekable file. This buffers a fetch wave's ranges (kept disjoint
-    by merge-on-add) and presents them as a file. A read outside the buffered
-    ranges falls back to one ``read_range`` — always correct, never wrong data —
-    so every prefetch heuristic here is an optimization, not a correctness
-    requirement. ``fallback_bytes`` counts miss traffic (~0 when healthy).
-    """
+    """Adapter between range fetches and the decoders' file API."""
 
     def __init__(self, size: int, fallback):
         super().__init__()
@@ -162,12 +135,6 @@ class _SparseBlobSource(io.RawIOBase):
         self.fallback_bytes = 0
 
     def add(self, offset: int, data: bytes) -> None:
-        """Buffer a fetched range, merging any chunks it overlaps or touches.
-
-        Keeping chunks disjoint lets ``covers``/``readinto`` check only the one
-        chunk preceding a position; overlapping chunks would misreport covered
-        bytes as missing and cost a spurious fallback round trip.
-        """
         end = offset + len(data)
         lo = bisect.bisect_left(self._starts, offset)
         if lo > 0 and self._starts[lo - 1] + len(self._chunks[lo - 1]) >= offset:
@@ -239,9 +206,7 @@ class _SparseBlobSource(io.RawIOBase):
 
 class _VideoDecoderLRU:
     """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
-
-    Remote decoders hold prefetched bytes plus an ffmpeg context, so eviction is
-    bounded by ``byte_budget`` too, not just entry count.
+    eviction is bounded by ``byte_budget`` too, not just entry count.
     """
 
     def __init__(self, capacity: int, byte_budget: int | None = None):
@@ -272,7 +237,6 @@ class _VideoDecoderLRU:
 
 
 def to_lance_column(key: str) -> str:
-    """Map a LeRobot feature key to its Lance column name."""
     return key.replace(".", "_")
 
 
@@ -299,12 +263,7 @@ def _connect(db_uri: str, storage_options: dict | None, revision: str | None = N
 
 
 def _materialize_meta(db, local_root: Path) -> None:
-    """Write ``meta/`` from the meta table to a local cache, once.
-
-    The table is the transport; files are materialized byte-identical so
-    ``LeRobotDatasetMetadata`` reads them unchanged. Writes to a temp dir and
-    renames into place so an interrupted run is never mistaken for a complete one.
-    """
+    """Write ``meta/`` from the meta table to a local cache, once."""
     meta_dir = local_root / "meta"
     if meta_dir.exists():
         return
@@ -318,13 +277,10 @@ def _materialize_meta(db, local_root: Path) -> None:
 
     tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
     try:
-        # Stream row groups: per-episode stats reach hundreds of MB at droid scale.
         tmp_resolved = tmp_dir.resolve()
         for batch in table.search().select(["path", "data"]).to_batches():
             paths = batch.column("path").to_pylist()
             for i, rel_path in enumerate(paths):
-                # rel_path is from a possibly-remote table: an absolute or '..'
-                # path would escape tmp_dir. Confine every write under it.
                 dst = (tmp_dir / rel_path).resolve()
                 if not dst.is_relative_to(tmp_resolved):
                     raise ValueError(f"meta table entry escapes the cache directory: {rel_path!r}")
@@ -333,7 +289,7 @@ def _materialize_meta(db, local_root: Path) -> None:
         try:
             tmp_dir.rename(meta_dir)
         except OSError:
-            if not meta_dir.exists():  # lost a race to another process is fine
+            if not meta_dir.exists(): 
                 raise
     finally:
         if tmp_dir.exists():
@@ -363,8 +319,7 @@ def is_lance_dataset(
         paths = huggingface_hub.HfApi().get_paths_info(
             repo_id, [f"{FRAMES_TABLE}.lance"], repo_type="dataset", revision=revision
         )
-    except Exception:
-        # Unknown repo, no network, auth failure: fall back to the parquet loader,
+    except Exception:   # fall back to the parquet loader,
         return False
     return len(paths) > 0
 
@@ -419,8 +374,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._storage_options = storage_options
 
         if root is not None and _is_remote_uri(root):
-            # Object-store root: tables read in place; meta/ materialized once
-            # into a local cache since LeRobotDatasetMetadata reads from a dir.
             self._db_uri = str(root).rstrip("/")
             self.root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", self._db_uri)
             if not (self.root / "meta").exists():
@@ -437,13 +390,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
         )
-        # For hub-hosted tables, read from the metadata's RESOLVED revision so
-        # tables and meta can never come from different revisions.
         self._hub_revision = self.meta.revision if self._db_uri == f"hf://datasets/{repo_id}" else None
 
         if self.meta.image_keys:
-            # Only video-backed camera features are supported: an image-backed
-            # dataset would silently drop its camera columns. Re-encode as video.
             raise NotImplementedError(
                 f"Image-backed features are not supported by LanceDBDataset: {self.meta.image_keys}. "
                 "Re-encode them as video."
@@ -452,8 +401,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
         if self.meta.depth_keys:
-            # Stats must match the output unit or the processor normalizes with a
-            # 1000x-off scale. Mirror LeRobotDataset.
             self.meta.rescale_depth_stats(self._depth_output_unit)
         self._depth_encoder_configs = {
             key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
@@ -485,8 +432,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 "the dataset metadata is inconsistent."
             )
 
-        # Row position in frames table == absolute frame index. Subset selection
-        # maps relative __getitem__ indices through _rel_to_abs.
         if self.episodes is not None:
             self._rel_to_abs = np.concatenate(
                 [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in self.episodes]
@@ -500,7 +445,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         self._task_names = list(self.meta.tasks.index)
 
-        # Tabular features live in the frames table; pixels do not.
         self._tabular_keys = [
             key
             for key in self.meta.features
@@ -530,7 +474,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
             for key in self.meta.video_keys
         }
 
-        # Lazily opened per process; see __getstate__.
         self._frames_perm = None
         self._videos_table = None
         self._video_row_ids: dict[tuple, int] | None = None
@@ -539,27 +482,16 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._decode_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 16
-        # Decoders hold buffered bytes: cap at 2 GiB per worker to bound memory.
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30) # 2GB cap
 
     def _ensure_open(self) -> None:
-        """Open the frames table handle for this process if needed.
-
-        Handles open lazily and drop on pickling so each worker builds its own.
-        Lance is not fork-safe: pass ``multiprocessing_context=lance_mp_context()``
-        when ``num_workers > 0``.
-        """
         if self._frames_perm is not None:
             return
         if self.meta.video_keys:
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-            # One persistent pool per worker for decoder creation and frame
-            # decoding; 16 matches the old per-batch decoder-creation cap.
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
         db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision)
         table = db.open_table(FRAMES_TABLE)
-        # Integrity: row count must equal total_frames (row position == abs frame
-        # index). Catches truncated/over-appended tables at open.
         n_rows = table.count_rows()
         if n_rows != self.meta.total_frames:
             raise ValueError(
@@ -582,7 +514,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
                 for row in index.to_pylist()
             }
-            # fail fast in case of missing episodes
             referenced = {
                 (key, int(chunk), int(file))
                 for key, (chunks, files, _) in self._video_locator.items()
@@ -665,8 +596,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     item[cam_key] = self.image_transforms(item[cam_key])
         return items
 
-    # ── internals ──────────────────────────────────────────────────────────
-
     def _plan_file_windows(self, plans: list[dict]) -> dict[tuple, list[tuple[int, int]]]:
         """Map each batch sample's video windows to (file key -> frame spans).
 
@@ -725,11 +654,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return self._video_file_key(key, ep_idx), (first, base + max(window))
 
     def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
-        """Fetch rows from the frames table and decode columns to numpy.
-
-        Vector features come back as 2-D ``(n_rows, dim)``, scalars as 1-D,
-        language columns as python lists of message dicts.
-        """
         batch = self._frames_perm.__getitems__(rows)
         columns = {}
         for key, lance_name in zip(self._tabular_keys, self._fetch_columns, strict=True):
@@ -737,8 +661,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
             if hasattr(array, "combine_chunks"):
                 array = array.combine_chunks()
             if key in self._language_keys:
-                # Match upstream's datasets.Json() feature: tool_calls stored as
-                # JSON text, surfaced as python objects.
                 rows = array.to_pylist()
                 for row in rows:
                     for msg in row or ():
@@ -776,13 +698,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
                 return
             fps = decoder.metadata.average_fps
-            # One decode call per window: window frames are consecutive, so it's
-            # one seek plus a sequential decode.
             for sample_idx, shifted_ts in file_requests:
                 indices = [round(ts * fps) for ts in shifted_ts]
                 batch = decoder.get_frames_at(indices=indices)
-                # float64: float32 quantizes ~1e-3 s at t~1e4 s in long aggregated
-                # files, tripping tolerance_s spuriously.
                 distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
                 if (distance >= self.tolerance_s).any():
                     raise FrameTimestampError(
@@ -795,7 +713,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     frames = (frames / 255.0).type(torch.float32)
                 results[sample_idx][key] = frames.squeeze(0)
 
-        # Decode files in parallel (decoding releases the GIL).
         futures = [self._decode_pool.submit(_decode_file, k, r) for k, r in requests.items()]
         for future in futures:
             future.result()
@@ -863,9 +780,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 spans_by_key[key] = spans
             self._fetch_spans(spans_by_key, sources)
 
-            # Decoder creation parses moov sample tables (~ms/file): parallelize.
-            # Depth files get no torchcodec decoder (pyav handles their 16-bit
-            # planes); their entry holds only the prefetched source.
             rgb_files = [key for key in new_files if key[0] not in self.meta.depth_keys]
             created = self._decode_pool.map(
                 lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
@@ -909,11 +823,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         return [base + float(timestamps[row_pos[row]]) for row in window]
 
     def _ensure_decoders(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
-        """Stage 2 of video decoding: fetch this batch's frame windows.
-
-        Translates each window into a keyframe-aligned byte range and fetches
-        them all in one ``fetch_blob_ranges`` call.
-        """
+        """Stage 2 of video decoding: fetch this batch's frame windows."""
         decoders = {key: decoder for key, (decoder, _) in prepared.items()}
         sources = {key: source for key, (_, source) in prepared.items()}
 
@@ -937,26 +847,19 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
         for key in requests:
             source = sources[key]
-            # Re-account each batch as sources grow, so the byte budget alone
-            # bounds memory: an oversized entry is evicted and rebuilt from two
-            # prefetch ranges next touch.
+            # Re-account each batch as sources grow, so the byte bounds memory
             decoder = decoders[key]
             if decoder is not None:
                 height = decoder.metadata.height or 0
                 width = decoder.metadata.width or 0
-            else:  # depth: no torchcodec decoder; size from the feature shape
+            else:  # depth: no torchcodec decoder. size from the feature shape
                 height, width = (tuple(self.meta.features[key[0]].get("shape") or (0, 0)) + (0, 0))[:2]
             context_cost = (8 << 20) + 8 * height * width
             self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered + context_cost)
         return prepared
 
     def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode one depth window with upstream's pyav decoder over our sparse source.
-
-        Depth videos hold 16-bit planes torchcodec cannot emit;
-        decode_video_frames_pyav takes file-like objects, so the same upstream
-        function serves both loaders. We add only the seek and the dequantize.
-        """
+        """Decode one depth window with upstream's pyav decoder over our sparse source."""
         source.seek(0)
         frames = decode_video_frames_pyav(
             source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
@@ -974,11 +877,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
     def _fetch_spans(
         self, spans_by_key: dict[tuple, list[tuple[int, int]]], sources: dict[tuple, _SparseBlobSource]
     ) -> None:
-        """Fetch byte spans for many files in one parallel wave and buffer them.
-
-        Spans are coalesced per file and all files' ranges go out in one
-        ``fetch_blob_ranges`` call.
-        """
         range_requests: list[tuple[int, int, int]] = []
         range_targets: list[tuple[tuple, int]] = []
         for key, spans in spans_by_key.items():
@@ -995,9 +893,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """Fetch byte-index columns for files not yet in the per-worker cache."""
         if not missing:
             return
-        # Point reads by _rowid: a filter on plain columns would scan and decode
-        # the large keyframe list columns for the whole table. Keep those lists in
-        # Arrow/numpy — python conversion costs seconds/batch at droid scale.
         row_ids = ",".join(str(self._video_row_ids[file_key]) for file_key in missing)
         batch = (
             self._videos_table.search()
@@ -1035,10 +930,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self._file_meta.popitem(last=False)
 
     def _window_byte_range(self, key: str, meta: dict, first_frame: int, last_frame: int) -> tuple[int, int]:
-        """Byte range covering frames [first, last]: preceding keyframe to next keyframe.
-
-        Depth ranges get 4x readahead slack (12-bit depth packets run ~90 KB vs ~64 KB).
-        """
+        """Byte range covering frames [first, last]: preceding keyframe to next keyframe."""
         kf_indices, kf_positions = meta["kf_indices"], meta["kf_positions"]
         start_idx = max(int(np.searchsorted(kf_indices, first_frame, side="right")) - 1, 0)
         end_idx = int(np.searchsorted(kf_indices, last_frame, side="right"))
