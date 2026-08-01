@@ -560,3 +560,66 @@ def test_model_to_wandb_metadata_is_json_safe(tmp_path):
     json.dumps(payload)
     assert payload["source_path"] == str(root.resolve())
     assert payload["policy_type"] == "act"
+
+
+def _write_adapter_config(root: Path, *, base_model_name_or_path=None) -> None:
+    import json
+
+    payload = {} if base_model_name_or_path is None else {"base_model_name_or_path": base_model_name_or_path}
+    (root / PEFT_ADAPTER_CONFIG_NAME).write_text(json.dumps(payload))
+    (root / PEFT_ADAPTER_WEIGHTS_NAME).write_bytes(b"adapter")
+
+
+def test_inspect_model_directory_warns_when_adapter_base_model_is_not_local(tmp_path, caplog):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="act")
+    _write_adapter_config(root, base_model_name_or_path="my-team/some-base-policy")
+
+    metadata = inspect_model_directory(root)
+
+    assert metadata.is_self_contained is False
+    assert metadata.base_model_name_or_path == "my-team/some-base-policy"
+    assert metadata.to_wandb_metadata()["is_self_contained"] is False
+    assert metadata.to_wandb_metadata()["base_model_name_or_path"] == "my-team/some-base-policy"
+    assert any(
+        "my-team/some-base-policy" in record.message and record.levelname == "WARNING"
+        for record in caplog.records
+    )
+
+
+def test_inspect_model_directory_no_warning_when_base_model_present_locally(tmp_path, caplog):
+    root = tmp_path / "model"
+    base_model_dir = tmp_path / "local-base-model"
+    base_model_dir.mkdir()
+    _write_model_config(root, policy_type="act")
+    _write_adapter_config(root, base_model_name_or_path=str(base_model_dir))
+
+    metadata = inspect_model_directory(root)
+
+    assert metadata.is_self_contained is True
+    assert metadata.base_model_name_or_path == str(base_model_dir)
+    assert not any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_inspect_model_directory_no_warning_with_full_weights(tmp_path, caplog):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="act")
+    (root / SAFETENSORS_SINGLE_FILE).write_bytes(b"weights")
+
+    metadata = inspect_model_directory(root)
+
+    assert metadata.is_self_contained is True
+    assert metadata.base_model_name_or_path is None
+    assert not any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_inspect_model_directory_tolerates_corrupt_adapter_config(tmp_path):
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="act")
+    (root / PEFT_ADAPTER_CONFIG_NAME).write_text("{not valid json")
+    (root / PEFT_ADAPTER_WEIGHTS_NAME).write_bytes(b"adapter")
+
+    metadata = inspect_model_directory(root)
+
+    assert metadata.is_self_contained is False
+    assert metadata.base_model_name_or_path is None

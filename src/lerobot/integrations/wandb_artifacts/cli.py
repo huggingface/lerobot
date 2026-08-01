@@ -151,11 +151,11 @@ def cmd_model_download(args: argparse.Namespace) -> None:
             parsed,
             expected_type=MODEL_ARTIFACT_TYPE,
             download_root=args.root,
+            validator=validate_model_directory,
         )
     finally:
         run.finish()
 
-    validate_model_directory(result.local_path)
     print(
         f"Downloaded model artifact {result.resolved_ref} to: {result.local_path} "
         "(use directly as a rollout policy path)"

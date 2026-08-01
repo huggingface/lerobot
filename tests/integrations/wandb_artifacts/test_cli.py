@@ -436,10 +436,13 @@ def test_model_download_happy_path(tmp_path, monkeypatch, capsys):
 
     dest = tmp_path / "materialized"
     download_calls = []
+    validator_calls = []
 
-    def _fake_download(passed_run, ref, *, expected_type, download_root, **kwargs):
+    def _fake_download(passed_run, ref, *, expected_type, download_root, validator=None):
         download_calls.append(expected_type)
         _write_minimal_model(Path(download_root))
+        validator_calls.append(validator)
+        validator(Path(download_root))
         return MaterializedArtifact(
             requested_ref=str(ref),
             resolved_ref="my-team/my-project/pick-cube-policy:v3",
@@ -456,6 +459,7 @@ def test_model_download_happy_path(tmp_path, monkeypatch, capsys):
     )
 
     assert download_calls == ["model"]
+    assert validator_calls == [cli.validate_model_directory]
     run.finish.assert_called_once()
     out = capsys.readouterr().out
     assert "my-team/my-project/pick-cube-policy:v3" in out
@@ -463,21 +467,21 @@ def test_model_download_happy_path(tmp_path, monkeypatch, capsys):
 
 
 def test_model_download_rejects_result_missing_required_files(tmp_path, monkeypatch):
+    """The store must validate the staged download before promoting it to ``--root``.
+
+    Mirrors ``test_dataset_download_rejects_result_missing_required_files``: the validator is
+    invoked by ``download_artifact`` itself, while the download is still staged, not by the CLI
+    after the fact — so a rejecting validator must stop promotion before it ever happens.
+    """
     run = _fake_run()
     monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
 
     dest = tmp_path / "materialized"
 
-    def _fake_download_incomplete(passed_run, ref, *, expected_type, download_root, **kwargs):
+    def _fake_download_incomplete(passed_run, ref, *, expected_type, download_root, validator=None):
         Path(download_root).mkdir(parents=True, exist_ok=True)
-        return MaterializedArtifact(
-            requested_ref=str(ref),
-            resolved_ref="my-team/my-project/pick-cube-policy:v0",
-            local_path=Path(download_root),
-            version="v0",
-            digest="digest",
-            metadata={},
-        )
+        validator(Path(download_root))
+        raise AssertionError("validator should have rejected the incomplete directory")
 
     monkeypatch.setattr(cli, "download_artifact", _fake_download_incomplete)
 
@@ -486,5 +490,56 @@ def test_model_download_rejects_result_missing_required_files(tmp_path, monkeypa
             ["model", "download", "--ref", "my-team/my-project/pick-cube-policy:latest", "--root", str(dest)]
         )
 
-    # Validation happens after the run is finished, so a bad result still finishes the run.
+    run.finish.assert_called_once()
+
+
+@pytest.mark.parametrize("destination_exists", [False, True])
+def test_model_download_leaves_destination_untouched_when_staged_model_is_invalid(
+    tmp_path, monkeypatch, destination_exists
+):
+    """Regression test for staging an invalid model: it must never be promoted to ``--root``.
+
+    Exercises the real ``download_artifact`` (not a mock of it) end to end through
+    ``cmd_model_download``, so it proves the CLI actually wires ``validate_model_directory`` in as
+    the store's ``validator`` — a mocked ``download_artifact`` would hide a missing wire-up.
+    """
+    run = _fake_run()
+
+    class _InvalidStagedArtifact:
+        type = "model"
+        version = "v0"
+        digest = "digest"
+        metadata = {}
+        entity = "my-team"
+        project = "my-project"
+        name = "pick-cube-policy:v0"
+
+        @property
+        def qualified_name(self):
+            return f"{self.entity}/{self.project}/{self.name}"
+
+        def download(self, root=None, **_kwargs):
+            # Staged content has config.json but no weights: fails validate_model_directory.
+            root_path = Path(root)
+            root_path.mkdir(parents=True, exist_ok=True)
+            (root_path / CONFIG_NAME).write_text("{}")
+            return root
+
+    run.use_artifact = lambda ref: _InvalidStagedArtifact()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+
+    dest = tmp_path / "materialized"
+    if destination_exists:
+        dest.mkdir()
+
+    with pytest.raises(ModelDirectoryError):
+        cli.main(
+            ["model", "download", "--ref", "my-team/my-project/pick-cube-policy:latest", "--root", str(dest)]
+        )
+
+    if destination_exists:
+        assert dest.is_dir()
+        assert list(dest.iterdir()) == []
+    else:
+        assert not dest.exists()
     run.finish.assert_called_once()

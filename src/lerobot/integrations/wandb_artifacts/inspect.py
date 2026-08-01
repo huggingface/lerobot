@@ -21,6 +21,7 @@ stay inside the artifact root, and frame/task/episode indices must agree.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import subprocess
 from dataclasses import dataclass
@@ -148,6 +149,12 @@ class ModelDirectoryMetadata:
     policy_type: str | None
     source_path: Path
     git_commit: str | None
+    # A PEFT adapter alone can't be rolled out: the base model it was trained against is resolved
+    # from `base_model_name_or_path` in adapter_config.json, not bundled in this artifact. These two
+    # fields make that visible (in the W&B UI, via `to_wandb_metadata()`) rather than only in a log
+    # line — see the adapter-only branch of `inspect_model_directory`.
+    is_self_contained: bool
+    base_model_name_or_path: str | None
 
     def to_wandb_metadata(self) -> dict[str, Any]:
         """JSON-safe dict form, suitable for a W&B Artifact's ``metadata`` argument."""
@@ -157,6 +164,8 @@ class ModelDirectoryMetadata:
             "policy_type": self.policy_type,
             "source_path": str(self.source_path),
             "git_commit": self.git_commit,
+            "is_self_contained": self.is_self_contained,
+            "base_model_name_or_path": self.base_model_name_or_path,
         }
 
 
@@ -203,14 +212,66 @@ def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
     root = Path(root)
     config = validate_model_directory(root)
     policy_type = config.get("type") if config is not None else None
+
+    has_full_weights = (root / SAFETENSORS_SINGLE_FILE).is_file()
+    has_adapter_weights = (root / PEFT_ADAPTER_CONFIG_NAME).is_file() and (
+        root / PEFT_ADAPTER_WEIGHTS_NAME
+    ).is_file()
+
+    is_self_contained = has_full_weights
+    base_model_name_or_path = None
+    if not has_full_weights and has_adapter_weights:
+        base_model_name_or_path = _adapter_base_model_name(root)
+        is_self_contained = base_model_name_or_path is not None and _local_path_exists(
+            base_model_name_or_path
+        )
+        if not is_self_contained:
+            logging.warning(
+                "%s contains only PEFT adapter weights, not the base model it was trained against: "
+                "base model %s is NOT contained in this artifact and must be available locally at "
+                "rollout time, or loading will fail (or, if it resolves to a Hub repo id, silently "
+                "fetch from the network).",
+                root,
+                base_model_name_or_path
+                if base_model_name_or_path is not None
+                else "(could not be determined: adapter_config.json is missing, unreadable, or has "
+                "no base_model_name_or_path)",
+            )
+
     return ModelDirectoryMetadata(
-        has_full_weights=(root / SAFETENSORS_SINGLE_FILE).is_file(),
-        has_adapter_weights=(root / PEFT_ADAPTER_CONFIG_NAME).is_file()
-        and (root / PEFT_ADAPTER_WEIGHTS_NAME).is_file(),
+        has_full_weights=has_full_weights,
+        has_adapter_weights=has_adapter_weights,
         policy_type=policy_type if isinstance(policy_type, str) else None,
         source_path=root.resolve(),
         git_commit=_current_git_commit(),
+        is_self_contained=is_self_contained,
+        base_model_name_or_path=base_model_name_or_path,
     )
+
+
+def _adapter_base_model_name(root: Path) -> str | None:
+    """Best-effort ``base_model_name_or_path`` from a PEFT ``adapter_config.json``.
+
+    Degrades to ``None`` on any read/parse problem, consistent with how ``validate_model_directory``
+    already degrades ``config.json`` parsing: a malformed adapter config must not crash inspection.
+    """
+    try:
+        with (root / PEFT_ADAPTER_CONFIG_NAME).open() as f:
+            adapter_config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(adapter_config, dict):
+        return None
+    base_model = adapter_config.get("base_model_name_or_path")
+    return base_model if isinstance(base_model, str) else None
+
+
+def _local_path_exists(value: str) -> bool:
+    """Whether ``value`` resolves to an existing local path (vs. e.g. an unreachable Hub repo id)."""
+    try:
+        return Path(value).expanduser().exists()
+    except OSError:
+        return False
 
 
 def _read_info(root: Path) -> DatasetInfo:
