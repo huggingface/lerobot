@@ -275,10 +275,7 @@ def smooth_teleop_session_start(
 
     # Non-actuated: bring follower to teleop pose
     raw = teleop.get_action()
-    if robot_action_processor is not None:
-        target = robot_action_processor((raw, obs))
-    else:
-        target = raw
+    target = robot_action_processor((raw, obs)) if robot_action_processor is not None else raw
     if not isinstance(target, dict) or not target or not follower_pos:
         return
     # Align on overlapping numeric keys
