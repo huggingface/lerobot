@@ -311,4 +311,3 @@ def smooth_follower_to_action(
     current = {k: current_full[k] for k in common_keys}
     target = {k: target_action[k] for k in common_keys}
     follower_smooth_move_to(robot, current, target, duration_s=duration_s, fps=fps)
-
