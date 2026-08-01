@@ -56,14 +56,15 @@ class MaterializedArtifact:
     possibly-mutable-alias reference string for a download). ``resolved_ref`` is always the
     immutable ``entity/project/name:vN`` W&B actually resolved to. ``local_path`` is the directory
     that now holds (or, for an upload, already held) the artifact's contents on disk — the source
-    directory for an upload, the download destination for a download. ``registry_collection`` is
-    the unified-Registry collection name the artifact was linked into (see :func:`link_to_registry`),
-    or ``None`` when the caller didn't request a registry link.
+    directory for an upload, the download destination for a download, and ``None`` when the
+    artifact was only *referenced* and never fetched (see :func:`declare_input`).
+    ``registry_collection`` is the unified-Registry collection name the artifact was linked into
+    (see :func:`link_to_registry`), or ``None`` when the caller didn't request a registry link.
     """
 
     requested_ref: str
     resolved_ref: str
-    local_path: Path
+    local_path: Path | None
     version: str
     digest: str
     metadata: dict[str, Any]
@@ -146,6 +147,45 @@ def upload_directory(
     )
 
 
+def _use_artifact(run: wandb.sdk.wandb_run.Run, ref: ArtifactRef, expected_type: str) -> wandb.Artifact:
+    """Draw the lineage edge from ``run`` to ``ref`` and check the type before any bytes move."""
+    _wandb_sdk()
+    artifact = run.use_artifact(str(ref))
+    if artifact.type != expected_type:
+        raise ArtifactTypeMismatchError(
+            f"Expected an artifact of type {expected_type!r} but {ref} is of type {artifact.type!r}."
+        )
+    return artifact
+
+
+def declare_input(
+    run: wandb.sdk.wandb_run.Run,
+    ref: str | ArtifactRef,
+    *,
+    expected_type: str,
+) -> MaterializedArtifact:
+    """Declare ``ref`` as an input of ``run`` for lineage, without downloading it.
+
+    ``use_artifact`` both draws the lineage edge and resolves a possibly-mutable alias to an
+    immutable version, so this costs one metadata call and no bytes — the point when a caller needs
+    to record *which* model produced something it is not going to load. The returned
+    :class:`MaterializedArtifact` has ``local_path=None`` precisely because nothing was fetched.
+
+    Raises:
+        ArtifactTypeMismatchError: the artifact's declared type isn't ``expected_type``.
+    """
+    parsed = ref if isinstance(ref, ArtifactRef) else parse_artifact_ref(ref)
+    artifact = _use_artifact(run, parsed, expected_type)
+    return MaterializedArtifact(
+        requested_ref=str(parsed),
+        resolved_ref=artifact.qualified_name,
+        local_path=None,
+        version=artifact.version,
+        digest=artifact.digest,
+        metadata=dict(artifact.metadata or {}),
+    )
+
+
 def download_artifact(
     run: wandb.sdk.wandb_run.Run,
     ref: str | ArtifactRef,
@@ -180,12 +220,7 @@ def download_artifact(
             )
         destination_was_empty = True
 
-    _wandb_sdk()
-    artifact = run.use_artifact(str(parsed))
-    if artifact.type != expected_type:
-        raise ArtifactTypeMismatchError(
-            f"Expected an artifact of type {expected_type!r} but {parsed} is of type {artifact.type!r}."
-        )
+    artifact = _use_artifact(run, parsed, expected_type)
 
     download_root.parent.mkdir(parents=True, exist_ok=True)
     staging_root = Path(tempfile.mkdtemp(prefix=f".{download_root.name}.download-", dir=download_root.parent))

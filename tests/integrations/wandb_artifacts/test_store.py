@@ -26,6 +26,7 @@ from lerobot.integrations.wandb_artifacts.store import (
     ArtifactTypeMismatchError,
     DownloadDestinationNotEmptyError,
     MaterializedArtifact,
+    declare_input,
     download_artifact,
     link_to_registry,
     upload_directory,
@@ -400,3 +401,45 @@ def test_download_artifact_cleans_staging_after_validation_failure(tmp_path):
 
     assert not destination.exists()
     assert not Path(fake._download_root).exists()
+
+
+# ---------------------------------------------------------------------------
+# declare_input
+# ---------------------------------------------------------------------------
+
+
+def test_declare_input_resolves_the_ref_without_downloading_anything():
+    """Lineage-only: the edge is drawn and the alias resolved, but no bytes are fetched, so there
+    is no local path to report.
+    """
+    # W&B resolves the mutable alias, so `use_artifact` hands back the immutable version.
+    artifact = _FakeArtifact(name="pick-cube-policy:v7", type="model", metadata={"policy": "act"})
+    run = MagicMock()
+    run.use_artifact.return_value = artifact
+
+    result = declare_input(run, "my-team/my-project/pick-cube-policy:latest", expected_type="model")
+
+    run.use_artifact.assert_called_once_with("my-team/my-project/pick-cube-policy:latest")
+    assert artifact._download_root is None
+    assert result.local_path is None
+    assert result.requested_ref == "my-team/my-project/pick-cube-policy:latest"
+    assert result.resolved_ref == "my-team/my-project/pick-cube-policy:v7"
+    assert result.version == "v7"
+    assert result.metadata == {"policy": "act"}
+
+
+def test_declare_input_rejects_the_wrong_artifact_type():
+    run = MagicMock()
+    run.use_artifact.return_value = _FakeArtifact(name="pick-cube:latest", type="dataset")
+
+    with pytest.raises(ArtifactTypeMismatchError, match="type 'dataset'"):
+        declare_input(run, "my-team/my-project/pick-cube:latest", expected_type="model")
+
+
+def test_declare_input_rejects_a_malformed_ref_before_calling_wandb():
+    run = MagicMock()
+
+    with pytest.raises(ValueError):
+        declare_input(run, "not-a-ref", expected_type="model")
+
+    run.use_artifact.assert_not_called()
