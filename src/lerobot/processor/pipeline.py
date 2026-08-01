@@ -1078,8 +1078,22 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
         else:
             # Fallback to dynamic import using the full class path
-            full_class_path = step_entry["class"]
+            full_class_path = step_entry.get("class", "")
+            if not full_class_path or "." not in full_class_path:
+                raise ValueError(
+                    f"Invalid class path '{full_class_path}' in step entry. "
+                    "Expected a full module path like 'lerobot.processor.normalize.NormalizeStep'."
+                )
+
             module_path, class_name = full_class_path.rsplit(".", 1)
+
+            # Restrict dynamic imports to internal lerobot.processor namespace
+            if module_path != "lerobot.processor" and not module_path.startswith("lerobot.processor."):
+                raise ImportError(
+                    f"Failed to load processor step '{full_class_path}'. "
+                    f"Unauthorized module path '{module_path}' in step entry. "
+                    "Dynamic imports are restricted to internal 'lerobot.processor.*' modules."
+                )
 
             try:
                 module = importlib.import_module(module_path)
