@@ -26,7 +26,7 @@ from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.integrations.wandb_artifacts import cli
 from lerobot.integrations.wandb_artifacts.inspect import DatasetDirectoryError, ModelDirectoryError
-from lerobot.integrations.wandb_artifacts.store import MaterializedArtifact
+from lerobot.integrations.wandb_artifacts.store import ArtifactTypeMismatchError, MaterializedArtifact
 
 _ACTION_FEATURE = {"dtype": "float32", "shape": (6,), "names": None}
 
@@ -552,4 +552,215 @@ def test_model_download_leaves_destination_untouched_when_staged_model_is_invali
         assert list(dest.iterdir()) == []
     else:
         assert not dest.exists()
+    run.finish.assert_called_once()
+
+
+def _write_rollout_dataset(root: Path, *, episodes: int, with_video: bool) -> None:
+    """A genuinely valid rollout dataset (a rollout is a LeRobotDataset; see ADR 0004)."""
+    camera_key = "observation.images.cam"
+    features = {"action": _ACTION_FEATURE}
+    if with_video:
+        features[camera_key] = {
+            "dtype": "video",
+            "shape": (32, 32, 3),
+            "names": ["height", "width", "channels"],
+        }
+    dataset = LeRobotDataset.create(
+        repo_id="tests/rollout_wandb-cli",
+        fps=10,
+        features=features,
+        root=root,
+        robot_type="so101",
+        use_videos=with_video,
+        video_backend="pyav",
+        metadata_buffer_size=1,
+    )
+    for _ in range(episodes):
+        for _ in range(4):
+            frame = {"action": np.zeros(6, dtype=np.float32), "task": "pick the cube"}
+            if with_video:
+                frame[camera_key] = np.zeros((32, 32, 3), dtype=np.uint8)
+            dataset.add_frame(frame)
+        dataset.save_episode(parallel_encoding=False)
+    dataset.finalize()
+
+
+def _model_input_result():
+    return MaterializedArtifact(
+        requested_ref="my-team/my-project/pick-cube-policy:latest",
+        resolved_ref="my-team/my-project/pick-cube-policy:v3",
+        local_path=None,
+        version="v3",
+        digest="digest",
+        metadata={},
+    )
+
+
+def _rollout_upload_result():
+    return MaterializedArtifact(
+        requested_ref="my-team/my-project/pick-cube-rollout",
+        resolved_ref="my-team/my-project/pick-cube-rollout:v0",
+        local_path=Path("/tmp/does-not-matter"),
+        version="v0",
+        digest="digest",
+        metadata={},
+    )
+
+
+def _rollout_argv(root: Path, **overrides) -> list[str]:
+    args = {
+        "--root": str(root),
+        "--project": "my-project",
+        "--entity": "my-team",
+        "--name": "pick-cube-rollout",
+        "--model-ref": "my-team/my-project/pick-cube-policy:latest",
+        "--episodes-succeeded": "2",
+    }
+    args.update(overrides)
+    return ["rollout", "upload", *[value for pair in args.items() for value in pair]]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    [
+        ({"--episodes-succeeded": "99"}, ValueError),
+        ({"--episodes-succeeded": "-1"}, ValueError),
+        ({"--model-ref": "not-a-ref"}, ValueError),
+    ],
+    ids=["successes_above_episode_count", "negative_successes", "malformed_model_ref"],
+)
+def test_rollout_upload_rejects_bad_input_before_creating_a_run(
+    tmp_path, monkeypatch, overrides, expected_error
+):
+    """Every local check runs before `wandb.init`, so a typo never leaves an empty run behind."""
+    rollout_root = tmp_path / "rollout"
+    _write_rollout_dataset(rollout_root, episodes=3, with_video=False)
+
+    init_calls = []
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or _fake_run())
+    monkeypatch.setattr(cli, "upload_directory", lambda *a, **kw: _rollout_upload_result())
+
+    with pytest.raises(expected_error):
+        cli.main(_rollout_argv(rollout_root, **overrides))
+
+    assert init_calls == []
+
+
+def test_rollout_upload_rejects_a_directory_that_is_not_a_dataset(tmp_path, monkeypatch):
+    init_calls = []
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: init_calls.append(kwargs) or _fake_run())
+
+    empty_root = tmp_path / "not-a-dataset"
+    empty_root.mkdir()
+
+    with pytest.raises(DatasetDirectoryError):
+        cli.main(_rollout_argv(empty_root))
+
+    assert init_calls == []
+
+
+def test_rollout_upload_happy_path(tmp_path, monkeypatch, capsys):
+    rollout_root = tmp_path / "rollout"
+    _write_rollout_dataset(rollout_root, episodes=3, with_video=True)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    declared = []
+    monkeypatch.setattr(
+        cli,
+        "declare_input",
+        lambda passed_run, ref, *, expected_type: (
+            declared.append((str(ref), expected_type)) or _model_input_result()
+        ),
+    )
+    upload_calls = []
+
+    def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None, **kwargs):
+        upload_calls.append({"artifact_type": artifact_type, "metadata": metadata, "name": name})
+        return _rollout_upload_result()
+
+    monkeypatch.setattr(cli, "upload_directory", _fake_upload)
+    videos = []
+    monkeypatch.setattr(cli.wandb, "Video", lambda path, **kwargs: videos.append(path) or f"video:{path}")
+
+    cli.main(_rollout_argv(rollout_root))
+
+    # The model is a run input for lineage, and is never downloaded.
+    assert declared == [("my-team/my-project/pick-cube-policy:latest", "model")]
+
+    # Its own artifact type, distinct from a training dataset.
+    assert upload_calls[0]["artifact_type"] == "rollout"
+
+    # Dataset facts and rollout facts both travel with the artifact.
+    metadata = upload_calls[0]["metadata"]
+    assert metadata["schema_version"] == "v3.0"
+    assert metadata["episodes"] == 3
+    assert metadata["successes"] == 2
+    assert metadata["success_rate"] == pytest.approx(2 / 3)
+    assert metadata["frames"] == 12
+    assert metadata["duration_s"] == pytest.approx(1.2)
+    assert metadata["model_artifact_requested_ref"] == "my-team/my-project/pick-cube-policy:latest"
+    assert metadata["model_artifact_resolved_ref"] == "my-team/my-project/pick-cube-policy:v3"
+
+    # ...and the rollout facts are visible in the run UI, built from the same summary object.
+    run.summary.update.assert_called_once()
+    logged_summary = run.summary.update.call_args[0][0]
+    assert logged_summary["success_rate"] == pytest.approx(2 / 3)
+    assert logged_summary.items() <= metadata.items()
+
+    # Exactly one video reaches the run; the rest of the dataset stays in the artifact only.
+    assert len(videos) == 1
+    assert Path(videos[0]) == sorted(rollout_root.rglob("*.mp4"))[0]
+    assert run.log.call_count == 1
+
+    # The recorded path locates the file inside the artifact, where the metadata will be read from
+    # — never this machine's copy, which won't exist wherever the artifact is materialized next.
+    assert metadata["representative_video_path"] == "videos/observation.images.cam/chunk-000/file-000.mp4"
+    assert str(rollout_root) not in metadata["representative_video_path"]
+
+    run.finish.assert_called_once()
+
+    out = capsys.readouterr().out
+    assert "my-team/my-project/pick-cube-rollout:v0" in out
+    assert "my-team/my-project/pick-cube-policy:v3" in out
+    assert "success rate: 66.7%" in out
+    assert "episode(s) 0, 1, 2" in out
+
+
+def test_rollout_upload_without_video_logs_no_run_media(tmp_path, monkeypatch, capsys):
+    rollout_root = tmp_path / "rollout"
+    _write_rollout_dataset(rollout_root, episodes=2, with_video=False)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    monkeypatch.setattr(cli, "declare_input", lambda *a, **kw: _model_input_result())
+    monkeypatch.setattr(cli, "upload_directory", lambda *a, **kw: _rollout_upload_result())
+
+    cli.main(_rollout_argv(rollout_root))
+
+    run.log.assert_not_called()
+    run.finish.assert_called_once()
+    assert "nothing logged as run media" in capsys.readouterr().out
+
+
+def test_rollout_upload_finishes_the_run_when_the_model_ref_is_not_a_model(tmp_path, monkeypatch):
+    rollout_root = tmp_path / "rollout"
+    _write_rollout_dataset(rollout_root, episodes=2, with_video=False)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    upload_calls = []
+    monkeypatch.setattr(
+        cli, "upload_directory", lambda *a, **kw: upload_calls.append(kw) or _rollout_upload_result()
+    )
+
+    def _wrong_type(*a, **kw):
+        raise ArtifactTypeMismatchError("not a model")
+
+    monkeypatch.setattr(cli, "declare_input", _wrong_type)
+
+    with pytest.raises(ArtifactTypeMismatchError):
+        cli.main(_rollout_argv(rollout_root))
+
+    assert upload_calls == []  # nothing is uploaded without a lineage edge
     run.finish.assert_called_once()
