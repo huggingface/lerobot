@@ -73,6 +73,13 @@ def test_run_use_artifact_accepts_expected_params():
     assert "artifact_or_name" in params
 
 
+def test_run_link_artifact_accepts_expected_params():
+    # store.py's link_to_registry() calls Run.link_artifact(artifact, target_path=..., aliases=...),
+    # the unified-Registry API — deliberately not the legacy Run.link_model().
+    params = _params(wandb.sdk.wandb_run.Run.link_artifact)
+    assert {"artifact", "target_path", "aliases"} <= params
+
+
 @pytest.mark.parametrize("attr", ["entity", "project", "finish"])
 def test_run_exposes_expected_attributes(attr):
     assert hasattr(wandb.sdk.wandb_run.Run, attr)

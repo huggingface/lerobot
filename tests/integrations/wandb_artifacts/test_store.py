@@ -27,6 +27,7 @@ from lerobot.integrations.wandb_artifacts.store import (
     DownloadDestinationNotEmptyError,
     MaterializedArtifact,
     download_artifact,
+    link_to_registry,
     upload_directory,
 )
 
@@ -134,6 +135,87 @@ def test_upload_directory_waits_for_commit(tmp_path, monkeypatch):
 
     upload_directory(run, tmp_path, name="n", artifact_type="dataset")
     assert waited == [True]
+
+
+# ---------------------------------------------------------------------------
+# link_to_registry
+# ---------------------------------------------------------------------------
+
+
+def test_link_to_registry_targets_unified_registry_collection():
+    run = MagicMock()
+    artifact = MagicMock()
+
+    target_path = link_to_registry(run, artifact, collection="pick-cube-policy", aliases=["candidate"])
+
+    assert target_path == "wandb-registry-model/pick-cube-policy"
+    run.link_artifact.assert_called_once_with(
+        artifact, target_path="wandb-registry-model/pick-cube-policy", aliases=["candidate"]
+    )
+
+
+def test_link_to_registry_without_aliases_passes_none():
+    run = MagicMock()
+    artifact = MagicMock()
+
+    link_to_registry(run, artifact, collection="pick-cube-policy")
+
+    run.link_artifact.assert_called_once_with(
+        artifact, target_path="wandb-registry-model/pick-cube-policy", aliases=None
+    )
+
+
+def test_upload_directory_without_registry_collection_never_links(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        wandb,
+        "Artifact",
+        lambda name, type, metadata=None: _FakeArtifact(name=name, type=type, metadata=metadata),
+    )
+    run = MagicMock()
+    run.entity = "e"
+    run.project = "p"
+    run.log_artifact.side_effect = lambda artifact, aliases=None: artifact
+
+    result = upload_directory(run, tmp_path, name="n", artifact_type="model")
+
+    run.link_artifact.assert_not_called()
+    assert result.registry_collection is None
+
+
+def test_upload_directory_with_registry_collection_links_after_wait(tmp_path, monkeypatch):
+    call_order = []
+
+    class _TrackingArtifact(_FakeArtifact):
+        def wait(self, timeout=None):
+            call_order.append("wait")
+            return super().wait(timeout=timeout)
+
+    monkeypatch.setattr(
+        wandb,
+        "Artifact",
+        lambda name, type, metadata=None: _TrackingArtifact(name=name, type=type, metadata=metadata),
+    )
+    run = MagicMock()
+    run.entity = "e"
+    run.project = "p"
+    run.log_artifact.side_effect = lambda artifact, aliases=None: artifact
+    run.link_artifact.side_effect = lambda *a, **kw: call_order.append("link")
+
+    result = upload_directory(
+        run,
+        tmp_path,
+        name="n",
+        artifact_type="model",
+        aliases=["candidate"],
+        registry_collection="pick-cube-policy",
+    )
+
+    assert call_order == ["wait", "link"]
+    run.link_artifact.assert_called_once()
+    call_kwargs = run.link_artifact.call_args.kwargs
+    assert call_kwargs["target_path"] == "wandb-registry-model/pick-cube-policy"
+    assert call_kwargs["aliases"] == ["candidate"]
+    assert result.registry_collection == "pick-cube-policy"
 
 
 # ---------------------------------------------------------------------------
