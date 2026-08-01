@@ -13,10 +13,12 @@
 # limitations under the License.
 """Validation of `dataset.repo_id` / `dataset.artifact_ref` in `TrainPipelineConfig.validate()`."""
 
+import json
+
 import draccus
 import pytest
 
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401  (registers --policy.type act)
 
 
@@ -64,6 +66,22 @@ def test_artifact_ref_requires_wandb_enable_and_project(extra_args):
         cfg.validate()
 
 
+@pytest.mark.parametrize("mode", ["offline", "disabled"])
+def test_artifact_ref_requires_online_wandb_mode(mode):
+    cfg = _parse(
+        "--dataset.artifact_ref",
+        "team/proj/name:latest",
+        "--wandb.enable",
+        "true",
+        "--wandb.project",
+        "proj",
+        "--wandb.mode",
+        mode,
+    )
+    with pytest.raises(ValueError, match="requires `wandb.mode=online`"):
+        cfg.validate()
+
+
 def test_artifact_ref_rejected_for_remote_jobs():
     cfg = _parse(
         "--dataset.artifact_ref",
@@ -91,3 +109,33 @@ def test_artifact_ref_with_wandb_enabled_and_local_job_passes_validation():
     cfg.validate()
     assert cfg.dataset.repo_id is None
     assert cfg.dataset.artifact_ref == "team/proj/name:latest"
+
+
+def test_runtime_repo_id_is_not_persisted_for_artifact_checkpoint(tmp_path):
+    cfg = _parse(
+        "--dataset.artifact_ref",
+        "team/proj/name:latest",
+        "--wandb.enable",
+        "true",
+        "--wandb.project",
+        "proj",
+    )
+    cfg.validate()
+
+    # Materialization fills these runtime fields before save_checkpoint serializes the config.
+    cfg.dataset.repo_id = "name"
+    cfg.dataset.root = tmp_path / "run" / "wandb_dataset"
+    cfg.save_pretrained(tmp_path)
+
+    with open(tmp_path / TRAIN_CONFIG_NAME) as f:
+        saved = json.load(f)
+    assert saved["dataset"]["artifact_ref"] == "team/proj/name:latest"
+    assert saved["dataset"]["repo_id"] is None
+
+    # Serialization must not disturb the live runtime config used by the active training process.
+    assert cfg.dataset.repo_id == "name"
+
+    reloaded = TrainPipelineConfig.from_pretrained(tmp_path)
+    reloaded.validate()
+    assert reloaded.dataset.repo_id is None
+    assert reloaded.dataset.artifact_ref == "team/proj/name:latest"
