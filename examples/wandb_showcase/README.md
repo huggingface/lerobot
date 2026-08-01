@@ -121,9 +121,16 @@ lerobot-train \
 separate from the periodic per-checkpoint uploads. `--wandb.registered_model_name` additionally
 links that version into the Registry collection `wandb-registry-model/pick-cube-policy`.
 
-Resuming works without re-downloading: pass `--resume=true` with the same `--output_dir` and the
-already-materialized copy is reused, its identity verified against the sidecar written by the
-original download.
+Resuming works without re-downloading the dataset. Resumption needs `--config_path` as well as
+`--resume=true` (the same `--output_dir` alone is not enough — `validate()` rejects it):
+
+```bash
+lerobot-train --resume=true \
+  --config_path=outputs/train/act_pick_cube/checkpoints/last/pretrained_model/train_config.json
+```
+
+The already-materialized dataset copy under that `--output_dir` is reused, and its identity is
+verified against the sidecar written by the original download before any training resumes.
 
 > **PEFT/LoRA runs:** an adapter-only checkpoint is uploaded but **not** linked into the Registry —
 > it cannot be rolled out on its own, since its base model is resolved at load time and is not in
@@ -142,7 +149,9 @@ lerobot-wandb model download \
   --root ./policies/pick-cube-candidate
 ```
 
-The resulting directory is usable directly as `--policy.path`.
+The resulting directory is usable directly as `--policy.path`. **Write down the resolved
+`:vN` it prints** — that, not `:candidate`, is what the robot is about to run, and it is what step 6
+must record. The alias may move between now and then; the version cannot.
 
 ## 5. Roll out on the real robot
 
@@ -174,9 +183,14 @@ lerobot-wandb rollout upload \
   --entity my-team \
   --project so101-pick-cube \
   --name pick-cube-rollout \
-  --model-ref my-team/so101-pick-cube/pick-cube-policy:candidate \
+  --model-ref my-team/so101-pick-cube/pick-cube-policy:v3 \
   --episodes-succeeded 14
 ```
+
+Note the `:v3` rather than `:candidate`. The ref is resolved again at upload time, so passing the
+alias would record whatever it points at _now_ — not necessarily the version the robot ran, if
+someone promoted a new candidate in between. Recording a model the rollout didn't use is worse than
+recording nothing, because it looks authoritative.
 
 This creates a run that declares the model as an **input** — resolved for lineage, never
 downloaded — and the rollout as an **output** of type `rollout`, distinct from a training dataset
@@ -209,11 +223,18 @@ import wandb
 
 api = wandb.Api()
 artifact = api.artifact("my-team/so101-pick-cube/pick-cube-policy:v3", type="model")
+
+# Project-collection alias.
 artifact.aliases.append("production")
 artifact.save()
 
+# Registry aliases are separate: they are assigned on the link, not on the artifact above.
 with wandb.init(entity="my-team", project="so101-pick-cube", job_type="promote") as run:
-    run.link_artifact(artifact, target_path="wandb-registry-model/pick-cube-policy")
+    run.link_artifact(
+        artifact,
+        target_path="wandb-registry-model/pick-cube-policy",
+        aliases=["production"],
+    )
 ```
 
 ## Where things live afterwards

@@ -127,6 +127,17 @@ def test_readme_record_command_parses():
     assert cfg.dataset.push_to_hub is False  # the showcase never touches the Hub
 
 
+def test_readme_records_the_immutable_model_version_for_the_rollout():
+    """The rollout upload must name the version the robot actually ran, not the alias it was
+    downloaded through: `cmd_rollout_upload` resolves the ref again at upload time, so an alias that
+    moved in between would record a model the rollout never used — wrong, and authoritative-looking.
+    """
+    upload = next(c for c in _readme_commands() if c.startswith("lerobot-wandb rollout upload"))
+    model_ref = upload.split("--model-ref ", 1)[1].split()[0]
+
+    assert re.fullmatch(r"[^:]+:v\d+", model_ref), f"--model-ref must pin a version, got {model_ref!r}"
+
+
 def test_readme_rollout_command_uses_a_rollout_prefixed_dataset_name():
     """`lerobot-rollout` resolves `--policy.path` through `parser.wrap` rather than plain draccus,
     so parsing it here would need a real checkpoint on disk. Check instead the one rule the rollout
