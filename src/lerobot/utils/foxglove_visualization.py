@@ -27,7 +27,7 @@ import time
 import cv2
 import numpy as np
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 
 from .constants import (
     ACTION,

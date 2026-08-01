@@ -304,40 +304,45 @@ def test_merge_empty_list(tmp_path):
         merge_datasets([], output_repo_id="merged", output_dir=tmp_path)
 
 
-def test_add_features_with_values(sample_dataset, tmp_path):
-    """Test adding a feature with pre-computed values."""
+@pytest.mark.parametrize(
+    "values, feature_shape, expected_item_shape",
+    [
+        (np.random.randn(50).astype(np.float32), (1,), ()),
+        (np.random.randn(50, 1).astype(np.float32), (1,), ()),
+        (np.random.randn(50, 7).astype(np.float32), (7,), (7,)),
+        (np.random.randn(50, 1, 4).astype(np.float32), (1, 4), (1, 4)),
+    ],
+    ids=["scalar_1d", "scalar_2d", "vector", "matrix"],
+)
+def test_add_features_with_values(sample_dataset, tmp_path, values, feature_shape, expected_item_shape):
+    """Test adding a pre-computed feature across supported per-frame shapes."""
     num_frames = sample_dataset.meta.total_frames
-    reward_values = np.random.randn(num_frames, 1).astype(np.float32)
+    assert len(values) == num_frames
 
-    feature_info = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    }
-    features = {
-        "reward": (reward_values, feature_info),
-    }
+    feature_info = {"dtype": "float32", "shape": feature_shape, "names": None}
+    features = {"new_feature": (values, feature_info)}
 
     with (
         patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
-        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+        mock_snapshot_download.return_value = str(tmp_path / "with_feature")
 
         new_dataset = add_features(
             dataset=sample_dataset,
             features=features,
-            output_dir=tmp_path / "with_reward",
+            output_dir=tmp_path / "with_feature",
         )
 
-    assert "reward" in new_dataset.meta.features
-    assert new_dataset.meta.features["reward"] == feature_info
+    assert "new_feature" in new_dataset.meta.features
+    assert new_dataset.meta.features["new_feature"] == feature_info
 
     assert len(new_dataset) == num_frames
     sample_item = new_dataset[0]
-    assert "reward" in sample_item
-    assert isinstance(sample_item["reward"], torch.Tensor)
+    assert "new_feature" in sample_item
+    assert isinstance(sample_item["new_feature"], torch.Tensor)
+    assert tuple(sample_item["new_feature"].shape) == expected_item_shape
 
 
 def test_add_features_with_callable(sample_dataset, tmp_path):
@@ -1125,9 +1130,61 @@ def test_modify_tasks_default_with_overrides(sample_dataset):
             assert ep_data["tasks"][0] == default_task
 
 
+def test_modify_tasks_replacements(sample_dataset):
+    """Test replacing task strings based on their current values."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+    )
+
+    assert len(modified_dataset.meta.tasks) == 2
+    assert "Pick the cube" in modified_dataset.meta.tasks.index
+    assert "Place the cube" in modified_dataset.meta.tasks.index
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Place the cube"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+
+
+def test_modify_tasks_replacements_with_episode_overrides(sample_dataset):
+    """Test that explicit episode overrides take precedence over replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+        episode_tasks={1: "Inspect the cube"},
+    )
+
+    assert modified_dataset.meta.episodes[0]["tasks"][0] == "Pick the cube"
+    assert modified_dataset.meta.episodes[1]["tasks"][0] == "Inspect the cube"
+    assert modified_dataset.meta.episodes[3]["tasks"][0] == "Place the cube"
+    assert len(modified_dataset.meta.tasks) == 3
+
+
+def test_modify_tasks_default_task_and_replacements(sample_dataset):
+    """Test that new_task acts as the default for episodes not matched by task_replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        new_task="Default task",
+        task_replacements={"task_0": "Pick the cube"},
+    )
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Default task"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+    assert len(modified_dataset.meta.tasks) == 2
+
+
 def test_modify_tasks_no_task_specified(sample_dataset):
     """Test error when no task is specified."""
-    with pytest.raises(ValueError, match="Must specify at least one of new_task or episode_tasks"):
+    with pytest.raises(
+        ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"
+    ):
         modify_tasks(sample_dataset)
 
 
@@ -1135,6 +1192,12 @@ def test_modify_tasks_invalid_episode_indices(sample_dataset):
     """Test error with invalid episode indices."""
     with pytest.raises(ValueError, match="Invalid episode indices"):
         modify_tasks(sample_dataset, episode_tasks={10: "Task", 20: "Task"})
+
+
+def test_modify_tasks_invalid_task_replacements(sample_dataset):
+    """Test error when task replacements refer to unknown task strings."""
+    with pytest.raises(ValueError, match="Task replacements reference unknown tasks"):
+        modify_tasks(sample_dataset, task_replacements={"missing_task": "New task"})
 
 
 def test_modify_tasks_updates_info_json(sample_dataset):
