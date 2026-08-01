@@ -14,6 +14,7 @@
 import pytest
 import torch
 
+from lerobot.optim.factory import make_loraplus_param_groups
 from lerobot.optim.optimizers import (
     AdamConfig,
     AdamWConfig,
@@ -279,3 +280,32 @@ def test_save_and_load_empty_multi_optimizer_state(base_params_dict, tmp_path):
         torch.testing.assert_close(
             optimizer.state_dict()["param_groups"], loaded_optimizers[name].state_dict()["param_groups"]
         )
+
+
+def test_make_loraplus_param_groups():
+    class _DummyLoRA(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.base = torch.nn.Linear(4, 4)  # frozen base weights
+            self.lora_A = torch.nn.Linear(4, 2, bias=False)
+            self.lora_B = torch.nn.Linear(2, 4, bias=False)
+            self.base.requires_grad_(False)
+
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+    groups = make_loraplus_param_groups(model, lr=lr, loraplus_lr_ratio=ratio)
+
+    # Frozen base params are excluded; A and B are split into two learning-rate groups.
+    all_params = [p for group in groups for p in group["params"]]
+    assert len(all_params) == 2
+    assert sorted(group["lr"] for group in groups) == [lr, lr * ratio]
+
+    a_group = next(group for group in groups if group["lr"] == lr)
+    b_group = next(group for group in groups if group["lr"] == lr * ratio)
+    assert model.lora_A.weight in a_group["params"]
+    assert model.lora_B.weight in b_group["params"]
+
+    # A non-positive ratio is rejected.
+    with pytest.raises(ValueError):
+        make_loraplus_param_groups(model, lr=lr, loraplus_lr_ratio=0.0)
