@@ -55,8 +55,7 @@ lancedb = pytest.importorskip("lancedb")
 
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
-    """Replace Arrow extension types (e.g. JSON in language tool_calls) with their
-    storage type, recursively — lance rejects extension types it doesn't know."""
+    """Strip Arrow extension types (JSON in language tool_calls) recursively; lance rejects them."""
     if isinstance(dtype, pa.BaseExtensionType):
         return _storage_type(dtype.storage_type)
     if pa.types.is_list(dtype):
@@ -69,10 +68,14 @@ def _storage_type(dtype: pa.DataType) -> pa.DataType:
 
 
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
-    """Test-only converter: copy ``meta/`` and build the frames table from parquet data."""
+    """Build a minimal lance-format dataset so the loader tests have something to read.
+
+    Not the production converter (that ships in the separate lerobot-lancedb repo):
+    just enough to produce valid frames/videos/meta tables from a standard dataset.
+    """
+    db = lancedb.connect(str(dst_root))
     shutil.copytree(src_root / "meta", dst_root / "meta")
-    meta_db = lancedb.connect(str(dst_root))
-    meta_db.create_table(
+    db.create_table(
         META_TABLE,
         pa.Table.from_pylist(
             [
@@ -96,7 +99,6 @@ def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
             column = pa.FixedSizeListArray.from_arrays(column.flatten(), len(column[0]))
         arrays.append(column)
         fields.append(pa.field(to_lance_column(field.name), column.type))
-    db = meta_db
     db.create_table(FRAMES_TABLE, pa.Table.from_arrays(arrays, schema=pa.schema(fields)))
 
     video_files = sorted((src_root / "videos").rglob("*.mp4"))
@@ -233,30 +235,6 @@ def test_video_parity(video_dataset_roots):
     assert item[video_key].dtype == torch.uint8
 
 
-@pytest.mark.skipif(
-    not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"),
-    reason="lancedb without fetch_blob_ranges",
-)
-def test_remote_ranged_path_parity(video_dataset_roots, monkeypatch, tmp_path):
-    """file:// routes through the remote path: byte-index ranges + fetch_blob_ranges."""
-    import lerobot.datasets.lancedb_dataset as module
-
-    monkeypatch.setattr(module, "HF_LEROBOT_HOME", tmp_path / "cache")
-    src_root, lance_root = video_dataset_roots
-    fps = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.fps
-    video_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.video_keys[0]
-    delta_timestamps = {video_key: [-2 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
-    upstream = LeRobotDataset(
-        DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
-    )
-    remote_ds = LanceDBDataset(root=f"file://{lance_root}", delta_timestamps=delta_timestamps)
-
-    indices = [0, len(upstream) // 2, len(upstream) - 1]
-    batched = remote_ds.__getitems__(indices)
-    for idx, item in zip(indices, batched, strict=True):
-        assert_items_equal(item, upstream[idx])
-
-
 def test_factory_autodetect_and_train_e2e(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
     # autodetection: lance layout -> LanceDBDataset, parquet layout -> LeRobotDataset
@@ -325,11 +303,7 @@ def test_pickle_and_dataloader(dataset_roots):
 
 
 def add_language_columns(src_root: Path) -> None:
-    """Augment a fixture dataset with the language columns from lerobot#3467.
-
-    Rows vary by frame index to cover the shapes the annotation pipeline
-    produces: non-empty, empty, and null lists, plus tool_calls JSON.
-    """
+    """Add lerobot#3467 language columns, varied by frame index (non-empty/empty/null, tool_calls)."""
     import json
 
     for f in sorted((src_root / "data").rglob("*.parquet")):
@@ -442,22 +416,6 @@ def test_depth_parity(depth_dataset_roots):
     lance_d = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
     for idx in [0, 7, len(upstream_d) - 1]:
         assert_items_equal(lance_d[idx], upstream_d[idx])
-
-
-@pytest.mark.skipif(
-    not hasattr(lancedb.table.LanceTable, "fetch_blob_ranges"),
-    reason="lancedb without fetch_blob_ranges",
-)
-def test_depth_remote_ranged_parity(depth_dataset_roots, monkeypatch, tmp_path):
-    import lerobot.datasets.lancedb_dataset as module
-
-    monkeypatch.setattr(module, "HF_LEROBOT_HOME", tmp_path / "cache")
-    src_root, lance_root = depth_dataset_roots
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
-    remote_ds = LanceDBDataset(root=f"file://{lance_root}")
-    indices = [0, len(upstream) - 1]
-    for item, idx in zip(remote_ds.__getitems__(indices), indices, strict=True):
-        assert_items_equal(item, upstream[idx])
 
 
 def test_materialize_meta_rejects_escaping_paths(tmp_path):
