@@ -132,10 +132,11 @@ def test_train_materializes_artifact_before_dataset_creation_with_no_hf_calls(mo
     fake_logger.record_dataset_artifact_lineage.assert_called_once_with(
         "team/proj/pick-cube:latest", "team/proj/pick-cube:v3"
     )
-    # cfg was repointed at the materialized directory, and repo_id was populated from the ref's
-    # collection name (no `repo_id` key exists in dataset artifact metadata; see report).
+    # cfg was repointed at the materialized directory. `repo_id` stays unset — it means "Hub dataset"
+    # everywhere downstream; the local dataset's constructor name comes from `local_id` instead.
     assert cfg.dataset.root == materialized_root
-    assert cfg.dataset.repo_id == "pick-cube"
+    assert cfg.dataset.repo_id is None
+    assert cfg.dataset.local_id == "pick-cube"
 
 
 def _resume_cfg(output_dir: Path) -> TrainPipelineConfig:
@@ -192,7 +193,7 @@ def test_materialize_dataset_artifact_resume_reuses_matching_sidecar_with_no_wan
         "team/proj/pick-cube:latest", "team/proj/pick-cube:v3"
     )
     assert cfg.dataset.root == download_root
-    assert cfg.dataset.repo_id == "pick-cube"
+    assert cfg.dataset.repo_id is None
 
 
 def test_materialize_dataset_artifact_resume_fails_fast_on_sidecar_mismatch(tmp_path):

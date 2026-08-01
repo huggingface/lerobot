@@ -55,7 +55,6 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
-from lerobot.integrations.wandb_artifacts import parse_artifact_ref
 from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
@@ -169,8 +168,6 @@ def _materialize_dataset_artifact(
             )
 
     cfg.dataset.root = download_root
-    if not cfg.dataset.repo_id:
-        cfg.dataset.repo_id = parse_artifact_ref(cfg.dataset.artifact_ref).name
     return materialized
 
 

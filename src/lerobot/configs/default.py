@@ -68,6 +68,23 @@ class DatasetConfig:
                 duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
                 raise ValueError(f"Episode indices contain duplicates: {duplicates}")
 
+    @property
+    def local_id(self) -> str | None:
+        """Identifier for the local dataset object, derived — never stored.
+
+        `LeRobotDataset` needs *a* name; artifact-backed runs have no Hub repo to give it, so the
+        artifact's collection name stands in. That name is a constructor detail only: it is not the
+        dataset's identity (the `.wandb_artifact.json` sidecar at `root` holds that) and must never
+        be written back into `repo_id`, or every provenance consumer downstream mistakes it for a
+        Hub dataset that doesn't exist.
+        """
+        if self.repo_id or self.artifact_ref is None:
+            return self.repo_id
+
+        from lerobot.integrations.wandb_artifacts import parse_artifact_ref
+
+        return parse_artifact_ref(self.artifact_ref).name
+
 
 @dataclass
 class WandBConfig:
