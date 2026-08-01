@@ -80,6 +80,15 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    # When set (alone or together with `registered_model_name`), the final trained checkpoint is
+    # published as its own versioned Artifact collection, separate from the periodic per-checkpoint
+    # uploads from `log_policy`. Requires `save_checkpoint=True`.
+    model_artifact_name: str | None = None
+    # When set, the final model Artifact is additionally linked into this W&B Registry collection.
+    # Requires `save_checkpoint=True`; not supported when `mode == "offline"`.
+    registered_model_name: str | None = None
+    # Aliases applied only to the final model Artifact version (never to periodic checkpoints).
+    model_artifact_aliases: list[str] = field(default_factory=lambda: ["latest"])
 
 
 @dataclass

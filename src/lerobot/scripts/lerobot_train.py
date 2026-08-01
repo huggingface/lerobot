@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
+    from lerobot.integrations.wandb_artifacts import MaterializedArtifact
+
 import torch
 from termcolor import colored
 from torch.optim import Optimizer
@@ -59,6 +61,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -104,7 +107,7 @@ def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
 
 def _materialize_dataset_artifact(
     cfg: TrainPipelineConfig, wandb_logger: "WandBLogger | None", is_main_process: bool
-) -> None:
+) -> "MaterializedArtifact | None":
     """Resolve `cfg.dataset.artifact_ref` into a local directory and repoint the dataset config at it.
 
     Only the main process talks to W&B; `download_root` is derived from `cfg.output_dir` alone so
@@ -112,10 +115,14 @@ def _materialize_dataset_artifact(
     under the same `accelerator.wait_for_everyone()` barrier that already separates the main
     process's dataset creation from every other rank's, so non-main ranks only ever read a fully
     materialized directory.
+
+    Returns the `MaterializedArtifact` this process resolved/downloaded (lineage for a later
+    `WandBLogger.log_final_model` call), or `None` on non-main ranks.
     """
     download_root = cfg.output_dir / "wandb_dataset"
+    materialized = None
     if is_main_process:
-        from lerobot.integrations.wandb_artifacts import validate_dataset_directory
+        from lerobot.integrations.wandb_artifacts import MaterializedArtifact, validate_dataset_directory
         from lerobot.integrations.wandb_artifacts.sidecar import ArtifactSidecar, read_sidecar, write_sidecar
 
         if cfg.resume and download_root.is_dir() and any(download_root.iterdir()):
@@ -137,6 +144,16 @@ def _materialize_dataset_artifact(
                     f"remove {download_root} or point --output_dir elsewhere."
                 )
             wandb_logger.record_dataset_artifact_lineage(cfg.dataset.artifact_ref, sidecar.resolved_ref)
+            # The sidecar already carries everything needed for final-model lineage; no W&B call
+            # (e.g. `use_artifact`) is needed to recover version/digest on the resume path.
+            materialized = MaterializedArtifact(
+                requested_ref=sidecar.requested_ref,
+                resolved_ref=sidecar.resolved_ref,
+                local_path=download_root,
+                version=sidecar.version,
+                digest=sidecar.digest,
+                metadata={},
+            )
         else:
             logging.info(f"Materializing dataset artifact {cfg.dataset.artifact_ref!r}")
             materialized = wandb_logger.download_dataset_artifact(cfg.dataset.artifact_ref, download_root)
@@ -154,6 +171,7 @@ def _materialize_dataset_artifact(
     cfg.dataset.root = download_root
     if not cfg.dataset.repo_id:
         cfg.dataset.repo_id = parse_artifact_ref(cfg.dataset.artifact_ref).name
+    return materialized
 
 
 def update_policy(
@@ -327,8 +345,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Materialize a dataset Artifact, if requested, before any dataset object is built: a bad or
     # missing artifact must fail before policy/optimizer allocation and before any HF Hub call.
+    dataset_artifact: MaterializedArtifact | None = None
     if cfg.dataset.artifact_ref is not None:
-        _materialize_dataset_artifact(cfg, wandb_logger, is_main_process)
+        dataset_artifact = _materialize_dataset_artifact(cfg, wandb_logger, is_main_process)
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
@@ -824,6 +843,26 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict, dataset_meta=dataset.meta)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
+
+        if wandb_logger and (cfg.wandb.model_artifact_name or cfg.wandb.registered_model_name):
+            final_checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+            if (final_checkpoint_dir / PRETRAINED_MODEL_DIR).is_dir():
+                logging.info(f"Publishing final model Artifact from {final_checkpoint_dir}")
+                wandb_logger.log_final_model(
+                    final_checkpoint_dir,
+                    step=step,
+                    robot_type=dataset.meta.robot_type,
+                    camera_keys=dataset.meta.camera_keys,
+                    dataset_artifact=dataset_artifact,
+                )
+            else:
+                # `save_checkpoint=True` is enforced by `TrainPipelineConfig.validate()` whenever
+                # either name is set, but the final step's checkpoint dir can still be absent in
+                # unusual paths (e.g. `cfg.steps == 0`). Skip rather than upload a partial directory.
+                logging.warning(
+                    f"No final checkpoint found at {final_checkpoint_dir}; skipping the "
+                    "wandb.model_artifact_name/registered_model_name upload."
+                )
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()
