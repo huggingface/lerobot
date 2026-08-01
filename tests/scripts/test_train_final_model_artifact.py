@@ -27,6 +27,9 @@ import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+# ...and these tests call `train()`, which needs `accelerate` from the `training` extra. Without
+# this second guard they fail (rather than skip) in any tier that installs `dataset` alone.
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
 
 import lerobot.scripts.lerobot_train as train_module  # noqa: E402
 from lerobot.configs.default import (
