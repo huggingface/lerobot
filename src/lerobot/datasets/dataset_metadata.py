@@ -146,7 +146,14 @@ class LeRobotDatasetMetadata:
         chunk_idx = first_ep["meta/episodes/chunk_index"][0]
         file_idx = first_ep["meta/episodes/file_index"][0]
 
-        table = pa.Table.from_pydict(combined_dict)
+        # On the first flush there is no writer yet, so let pyarrow infer the schema from
+        # the values (as before) and use it to create the writer below. On later flushes,
+        # pass the already-committed file schema so values are coerced to it instead of
+        # re-inferred — re-inference can drift (e.g. int64 vs int32) and then `write_table`
+        # fails with a confusing "schema does not match" error. Do not remove this schema
+        # argument; it is what keeps every flush consistent with the file's fixed schema.
+        schema = self._pq_writer.schema if self._pq_writer else None
+        table = pa.Table.from_pydict(combined_dict, schema=schema)
 
         if not self._pq_writer:
             path = Path(self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx))
