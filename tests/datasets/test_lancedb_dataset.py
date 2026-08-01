@@ -68,11 +68,7 @@ def _storage_type(dtype: pa.DataType) -> pa.DataType:
 
 
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
-    """Build a minimal lance-format dataset so the loader tests have something to read.
-
-    Not the production converter (that ships in the separate lerobot-lancedb repo):
-    just enough to produce valid frames/videos/meta tables from a standard dataset.
-    """
+    """Minimal lance-format writer for the tests (not the production converter)."""
     db = lancedb.connect(str(dst_root))
     shutil.copytree(src_root / "meta", dst_root / "meta")
     db.create_table(
@@ -214,8 +210,7 @@ def test_video_parity(video_dataset_roots):
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
 
-    # depth maps ride the same fixture: their static items are covered by the
-    # full-dict comparison above; assert they are actually present.
+    # depth maps ride the same fixture (static items covered by the compare above)
     assert upstream.meta.depth_keys
 
     fps = upstream.meta.fps
@@ -359,8 +354,7 @@ def add_language_columns(src_root: Path) -> None:
                 )
             else:
                 events.append([])
-        # pa.array cannot construct nested JSON extension values directly; build
-        # with the storage types (string), which is also what lands in parquet.
+        # pa.array can't build nested JSON extension values; use storage types (string).
         table = table.append_column(
             LANGUAGE_PERSISTENT,
             pa.array(persistent, type=_storage_type(language_persistent_arrow_type())),
@@ -389,8 +383,8 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
     lance_ds = LanceDBDataset(root=lance_root)
     assert lance_ds.meta.has_language_columns
 
-    # Indices chosen to hit every shape: both columns populated (0, 12), only
-    # persistent (33), only events (4), persistent null (5), neither (1).
+    # indices hit every shape: both populated (0,12), persistent-only (33),
+    # events-only (4), persistent-null (5), neither (1)
     for idx in [0, 1, 4, 5, 12, 33, len(upstream) - 1]:
         up_item, lance_item = upstream[idx], lance_ds[idx]
         for col in LANGUAGE_COLUMNS:
