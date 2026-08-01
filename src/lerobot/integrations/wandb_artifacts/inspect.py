@@ -171,6 +171,24 @@ class ModelDirectoryMetadata:
         }
 
 
+def registry_link_refusal(metadata: ModelDirectoryMetadata) -> str | None:
+    """Why ``metadata``'s model must not be linked into the Registry, or ``None`` if it may be.
+
+    A Registry collection is where a team looks for something deployable. An adapter-only
+    checkpoint whose base model isn't bundled cannot be rolled out from the artifact alone — the
+    base is resolved from ``base_model_name_or_path`` at load time, off the network or off a path
+    that only exists on the training machine — so linking it would put an undeployable version
+    where deployable ones live. The artifact still uploads; only the Registry claim is refused.
+    """
+    if metadata.is_self_contained:
+        return None
+    base_model = metadata.base_model_name_or_path or "(undeclared)"
+    return (
+        f"the checkpoint has only PEFT adapter weights and its base model ({base_model}) is not "
+        "bundled, so the artifact cannot be rolled out on its own"
+    )
+
+
 def validate_model_directory(root: Path | str) -> dict[str, Any] | None:
     """Prove that ``root`` is a locally loadable LeRobot policy checkpoint.
 
@@ -223,22 +241,27 @@ def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
     is_self_contained = has_full_weights
     base_model_name_or_path = None
     if not has_full_weights and has_adapter_weights:
+        # An adapter-only checkpoint is never self-contained, and not for want of bundling:
+        # `make_policy` hands `adapter_config.json`'s `base_model_name_or_path` to
+        # `from_pretrained` verbatim (see `policies/factory.py`) without rebasing it on the
+        # directory the adapter was loaded from. A base model copied inside `root` is therefore
+        # still looked up at the uploader's own path — exactly what the downloading machine lacks.
+        # Bundling can only start to work once the loader resolves that reference relative to the
+        # adapter directory.
         base_model_name_or_path = _adapter_base_model_name(root)
-        is_self_contained = base_model_name_or_path is not None and _local_path_exists(
+        logging.warning(
+            "%s contains only PEFT adapter weights, not the base model it was trained against. "
+            "Base model %s is resolved verbatim from adapter_config.json at load time, so whatever "
+            "machine downloads this artifact must already have it at that exact reference, or "
+            "loading will fail (or, if it is a Hub repo id, silently fetch from the network). "
+            "Copying the base model into this directory does not help: the stored reference is not "
+            "rewritten on download.",
+            root,
             base_model_name_or_path
+            if base_model_name_or_path is not None
+            else "(could not be determined: adapter_config.json is missing, unreadable, or has "
+            "no base_model_name_or_path)",
         )
-        if not is_self_contained:
-            logging.warning(
-                "%s contains only PEFT adapter weights, not the base model it was trained against: "
-                "base model %s is NOT contained in this artifact and must be available locally at "
-                "rollout time, or loading will fail (or, if it resolves to a Hub repo id, silently "
-                "fetch from the network).",
-                root,
-                base_model_name_or_path
-                if base_model_name_or_path is not None
-                else "(could not be determined: adapter_config.json is missing, unreadable, or has "
-                "no base_model_name_or_path)",
-            )
 
     return ModelDirectoryMetadata(
         has_full_weights=has_full_weights,
@@ -266,14 +289,6 @@ def _adapter_base_model_name(root: Path) -> str | None:
         return None
     base_model = adapter_config.get("base_model_name_or_path")
     return base_model if isinstance(base_model, str) else None
-
-
-def _local_path_exists(value: str) -> bool:
-    """Whether ``value`` resolves to an existing local path (vs. e.g. an unreachable Hub repo id)."""
-    try:
-        return Path(value).expanduser().exists()
-    except OSError:
-        return False
 
 
 def _read_info(root: Path) -> DatasetInfo:

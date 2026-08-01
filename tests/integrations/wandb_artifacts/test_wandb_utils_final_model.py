@@ -196,3 +196,62 @@ def test_log_final_model_aliases_never_reach_log_policy_periodic_upload(monkeypa
     monkeypatch.setattr(wandb_artifacts, "upload_directory", fake_upload_directory)
     logger.log_final_model(checkpoint_dir, step=1)
     assert fake_upload_directory.call_args.kwargs["aliases"] == ["candidate", "v42"]
+
+
+def _write_adapter_only_checkpoint(checkpoint_dir: Path, *, base_model: str = "lerobot/pi0_base") -> Path:
+    """A PEFT checkpoint: adapter weights only, base model resolved elsewhere at load time."""
+    pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+    pretrained_model_dir.mkdir(parents=True)
+    (pretrained_model_dir / CONFIG_NAME).write_text(json.dumps({"type": "pi0"}))
+    (pretrained_model_dir / "adapter_config.json").write_text(
+        json.dumps({"base_model_name_or_path": base_model})
+    )
+    (pretrained_model_dir / "adapter_model.safetensors").write_bytes(b"adapter")
+    return pretrained_model_dir
+
+
+def test_log_final_model_refuses_to_register_an_adapter_only_checkpoint(monkeypatch, tmp_path):
+    """A PEFT run must not put an unrollable version into the Registry, where a team looks for
+    something deployable. The Artifact is still published — only the Registry claim is withheld.
+    """
+    run = MagicMock()
+    wandb_cfg = WandBConfig(model_artifact_name="my-policy", registered_model_name="prod-policy")
+    logger = _make_logger(run, wandb_cfg)
+    checkpoint_dir = tmp_path / "checkpoints" / "000001"
+    _write_adapter_only_checkpoint(checkpoint_dir)
+
+    fake_upload_directory = MagicMock(
+        return_value=wandb_artifacts.MaterializedArtifact(
+            requested_ref="x", resolved_ref="x:v0", local_path=tmp_path, version="v0", digest="d", metadata={}
+        )
+    )
+    monkeypatch.setattr(wandb_artifacts, "upload_directory", fake_upload_directory)
+
+    logger.log_final_model(checkpoint_dir, step=1)
+
+    kwargs = fake_upload_directory.call_args.kwargs
+    assert kwargs["registry_collection"] is None  # not linked
+    assert kwargs["name"] == "my-policy"  # still uploaded, under the requested collection
+    assert kwargs["metadata"]["is_self_contained"] is False
+    assert "lerobot/pi0_base" in kwargs["metadata"]["registry_link_refused_reason"]
+
+
+def test_log_final_model_adapter_only_without_registry_request_is_unchanged(monkeypatch, tmp_path):
+    """No Registry link was asked for, so there is nothing to refuse and nothing to explain."""
+    run = MagicMock()
+    logger = _make_logger(run, WandBConfig(model_artifact_name="my-policy"))
+    checkpoint_dir = tmp_path / "checkpoints" / "000001"
+    _write_adapter_only_checkpoint(checkpoint_dir)
+
+    fake_upload_directory = MagicMock(
+        return_value=wandb_artifacts.MaterializedArtifact(
+            requested_ref="x", resolved_ref="x:v0", local_path=tmp_path, version="v0", digest="d", metadata={}
+        )
+    )
+    monkeypatch.setattr(wandb_artifacts, "upload_directory", fake_upload_directory)
+
+    logger.log_final_model(checkpoint_dir, step=1)
+
+    kwargs = fake_upload_directory.call_args.kwargs
+    assert kwargs["registry_collection"] is None
+    assert "registry_link_refused_reason" not in kwargs["metadata"]

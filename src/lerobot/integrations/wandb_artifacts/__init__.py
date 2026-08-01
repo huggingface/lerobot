@@ -32,6 +32,7 @@ _LAZY_EXPORTS = {
     "ModelDirectoryMetadata": ".inspect",
     "inspect_dataset_directory": ".inspect",
     "inspect_model_directory": ".inspect",
+    "registry_link_refusal": ".inspect",
     "validate_dataset_directory": ".inspect",
     "validate_model_directory": ".inspect",
     "ArtifactTypeMismatchError": ".store",
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
         ModelDirectoryMetadata,
         inspect_dataset_directory,
         inspect_model_directory,
+        registry_link_refusal,
         validate_dataset_directory,
         validate_model_directory,
     )
@@ -91,6 +93,7 @@ __all__ = [
     "inspect_model_directory",
     "link_to_registry",
     "parse_artifact_ref",
+    "registry_link_refusal",
     "upload_directory",
     "validate_dataset_directory",
     "validate_model_directory",

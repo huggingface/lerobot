@@ -41,6 +41,7 @@ lerobot-wandb rollout upload --root ./rollout_pick-cube --entity my-team --proje
 """
 
 import argparse
+import logging
 from pathlib import Path
 
 import wandb
@@ -50,6 +51,7 @@ from lerobot.utils.utils import init_logging
 from .inspect import (
     inspect_dataset_directory,
     inspect_model_directory,
+    registry_link_refusal,
     validate_dataset_directory,
     validate_model_directory,
 )
@@ -121,6 +123,18 @@ def cmd_model_upload(args: argparse.Namespace) -> None:
     metadata = inspect_model_directory(args.root)
     aliases = args.aliases or ["latest"]
 
+    artifact_metadata = metadata.to_wandb_metadata()
+    registry_collection = args.registry_collection
+    refusal = registry_link_refusal(metadata)
+    if registry_collection is not None and refusal is not None:
+        logging.warning(
+            f"Not linking into Registry collection {registry_collection!r}: {refusal}. The "
+            "Artifact is still uploaded — upload a merged checkpoint to register a deployable "
+            "version."
+        )
+        artifact_metadata["registry_link_refused_reason"] = refusal
+        registry_collection = None
+
     run = wandb.init(entity=args.entity, project=args.project, job_type="model_upload", mode="online")
     try:
         result = upload_directory(
@@ -129,8 +143,8 @@ def cmd_model_upload(args: argparse.Namespace) -> None:
             name=args.name,
             artifact_type=MODEL_ARTIFACT_TYPE,
             aliases=aliases,
-            metadata=metadata.to_wandb_metadata(),
-            registry_collection=args.registry_collection,
+            metadata=artifact_metadata,
+            registry_collection=registry_collection,
         )
     finally:
         run.finish()
@@ -139,6 +153,8 @@ def cmd_model_upload(args: argparse.Namespace) -> None:
     print(f"Aliases applied: {', '.join(aliases)}")
     if result.registry_collection:
         print(f"Linked into registry collection: {result.registry_collection}")
+    elif args.registry_collection:
+        print(f"NOT linked into registry collection {args.registry_collection}: {refusal}")
 
 
 def cmd_model_download(args: argparse.Namespace) -> None:
