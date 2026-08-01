@@ -192,7 +192,7 @@ def test_validate_requires_ordered_episode_rows(tmp_path):
     root = _write_dataset(tmp_path / "dataset", (1, 1))
     rows = _read_episode_rows(root)
     _write_episode_rows(root, list(reversed(rows)))
-    with pytest.raises(DatasetDirectoryError, match="ordered episode rows"):
+    with pytest.raises(DatasetDirectoryError, match="ordered by episode_index"):
         validate_dataset_directory(root)
 
 
