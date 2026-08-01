@@ -115,7 +115,7 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "wandb>=0.24.0,<0.28.0",
+    "wandb>=0.24.1,<0.28.0",
     "lerobot[accelerate-dep]",
 ]
 hardware = [

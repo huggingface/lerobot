@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import shutil
 import subprocess
 from dataclasses import dataclass
 from numbers import Integral
@@ -31,6 +32,7 @@ from typing import Any
 
 import datasets
 import pandas as pd
+import pyarrow.parquet as pq
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
@@ -466,17 +468,36 @@ def _require_files(root: Path, paths: set[Path], payload: str) -> None:
 
 
 def _read_frames(root: Path, info: DatasetInfo, features: datasets.Features) -> datasets.Dataset | None:
-    if not any((root / DATA_DIR).glob("*/*.parquet")):
+    paths = sorted((root / DATA_DIR).glob("*/*.parquet"))
+    if not paths:
         if info.total_frames == 0:
             return None
         raise DatasetDirectoryError(f"{root}/{DATA_DIR} has no loader-visible parquet files.")
+
+    # `datasets.Dataset.from_parquet(..., features=features)` (called below via
+    # `load_nested_dataset`) silently synthesizes a null-filled column for any name present in
+    # `features` but absent from the parquet file, instead of raising. That would make a dropped
+    # required column (e.g. `action`) invisible to the `column_names` check further down, so the
+    # on-disk schema is checked directly, before the loader gets a chance to paper over it.
+    expected_columns = set(features)
+    for path in paths:
+        try:
+            actual_columns = set(pq.ParquetFile(path).schema_arrow.names)
+        except Exception as e:
+            raise DatasetDirectoryError(f"{path} could not be read as parquet: {e}") from e
+        if actual_columns != expected_columns:
+            raise DatasetDirectoryError(
+                f"{path} does not match the frame schema declared in {INFO_PATH}: expected columns "
+                f"{sorted(expected_columns)}, found {sorted(actual_columns)}."
+            )
+
     try:
         frames = load_nested_dataset(root / DATA_DIR, features=features)
     except Exception as e:
         raise DatasetDirectoryError(
             f"{root}/{DATA_DIR} does not match the frame schema declared in {INFO_PATH}: {e}"
         ) from e
-    if set(frames.column_names) != set(features) or len(frames) != info.total_frames:
+    if set(frames.column_names) != expected_columns or len(frames) != info.total_frames:
         raise DatasetDirectoryError(
             f"{root}/{DATA_DIR} does not contain exactly {info.total_frames} rows with the declared columns."
         )
@@ -591,9 +612,15 @@ def _float_values(values: Any, label: str) -> list[float]:
 def _current_git_commit() -> str | None:
     """Best-effort commit of the LeRobot checkout; ``None`` for wheel/site-packages installs."""
     package_dir = Path(__file__).resolve().parents[2]
+    # Resolved to an absolute path (rather than passing the bare "git") so bandit's B607
+    # partial-executable-path check doesn't flag a PATH-search invocation: this always runs a
+    # fixed literal argv with no shell and no user input, but bandit can't see that.
+    git = shutil.which("git")
+    if git is None:
+        return None
     try:
         root_result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            [git, "rev-parse", "--show-toplevel"],
             cwd=package_dir,
             capture_output=True,
             text=True,
@@ -609,7 +636,7 @@ def _current_git_commit() -> str | None:
         return None
     try:
         commit_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            [git, "rev-parse", "HEAD"],
             cwd=repo_root,
             capture_output=True,
             text=True,
