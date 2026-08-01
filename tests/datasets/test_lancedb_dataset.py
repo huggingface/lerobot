@@ -394,8 +394,8 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
 
 def test_materialize_meta_rejects_escaping_paths(tmp_path):
     """A meta table entry with an absolute or traversing path must not escape the cache."""
-    for bad in ["/etc/passwd", "../../etc/passwd"]:
-        db = lancedb.connect(str(tmp_path / f"db_{abs(hash(bad))}"))
+    for i, bad in enumerate(["/etc/passwd", "../../etc/passwd"]):
+        db = lancedb.connect(str(tmp_path / f"db_{i}"))
         db.create_table(
             lancedb_module.META_TABLE,
             pa.table(
@@ -404,7 +404,7 @@ def test_materialize_meta_rejects_escaping_paths(tmp_path):
             ),
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
-            lancedb_module._materialize_meta(db, tmp_path / f"root_{abs(hash(bad))}")
+            lancedb_module._materialize_meta(db, tmp_path / f"root_{i}")
 
 
 def test_image_backed_features_rejected(tmp_path, lerobot_dataset_factory):
@@ -435,22 +435,11 @@ def test_depth_stats_rescaled_to_output_unit(video_dataset_roots):
         )
 
 
-def test_connect_passes_hub_revision(monkeypatch):
-    """_connect must forward a hub revision into storage_options (tables must match meta)."""
-    captured = {}
+def test_hub_revision_only_forwarded_for_hf_uris():
+    """The revision must reach a hub read's storage_options (so tables match meta),
+    but never a non-hub URI's."""
+    hub = lancedb_module._storage_options("hf://datasets/org/name", {"token": "t"}, "v3.0")
+    assert hub["revision"] == "v3.0"
 
-    def fake_connect(uri, **kwargs):
-        captured["uri"] = uri
-        captured["storage_options"] = kwargs.get("storage_options", {})
-        raise RuntimeError("stop after capture")
-
-    monkeypatch.setattr(lancedb_module.lancedb, "connect", fake_connect)
-    with pytest.raises(RuntimeError, match="stop after capture"):
-        lancedb_module._connect("hf://datasets/org/name", {"token": "t"}, revision="v3.0")
-    assert captured["storage_options"].get("revision") == "v3.0"
-
-    # non-hub URIs must NOT get a revision key
-    captured.clear()
-    with pytest.raises(RuntimeError, match="stop after capture"):
-        lancedb_module._connect("s3://bucket/path", None, revision="v3.0")
-    assert "revision" not in captured["storage_options"]
+    s3 = lancedb_module._storage_options("s3://bucket/path", None, "v3.0")
+    assert "revision" not in s3

@@ -244,19 +244,26 @@ def _is_remote_uri(path) -> bool:
     return "://" in str(path)
 
 
-def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
+def _storage_options(db_uri: str, storage_options: dict | None, revision: str | None) -> dict:
+    """Build the storage_options for a connect. For hf:// URIs, inject the token
+    and read tables from the same revision the metadata resolved to (lance honors
+    'revision' in storage_options, not an '@rev' URI suffix). Non-hub URIs are
+    left untouched."""
     options = dict(storage_options or {})
-    if _is_remote_uri(db_uri):
-        os.environ.setdefault("LANCE_IO_THREADS", "256")
     if db_uri.startswith("hf://"):
         if "token" not in options:
             token = huggingface_hub.get_token()
             if token:
                 options["token"] = token
-        # Read tables from the same revision the metadata resolved to (lance
-        # honors 'revision' in storage_options, not an '@rev' URI suffix).
         if revision and "revision" not in options:
             options["revision"] = revision
+    return options
+
+
+def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
+    if _is_remote_uri(db_uri):
+        os.environ.setdefault("LANCE_IO_THREADS", "256")
+    options = _storage_options(db_uri, storage_options, revision)
     return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
 
 
