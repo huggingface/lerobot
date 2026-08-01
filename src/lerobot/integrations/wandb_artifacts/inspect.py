@@ -242,15 +242,18 @@ def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
     base_model_name_or_path = None
     if not has_full_weights and has_adapter_weights:
         base_model_name_or_path = _adapter_base_model_name(root)
-        is_self_contained = base_model_name_or_path is not None and _local_path_exists(
-            base_model_name_or_path
-        )
+        # Self-contained means "the *artifact* holds everything needed", not "this machine does".
+        # `upload_directory` uploads `root` and nothing else, so a base model sitting elsewhere on
+        # the training box — however real that path is right now — is not in the artifact and will
+        # not exist wherever it is downloaded next.
+        is_self_contained = base_model_name_or_path is not None and _is_inside(base_model_name_or_path, root)
         if not is_self_contained:
             logging.warning(
                 "%s contains only PEFT adapter weights, not the base model it was trained against: "
-                "base model %s is NOT contained in this artifact and must be available locally at "
-                "rollout time, or loading will fail (or, if it resolves to a Hub repo id, silently "
-                "fetch from the network).",
+                "base model %s is not inside this directory, so it will not be uploaded with it "
+                "and must be available at rollout time on whatever machine downloads the artifact, "
+                "or loading will fail (or, if it resolves to a Hub repo id, silently fetch from "
+                "the network).",
                 root,
                 base_model_name_or_path
                 if base_model_name_or_path is not None
@@ -286,10 +289,15 @@ def _adapter_base_model_name(root: Path) -> str | None:
     return base_model if isinstance(base_model, str) else None
 
 
-def _local_path_exists(value: str) -> bool:
-    """Whether ``value`` resolves to an existing local path (vs. e.g. an unreachable Hub repo id)."""
+def _is_inside(value: str, root: Path) -> bool:
+    """Whether ``value`` is an existing path *within* ``root`` — i.e. bundled into the artifact.
+
+    A Hub repo id, a path that doesn't exist, and a real path outside ``root`` are all equally
+    "not in the artifact" as far as anyone downloading it later is concerned.
+    """
     try:
-        return Path(value).expanduser().exists()
+        candidate = Path(value).expanduser().resolve()
+        return candidate.exists() and candidate.is_relative_to(root.resolve())
     except OSError:
         return False
 

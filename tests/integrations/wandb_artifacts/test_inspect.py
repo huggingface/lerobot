@@ -587,7 +587,12 @@ def test_inspect_model_directory_warns_when_adapter_base_model_is_not_local(tmp_
     )
 
 
-def test_inspect_model_directory_no_warning_when_base_model_present_locally(tmp_path, caplog):
+def test_inspect_model_directory_warns_when_the_base_model_is_local_but_outside_the_artifact(
+    tmp_path, caplog
+):
+    """A base model elsewhere on the training machine is not in the artifact: `upload_directory`
+    uploads `root` and nothing else, so the path is meaningless wherever it lands next.
+    """
     root = tmp_path / "model"
     base_model_dir = tmp_path / "local-base-model"
     base_model_dir.mkdir()
@@ -596,8 +601,24 @@ def test_inspect_model_directory_no_warning_when_base_model_present_locally(tmp_
 
     metadata = inspect_model_directory(root)
 
-    assert metadata.is_self_contained is True
+    assert metadata.is_self_contained is False
     assert metadata.base_model_name_or_path == str(base_model_dir)
+    assert any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_inspect_model_directory_no_warning_when_the_base_model_is_bundled(tmp_path, caplog):
+    """The one case an adapter-only checkpoint really is self-contained: the base is inside the
+    directory being uploaded, so it travels with the artifact.
+    """
+    root = tmp_path / "model"
+    _write_model_config(root, policy_type="act")
+    base_model_dir = root / "base-model"
+    base_model_dir.mkdir(parents=True)
+    _write_adapter_config(root, base_model_name_or_path=str(base_model_dir))
+
+    metadata = inspect_model_directory(root)
+
+    assert metadata.is_self_contained is True
     assert not any(record.levelname == "WARNING" for record in caplog.records)
 
 
