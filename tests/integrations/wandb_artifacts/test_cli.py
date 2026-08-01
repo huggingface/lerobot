@@ -20,15 +20,22 @@ import pytest
 pytest.importorskip("wandb", reason="wandb is required (install lerobot[training])")
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.datasets.io_utils import write_info
+from lerobot.datasets.utils import STATS_PATH, DatasetInfo
 from lerobot.integrations.wandb_artifacts import cli
 from lerobot.integrations.wandb_artifacts.inspect import DatasetDirectoryError
 from lerobot.integrations.wandb_artifacts.store import MaterializedArtifact
-from tests.integrations.wandb_artifacts.test_inspect import _write_dataset
 
 
 def _write_minimal_dataset(root: Path) -> None:
-    """Materialize a real, writer-produced dataset (not a hand-built fixture) at ``root``."""
-    _write_dataset(root)
+    write_info(
+        DatasetInfo(
+            codebase_version="v3.0", fps=30, features={"action": {"dtype": "float32", "shape": (6,)}}
+        ),
+        root,
+    )
+    (root / STATS_PATH).write_text("{}")
+    (root / "data").mkdir(parents=True, exist_ok=True)
 
 
 def _fake_run():
@@ -71,6 +78,7 @@ def test_dataset_upload_validates_before_touching_wandb(tmp_path, monkeypatch):
 
 def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
     dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
     _write_minimal_dataset(dataset_root)
 
     run = _fake_run()
@@ -132,6 +140,7 @@ def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
 
 def test_dataset_upload_finishes_run_even_on_upload_failure(tmp_path, monkeypatch):
     dataset_root = tmp_path / "dataset"
+    dataset_root.mkdir()
     _write_minimal_dataset(dataset_root)
 
     run = _fake_run()
