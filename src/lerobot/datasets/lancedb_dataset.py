@@ -30,6 +30,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import av
+import huggingface_hub
 import numpy as np
 import torch
 
@@ -92,8 +94,6 @@ def build_video_byte_index(path: str | Path) -> dict:
     """Compute the byte-index columns for one video file.
     Works for any container/codec pyav can demux; frame indices assume constant frame rate. mp4-only.
     """
-    import av
-
     path = Path(path)
     file_size = path.stat().st_size
     kf_entries = []
@@ -250,9 +250,7 @@ def _connect(db_uri: str, storage_options: dict | None, revision: str | None = N
         os.environ.setdefault("LANCE_IO_THREADS", "256")
     if db_uri.startswith("hf://"):
         if "token" not in options:
-            from huggingface_hub import get_token
-
-            token = get_token()
+            token = huggingface_hub.get_token()
             if token:
                 options["token"] = token
         # Read tables from the same revision the metadata resolved to (lance
@@ -313,8 +311,6 @@ def is_lance_dataset(
         return True
     if repo_id is None:
         return False
-    import huggingface_hub
-
     try:
         paths = huggingface_hub.HfApi().get_paths_info(
             repo_id, [f"{FRAMES_TABLE}.lance"], repo_type="dataset", revision=revision
@@ -743,6 +739,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         for uncached files, creates their decoders, and prefetches the batch's
         frame-window byte ranges. Timestamp-independent, so it runs in a background thread.
         """
+        # Lazy: torchcodec is a platform-conditional extra (no wheel on some
+        # platforms); upstream video_utils imports it lazily for the same reason.
         from torchcodec.decoders import VideoDecoder
 
         self._load_file_meta([key for key in file_keys if key not in self._file_meta])

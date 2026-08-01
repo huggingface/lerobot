@@ -15,6 +15,7 @@
 # limitations under the License.
 """Parity tests: LanceDBDataset must return the same items as LeRobotDataset."""
 
+import json
 import pickle
 import shutil
 from pathlib import Path
@@ -26,6 +27,7 @@ import torch
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets import lancedb_dataset as lancedb_module
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lancedb_dataset import (
     FRAMES_TABLE,
@@ -49,13 +51,16 @@ from lerobot.datasets.language import (
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.policies.factory import make_policy_config
-from tests.fixtures.constants import DUMMY_REPO_ID
+from tests.fixtures.constants import (
+    DUMMY_CAMERA_FEATURES,
+    DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_REPO_ID,
+)
 
 lancedb = pytest.importorskip("lancedb")
 
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
-    """Strip Arrow extension types (JSON in language tool_calls) recursively; lance rejects them."""
     if isinstance(dtype, pa.BaseExtensionType):
         return _storage_type(dtype.storage_type)
     if pa.types.is_list(dtype):
@@ -68,7 +73,6 @@ def _storage_type(dtype: pa.DataType) -> pa.DataType:
 
 
 def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
-    """Minimal lance-format writer for the tests (not the production converter)."""
     db = lancedb.connect(str(dst_root))
     shutil.copytree(src_root / "meta", dst_root / "meta")
     db.create_table(
@@ -150,7 +154,6 @@ def assert_items_equal(actual: dict, expected: dict) -> None:
 
 
 def test_tabular_parity(dataset_roots):
-    """Items, delta windows + pads, batched==single, and episode subsets vs upstream."""
     src_root, lance_root = dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LanceDBDataset(root=lance_root)
@@ -187,8 +190,6 @@ def test_tabular_parity(dataset_roots):
 
 @pytest.fixture
 def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
-    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES_WITH_DEPTH
-
     src_root = tmp_path / "src_video"
     lerobot_dataset_factory(
         root=src_root,
@@ -203,7 +204,6 @@ def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
 
 
 def test_video_parity(video_dataset_roots):
-    """Video items, delta windows, one-element squeeze semantics, and uint8 mode vs upstream."""
     src_root, lance_root = video_dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec")
     lance_ds = LanceDBDataset(root=lance_root)
@@ -316,9 +316,6 @@ def test_pickle_and_dataloader(dataset_roots):
 
 
 def add_language_columns(src_root: Path) -> None:
-    """Add lerobot#3467 language columns, varied by frame index (non-empty/empty/null, tool_calls)."""
-    import json
-
     for f in sorted((src_root / "data").rglob("*.parquet")):
         table = pq.read_table(f)
         persistent, events = [], []
@@ -397,25 +394,21 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
 
 def test_materialize_meta_rejects_escaping_paths(tmp_path):
     """A meta table entry with an absolute or traversing path must not escape the cache."""
-    import lerobot.datasets.lancedb_dataset as module
-
     for bad in ["/etc/passwd", "../../etc/passwd"]:
         db = lancedb.connect(str(tmp_path / f"db_{abs(hash(bad))}"))
         db.create_table(
-            module.META_TABLE,
+            lancedb_module.META_TABLE,
             pa.table(
                 {"path": [bad], "data": [b"x"]},
                 schema=pa.schema([("path", pa.string()), ("data", pa.large_binary())]),
             ),
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
-            module._materialize_meta(db, tmp_path / f"root_{abs(hash(bad))}")
+            lancedb_module._materialize_meta(db, tmp_path / f"root_{abs(hash(bad))}")
 
 
 def test_image_backed_features_rejected(tmp_path, lerobot_dataset_factory):
     """Image-backed camera features (not video) must fail fast, not silently drop columns."""
-    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES
-
     src_root = tmp_path / "src_img"
     lerobot_dataset_factory(
         root=src_root,
@@ -444,8 +437,6 @@ def test_depth_stats_rescaled_to_output_unit(video_dataset_roots):
 
 def test_connect_passes_hub_revision(monkeypatch):
     """_connect must forward a hub revision into storage_options (tables must match meta)."""
-    import lerobot.datasets.lancedb_dataset as module
-
     captured = {}
 
     def fake_connect(uri, **kwargs):
@@ -453,13 +444,13 @@ def test_connect_passes_hub_revision(monkeypatch):
         captured["storage_options"] = kwargs.get("storage_options", {})
         raise RuntimeError("stop after capture")
 
-    monkeypatch.setattr(module.lancedb, "connect", fake_connect)
+    monkeypatch.setattr(lancedb_module.lancedb, "connect", fake_connect)
     with pytest.raises(RuntimeError, match="stop after capture"):
-        module._connect("hf://datasets/org/name", {"token": "t"}, revision="v3.0")
+        lancedb_module._connect("hf://datasets/org/name", {"token": "t"}, revision="v3.0")
     assert captured["storage_options"].get("revision") == "v3.0"
 
     # non-hub URIs must NOT get a revision key
     captured.clear()
     with pytest.raises(RuntimeError, match="stop after capture"):
-        module._connect("s3://bucket/path", None, revision="v3.0")
+        lancedb_module._connect("s3://bucket/path", None, revision="v3.0")
     assert "revision" not in captured["storage_options"]
