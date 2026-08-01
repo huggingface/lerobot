@@ -29,6 +29,7 @@ from typing import Any
 
 import datasets
 import pandas as pd
+import pyarrow.parquet as pq
 
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.feature_utils import get_hf_features_from_features
@@ -321,10 +322,28 @@ def _require_files(root: Path, paths: set[Path], payload: str) -> None:
 
 
 def _read_frames(root: Path, info: DatasetInfo, features: datasets.Features) -> datasets.Dataset | None:
-    if not any((root / DATA_DIR).glob("*/*.parquet")):
+    paths = sorted((root / DATA_DIR).glob("*/*.parquet"))
+    if not paths:
         if info.total_frames == 0:
             return None
         raise DatasetDirectoryError(f"{root}/{DATA_DIR} has no loader-visible parquet files.")
+
+    # `datasets.Dataset.from_parquet(..., features=...)` silently coerces a shard onto the
+    # declared schema, materializing a null-filled column for any that is actually missing from
+    # the file on disk instead of raising. Check the on-disk columns ourselves first so a data
+    # file missing a declared feature column is rejected rather than silently accepted.
+    declared = set(features)
+    for path in paths:
+        try:
+            actual = set(pq.ParquetFile(path).schema_arrow.names)
+        except Exception as e:
+            raise DatasetDirectoryError(f"{path} could not be read as a dataset parquet file: {e}") from e
+        if actual != declared:
+            raise DatasetDirectoryError(
+                f"{path} does not match the frame schema declared in {INFO_PATH}: "
+                f"columns {sorted(actual)} do not match declared columns {sorted(declared)}."
+            )
+
     try:
         frames = load_nested_dataset(root / DATA_DIR, features=features)
     except Exception as e:
