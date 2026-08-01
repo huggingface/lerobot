@@ -191,8 +191,16 @@ def test_tabular_parity(dataset_roots):
 
 @pytest.fixture
 def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
+    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES_WITH_DEPTH
+
     src_root = tmp_path / "src_video"
-    lerobot_dataset_factory(root=src_root, total_episodes=2, total_frames=40, use_videos=True)
+    lerobot_dataset_factory(
+        root=src_root,
+        total_episodes=2,
+        total_frames=40,
+        use_videos=True,
+        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    )
     lance_root = tmp_path / "lance_video"
     convert_frames_to_lance(src_root, lance_root)
     return src_root, lance_root
@@ -206,9 +214,19 @@ def test_video_parity(video_dataset_roots):
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
 
+    # depth maps ride the same fixture: their static items are covered by the
+    # full-dict comparison above; assert they are actually present.
+    assert upstream.meta.depth_keys
+
     fps = upstream.meta.fps
     video_key = upstream.meta.video_keys[0]
-    delta_timestamps = {video_key: [-1 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
+    depth_key = upstream.meta.depth_keys[0]
+    # delta windows over both an rgb and a depth camera in one shot
+    delta_timestamps = {
+        video_key: [-1 / fps, 0.0, 1 / fps],
+        depth_key: [-1 / fps, 0.0, 1 / fps],
+        "action": [0.0, 1 / fps],
+    }
     upstream_d = LeRobotDataset(
         DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
     )
@@ -383,41 +401,6 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
         )
 
 
-@pytest.fixture
-def depth_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
-    from tests.fixtures.constants import DUMMY_CAMERA_FEATURES_WITH_DEPTH
-
-    src_root = tmp_path / "src_depth"
-    lerobot_dataset_factory(
-        root=src_root,
-        total_episodes=2,
-        total_frames=50,
-        use_videos=True,
-        camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
-    )
-    lance_root = tmp_path / "lance_depth"
-    convert_frames_to_lance(src_root, lance_root)
-    return src_root, lance_root
-
-
-def test_depth_parity(depth_dataset_roots):
-    """Depth items and depth delta windows, both bit-exact vs upstream."""
-    src_root, lance_root = depth_dataset_roots
-    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
-    lance_ds = LanceDBDataset(root=lance_root)
-    assert upstream.meta.depth_keys
-    for idx in [0, len(upstream) // 2, len(upstream) - 1]:
-        assert_items_equal(lance_ds[idx], upstream[idx])
-
-    meta = upstream.meta
-    fps, depth_key = meta.fps, meta.depth_keys[0]
-    delta_timestamps = {depth_key: [-1 / fps, 0.0, 1 / fps], "action": [0.0, 1 / fps]}
-    upstream_d = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps)
-    lance_d = LanceDBDataset(root=lance_root, delta_timestamps=delta_timestamps)
-    for idx in [0, 7, len(upstream_d) - 1]:
-        assert_items_equal(lance_d[idx], upstream_d[idx])
-
-
 def test_materialize_meta_rejects_escaping_paths(tmp_path):
     """A meta table entry with an absolute or traversing path must not escape the cache."""
     import lerobot.datasets.lancedb_dataset as module
@@ -453,9 +436,9 @@ def test_image_backed_features_rejected(tmp_path, lerobot_dataset_factory):
         LanceDBDataset(root=lance_root)
 
 
-def test_depth_stats_rescaled_to_output_unit(depth_dataset_roots):
+def test_depth_stats_rescaled_to_output_unit(video_dataset_roots):
     """Depth stats must be rescaled to depth_output_unit, matching LeRobotDataset."""
-    src_root, lance_root = depth_dataset_roots
+    src_root, lance_root = video_dataset_roots
     depth_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.depth_keys[0]
     for unit in ("m", "mm"):
         upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, depth_output_unit=unit)
