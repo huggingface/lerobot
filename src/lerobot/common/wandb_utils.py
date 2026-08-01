@@ -216,7 +216,11 @@ class WandBLogger:
         performs the upload, waits for it to be committed, and only then does the link (in that
         order), so the caller never has to guess whether the artifact is durably logged.
         """
-        from lerobot.integrations.wandb_artifacts import inspect_model_directory, upload_directory
+        from lerobot.integrations.wandb_artifacts import (
+            inspect_model_directory,
+            registry_link_refusal,
+            upload_directory,
+        )
 
         pretrained_model_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
         model_metadata = inspect_model_directory(pretrained_model_dir)
@@ -241,6 +245,17 @@ class WandBLogger:
 
         collection_name = get_safe_wandb_artifact_name(self.cfg.model_artifact_name or self._group)
 
+        registry_collection = self.cfg.registered_model_name
+        refusal = registry_link_refusal(model_metadata)
+        if registry_collection is not None and refusal is not None:
+            logging.warning(
+                f"Not linking {collection_name!r} into Registry collection "
+                f"{registry_collection!r}: {refusal}. The Artifact is still uploaded — publish a "
+                "merged checkpoint (or bundle the base model) to register a deployable version."
+            )
+            metadata["registry_link_refused_reason"] = refusal
+            registry_collection = None
+
         return upload_directory(
             self._run,
             pretrained_model_dir,
@@ -248,7 +263,7 @@ class WandBLogger:
             artifact_type="model",
             aliases=self.cfg.model_artifact_aliases,
             metadata=metadata,
-            registry_collection=self.cfg.registered_model_name,
+            registry_collection=registry_collection,
         )
 
     def log_dict(

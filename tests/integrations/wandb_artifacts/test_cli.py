@@ -764,3 +764,94 @@ def test_rollout_upload_finishes_the_run_when_the_model_ref_is_not_a_model(tmp_p
 
     assert upload_calls == []  # nothing is uploaded without a lineage edge
     run.finish.assert_called_once()
+
+
+def _write_adapter_only_model(root: Path, *, base_model: str = "lerobot/pi0_base") -> None:
+    """A PEFT checkpoint with no full weights: loadable only if the base model is available."""
+    import json
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / CONFIG_NAME).write_text(json.dumps({"type": "pi0"}))
+    (root / "adapter_config.json").write_text(json.dumps({"base_model_name_or_path": base_model}))
+    (root / "adapter_model.safetensors").write_bytes(b"adapter")
+
+
+def test_model_upload_refuses_to_register_an_adapter_only_checkpoint(tmp_path, monkeypatch, capsys):
+    """The Artifact still uploads, but it is not linked into the Registry: a Registry collection is
+    where a team looks for something deployable, and this cannot be rolled out on its own.
+    """
+    model_root = tmp_path / "model"
+    _write_adapter_only_model(model_root)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    upload_calls = []
+
+    def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None, **kwargs):
+        upload_calls.append({"registry_collection": kwargs.get("registry_collection"), "metadata": metadata})
+        return _materialized_model_upload_result()
+
+    monkeypatch.setattr(cli, "upload_directory", _fake_upload)
+
+    cli.main(
+        [
+            "model",
+            "upload",
+            "--root",
+            str(model_root),
+            "--project",
+            "p",
+            "--name",
+            "n",
+            "--registry-collection",
+            "pick-cube-policy",
+        ]
+    )
+
+    # Uploaded, but never linked.
+    assert len(upload_calls) == 1
+    assert upload_calls[0]["registry_collection"] is None
+
+    # The refusal travels with the artifact, not only in a log line the operator may not see.
+    metadata = upload_calls[0]["metadata"]
+    assert metadata["is_self_contained"] is False
+    assert "lerobot/pi0_base" in metadata["registry_link_refused_reason"]
+
+    out = capsys.readouterr().out
+    assert "NOT linked into registry collection pick-cube-policy" in out
+    assert "Linked into registry collection:" not in out
+
+
+def test_model_upload_still_registers_a_full_weights_checkpoint(tmp_path, monkeypatch, capsys):
+    """The refusal is specific to adapter-only checkpoints; ordinary ones are unaffected."""
+    model_root = tmp_path / "model"
+    _write_minimal_model(model_root)
+
+    run = _fake_run()
+    monkeypatch.setattr(cli.wandb, "init", lambda **kwargs: run)
+    upload_calls = []
+
+    def _fake_upload(passed_run, directory, *, name, artifact_type, aliases=(), metadata=None, **kwargs):
+        upload_calls.append({"registry_collection": kwargs.get("registry_collection"), "metadata": metadata})
+        return _materialized_model_upload_result(registry_collection="pick-cube-policy")
+
+    monkeypatch.setattr(cli, "upload_directory", _fake_upload)
+
+    cli.main(
+        [
+            "model",
+            "upload",
+            "--root",
+            str(model_root),
+            "--project",
+            "p",
+            "--name",
+            "n",
+            "--registry-collection",
+            "pick-cube-policy",
+        ]
+    )
+
+    assert upload_calls[0]["registry_collection"] == "pick-cube-policy"
+    assert "registry_link_refused_reason" not in upload_calls[0]["metadata"]
+    assert "Linked into registry collection: pick-cube-policy" in capsys.readouterr().out

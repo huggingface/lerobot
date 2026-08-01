@@ -171,6 +171,24 @@ class ModelDirectoryMetadata:
         }
 
 
+def registry_link_refusal(metadata: ModelDirectoryMetadata) -> str | None:
+    """Why ``metadata``'s model must not be linked into the Registry, or ``None`` if it may be.
+
+    A Registry collection is where a team looks for something deployable. An adapter-only
+    checkpoint whose base model isn't bundled cannot be rolled out from the artifact alone — the
+    base is resolved from ``base_model_name_or_path`` at load time, off the network or off a path
+    that only exists on the training machine — so linking it would put an undeployable version
+    where deployable ones live. The artifact still uploads; only the Registry claim is refused.
+    """
+    if metadata.is_self_contained:
+        return None
+    base_model = metadata.base_model_name_or_path or "(undeclared)"
+    return (
+        f"the checkpoint has only PEFT adapter weights and its base model ({base_model}) is not "
+        "bundled, so the artifact cannot be rolled out on its own"
+    )
+
+
 def validate_model_directory(root: Path | str) -> dict[str, Any] | None:
     """Prove that ``root`` is a locally loadable LeRobot policy checkpoint.
 
