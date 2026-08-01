@@ -51,10 +51,11 @@ def _readme_commands() -> list[str]:
 def test_the_readme_actually_contains_commands():
     """Guard the guard: a regex that silently matches nothing would make every test below vacuous."""
     commands = _readme_commands()
-    assert len(commands) >= 4
-    # The pipeline is only end-to-end if all four stages are shown.
+    assert len(commands) >= 3
+    # The pipeline is only end-to-end if every stage that crosses machines is shown. Promotion is
+    # deliberately not here: the CLI can only log a new version, never promote an existing one.
     joined = " ".join(commands)
-    for expected in ("dataset upload", "model download", "rollout upload", "model upload"):
+    for expected in ("dataset upload", "model download", "rollout upload"):
         assert expected in joined
 
 
@@ -83,11 +84,13 @@ def test_readme_train_command_parses_and_validates(tmp_path):
     from lerobot.configs.train import TrainPipelineConfig
     from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401  (registers act)
 
-    args = _readme_train_command()
-    # Redirect the output dir (validate() refuses a pre-existing one) and don't demand a Hub repo_id.
-    args = [arg for arg in args if not arg.startswith("--output_dir=")]
-    args += [f"--output_dir={tmp_path / 'run'}", "--policy.push_to_hub=false", "--policy.device=cpu"]
-    args = [arg for arg in args if arg != "--policy.device=cuda"]
+    # Only environment-dependent values may be substituted here. Anything that decides whether the
+    # command is *valid* must not be: injecting `--policy.push_to_hub=false` to get a green test is
+    # how the first version of this file hid a README command that could not run at all.
+    args = [
+        arg for arg in _readme_train_command() if not arg.startswith(("--output_dir=", "--policy.device="))
+    ]
+    args += [f"--output_dir={tmp_path / 'run'}", "--policy.device=cpu"]
 
     cfg = draccus.parse(TrainPipelineConfig, args=args)
     cfg.validate()
@@ -96,6 +99,8 @@ def test_readme_train_command_parses_and_validates(tmp_path):
     assert cfg.dataset.repo_id is None
     assert cfg.wandb.model_artifact_name == "pick-cube-policy"
     assert cfg.wandb.registered_model_name == "pick-cube-policy"
+    # The showcase promises W&B is the only remote store; `push_to_hub` defaults to True.
+    assert cfg.policy.push_to_hub is False
 
 
 def _readme_command_for(tool: str) -> list[str]:
@@ -131,6 +136,9 @@ def test_readme_rollout_command_uses_a_rollout_prefixed_dataset_name():
     repo_id = next(a.split("=", 1)[1] for a in args if a.startswith("--dataset.repo_id="))
 
     assert repo_id.split("/", 1)[-1].startswith("rollout_")
+    # `DatasetRecordConfig.push_to_hub` defaults to True and the episodic strategy's teardown acts
+    # on it, so without this flag the rollout is published to the Hub behind the reader's back.
+    assert "--dataset.push_to_hub=false" in args
     # The rollout upload command must point at the directory this command writes.
     root = next(a.split("=", 1)[1] for a in args if a.startswith("--dataset.root="))
     upload = next(c for c in _readme_commands() if c.startswith("lerobot-wandb rollout upload"))

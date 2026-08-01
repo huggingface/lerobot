@@ -49,15 +49,15 @@ Read this before the commands; it is the part that keeps you from being misled.
 ## 0. Prerequisites
 
 ```bash
-uv sync --locked --extra test --extra dataset --extra training
+uv sync --locked --extra core_scripts --extra feetech --extra training
 wandb login
 export WANDB_ENTITY=my-team
 export WANDB_PROJECT=so101-pick-cube
 ```
 
-The `training` extra provides both `wandb` and `accelerate`. Everything below assumes an SO-101
-follower on `/dev/ttyACM0` and a leader on `/dev/ttyACM1`; adjust ports and camera indices to your
-setup.
+`core_scripts` pulls in the dataset and hardware stacks, `feetech` the SO-101's motor bus, and
+`training` both `wandb` and `accelerate`. Everything below assumes an SO-101 follower on
+`/dev/ttyACM0` and a leader on `/dev/ttyACM1`; adjust ports and camera indices to your setup.
 
 ## 1. Record a teaching dataset
 
@@ -113,7 +113,8 @@ lerobot-train \
   --wandb.entity=my-team \
   --wandb.model_artifact_name=pick-cube-policy \
   --wandb.model_artifact_aliases='["candidate"]' \
-  --wandb.registered_model_name=pick-cube-policy
+  --wandb.registered_model_name=pick-cube-policy \
+  --policy.push_to_hub=false
 ```
 
 `--wandb.model_artifact_name` publishes the final checkpoint as its own versioned collection,
@@ -157,7 +158,8 @@ lerobot-rollout \
   --dataset.repo_id=local/rollout_pick-cube \
   --dataset.root=./data/rollout_pick-cube \
   --dataset.num_episodes=20 \
-  --dataset.single_task="Pick up the cube and place it in the bin"
+  --dataset.single_task="Pick up the cube and place it in the bin" \
+  --dataset.push_to_hub=false
 ```
 
 Count the successes yourself while it runs. You will pass that number in the next step.
@@ -185,21 +187,33 @@ requested and resolved model refs. Exactly one representative video is shown in 
 deterministically. The complete rollout — every episode, every camera — lives in the Artifact.
 
 > **On that one video:** in Dataset v3 a single `.mp4` holds as many episodes as fit under the
-> writer's file-size target, so the clip in the UI is an episode *span*. The run summary records
+> writer's file-size target, so the clip in the UI is an episode _span_. The run summary records
 > which episodes it actually shows, under `representative_video_episodes`.
 
 ## 7. Promote what worked
 
-Nothing is promoted automatically. When a rollout justifies it, move the alias:
+Nothing is promoted automatically. When a rollout justifies promotion, promote **the exact version
+the rollout evaluated** — `pick-cube-policy:v3`, whatever `:candidate` resolved to when you
+downloaded it, which the rollout run recorded as `model_artifact_resolved_ref`.
 
-```bash
-lerobot-wandb model upload \
-  --root ./policies/pick-cube-candidate \
-  --entity my-team \
-  --project so101-pick-cube \
-  --name pick-cube-policy \
-  --alias production \
-  --registry-collection pick-cube-policy
+`lerobot-wandb model upload` cannot do this: it always logs a _new_ artifact version from a local
+directory. Re-uploading the downloaded policy would produce a different version, carrying no edge
+to the rollout that justified it, while the rollout stays attached to the version you actually
+tested. That is the opposite of what promotion is for.
+
+Until the CLI grows a promote command (tracked in #24), move the alias and add the Registry link on
+the existing version, either in the W&B UI or with the SDK:
+
+```python
+import wandb
+
+api = wandb.Api()
+artifact = api.artifact("my-team/so101-pick-cube/pick-cube-policy:v3", type="model")
+artifact.aliases.append("production")
+artifact.save()
+
+with wandb.init(entity="my-team", project="so101-pick-cube", job_type="promote") as run:
+    run.link_artifact(artifact, target_path="wandb-registry-model/pick-cube-policy")
 ```
 
 ## Where things live afterwards
