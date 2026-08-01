@@ -20,6 +20,12 @@ W&B SDK nor a network call is ever exercised here.
 
 from unittest.mock import MagicMock
 
+import pytest
+
+# `validate_dataset_directory` (reached via the logger's lazy import) pulls in `datasets`/`pandas`,
+# so these tests only run once the dataset extra is installed.
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 import lerobot.integrations.wandb_artifacts as wandb_artifacts
 from lerobot.common.wandb_utils import WandBLogger
 
