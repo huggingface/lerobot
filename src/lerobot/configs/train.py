@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import builtins
+import copy
 import datetime as dt
 import json
 import multiprocessing
@@ -269,6 +270,8 @@ class TrainPipelineConfig(HubMixin):
                 raise ValueError(
                     "`dataset.artifact_ref` requires `wandb.enable=true` and `wandb.project` to be set."
                 )
+            if self.wandb.mode not in (None, "online"):
+                raise ValueError("`dataset.artifact_ref` requires `wandb.mode=online` or an unset mode.")
             if self.job.is_remote:
                 raise ValueError("`dataset.artifact_ref` is not supported for remote (HF Jobs) runs.")
 
@@ -306,8 +309,17 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        persisted_cfg = self
+        if self.dataset.artifact_ref is not None:
+            # Artifact materialization derives repo_id only to satisfy local dataset constructors.
+            # Keep that runtime detail out of checkpoints so the serialized source remains exclusive
+            # and passes the same validation when the run is resumed.
+            persisted_cfg = copy.copy(self)
+            persisted_cfg.dataset = copy.copy(self.dataset)
+            persisted_cfg.dataset.repo_id = None
+
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+            draccus.dump(persisted_cfg, f, indent=4)
 
     @classmethod
     def from_pretrained(
