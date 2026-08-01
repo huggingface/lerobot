@@ -21,7 +21,7 @@ on:
 
 # Sets up the environment variables
 env:
-  UV_VERSION: "0.8.0"
+  UV_VERSION: "0.11.30"
   PYTHON_VERSION: "3.12"
 
 jobs:
@@ -38,12 +38,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v6
         with:
           python-version: '3.12'
 
@@ -104,7 +104,7 @@ jobs:
       - name: Publish to TestPyPI for pre-releases
         # True for tags like 'v0.2.0-rc1'
         if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
         with:
           repository-url: https://test.pypi.org/legacy/
           verbose: true
@@ -112,7 +112,7 @@ jobs:
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e  # v1.13.0
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
         with:
           verbose: true
           print-hash: true
@@ -127,7 +127,7 @@ jobs:
     env:
       MUJOCO_GL: egl
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
@@ -137,7 +137,7 @@ jobs:
           git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
           speech-dispatcher libgeos-dev portaudio19-dev
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning]
           version: ${{ env.UV_VERSION }}

@@ -180,3 +180,20 @@ def test_non_dict_passthrough_last_wins():
     out = combine_feature_dicts(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
+
+
+def test_get_safe_version_raises_on_repo_without_version_tags(monkeypatch):
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
+
+    with pytest.raises(RuntimeError, match="must be tagged with a codebase version"):
+        get_safe_version("private/repo", "v3.0")
+
+
+def test_get_safe_version_error_reports_repo_id(monkeypatch):
+    repo_id = "private/repo"
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        get_safe_version(repo_id, "v3.0")
+
+    assert repo_id in str(exc_info.value)
