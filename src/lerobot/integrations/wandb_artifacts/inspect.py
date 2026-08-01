@@ -241,25 +241,27 @@ def inspect_model_directory(root: Path | str) -> ModelDirectoryMetadata:
     is_self_contained = has_full_weights
     base_model_name_or_path = None
     if not has_full_weights and has_adapter_weights:
+        # An adapter-only checkpoint is never self-contained, and not for want of bundling:
+        # `make_policy` hands `adapter_config.json`'s `base_model_name_or_path` to
+        # `from_pretrained` verbatim (see `policies/factory.py`) without rebasing it on the
+        # directory the adapter was loaded from. A base model copied inside `root` is therefore
+        # still looked up at the uploader's own path — exactly what the downloading machine lacks.
+        # Bundling can only start to work once the loader resolves that reference relative to the
+        # adapter directory.
         base_model_name_or_path = _adapter_base_model_name(root)
-        # Self-contained means "the *artifact* holds everything needed", not "this machine does".
-        # `upload_directory` uploads `root` and nothing else, so a base model sitting elsewhere on
-        # the training box — however real that path is right now — is not in the artifact and will
-        # not exist wherever it is downloaded next.
-        is_self_contained = base_model_name_or_path is not None and _is_inside(base_model_name_or_path, root)
-        if not is_self_contained:
-            logging.warning(
-                "%s contains only PEFT adapter weights, not the base model it was trained against: "
-                "base model %s is not inside this directory, so it will not be uploaded with it "
-                "and must be available at rollout time on whatever machine downloads the artifact, "
-                "or loading will fail (or, if it resolves to a Hub repo id, silently fetch from "
-                "the network).",
-                root,
-                base_model_name_or_path
-                if base_model_name_or_path is not None
-                else "(could not be determined: adapter_config.json is missing, unreadable, or has "
-                "no base_model_name_or_path)",
-            )
+        logging.warning(
+            "%s contains only PEFT adapter weights, not the base model it was trained against. "
+            "Base model %s is resolved verbatim from adapter_config.json at load time, so whatever "
+            "machine downloads this artifact must already have it at that exact reference, or "
+            "loading will fail (or, if it is a Hub repo id, silently fetch from the network). "
+            "Copying the base model into this directory does not help: the stored reference is not "
+            "rewritten on download.",
+            root,
+            base_model_name_or_path
+            if base_model_name_or_path is not None
+            else "(could not be determined: adapter_config.json is missing, unreadable, or has "
+            "no base_model_name_or_path)",
+        )
 
     return ModelDirectoryMetadata(
         has_full_weights=has_full_weights,
@@ -287,19 +289,6 @@ def _adapter_base_model_name(root: Path) -> str | None:
         return None
     base_model = adapter_config.get("base_model_name_or_path")
     return base_model if isinstance(base_model, str) else None
-
-
-def _is_inside(value: str, root: Path) -> bool:
-    """Whether ``value`` is an existing path *within* ``root`` — i.e. bundled into the artifact.
-
-    A Hub repo id, a path that doesn't exist, and a real path outside ``root`` are all equally
-    "not in the artifact" as far as anyone downloading it later is concerned.
-    """
-    try:
-        candidate = Path(value).expanduser().resolve()
-        return candidate.exists() and candidate.is_relative_to(root.resolve())
-    except OSError:
-        return False
 
 
 def _read_info(root: Path) -> DatasetInfo:

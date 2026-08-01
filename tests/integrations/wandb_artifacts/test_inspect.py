@@ -606,9 +606,10 @@ def test_inspect_model_directory_warns_when_the_base_model_is_local_but_outside_
     assert any(record.levelname == "WARNING" for record in caplog.records)
 
 
-def test_inspect_model_directory_no_warning_when_the_base_model_is_bundled(tmp_path, caplog):
-    """The one case an adapter-only checkpoint really is self-contained: the base is inside the
-    directory being uploaded, so it travels with the artifact.
+def test_inspect_model_directory_still_refuses_when_the_base_model_is_bundled(tmp_path, caplog):
+    """Bundling the base model inside the artifact is not enough, which is the unintuitive part:
+    `make_policy` passes `adapter_config.json`'s `base_model_name_or_path` to `from_pretrained`
+    verbatim, so the stored path still points at the uploader's machine after download.
     """
     root = tmp_path / "model"
     _write_model_config(root, policy_type="act")
@@ -618,8 +619,8 @@ def test_inspect_model_directory_no_warning_when_the_base_model_is_bundled(tmp_p
 
     metadata = inspect_model_directory(root)
 
-    assert metadata.is_self_contained is True
-    assert not any(record.levelname == "WARNING" for record in caplog.records)
+    assert metadata.is_self_contained is False
+    assert any(record.levelname == "WARNING" for record in caplog.records)
 
 
 def test_inspect_model_directory_no_warning_with_full_weights(tmp_path, caplog):
