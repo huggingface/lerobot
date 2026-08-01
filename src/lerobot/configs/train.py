@@ -261,6 +261,17 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
+        if (self.dataset.repo_id is None) == (self.dataset.artifact_ref is None):
+            raise ValueError("Exactly one of `dataset.repo_id` or `dataset.artifact_ref` must be set.")
+
+        if self.dataset.artifact_ref is not None:
+            if not (self.wandb.enable and self.wandb.project):
+                raise ValueError(
+                    "`dataset.artifact_ref` requires `wandb.enable=true` and `wandb.project` to be set."
+                )
+            if self.job.is_remote:
+                raise ValueError("`dataset.artifact_ref` is not supported for remote (HF Jobs) runs.")
+
         if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
