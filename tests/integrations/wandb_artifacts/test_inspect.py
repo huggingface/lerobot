@@ -20,11 +20,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-import pandas as pd
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd
 from datasets import Dataset
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
@@ -198,7 +198,7 @@ def test_validate_requires_ordered_episode_rows(tmp_path):
     root = _write_dataset(tmp_path / "dataset", (1, 1))
     rows = _read_episode_rows(root)
     _write_episode_rows(root, list(reversed(rows)))
-    with pytest.raises(DatasetDirectoryError, match="ordered episode rows"):
+    with pytest.raises(DatasetDirectoryError, match="rows ordered by episode_index"):
         validate_dataset_directory(root)
 
 

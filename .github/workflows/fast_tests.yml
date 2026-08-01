@@ -126,3 +126,10 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10
+
+      # ── Tier 5: Training ─────────────────────────────────
+      - name: "Tier 5 — Install: training"
+        run: uv sync --locked --extra test --extra dataset --extra training
+
+      - name: "Tier 5 — Test: training"
+        run: uv run pytest tests -vv --maxfail=10

@@ -15,6 +15,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 pytest.importorskip("wandb", reason="wandb is required (install lerobot[training])")
@@ -22,22 +23,33 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
 
-from lerobot.datasets.io_utils import write_info
-from lerobot.datasets.utils import STATS_PATH, DatasetInfo
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.integrations.wandb_artifacts import cli
 from lerobot.integrations.wandb_artifacts.inspect import DatasetDirectoryError, ModelDirectoryError
 from lerobot.integrations.wandb_artifacts.store import MaterializedArtifact
 
+_ACTION_FEATURE = {"dtype": "float32", "shape": (6,), "names": None}
+
 
 def _write_minimal_dataset(root: Path) -> None:
-    write_info(
-        DatasetInfo(
-            codebase_version="v3.0", fps=30, features={"action": {"dtype": "float32", "shape": (6,)}}
-        ),
-        root,
+    """A tiny, genuinely valid local LeRobot dataset (`root` must not already exist).
+
+    Built with the real dataset writer rather than hand-assembled JSON so it stays valid as
+    `inspect.validate_dataset_directory`'s requirements evolve.
+    """
+    dataset = LeRobotDataset.create(
+        repo_id="tests/wandb-artifacts-cli",
+        fps=30,
+        features={"action": _ACTION_FEATURE},
+        root=root,
+        robot_type="so101",
+        use_videos=False,
+        video_backend="pyav",
+        metadata_buffer_size=1,
     )
-    (root / STATS_PATH).write_text("{}")
-    (root / "data").mkdir(parents=True, exist_ok=True)
+    dataset.add_frame({"action": np.zeros(6, dtype=np.float32), "task": "task-0"})
+    dataset.save_episode(parallel_encoding=False)
+    dataset.finalize()
 
 
 def _write_minimal_model(root: Path) -> None:
@@ -88,7 +100,6 @@ def test_dataset_upload_validates_before_touching_wandb(tmp_path, monkeypatch):
 
 def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
     dataset_root = tmp_path / "dataset"
-    dataset_root.mkdir()
     _write_minimal_dataset(dataset_root)
 
     run = _fake_run()
@@ -150,7 +161,6 @@ def test_dataset_upload_happy_path(tmp_path, monkeypatch, capsys):
 
 def test_dataset_upload_finishes_run_even_on_upload_failure(tmp_path, monkeypatch):
     dataset_root = tmp_path / "dataset"
-    dataset_root.mkdir()
     _write_minimal_dataset(dataset_root)
 
     run = _fake_run()
