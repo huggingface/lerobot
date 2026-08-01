@@ -7,7 +7,13 @@ import torch
 
 pytest.importorskip("transformers")
 
-from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs import (
+    FeatureType,
+    NormalizationMode,
+    PipelineFeatureType,
+    PolicyFeature,
+    PreTrainedConfig,
+)
 from lerobot.envs.configs import LiberoEnv
 from lerobot.envs.factory import make_env_pre_post_processors
 from lerobot.lerobot_types import TransitionKey
@@ -162,6 +168,21 @@ def test_legacy_action_attend_cot_config_is_ignored(tmp_path) -> None:
     reloaded = G05Config.from_pretrained(tmp_path)
     assert reloaded.predict_cot is config.predict_cot
     assert not hasattr(reloaded, "action_attend_cot")
+
+
+def test_registration_keeps_policy_choice_parsing_usable() -> None:
+    """Importing G0.5 must not break draccus parsing of any policy-bearing config.
+
+    A custom draccus decoder on ``G05Config`` would satisfy the legacy-field test
+    above while making every ``TrainPipelineConfig`` parse fail as soon as this
+    module is imported, since draccus rejects a custom decoder on a choice type.
+    """
+    from draccus.argparsing import ArgumentParser
+
+    from lerobot.configs.train import TrainPipelineConfig
+
+    assert "g05" in PreTrainedConfig.get_known_choices()
+    ArgumentParser(TrainPipelineConfig)
 
 
 def test_inference_action_heads_are_exclusive(monkeypatch) -> None:

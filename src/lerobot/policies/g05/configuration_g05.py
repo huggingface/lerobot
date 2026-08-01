@@ -7,9 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import draccus
-from draccus.parsers.decoding import decode_dataclass
-
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -329,9 +326,11 @@ class G05Config(PreTrainedConfig):
     def reward_delta_indices(self) -> None:
         return None
 
-
-@draccus.decode.register(G05Config)
-def _decode_g05_config(raw_value: dict[str, Any], path: tuple[str, ...]) -> G05Config:
-    config = dict(raw_value)
-    config.pop("action_attend_cot", None)
-    return decode_dataclass(G05Config, config, path)
+    @classmethod
+    def _migrate_serialized_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        # Early converted checkpoints stored the CoT attention flag, which the action
+        # expert no longer reads. Registering a draccus decoder instead is not an
+        # option: draccus refuses a custom decoder on a choice-registry subclass.
+        migrated = dict(config)
+        migrated.pop("action_attend_cot", None)
+        return migrated
