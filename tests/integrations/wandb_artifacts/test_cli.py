@@ -713,6 +713,11 @@ def test_rollout_upload_happy_path(tmp_path, monkeypatch, capsys):
     assert Path(videos[0]) == sorted(rollout_root.rglob("*.mp4"))[0]
     assert run.log.call_count == 1
 
+    # The recorded path locates the file inside the artifact, where the metadata will be read from
+    # — never this machine's copy, which won't exist wherever the artifact is materialized next.
+    assert metadata["representative_video_path"] == "videos/observation.images.cam/chunk-000/file-000.mp4"
+    assert str(rollout_root) not in metadata["representative_video_path"]
+
     run.finish.assert_called_once()
 
     out = capsys.readouterr().out

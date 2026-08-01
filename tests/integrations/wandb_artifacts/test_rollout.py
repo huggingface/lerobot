@@ -124,9 +124,10 @@ def test_representative_video_covers_every_episode_stored_in_the_chosen_file(tmp
     assert video is not None
     assert video.video_key == "observation.images.cam"
     assert video.episodes == (0, 1, 2)
-    assert video.path.is_file()
-    # Every video file in this dataset — exactly one — is the one we picked.
-    assert sorted(root.rglob("*.mp4")) == [video.path]
+    # The path is relative — it locates the file inside the artifact, not on this machine.
+    assert str(video.path) == "videos/observation.images.cam/chunk-000/file-000.mp4"
+    # ...and joined with the root it came from, it is the dataset's one and only video file.
+    assert sorted(root.rglob("*.mp4")) == [root / video.path]
 
 
 def test_representative_video_picks_one_camera_deterministically(tmp_path):

@@ -205,7 +205,9 @@ def cmd_rollout_upload(args: argparse.Namespace) -> None:
             # Exactly one video reaches the run UI. The rest stay in the Artifact: a rollout can be
             # hundreds of episodes, and logging each as run media would duplicate the whole dataset
             # into W&B's media store for no added information.
-            run.log({"rollout_video": wandb.Video(str(video.path), fps=metadata.fps, format="mp4")})
+            run.log(
+                {"rollout_video": wandb.Video(str(args.root / video.path), fps=metadata.fps, format="mp4")}
+            )
     finally:
         run.finish()
 

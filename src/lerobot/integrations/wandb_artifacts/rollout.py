@@ -23,7 +23,7 @@ putting in front of a human.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from lerobot.datasets.io_utils import load_episodes, load_info
@@ -52,10 +52,16 @@ class RepresentativeVideo:
 
     In Dataset v3 a single ``.mp4`` holds however many episodes fit under the writer's file-size
     target (``dataset_writer`` concatenates each new episode onto the current file), so this is a
-    span, not one episode. ``episodes`` is every episode index stored in ``path``.
+    span, not one episode. ``episodes`` is every episode index stored in the file.
+
+    ``path`` is relative to the rollout root, which is also where the file lives *inside* the
+    artifact (``upload_directory`` places the root's contents at the artifact root). Never an
+    absolute or ``--root``-prefixed path: that locates nothing once the artifact is materialized on
+    another machine, and pins local state into metadata meant to outlive it. Callers that need to
+    read the file join it with the root they already hold.
     """
 
-    path: Path
+    path: PurePosixPath
     video_key: str
     episodes: tuple[int, ...]
 
@@ -161,7 +167,9 @@ def select_representative_video(root: Path | str) -> RepresentativeVideo | None:
 
     key, chunk_index, file_index, _ = min(located)
     return RepresentativeVideo(
-        path=root / info.video_path.format(video_key=key, chunk_index=chunk_index, file_index=file_index),
+        path=PurePosixPath(
+            info.video_path.format(video_key=key, chunk_index=chunk_index, file_index=file_index)
+        ),
         video_key=key,
         episodes=tuple(
             sorted(
