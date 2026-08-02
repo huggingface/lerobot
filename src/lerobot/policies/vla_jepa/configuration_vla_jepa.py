@@ -99,11 +99,21 @@ class VLAJEPAConfig(PreTrainedConfig):
     causal_world_model_context: bool = False
 
     resize_images_to: tuple[int, int] | None = None
-    binarize_gripper_action: bool = True
-    pre_snap_gripper_action: bool = True
+    # Gripper post-processing, ported from the starVLA LIBERO eval loop. OFF by default
+    # because it is only correct for LIBERO's action convention: `pre_snap` writes {0, 1}
+    # into normalized space and `binarize` then thresholds the *unnormalized* value at
+    # `gripper_threshold`, so a gripper whose physical range is not roughly [0, 1] (degrees,
+    # mm, [0, 100]) gets pinned to a constant. Enable them only for LIBERO-style setups.
+    binarize_gripper_action: bool = False
+    pre_snap_gripper_action: bool = False
     clip_normalized_actions: bool = True
+    # Index of the gripper in the action vector. Prefer leaving this at its default and
+    # setting `gripper_joint_names`, which resolves the index from dataset metadata.
     gripper_dim: int = 6
     gripper_threshold: float = 0.5
+    # Action-dimension names identifying the gripper. When these match `action_feature_names`,
+    # the resolved index wins over `gripper_dim`.
+    gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
     torch_dtype: str = "bfloat16"
 
     optimizer_lr: float = 1e-4
@@ -136,6 +146,22 @@ class VLAJEPAConfig(PreTrainedConfig):
                 f"({self.jepa_tubelet_size}) to have at least one context and one GT temporal position."
             )
 
+    @property
+    def resolved_gripper_dim(self) -> int:
+        """Gripper index, resolved from `action_feature_names` when possible.
+
+        Falls back to the raw `gripper_dim` when dataset metadata is unavailable (for example
+        when a saved processor pipeline is rebuilt without a dataset attached).
+        """
+        if not self.action_feature_names or not self.gripper_joint_names:
+            return self.gripper_dim
+        wanted = [name.lower() for name in self.gripper_joint_names if name]
+        for index, name in enumerate(self.action_feature_names):
+            lowered = str(name).lower()
+            if any(token == lowered or token in lowered for token in wanted):
+                return index
+        return self.gripper_dim
+
     def validate_features(self) -> None:
         if not self.image_features:
             raise ValueError("VLAJEPA requires at least one visual input feature.")
@@ -144,6 +170,16 @@ class VLAJEPAConfig(PreTrainedConfig):
         self.action_dim = self.action_feature.shape[0]
         if self.robot_state_feature is not None:
             self.state_dim = self.robot_state_feature.shape[0]
+        # The gripper steps silently no-op when the index is out of range, which reads as
+        # "binarization ran" while nothing happened. Fail loudly at construction instead.
+        if self.pre_snap_gripper_action or self.binarize_gripper_action:
+            gripper_dim = self.resolved_gripper_dim
+            if gripper_dim >= self.action_dim:
+                raise ValueError(
+                    f"`gripper_dim` ({gripper_dim}) is out of range for a {self.action_dim}-dim "
+                    f"action. Set `gripper_dim`/`gripper_joint_names` to the real gripper index, "
+                    f"or disable `pre_snap_gripper_action`/`binarize_gripper_action`."
+                )
 
     def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
         """Derive action/state dims and dimension names from the dataset actually being used.
