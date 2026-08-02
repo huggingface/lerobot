@@ -17,6 +17,8 @@
     title: Bring Your Own Hardware
   - local: hilserl
     title: Train a Robot with RL
+  - local: rl_token
+    title: RL-Token with PI0
   - local: hilserl_sim
     title: Train RL in Simulation
   - local: multi_gpu_training

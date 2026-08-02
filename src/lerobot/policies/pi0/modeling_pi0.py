@@ -17,6 +17,7 @@
 import builtins
 import logging
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
@@ -72,6 +73,16 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+
+
+@dataclass(frozen=True)
+class PI0VLAContext:
+    """Frozen PI0 features consumed by the RL-Token Stage 1/2 models."""
+
+    final_tokens: Tensor
+    token_mask: Tensor
+    reference_actions: Tensor
+    proprio: Tensor
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -653,6 +664,89 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
+        actions, _, _ = self._sample_actions_with_prefix(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            noise=noise,
+            num_steps=num_steps,
+            **kwargs,
+        )
+        return actions
+
+    @torch.no_grad()
+    def sample_actions_with_context(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        num_steps=None,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Sample actions and return the final PI0 prefix tokens from the same prefill."""
+        return self._sample_actions_with_prefix(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            noise=noise,
+            num_steps=num_steps,
+            **kwargs,
+        )
+
+    @torch.no_grad()
+    def encode_prefix(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+    ) -> tuple[Tensor, Tensor]:
+        """Encode PI0 image/language inputs without running action denoising."""
+        prefix_output, prefix_pad_masks, _ = self._prefill_prefix(images, img_masks, lang_tokens, lang_masks)
+        return prefix_output, prefix_pad_masks
+
+    def _prefill_prefix(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+    ):
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        return prefix_output, prefix_pad_masks, past_key_values
+
+    def _sample_actions_with_prefix(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        num_steps=None,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> tuple[Tensor, Tensor, Tensor]:
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -668,24 +762,11 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        prefix_output, prefix_pad_masks, past_key_values = self._prefill_prefix(
             images, img_masks, lang_tokens, lang_masks
         )
-        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
-        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        _, past_key_values = self.paligemma_with_expert.forward(
-            attention_mask=prefix_att_2d_masks_4d,
-            position_ids=prefix_position_ids,
-            past_key_values=None,
-            inputs_embeds=[prefix_embs, None],
-            use_cache=True,
-        )
-
-        return euler_integrate(
+        actions = euler_integrate(
             lambda input_x_t, current_timestep: self.denoise_step(
                 state=state,
                 prefix_pad_masks=prefix_pad_masks,
@@ -701,6 +782,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
         )
+        return actions, prefix_output, prefix_pad_masks
 
     def denoise_step(
         self,
@@ -769,6 +851,7 @@ class PI0Policy(PreTrainedPolicy):
         # Initialize the core PI0 model
         self.init_rtc_processor()
         self.model = PI0Pytorch(config, rtc_processor=self.rtc_processor)
+        self._pretrained_weights_loaded = False
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
@@ -867,6 +950,7 @@ class PI0Policy(PreTrainedPolicy):
 
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            model._pretrained_weights_loaded = True
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
@@ -1090,6 +1174,43 @@ class PI0Policy(PreTrainedPolicy):
         actions = actions[:, :, :original_action_dim]
 
         return actions
+
+    @torch.no_grad()
+    def predict_action_chunk_with_context(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> tuple[Tensor, PI0VLAContext]:
+        """Predict a normalized action chunk and expose PI0 final prefix tokens for RL-Token."""
+        self.eval()
+
+        images, img_masks = self._preprocess_images(batch)
+        lang_tokens = batch[OBS_LANGUAGE_TOKENS]
+        lang_masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+        padded_state = self.prepare_state(batch)
+        actions, final_tokens, token_mask = self.model.sample_actions_with_context(
+            images, img_masks, lang_tokens, lang_masks, padded_state, **kwargs
+        )
+
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        actions = actions[:, :, :original_action_dim]
+        context = PI0VLAContext(
+            final_tokens=final_tokens,
+            token_mask=token_mask,
+            reference_actions=actions,
+            proprio=batch[OBS_STATE],
+        )
+        return actions, context
+
+    @torch.no_grad()
+    def encode_vla_tokens(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
+        """Return final PI0 prefix tokens for RL-Token Stage 1 without sampling actions."""
+        self.eval()
+        images, img_masks = self._preprocess_images(batch)
+        return self.model.encode_prefix(
+            images,
+            img_masks,
+            batch[OBS_LANGUAGE_TOKENS],
+            batch[OBS_LANGUAGE_ATTENTION_MASK],
+        )
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.
