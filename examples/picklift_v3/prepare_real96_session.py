@@ -50,7 +50,7 @@ def make_config(
     if missing:
         raise ValueError(f"device config missing: {', '.join(missing)}")
     if session_index not in SESSION_SEQUENCE_SHA256:
-        raise ValueError("only independently transferred Session 1 is deployable in this checkout")
+        raise ValueError("only independently transferred sessions are deployable in this checkout")
     return {
         "collection_workflow_version": BATCH_WORKFLOW_VERSION,
         "successes_per_spawn": 1,
@@ -120,6 +120,15 @@ def make_config(
             "subset_manifest_id": SUBSET_MANIFEST_ID,
             "subset_manifest_sha256": SUBSET_MANIFEST_SHA256,
             "session_sequence_sha256": SESSION_SEQUENCE_SHA256[session_index],
+            "predecessor_session_id": "task1_real96_s01" if session_index == 2 else None,
+            "predecessor_freeze_id": (
+                "task1_picklift_real96_s01_raw_attempts_freeze_v1" if session_index == 2 else None
+            ),
+            "predecessor_raw_tree_sha256": (
+                "f628ab551aadea2c40402a48b7bda9625342d2b7921e960035e9620f2970fd2a"
+                if session_index == 2
+                else None
+            ),
             "ready_pose_profile": READY_POSE_PROFILE,
             "ready_pose_state_sha256": READY_POSE_STATE_SHA256,
             "follower_calibration_path": device_config["follower_calibration_path"],

@@ -10,10 +10,12 @@ from examples.picklift_v3.prepare_real96_session import make_config, validate_wi
 from examples.picklift_v3.real96_plan import (
     COLLECTION_PLAN_SHA256,
     SESSION_ITEMS_SHA256,
+    SESSION_SEQUENCE_SHA256,
     batch_spawns,
     compact_session_bytes,
     real96_items,
     session_items,
+    session_sequence_bytes,
     validate_session_source,
 )
 
@@ -49,6 +51,27 @@ def test_real96_generator_reproduces_transferred_session1_exactly():
     assert [item["session_order"] for item in items] == list(range(1, 25))
     assert items[0]["plan_item_id"] == "real96_s01_r3c4_core_center_rep01_yaw00"
     assert items[-1]["plan_item_id"] == "real96_s01_r2c1_extension_q3_rep01_yaw45"
+
+
+def test_real96_generator_reproduces_transferred_session2_exactly():
+    validate_session_source(2)
+    assert len(compact_session_bytes(2)) == 14180
+    assert hashlib.sha256(compact_session_bytes(2)).hexdigest() == SESSION_ITEMS_SHA256[2]
+    assert hashlib.sha256(session_sequence_bytes(2)).hexdigest() == SESSION_SEQUENCE_SHA256[2]
+    items = session_items(2)
+    assert [item["global_order"] for item in items] == list(range(25, 49))
+    assert Counter(item["cell"] for item in items) == {
+        f"r{row}c{column}": 2 for row in range(1, 4) for column in range(1, 5)
+    }
+    assert Counter(item["subset_role"] for item in items) == {"extension": 12, "core": 12}
+    assert Counter(item["position_kind"] for item in items) == {"center": 12, "offset": 12}
+    assert Counter(item["yaw_degrees_modulo_90"] for item in items) == {0: 12, 45: 12}
+    assert Counter(item["quadrant"] for item in items if item["quadrant"] is not None) == {
+        "Q0": 3,
+        "Q1": 3,
+        "Q2": 3,
+        "Q3": 3,
+    }
 
 
 def test_full_real96_distribution_is_frozen_and_balanced():

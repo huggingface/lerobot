@@ -12,8 +12,14 @@ POSE_MANIFEST_ID = "task1_picklift_real96_poses_v1"
 POSE_MANIFEST_SHA256 = "1845f6e51f7afecfb21caf8278141aab4371e3e8667f2d81a14dbb318478f7d8"
 SUBSET_MANIFEST_ID = "task1_picklift_real48_real96_subsets_v1"
 SUBSET_MANIFEST_SHA256 = "bdf7ad387cd4d8f619ead947d40c7642682859a3986d6e30df591f767b24ac5b"
-SESSION_SEQUENCE_SHA256 = {1: "bda0389c211dc728f53071e8d77f8b332a50b9ec3f22e024d73c66b59fc2d5d1"}
-SESSION_ITEMS_SHA256 = {1: "814dc518da9de7d631209a95022bf2d9e5bfc4401d53b2d93cc60fbc85d0b478"}
+SESSION_SEQUENCE_SHA256 = {
+    1: "bda0389c211dc728f53071e8d77f8b332a50b9ec3f22e024d73c66b59fc2d5d1",
+    2: "c81826685dc906e6bbf9d160e43fcb3986c146ecdc5ec020e73eb7c36ad05b98",
+}
+SESSION_ITEMS_SHA256 = {
+    1: "814dc518da9de7d631209a95022bf2d9e5bfc4401d53b2d93cc60fbc85d0b478",
+    2: "3cb86c9c176828405cc1cc838a119b7f4bd848a7d28f612d1624844342da0c37",
+}
 
 ROW_CENTERS_MM = (225, 275, 325)
 COLUMN_CENTERS_MM = (-75, -25, 25, 75)
@@ -131,6 +137,10 @@ def compact_session_bytes(session_index: int) -> bytes:
     return json.dumps(session_items(session_index), ensure_ascii=False, separators=(",", ":")).encode()
 
 
+def session_sequence_bytes(session_index: int) -> bytes:
+    return "".join(f"{item['plan_item_id']}\n" for item in session_items(session_index)).encode()
+
+
 def validate_session_source(session_index: int) -> None:
     expected = SESSION_ITEMS_SHA256.get(session_index)
     if expected is None:
@@ -138,6 +148,12 @@ def validate_session_source(session_index: int) -> None:
     actual = _sha256(compact_session_bytes(session_index))
     if actual != expected:
         raise RuntimeError(f"session {session_index} source hash mismatch: {actual} != {expected}")
+    sequence_actual = _sha256(session_sequence_bytes(session_index))
+    sequence_expected = SESSION_SEQUENCE_SHA256[session_index]
+    if sequence_actual != sequence_expected:
+        raise RuntimeError(
+            f"session {session_index} sequence hash mismatch: {sequence_actual} != {sequence_expected}"
+        )
 
 
 def batch_spawns(session_index: int) -> list[dict]:

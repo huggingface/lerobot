@@ -10,9 +10,12 @@ as the collector code commit.
 The frozen research collection plan is copied byte-for-byte under
 `contracts/`; its SHA-256 is
 `f8d9ab2de3e7f6915dacafc2b8f70cc523373154b2df6b3abc8536fcfb623ef7`.
-`real96_plan.py` reproduces all 96 plan items deterministically. Session 1 was
-independently transferred as a compact 14,171-byte JSON array and must hash to
-`814dc518da9de7d631209a95022bf2d9e5bfc4401d53b2d93cc60fbc85d0b478`.
+`real96_plan.py` reproduces all 96 plan items deterministically. Sessions 1 and
+2 have independently transferred canonical compact JSON identities. Session 2
+is 14,180 bytes, hashes to
+`3cb86c9c176828405cc1cc838a119b7f4bd848a7d28f612d1624844342da0c37`,
+and has sequence hash
+`c81826685dc906e6bbf9d160e43fcb3986c146ecdc5ec020e73eb7c36ad05b98`.
 
 ## Operator lifecycle
 
@@ -56,7 +59,8 @@ state/action remains recorded.
 
 ## Offline preparation
 
-Generate a new Session 1 machine-local config without opening devices:
+Generate a new machine-local config without opening devices (use `--session 2`
+and the corresponding `s02` paths for Session 2):
 
 ```bash
 uv run python -m examples.picklift_v3.prepare_real96_session \
