@@ -63,9 +63,7 @@ class FaultInjectionConfig:
     def validate(self, num_envs: int | None = None) -> None:
         """Raise ``ValueError`` if configuration fields are invalid."""
         if self.type != "action_hold":
-            raise ValueError(
-                f"Unsupported fault type {self.type!r}. Currently supported: 'action_hold'."
-            )
+            raise ValueError(f"Unsupported fault type {self.type!r}. Currently supported: 'action_hold'.")
         if self.trigger_step < 1:
             raise ValueError(
                 f"trigger_step must be >= 1 so a previous valid action exists to hold "
@@ -83,9 +81,7 @@ class FaultInjectionConfig:
             if len(self.env_ids) != len(set(self.env_ids)):
                 raise ValueError(f"env_ids contain duplicates: {self.env_ids}.")
             if num_envs is not None and any(i >= num_envs for i in self.env_ids):
-                raise ValueError(
-                    f"env_ids out of range for num_envs={num_envs}: {self.env_ids}."
-                )
+                raise ValueError(f"env_ids out of range for num_envs={num_envs}: {self.env_ids}.")
 
 
 def default_fault_config() -> FaultInjectionConfig:

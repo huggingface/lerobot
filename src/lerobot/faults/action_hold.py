@@ -61,9 +61,7 @@ class ActionHoldFault:
         self.config = config
         self.num_envs = num_envs
         self.event_logger = event_logger
-        self._selected = (
-            set(range(num_envs)) if config.env_ids is None else set(config.env_ids)
-        )
+        self._selected = set(range(num_envs)) if config.env_ids is None else set(config.env_ids)
         seed = 0 if config.seed is None else int(config.seed)
         # One Generator for all envs; draws happen in env-index order at trigger time.
         self._rng = np.random.default_rng(seed)
@@ -150,8 +148,7 @@ class ActionHoldFault:
             if state.remaining > 0:
                 if state.prev_action is None:
                     raise RuntimeError(
-                        f"ActionHoldFault env {env_idx}: remaining={state.remaining} but "
-                        "prev_action is None."
+                        f"ActionHoldFault env {env_idx}: remaining={state.remaining} but prev_action is None."
                     )
                 held = state.prev_action.copy()
                 proposed = actions[env_idx].copy()
@@ -175,11 +172,7 @@ class ActionHoldFault:
             ):
                 state.will_activate = bool(self._rng.random() < self.config.probability)
 
-            if (
-                state.episode_step == self.config.trigger_step
-                and not state.activated
-                and state.will_activate
-            ):
+            if state.episode_step == self.config.trigger_step and not state.activated and state.will_activate:
                 if state.prev_action is None:
                     raise RuntimeError(
                         f"ActionHoldFault cannot activate at trigger_step="
