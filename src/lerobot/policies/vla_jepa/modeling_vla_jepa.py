@@ -16,17 +16,17 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.utils import populate_queues
+from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import get_autocast_context
+from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -497,22 +497,15 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def from_pretrained(
-        cls: type[T],
-        pretrained_name_or_path: str | Path,
-        **kwargs,
-    ):
-        return super().from_pretrained(pretrained_name_or_path, **kwargs)
-
-    @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
             return super()._load_as_safetensor(model, model_file, map_location, strict)
 
-        from safetensors.torch import load_file
-
-        state_dict = load_file(model_file, device=map_location)
+        # `resolve_safetensors_device` is what keeps every rank from materializing the whole
+        # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
+        # torch.cuda.current_device(), and `config.device` is exactly that bare string.
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
         current = model.state_dict()
 
         reinitialized: list[str] = []
@@ -536,8 +529,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 f"(randomly re-initialised):\n  " + "\n  ".join(reinitialized)
             )
 
-        from lerobot.policies.utils import log_model_loading_keys
-
+        # Deliberately non-strict: the reinitialized tensors above are *expected* to be missing.
+        # `strict` still has to mean something, so enforce it on everything else.
         missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
+        if strict:
+            reinit_keys = {entry.split(":", 1)[0] for entry in reinitialized}
+            unaccounted = [k for k in missing_keys if k not in reinit_keys]
+            if unaccounted or unexpected_keys:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__} with strict=True: "
+                    f"missing keys not covered by `reinit_modules` {unaccounted}, "
+                    f"unexpected keys {list(unexpected_keys)}."
+                )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
