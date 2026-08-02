@@ -19,6 +19,40 @@ lerobot-train \
 This initializes SigLIP2 and Gemma3-270M from unimodal checkpoints and creates a
 fresh Gemma3 multimodal connector.
 
+### One-stage RECAP optimization
+
+Train the connector, value readout, and Gemma together from the start with
+component-specific learning rates, while keeping SigLIP2 frozen:
+
+```bash
+lerobot-train \
+  --reward_model.type=distributional_value_function \
+  --reward_model.freeze_vision_encoder=true \
+  --reward_model.freeze_language_model=false \
+  --reward_model.target_method=hl_gauss \
+  --reward_model.hl_gauss_sigma_ratio=0.75 \
+  --reward_model.use_one_hot_terminal=false \
+  --reward_model.value_dropout=0.1 \
+  --reward_model.optimizer_language_model_lr=1e-5 \
+  --reward_model.optimizer_multimodal_projector_lr=5e-5 \
+  --reward_model.optimizer_value_query_lr=1e-4 \
+  --reward_model.optimizer_value_head_lr=1e-4 \
+  --reward_model.optimizer_weight_decay=0.01 \
+  --reward_model.scheduler_warmup_steps=300 \
+  --reward_model.scheduler_decay_steps=6000 \
+  --reward_model.scheduler_decay_lr=1e-6 \
+  --dataset.repo_id=<dataset_repo_id> \
+  --dataset.eval_split=0.1 \
+  --eval_steps=500 \
+  --save_freq=500 \
+  --steps=6000
+```
+
+Defaults for this VF are head/query `1e-4`, connector `5e-5`, Gemma `1e-5`,
+weight decay `0.01`, dropout `0.1`, gradient clipping `1.0`, and cosine decay
+that brings the highest learning-rate group to `1e-6` while preserving group
+ratios.
+
 ## Temporal SigLIP2
 
 ```bash

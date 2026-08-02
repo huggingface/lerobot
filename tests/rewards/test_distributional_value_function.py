@@ -121,6 +121,22 @@ def test_config_defaults_match_pi06_gemma3_layout():
     assert config.num_image_tokens == 256
     assert config.target_method == "dirac_delta"
     assert config.hl_gauss_sigma_ratio == 0.75
+    assert config.value_dropout == 0.1
+    assert config.optimizer_weight_decay == 0.01
+    assert config.scheduler_decay_lr == 1e-6
+
+
+def test_optimizer_preset_matches_regularized_vf_recipe():
+    config = DistributionalVFConfig(device="cpu")
+
+    optimizer = config.get_optimizer_preset()
+    scheduler = config.get_scheduler_preset()
+
+    assert optimizer.lr == config.optimizer_value_head_lr
+    assert optimizer.weight_decay == 0.01
+    assert optimizer.grad_clip_norm == 1.0
+    assert scheduler.peak_lr == 1e-4
+    assert scheduler.decay_lr == 1e-6
 
 
 # ------------------------------------------------------------------
@@ -506,6 +522,45 @@ def test_freeze_language_model():
         assert not p.requires_grad
     for p in model.value_head.parameters():
         assert p.requires_grad
+
+
+@skip_if_package_missing("transformers")
+def test_frozen_towers_optimizer_groups():
+    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+        DistributionalVFRewardModel,
+    )
+
+    model = DistributionalVFRewardModel(_make_config(freeze_vision_encoder=True, freeze_language_model=True))
+    groups = {group["name"]: group for group in model.get_optim_params()}
+
+    assert set(groups) == {"multimodal_projector", "value_query", "value_head"}
+    assert groups["multimodal_projector"]["lr"] == 5e-5
+    assert groups["value_query"]["lr"] == 1e-4
+    assert groups["value_head"]["lr"] == 1e-4
+
+
+@skip_if_package_missing("transformers")
+def test_one_stage_optimizer_groups():
+    from lerobot.rewards.distributional_value_function.modeling_distributional_value_function import (
+        DistributionalVFRewardModel,
+    )
+
+    model = DistributionalVFRewardModel(_make_config(freeze_vision_encoder=True, freeze_language_model=False))
+    groups = {group["name"]: group for group in model.get_optim_params()}
+
+    assert set(groups) == {
+        "language_model",
+        "multimodal_projector",
+        "value_query",
+        "value_head",
+    }
+    assert groups["language_model"]["lr"] == 1e-5
+
+    optimizer = model.config.get_optimizer_preset().build(model.get_optim_params())
+    optimizer_groups = {group["name"]: group for group in optimizer.param_groups}
+    assert optimizer_groups["language_model"]["lr"] == 1e-5
+    assert optimizer_groups["multimodal_projector"]["lr"] == 5e-5
+    assert optimizer_groups["value_head"]["weight_decay"] == 0.01
 
 
 @skip_if_package_missing("transformers")

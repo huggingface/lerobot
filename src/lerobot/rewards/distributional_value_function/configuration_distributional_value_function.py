@@ -85,10 +85,21 @@ class DistributionalVFConfig(RewardModelConfig):
     tokenizer_max_length: int = 200
 
     # Training controls
-    value_dropout: float = 0.0
+    value_dropout: float = 0.1
     freeze_vision_encoder: bool = False
     freeze_language_model: bool = False
     stop_gradient_to_vlm: bool = False
+    optimizer_vision_lr: float = 1e-6
+    optimizer_language_model_lr: float = 1e-5
+    optimizer_multimodal_projector_lr: float = 5e-5
+    optimizer_value_query_lr: float = 1e-4
+    optimizer_value_head_lr: float = 1e-4
+    optimizer_weight_decay: float = 1e-2
+    scheduler_warmup_steps: int = 500
+    scheduler_decay_steps: int = 40000
+    scheduler_decay_lr: float = 1e-6
+    # Deprecated compatibility field. Component-specific learning rates above
+    # now control optimization directly.
     vision_encoder_lr_multiplier: float = 0.5
 
     # Normalization
@@ -98,19 +109,46 @@ class DistributionalVFConfig(RewardModelConfig):
         }
     )
 
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        learning_rates = {
+            "optimizer_vision_lr": self.optimizer_vision_lr,
+            "optimizer_language_model_lr": self.optimizer_language_model_lr,
+            "optimizer_multimodal_projector_lr": self.optimizer_multimodal_projector_lr,
+            "optimizer_value_query_lr": self.optimizer_value_query_lr,
+            "optimizer_value_head_lr": self.optimizer_value_head_lr,
+        }
+        for name, learning_rate in learning_rates.items():
+            if learning_rate <= 0:
+                raise ValueError(f"{name} must be > 0, got {learning_rate}")
+        if self.optimizer_weight_decay < 0:
+            raise ValueError(f"optimizer_weight_decay must be >= 0, got {self.optimizer_weight_decay}")
+        if not 0 <= self.value_dropout <= 1:
+            raise ValueError(f"value_dropout must be in [0,1], got {self.value_dropout}")
+        if self.scheduler_warmup_steps < 0 or self.scheduler_decay_steps < 1:
+            raise ValueError("scheduler_warmup_steps must be >= 0 and scheduler_decay_steps must be >= 1")
+        if self.scheduler_decay_lr < 0:
+            raise ValueError(f"scheduler_decay_lr must be >= 0, got {self.scheduler_decay_lr}")
+
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
-            lr=5e-5,
-            weight_decay=1e-10,
+            lr=self.optimizer_value_head_lr,
+            weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=1.0,
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
         return CosineDecayWithWarmupSchedulerConfig(
-            num_warmup_steps=500,
-            num_decay_steps=40000,
-            peak_lr=5e-5,
-            decay_lr=5e-5,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+            peak_lr=max(
+                self.optimizer_vision_lr,
+                self.optimizer_language_model_lr,
+                self.optimizer_multimodal_projector_lr,
+                self.optimizer_value_query_lr,
+                self.optimizer_value_head_lr,
+            ),
+            decay_lr=self.scheduler_decay_lr,
         )
 
     def validate_features(self) -> None:

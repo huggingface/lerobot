@@ -229,21 +229,40 @@ class DistributionalVFRewardModel(PreTrainedRewardModel):
 
     def get_optim_params(self) -> list[dict]:
         """Optimizer param groups with per-component learning rates."""
-        vision_params = []
-        other_params = []
-
+        groups: dict[str, list[nn.Parameter]] = {
+            "vision_encoder": [],
+            "language_model": [],
+            "multimodal_projector": [],
+            "value_query": [],
+            "value_head": [],
+        }
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
             if name.startswith("vision_encoder"):
-                vision_params.append(param)
+                groups["vision_encoder"].append(param)
+            elif name.startswith("language_model"):
+                groups["language_model"].append(param)
+            elif name.startswith("multi_modal_projector"):
+                groups["multimodal_projector"].append(param)
+            elif name.startswith("value_query"):
+                groups["value_query"].append(param)
+            elif name.startswith("value_head"):
+                groups["value_head"].append(param)
             else:
-                other_params.append(param)
+                raise ValueError(f"Unrecognized trainable VF parameter: {name}")
 
-        base_lr = self.config.get_optimizer_preset().lr
+        learning_rates = {
+            "vision_encoder": self.config.optimizer_vision_lr,
+            "language_model": self.config.optimizer_language_model_lr,
+            "multimodal_projector": self.config.optimizer_multimodal_projector_lr,
+            "value_query": self.config.optimizer_value_query_lr,
+            "value_head": self.config.optimizer_value_head_lr,
+        }
         return [
-            {"params": other_params},
-            {"params": vision_params, "lr": base_lr * self.config.vision_encoder_lr_multiplier},
+            {"params": params, "lr": learning_rates[name], "name": name}
+            for name, params in groups.items()
+            if params
         ]
 
     def embed_image(self, image: Tensor) -> Tensor:
