@@ -28,16 +28,16 @@ from lerobot.faults import ActionHoldFault, FaultEventLogger, FaultInjectionConf
 
 
 def _cfg(**kwargs) -> FaultInjectionConfig:
-    defaults = dict(
-        enabled=True,
-        type="action_hold",
-        trigger_step=3,
-        duration=2,
-        probability=1.0,
-        seed=42,
-        env_ids=None,
-        log_path=None,
-    )
+    defaults = {
+        "enabled": True,
+        "type": "action_hold",
+        "trigger_step": 3,
+        "duration": 2,
+        "probability": 1.0,
+        "seed": 42,
+        "env_ids": None,
+        "log_path": None,
+    }
     defaults.update(kwargs)
     return FaultInjectionConfig(**defaults)
 
@@ -100,7 +100,7 @@ def test_disabled_is_exact_noop():
     proposed = _action(1, 4, 5.0)
     out = inj.apply(proposed)
     assert out is proposed
-    assert inj.event_logger is None or True
+    assert inj.event_logger is None
 
 
 def test_vector_envs_maintain_separate_state():
@@ -151,7 +151,7 @@ def test_same_seed_reproducible_activation():
 )
 def test_invalid_config_errors(kwargs, match):
     with pytest.raises(ValueError, match=match):
-        FaultInjectionConfig(enabled=True, **{**dict(trigger_step=2, duration=1), **kwargs})
+        FaultInjectionConfig(enabled=True, **{"trigger_step": 2, "duration": 1, **kwargs})
 
 
 def test_env_ids_out_of_range():
