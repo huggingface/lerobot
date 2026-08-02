@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 Gangelia and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 Gangelia. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -71,26 +72,33 @@ class ActionHoldFault:
     def enabled(self) -> bool:
         return bool(self.config.enabled)
 
+    def close(self) -> None:
+        """Close the event logger if one was attached."""
+        if self.event_logger is not None:
+            self.event_logger.close()
+
     def reset(
         self,
         env_ids: list[int] | None = None,
         episode_ids: list[int] | dict[int, int] | None = None,
     ) -> None:
         """Clear episode-specific state for the given environments (or all)."""
-        indices = range(self.num_envs) if env_ids is None else env_ids
-        for i in indices:
-            if i < 0 or i >= self.num_envs:
-                raise ValueError(f"env_id {i} out of range for num_envs={self.num_envs}.")
-            ep_id = None
-            if isinstance(episode_ids, dict):
-                ep_id = episode_ids.get(i)
-            elif isinstance(episode_ids, list):
-                # Interpreted as aligned with ``indices`` when lengths match, else by env index.
-                if len(episode_ids) == len(list(indices)):
-                    ep_id = episode_ids[list(indices).index(i)]
-                elif i < len(episode_ids):
-                    ep_id = episode_ids[i]
-            self._states[i] = _EnvFaultState(episode_id=ep_id)
+        indices = list(range(self.num_envs) if env_ids is None else env_ids)
+        episode_id_by_env: dict[int, int] = {}
+        if isinstance(episode_ids, dict):
+            episode_id_by_env = episode_ids
+        elif isinstance(episode_ids, list):
+            if len(episode_ids) == len(indices):
+                episode_id_by_env = dict(zip(indices, episode_ids, strict=True))
+            else:
+                episode_id_by_env = {
+                    env_idx: episode_ids[env_idx] for env_idx in indices if env_idx < len(episode_ids)
+                }
+
+        for env_idx in indices:
+            if env_idx < 0 or env_idx >= self.num_envs:
+                raise ValueError(f"env_id {env_idx} out of range for num_envs={self.num_envs}.")
+            self._states[env_idx] = _EnvFaultState(episode_id=episode_id_by_env.get(env_idx))
 
     def notify_dones(self, dones: np.ndarray) -> None:
         """Mark finished envs so mid-batch tail steps cannot re-trigger a fault."""
@@ -126,6 +134,8 @@ class ActionHoldFault:
             raise ValueError(
                 f"Expected actions with shape ({self.num_envs}, action_dim), got {actions.shape}."
             )
+        if episode_ids is not None and len(episode_ids) != self.num_envs:
+            raise ValueError(f"episode_ids must have length {self.num_envs}, got {len(episode_ids)}.")
 
         executed = actions.copy()
 
@@ -134,8 +144,7 @@ class ActionHoldFault:
                 self._states[env_idx].episode_id = episode_ids[env_idx]
 
             if env_idx not in self._selected:
-                # Still track previous action / step for selected-env consistency if
-                # selection changes mid-run is not supported; unselected envs pass through.
+                # Unselected envs always pass through (selection is fixed at construction).
                 self._pass_through(env_idx, executed, actions)
                 continue
 
@@ -239,14 +248,14 @@ class ActionHoldFault:
 def make_fault_injector(
     config: FaultInjectionConfig | None,
     num_envs: int,
-    log_path: str | None = None,
+    log_path: str | Path | None = None,
 ) -> ActionHoldFault | None:
     """Build an injector from config, or ``None`` when disabled / unset."""
     if config is None or not config.enabled:
         return None
     config.validate(num_envs=num_envs)
     path = log_path if log_path is not None else config.log_path
-    logger = FaultEventLogger(path) if path is not None else FaultEventLogger(None)
+    logger = FaultEventLogger(path) if path is not None else None
     if config.type == "action_hold":
         return ActionHoldFault(config=config, num_envs=num_envs, event_logger=logger)
     raise ValueError(f"Unsupported fault type {config.type!r}.")

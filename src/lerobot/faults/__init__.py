@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 Gangelia and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 Gangelia. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ injector is constructed and evaluation behavior is unchanged.
 """
 
 from lerobot.faults.action_hold import ActionHoldFault, make_fault_injector
-from lerobot.faults.config import FaultInjectionConfig, default_fault_config
+from lerobot.faults.config import FaultInjectionConfig, default_fault_config, resolve_fault_log_path
 from lerobot.faults.logging import FaultEventLogger
 
 __all__ = [
@@ -34,4 +34,5 @@ __all__ = [
     "FaultInjectionConfig",
     "default_fault_config",
     "make_fault_injector",
+    "resolve_fault_log_path",
 ]
