@@ -1,0 +1,25 @@
+{
+  "schema": "task1_picklift_real48_vs_real96_eval48_research_identity_v1",
+  "research_repo": "G:/PhysicalAI/IAmRobotTrainerResearch",
+  "head_commit": "73908355df1add52cd04753216c13f8b1c0b400a",
+  "tracked_working_tree_status": "clean",
+  "unrelated_untracked_entries_ignored": [
+    ".codex-staging-task1-smolvla-phase-b/"
+  ],
+  "files": {
+    "experiment_design": {
+      "path": "experiment-design/task1-picklift-real48-vs-real96-eval48-v1.json",
+      "snapshot": "source_research_contract.json",
+      "sha256": "46b2ec8335d9b4415967efdd70dbe854d113d2966307a0eaaf38278744650af1",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+      "snapshot": "source_pose_manifest.json",
+      "sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7",
+      "match": true
+    }
+  },
+  "hardware_accessed": false,
+  "rollout_executed": false
+}

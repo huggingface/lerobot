@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real48_vs_real96_eval48_v1",
+  "status": "frozen_data_budget_gate_not_started",
+  "freeze_date": "2026-08-02",
+  "purpose": "Measure the Task1 Real-data budget effect under a fixed 48-pose paired real-robot evaluation.",
+  "task_contract": {
+    "contract_id": "task1_picklift_final_v2",
+    "operational_task_id": "PickLift-Nexus-v1",
+    "pose_manifest": "../manifests/task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+    "pose_manifest_sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7"
+  },
+  "models": [
+    {
+      "model_id": "ACT_Real48_seed1000_step100000",
+      "policy_family": "ACT",
+      "dataset_subset": "Real48",
+      "training_seed": 1000,
+      "training_steps": 100000,
+      "checkpoint_selection": "fixed step100000 only",
+      "train_from_scratch": true
+    },
+    {
+      "model_id": "ACT_Real96_seed1000_step100000",
+      "policy_family": "ACT",
+      "dataset_subset": "Real96",
+      "training_seed": 1000,
+      "training_steps": 100000,
+      "checkpoint_selection": "fixed step100000 only",
+      "train_from_scratch": true
+    }
+  ],
+  "training_recipe": {
+    "recipe_id": "task1_act100k_front20hz_chunk67_v1",
+    "reference": {
+      "path": "task1-picklift-real24-questsim24-act-v1.json",
+      "sha256": "207427ae365a5981f74a106f32f0069292d1695e989e712f668b15e8bb6add86",
+      "reuse_scope": "hyperparameters only; no simulation data or mixed-domain sampler is used"
+    },
+    "only_intended_difference": "Dataset subset manifest (Real48 versus Real96)",
+    "necessary_derived_difference": "State/action MEAN_STD statistics are recomputed independently from the frozen Real48 or Real96 training subset; this is part of changing the Dataset manifest, not a tuned hyperparameter.",
+    "runtime": {
+      "lerobot_version": "0.6.1",
+      "device": "cuda",
+      "use_amp": false,
+      "num_workers": 4
+    },
+    "run": {
+      "initialize_from_checkpoint": null,
+      "seed": 1000,
+      "steps": 100000,
+      "batch_size": 8,
+      "save_frequency_steps": 20000,
+      "selected_checkpoint_step": 100000,
+      "checkpoint_selection_from_results": false,
+      "smoke": "Separate 500-step from-scratch compatibility run; full run restarts from scratch."
+    },
+    "sampler": {
+      "type": "standard LeRobot frame sampling within the selected pure-Real subset",
+      "episode_duplication_in_derived_dataset": false,
+      "domain_balancing": false,
+      "result_weighting": false
+    },
+    "optimizer": {
+      "type": "adamw",
+      "learning_rate": 1e-05,
+      "weight_decay": 0.0001,
+      "gradient_clip_norm": 10.0
+    },
+    "policy": {
+      "type": "act",
+      "input_features": [
+        "observation.state",
+        "observation.images.front"
+      ],
+      "output_feature": "action",
+      "chunk_size": 67,
+      "n_action_steps": 67,
+      "vision_backbone": "resnet18",
+      "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+      "dim_model": 512,
+      "n_heads": 8,
+      "dim_feedforward": 3200,
+      "n_encoder_layers": 4,
+      "n_decoder_layers": 1,
+      "use_vae": true,
+      "latent_dim": 32,
+      "n_vae_encoder_layers": 4,
+      "dropout": 0.1,
+      "kl_weight": 10.0
+    },
+    "normalization": {
+      "mapping": {
+        "visual": "MEAN_STD",
+        "state": "MEAN_STD",
+        "action": "MEAN_STD"
+      },
+      "use_imagenet_stats": true,
+      "visual_mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "visual_std": [
+        0.229,
+        0.224,
+        0.225
+      ],
+      "state_action_statistics_source": "the condition's frozen Real48 or Real96 subset only"
+    },
+    "image_transforms_enabled": false,
+    "not_in_this_gate": [
+      "Real12",
+      "Real24",
+      "simulation data",
+      "SmolVLA",
+      "checkpoint selection by result"
+    ]
+  },
+  "hardware_rollout_contract": {
+    "valid_rollouts": 96,
+    "poses": 48,
+    "models_per_pose": 2,
+    "paired_same_nominal_pose": true,
+    "first_model_balance": "24 poses each",
+    "full_policy_window_seconds": 30.0,
+    "model_failure_retry_allowed": false,
+    "single_linked_replacement_allowed_only_for": [
+      "policy window never started",
+      "confirmed operator placement error",
+      "infrastructure error"
+    ],
+    "replacement_must_preserve_original_evidence": true
+  },
+  "success_contract": {
+    "within_window": true,
+    "double_finger_grasp": true,
+    "unsupported_lift_strictly_greater_than_m": 0.05,
+    "continuous_hold_seconds_minimum": 0.5,
+    "operator_label": "required",
+    "canonical_video_review": "required",
+    "adjudication_if_disagreement": "required and immutable"
+  },
+  "reporting": [
+    "overall success rate by model",
+    "success rate by seen_by_real48, added_by_real96, and unseen_by_both",
+    "per-cell and per-yaw results",
+    "missed_grasp, spatial_offset, post_grasp_drop, and other frozen failure categories",
+    "paired Real96 minus Real48 success difference"
+  ],
+  "claim_boundary": {
+    "gate_role": "Task1 data-budget gate",
+    "single_training_seed": true,
+    "paper_scale_effect_claim": false,
+    "formal_crowd_paper_may_reuse_pose_bank": true,
+    "future_training_seeds_may_be_added_without_reselecting_poses": true,
+    "coverage_fraction_is_not_a_promised_success_rate": true
+  },
+  "authorization_boundary": {
+    "contract_frozen": true,
+    "training_started": false,
+    "hardware_authorized": false,
+    "rollout_started": false,
+    "push": false
+  }
+}
