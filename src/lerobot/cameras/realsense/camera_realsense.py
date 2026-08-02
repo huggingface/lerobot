@@ -271,6 +271,11 @@ class RealSenseCamera(Camera):
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
 
+        if not warmup:
+            self._open_pipeline()
+            logger.info(f"{self} connected.")
+            return
+
         last_error: Exception | None = None
 
         for attempt in range(1, self._MAX_CONNECT_ATTEMPTS + 1):
@@ -907,11 +912,5 @@ class RealSenseCamera(Camera):
             )
 
         self._cleanup_resources()
-
-        with self.frame_lock:
-            self.latest_color_frame = None
-            self.latest_depth_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
 
         logger.info(f"{self} disconnected.")
