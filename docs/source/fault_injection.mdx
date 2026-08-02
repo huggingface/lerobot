@@ -29,13 +29,17 @@ valid executed action for `duration` environment steps, then resume policy actio
 | `--fault.probability` | Activation probability at trigger | `1.0` |
 | `--fault.seed` | RNG seed for activation decisions | `42` |
 | `--fault.env_ids` | Vector-env indices (`null` = all) | `null` |
-| `--fault.log_path` | JSONL event log path | `<output_dir>/fault_events.jsonl` |
+| `--fault.log_path` | JSONL event log path (relative paths are under `output_dir`) | `<output_dir>/fault_events.jsonl` |
+
+Fault injection is **policy-agnostic**: it runs after action postprocessing and before
+`env.step`, so any LeRobot policy that works with `lerobot-eval` can be tested
+(SmolVLA, π₀, ACT, …).
 
 ## Example
 
 ```bash
 lerobot-eval \
-  --policy.path=lerobot/smolvla_libero \
+  --policy.path=<your_policy> \
   --env.type=libero \
   --env.task=libero_object \
   --env.task_ids="[0]" \
@@ -45,11 +49,12 @@ lerobot-eval \
   --fault.type=action_hold \
   --fault.trigger_step=20 \
   --fault.duration=8 \
-  --fault.log_path=outputs/eval/fault_hold/fault_events.jsonl \
   --output_dir=outputs/eval/fault_hold
 ```
 
-A helper A/B smoke script is available:
+Optional helper that runs the same eval twice (clean vs faulted). Defaults use
+`lerobot/smolvla_libero` only as a convenience example — override with
+`POLICY_PATH=...`:
 
 ```bash
 bash scripts/run_fault_smoke.sh baseline
@@ -63,8 +68,11 @@ lifecycle events (`activated` → `active` → `completed`) with both
 `proposed_action` and `executed_held_action`.
 
 Compare task success via LeRobot's usual `eval_info.json` (`overall.pc_success`).
+Rendered rollout videos are written under `output_dir/videos/` by default (unless
+you enable dataset recording instead).
 
 ## Constraints
 
 - Requires `--env.max_parallel_tasks=1` while faults are enabled (keeps event logs consistent)
+- One fault type per eval run in this PR (`action_hold`)
 - Unit tests live under `tests/faults/` and do not require a simulator or GPU

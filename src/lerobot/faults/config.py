@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 Gangelia and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 Gangelia. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,8 +48,8 @@ class FaultInjectionConfig:
     seed: int | None = 42
     # Vector-env indices to apply the fault to. None means all environments.
     env_ids: list[int] | None = None
-    # JSONL path for fault events. Relative paths are resolved against output_dir
-    # by the eval entrypoint when provided.
+    # JSONL path for fault events. Relative paths are resolved against the eval
+    # ``output_dir`` in ``eval_main`` / :func:`resolve_fault_log_path`.
     log_path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -82,6 +82,22 @@ class FaultInjectionConfig:
                 raise ValueError(f"env_ids contain duplicates: {self.env_ids}.")
             if num_envs is not None and any(i >= num_envs for i in self.env_ids):
                 raise ValueError(f"env_ids out of range for num_envs={num_envs}: {self.env_ids}.")
+
+
+def resolve_fault_log_path(log_path: Path | str | None, output_dir: Path | str) -> Path:
+    """Resolve a fault log path, anchoring relative paths under ``output_dir``.
+
+    - ``None`` → ``<output_dir>/fault_events.jsonl``
+    - absolute path → unchanged
+    - relative path → ``<output_dir>/<log_path>``
+    """
+    output = Path(output_dir)
+    if log_path is None:
+        return output / "fault_events.jsonl"
+    path = Path(log_path)
+    if path.is_absolute():
+        return path
+    return output / path
 
 
 def default_fault_config() -> FaultInjectionConfig:

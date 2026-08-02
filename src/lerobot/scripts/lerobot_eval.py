@@ -83,7 +83,12 @@ from lerobot.envs import (
     preprocess_observation,
 )
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
-from lerobot.faults import ActionHoldFault, FaultInjectionConfig, make_fault_injector
+from lerobot.faults import (
+    ActionHoldFault,
+    FaultInjectionConfig,
+    make_fault_injector,
+    resolve_fault_log_path,
+)
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -481,7 +486,55 @@ def eval_policy(
     policy.eval()
 
     fault_injector = make_fault_injector(fault_cfg, num_envs=env.num_envs)
+    try:
+        return _eval_policy_body(
+            env=env,
+            policy=policy,
+            env_preprocessor=env_preprocessor,
+            env_postprocessor=env_postprocessor,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=n_episodes,
+            max_episodes_rendered=max_episodes_rendered,
+            videos_dir=videos_dir,
+            return_episode_data=return_episode_data,
+            start_seed=start_seed,
+            recording_dir=recording_dir,
+            env_features=env_features,
+            recording_repo_id=recording_repo_id,
+            recording_private=recording_private,
+            save_predicted_video=save_predicted_video,
+            fault_injector=fault_injector,
+            start=start,
+            was_training=was_training,
+        )
+    finally:
+        if fault_injector is not None:
+            fault_injector.close()
 
+
+def _eval_policy_body(
+    *,
+    env: gym.vector.VectorEnv,
+    policy: nn.Module,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    n_episodes: int,
+    max_episodes_rendered: int,
+    videos_dir: Path | None,
+    return_episode_data: bool,
+    start_seed: int | None,
+    recording_dir: Path | None,
+    env_features: dict | None,
+    recording_repo_id: str | None,
+    recording_private: bool,
+    save_predicted_video: bool,
+    fault_injector: ActionHoldFault | None,
+    start: float,
+    was_training: bool,
+) -> dict:
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
     n_batches = n_episodes // env.num_envs + int((n_episodes % env.num_envs) != 0)
@@ -666,9 +719,6 @@ def eval_policy(
     for thread in threads:
         thread.join()
 
-    if fault_injector is not None and fault_injector.event_logger is not None:
-        fault_injector.event_logger.close()
-
     # Compile eval info.
     info = {
         "per_episode": [
@@ -814,10 +864,8 @@ def eval_main(cfg: EvalPipelineConfig):
                 "Fault injection currently requires --env.max_parallel_tasks=1 so "
                 "fault event logs stay consistent across tasks."
             )
-        if fault_cfg.log_path is None:
-            fault_cfg.log_path = Path(cfg.output_dir) / "fault_events.jsonl"
-        # Truncate once per eval run; per-task injectors append to this file.
-        fault_cfg.log_path = Path(fault_cfg.log_path)
+        # Resolve relative paths under output_dir; truncate once per eval run.
+        fault_cfg.log_path = resolve_fault_log_path(fault_cfg.log_path, cfg.output_dir)
         fault_cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
         fault_cfg.log_path.write_text("", encoding="utf-8")
 
@@ -1013,6 +1061,12 @@ def eval_policy_all(
     plus per-task infos.
     """
     start_t = time.time()
+
+    if fault_cfg is not None and fault_cfg.enabled and max_parallel_tasks > 1:
+        raise ValueError(
+            "Fault injection currently requires max_parallel_tasks=1 so "
+            "fault event logs stay consistent across tasks."
+        )
 
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]

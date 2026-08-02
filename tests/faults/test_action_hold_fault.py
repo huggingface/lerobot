@@ -24,7 +24,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.faults import ActionHoldFault, FaultEventLogger, FaultInjectionConfig, make_fault_injector
+from lerobot.faults import (
+    ActionHoldFault,
+    FaultEventLogger,
+    FaultInjectionConfig,
+    make_fault_injector,
+    resolve_fault_log_path,
+)
 
 
 def _cfg(**kwargs) -> FaultInjectionConfig:
@@ -291,3 +297,28 @@ def test_fault_off_action_path_is_identity():
         action_numpy = fault_injector.apply(action_numpy)
     assert action_numpy is proposed
     np.testing.assert_array_equal(action_numpy, proposed)
+
+
+def test_episode_ids_length_mismatch_raises():
+    inj = ActionHoldFault(_cfg(trigger_step=1, duration=1), num_envs=2)
+    with pytest.raises(ValueError, match="episode_ids must have length 2"):
+        inj.apply(_action(2, 1, 1.0), episode_ids=[0])
+
+
+def test_make_fault_injector_skips_logger_without_path():
+    inj = make_fault_injector(_cfg(log_path=None), num_envs=1)
+    assert inj is not None
+    assert inj.event_logger is None
+    inj.close()
+
+
+def test_resolve_fault_log_path_anchors_relative(tmp_path: Path):
+    assert resolve_fault_log_path(None, tmp_path) == tmp_path / "fault_events.jsonl"
+    assert resolve_fault_log_path("nested/events.jsonl", tmp_path) == tmp_path / "nested/events.jsonl"
+    absolute = tmp_path / "abs.jsonl"
+    assert resolve_fault_log_path(absolute, tmp_path / "other") == absolute
+
+
+def test_injector_close_is_safe_without_logger():
+    inj = ActionHoldFault(_cfg(log_path=None), num_envs=1)
+    inj.close()  # must not raise
