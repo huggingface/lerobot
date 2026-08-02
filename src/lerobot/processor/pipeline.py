@@ -33,6 +33,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
@@ -242,6 +243,28 @@ class ProcessorKwargs(TypedDict, total=False):
     name: str | None
     before_step_hooks: list[Callable[[int, EnvTransition], None]] | None
     after_step_hooks: list[Callable[[int, EnvTransition], None]] | None
+
+
+def build_processor_migration_command(
+    pretrained_path: str | Path,
+    *,
+    revision: str | None = None,
+) -> str:
+    """Build a portable, shell-quoted migration command for a legacy checkpoint.
+
+    Uses module execution so the command works regardless of working directory,
+    and quotes arguments so local paths with spaces remain copy-pasteable.
+    """
+    cmd = [
+        "python",
+        "-m",
+        "lerobot.processor.migrate_policy_normalization",
+        "--pretrained-path",
+        str(pretrained_path),
+    ]
+    if revision is not None:
+        cmd.extend(["--revision", str(revision)])
+    return shlex.join(cmd)
 
 
 class ProcessorMigrationError(Exception):
@@ -1494,9 +1517,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         **Migration Command Generation**:
         - Constructs exact command user needs to run
-        - Uses the migration script: migrate_policy_normalization.py
-        - Includes the model path automatically
-        - Example: "python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path /models/old_model"
+        - Uses module execution: ``python -m lerobot.processor.migrate_policy_normalization``
+        - Includes the model path automatically (shell-quoted for spaces)
+        - Example: ``python -m lerobot.processor.migrate_policy_normalization --pretrained-path /models/old_model``
 
         **Error Structure**:
         - **Always raises**: ProcessorMigrationError (never returns)
@@ -1519,13 +1542,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Raises:
             ProcessorMigrationError: Always raised (this method never returns normally)
         """
-        migration_command = (
-            f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
+        raise ProcessorMigrationError(
+            model_path,
+            build_processor_migration_command(model_path, revision=revision),
+            original_error,
         )
-        if revision is not None:
-            migration_command += f" --revision {revision}"
-
-        raise ProcessorMigrationError(model_path, migration_command, original_error)
 
     def __len__(self) -> int:
         """Returns the number of steps in the pipeline."""

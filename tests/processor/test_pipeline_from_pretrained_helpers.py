@@ -134,7 +134,7 @@ def test_load_config_legacy_hub_policy_suggests_revision_aware_migration(tmp_pat
 
     error = exc_info.value
     assert error.model_path == "lerobot/diffusion_pusht"
-    assert "migrate_policy_normalization.py" in error.migration_command
+    assert "python -m lerobot.processor.migrate_policy_normalization" in error.migration_command
     assert "--revision legacy" in error.migration_command
     assert "policy_preprocessor.json" in error.original_error
 
