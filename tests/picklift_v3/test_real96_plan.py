@@ -74,6 +74,45 @@ def test_real96_generator_reproduces_transferred_session2_exactly():
     }
 
 
+def test_real96_generator_reproduces_transferred_session3_exactly():
+    validate_session_source(3)
+    assert len(compact_session_bytes(3)) == 14180
+    assert hashlib.sha256(compact_session_bytes(3)).hexdigest() == SESSION_ITEMS_SHA256[3]
+    assert len(session_sequence_bytes(3)) == 972
+    assert hashlib.sha256(session_sequence_bytes(3)).hexdigest() == SESSION_SEQUENCE_SHA256[3]
+    items = session_items(3)
+    assert [item["global_order"] for item in items] == list(range(49, 73))
+    assert Counter(item["cell"] for item in items) == {
+        f"r{row}c{column}": 2 for row in range(1, 4) for column in range(1, 5)
+    }
+    assert Counter(item["subset_role"] for item in items) == {"extension": 12, "core": 12}
+    assert Counter(item["position_kind"] for item in items) == {"offset": 12, "center": 12}
+    assert Counter(item["yaw_degrees_modulo_90"] for item in items) == {0: 12, 45: 12}
+    assert Counter(item["quadrant"] for item in items if item["quadrant"] is not None) == {
+        "Q0": 3,
+        "Q1": 3,
+        "Q2": 3,
+        "Q3": 3,
+    }
+
+
+def test_session3_config_carries_frozen_cumulative_provenance(tmp_path):
+    cfg = make_config(
+        session_index=3,
+        operator_id="operator_01",
+        dataset_root=tmp_path / "new_raw_attempts",
+        device_config=device_config(),
+    )
+    base = cfg["base_config"]
+    assert base["predecessor_session_id"] == "task1_real96_s02"
+    assert base["cumulative_accepted_before_session"] == 48
+    assert [item["session_id"] for item in base["completed_session_freezes"]] == [
+        "task1_real96_s01",
+        "task1_real96_s02",
+    ]
+    validate_without_hardware(cfg)
+
+
 def test_full_real96_distribution_is_frozen_and_balanced():
     items = real96_items()
     assert len(items) == 96

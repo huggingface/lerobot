@@ -11,11 +11,11 @@ The frozen research collection plan is copied byte-for-byte under
 `contracts/`; its SHA-256 is
 `f8d9ab2de3e7f6915dacafc2b8f70cc523373154b2df6b3abc8536fcfb623ef7`.
 `real96_plan.py` reproduces all 96 plan items deterministically. Sessions 1 and
-2 have independently transferred canonical compact JSON identities. Session 2
+3 have independently transferred canonical compact JSON identities. Session 3
 is 14,180 bytes, hashes to
-`3cb86c9c176828405cc1cc838a119b7f4bd848a7d28f612d1624844342da0c37`,
+`baf03acb08aa4f26e1fa5eed63c02349ee59854391c4d1433640aa86e22ac483`,
 and has sequence hash
-`c81826685dc906e6bbf9d160e43fcb3986c146ecdc5ec020e73eb7c36ad05b98`.
+`99ea1973aa5dccf00d7f4b241dc6c8a902d393b06d52aab60f3e161592385011`.
 
 ## Operator lifecycle
 

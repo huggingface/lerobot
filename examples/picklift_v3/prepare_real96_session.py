@@ -28,6 +28,20 @@ from examples.picklift_v3.record import (
 READY_POSE_PROFILE = "task1_real24_ready_pose_reset_v1"
 READY_POSE_STATE_SHA256 = "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56"
 CAMERA_PROFILE = "icspring_front_crop_1280x960_to_640x480_v1"
+COMPLETED_SESSION_FREEZES = {
+    1: {
+        "session_id": "task1_real96_s01",
+        "freeze_id": "task1_picklift_real96_s01_raw_attempts_freeze_v1",
+        "raw_tree_sha256": "f628ab551aadea2c40402a48b7bda9625342d2b7921e960035e9620f2970fd2a",
+        "accepted_success_episodes": 24,
+    },
+    2: {
+        "session_id": "task1_real96_s02",
+        "freeze_id": "task1_picklift_real96_s02_raw_attempts_freeze_v1",
+        "raw_tree_sha256": "ed02dda9b55400b3a4be6a837c98fff3db83ff4c7ffd5de2466c64eb39773f4b",
+        "accepted_success_episodes": 24,
+    },
+}
 
 
 def make_config(
@@ -51,6 +65,8 @@ def make_config(
         raise ValueError(f"device config missing: {', '.join(missing)}")
     if session_index not in SESSION_SEQUENCE_SHA256:
         raise ValueError("only independently transferred sessions are deployable in this checkout")
+    prior_sessions = [COMPLETED_SESSION_FREEZES[index] for index in range(1, session_index)]
+    immediate_predecessor = prior_sessions[-1] if prior_sessions else None
     return {
         "collection_workflow_version": BATCH_WORKFLOW_VERSION,
         "successes_per_spawn": 1,
@@ -120,14 +136,16 @@ def make_config(
             "subset_manifest_id": SUBSET_MANIFEST_ID,
             "subset_manifest_sha256": SUBSET_MANIFEST_SHA256,
             "session_sequence_sha256": SESSION_SEQUENCE_SHA256[session_index],
-            "predecessor_session_id": "task1_real96_s01" if session_index == 2 else None,
-            "predecessor_freeze_id": (
-                "task1_picklift_real96_s01_raw_attempts_freeze_v1" if session_index == 2 else None
+            "predecessor_session_id": (
+                immediate_predecessor["session_id"] if immediate_predecessor else None
             ),
+            "predecessor_freeze_id": (immediate_predecessor["freeze_id"] if immediate_predecessor else None),
             "predecessor_raw_tree_sha256": (
-                "f628ab551aadea2c40402a48b7bda9625342d2b7921e960035e9620f2970fd2a"
-                if session_index == 2
-                else None
+                immediate_predecessor["raw_tree_sha256"] if immediate_predecessor else None
+            ),
+            "completed_session_freezes": prior_sessions,
+            "cumulative_accepted_before_session": sum(
+                item["accepted_success_episodes"] for item in prior_sessions
             ),
             "ready_pose_profile": READY_POSE_PROFILE,
             "ready_pose_state_sha256": READY_POSE_STATE_SHA256,
