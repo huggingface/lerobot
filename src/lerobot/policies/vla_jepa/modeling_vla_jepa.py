@@ -144,6 +144,13 @@ class VLAJEPAModel(nn.Module):
         `output_hidden_states=True` is post-norm (tied to `last_hidden_state` via
         `@capture_outputs`). A forward hook on `language_model.layers[-1]` recovers
         the correct pre-RMSNorm state, matching the training-time representation.
+
+        Calls the inner `Qwen3VLModel` rather than the `Qwen3VLForConditionalGeneration`
+        wrapper: only the hooked hidden state is used, and the wrapper's forward ends in
+        `lm_head(hidden_states[:, slice(None), :])` because `logits_to_keep` defaults to 0,
+        so it would build full-sequence logits over the 151936-token vocab and discard them
+        (~3.4 GB in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head`
+        keeps its checkpoint key; only this forward path skips it.
         """
         captured: list[torch.Tensor] = []
 
@@ -154,12 +161,7 @@ class VLAJEPAModel(nn.Module):
         last_layer = self.qwen.model.model.language_model.layers[-1]
         handle = last_layer.register_forward_hook(_hook)
         try:
-            self.qwen.model(
-                **qwen_inputs,
-                output_hidden_states=False,
-                output_attentions=False,
-                return_dict=True,
-            )
+            self.qwen.model.model(**qwen_inputs)
         finally:
             handle.remove()
 
