@@ -1,10 +1,28 @@
 import json
 
+import pytest
+
 from examples.picklift_v3.backend import SyntheticBackend
 from examples.picklift_v3.batch_record import (
     BATCH_WORKFLOW_VERSION,
     record_batch,
     validate_batch_config,
+)
+from examples.picklift_v3.real96_plan import (
+    COLLECTION_PLAN_ID,
+    COLLECTION_PLAN_SHA256,
+    POSE_MANIFEST_ID,
+    POSE_MANIFEST_SHA256,
+    RESEARCH_CONTRACT_COMMIT,
+    RESEARCH_CONTRACT_PARENT,
+    SESSION_SEQUENCE_SHA256,
+    SUBSET_MANIFEST_ID,
+    SUBSET_MANIFEST_SHA256,
+    batch_spawns,
+)
+from examples.picklift_v3.record import (
+    REAL96_COLLECTION_PROTOCOL_VERSION,
+    REAL96_SPAWN_PROTOCOL_VERSION,
 )
 from tests.picklift_v3.test_record import config
 
@@ -30,7 +48,7 @@ class FakeBatchUI:
         pass
 
     def wait_for_start(self, _frame_provider, message=""):
-        assert "picklift_spawn_v5" in message
+        assert "Real96" in message
 
     def wait_for_next_start(self, frame_provider, message):
         assert frame_provider().shape == (480, 640, 3)
@@ -76,6 +94,30 @@ def batch_config(tmp_path, *, successes_per_spawn=1, max_attempts=4):
             "result": "pending",
             "success": False,
             "episode_seconds": 0.1,
+            "spawn_protocol_version": REAL96_SPAWN_PROTOCOL_VERSION,
+            "collection_protocol_version": REAL96_COLLECTION_PROTOCOL_VERSION,
+            "task_spec_revision": "task1_picklift_final_v2",
+            "yaw_annotation_mode": "predeclared_nominal_0_or_45",
+            "yaw_intended_range_deg": [0, 45],
+            "yaw_sampling_method": "frozen_real96_pose_manifest_v1",
+            "yaw_distribution_claim": "balanced_predeclared_nominal",
+            "research_contract_commit": RESEARCH_CONTRACT_COMMIT,
+            "research_contract_parent": RESEARCH_CONTRACT_PARENT,
+            "task_contract_id": "task1_picklift_final_v2",
+            "task_contract_version": 2,
+            "collection_plan_id": COLLECTION_PLAN_ID,
+            "collection_plan_sha256": COLLECTION_PLAN_SHA256,
+            "pose_manifest_id": POSE_MANIFEST_ID,
+            "pose_manifest_sha256": POSE_MANIFEST_SHA256,
+            "subset_manifest_id": SUBSET_MANIFEST_ID,
+            "subset_manifest_sha256": SUBSET_MANIFEST_SHA256,
+            "session_sequence_sha256": SESSION_SEQUENCE_SHA256[1],
+            "ready_pose_profile": "task1_real24_ready_pose_reset_v1",
+            "ready_pose_state_sha256": ("ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56"),
+            "follower_calibration_path": "/calibration/follower.json",
+            "follower_calibration_sha256": "f" * 64,
+            "leader_calibration_path": "/calibration/leader.json",
+            "leader_calibration_sha256": "e" * 64,
         }
     )
     return {
@@ -83,22 +125,7 @@ def batch_config(tmp_path, *, successes_per_spawn=1, max_attempts=4):
         "successes_per_spawn": successes_per_spawn,
         "max_attempts": max_attempts,
         "base_config": base,
-        "spawns": [
-            {
-                "spawn_id": "pl_v5_s001",
-                "spawn_region": "r1c1",
-                "spawn_x_cm": 22.5,
-                "spawn_y_cm": -7.5,
-                "spawn_yaw_deg": None,
-            },
-            {
-                "spawn_id": "pl_v5_s002",
-                "spawn_region": "r1c2",
-                "spawn_x_cm": 22.5,
-                "spawn_y_cm": -2.5,
-                "spawn_yaw_deg": None,
-            },
-        ],
+        "spawns": batch_spawns(1)[:2],
     }
 
 
@@ -117,8 +144,8 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     from lerobot.datasets import LeRobotDataset
 
     dataset = LeRobotDataset(cfg["base_config"]["repo_id"], root=root)
-    assert len(dataset) == 2
-    assert dataset.num_episodes == 2
+    assert len(dataset) == 3
+    assert dataset.num_episodes == 3
     attempts = [
         json.loads(path.read_text()) for path in sorted((root / "provenance/attempts").glob("*.json"))
     ]
@@ -126,19 +153,23 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
         json.loads(path.read_text()) for path in sorted((root / "provenance/episodes").glob("*.json"))
     ]
     assert [item["spawn_id"] for item in attempts] == [
-        "pl_v5_s001",
-        "pl_v5_s001",
-        "pl_v5_s002",
+        cfg["spawns"][0]["plan_item_id"],
+        cfg["spawns"][0]["plan_item_id"],
+        cfg["spawns"][1]["plan_item_id"],
     ]
     assert [item["result"] for item in attempts] == ["failure", "success", "success"]
     assert [item["saved_to_training"] for item in attempts] == [False, True, True]
-    assert [item["episode_index"] for item in attempts] == [None, 0, 1]
-    assert [item["spawn_id"] for item in episodes] == ["pl_v5_s001", "pl_v5_s002"]
+    assert [item["episode_index"] for item in attempts] == [0, 1, 2]
+    assert [item["spawn_id"] for item in episodes] == [item["spawn_id"] for item in attempts]
+    assert [item["attempt_ordinal"] for item in attempts] == [1, 2, 1]
+    assert attempts[1]["previous_attempt_id"] == attempts[0]["attempt_id"]
     manifest = json.loads((root / "provenance/session.json").read_text())
     assert manifest["complete"] is True
     assert manifest["attempt_count"] == 3
     assert manifest["saved_episode_count"] == 2
-    assert manifest["training_view_rule"].startswith("only operator-confirmed SUCCESS")
+    assert manifest["training_view_rule"].startswith("raw v3 dataset retains every started attempt")
+    assert manifest["accepted_dataset_episode_indices"] == [1, 2]
+    assert manifest["raw_attempt_episode_count"] == 3
     assert manifest["collection_workflow_version"] == BATCH_WORKFLOW_VERSION
     assert manifest["collection_commit"]
     assert manifest["lerobot_dataset_version"] == "v3.0"
@@ -160,29 +191,10 @@ def test_continuous_batch_retries_failure_and_only_saves_successes(tmp_path):
     assert backends[0].close_calls == 1
 
 
-def test_multiple_successes_per_spawn_are_balanced_across_cells(tmp_path):
+def test_real96_rejects_more_than_one_accepted_episode_per_plan_item(tmp_path):
     cfg = batch_config(tmp_path, successes_per_spawn=2, max_attempts=5)
-    ui = FakeBatchUI(["failure", "success", "success", "success", "success"])
-
-    root = record_batch(cfg, backend_factory=SyntheticBackend, ui=ui)
-
-    attempts = [
-        json.loads(path.read_text()) for path in sorted((root / "provenance/attempts").glob("*.json"))
-    ]
-    assert [item["spawn_id"] for item in attempts] == [
-        "pl_v5_s001_rep01",
-        "pl_v5_s001_rep01",
-        "pl_v5_s002_rep01",
-        "pl_v5_s001_rep02",
-        "pl_v5_s002_rep02",
-    ]
-    manifest = json.loads((root / "provenance/dataset.json").read_text())
-    assert manifest["saved_episode_count"] == 4
-    assert [item["saved_successes"] for item in manifest["planned_spawns"]] == [2, 2]
-    assert [item["spawn_id"] for item in manifest["planned_spawns"]] == [
-        "pl_v5_s001",
-        "pl_v5_s002",
-    ]
+    with pytest.raises(ValueError, match="successes_per_spawn=1"):
+        validate_batch_config(cfg)
 
 
 def test_real_batch_accepts_direct_absolute_future_protocol(tmp_path):

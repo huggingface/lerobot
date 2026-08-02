@@ -93,24 +93,25 @@ ready. Click **END EPISODE** (or press `E`/Space) to finish early. `Q`/Escape
 quits. After the episode, select **SUCCESS**, **FAILURE**, or **DISCARD**.
 The collector never starts merely because the window opened.
 
-For continuous 24/60-episode collection, copy and complete
-`configs/batch.template.json`, then launch:
+For the frozen Task1 Real96 collection, generate the current session config
+with `prepare_real96_session.py` as documented in
+[`REAL96_COLLECTION_PROTOCOL.md`](./REAL96_COLLECTION_PROTOCOL.md), then launch:
 
 ```bash
 ./examples/picklift_v3/run_batch_ui.sh /path/to/completed-batch-config.json
 ```
 
 The same window stays open across attempts. In
-`picklift_continuous_batch_v3_absolute_live_reset`, END stops dataset writes but starts
+`picklift_continuous_batch_v4_real96_attempt_ledger`, END stops dataset writes but starts
 a clearly labelled `RESET / NO DATA RECORDING` phase in which Follower keeps
 following Leader. The operator can lower/release the cube and move directly to
 the next ready pose without disconnecting torque or manually realigning.
 `START NEXT` ends reset mode and begins the next episode. SUCCESS advances
-through the 12 cells in balanced order; FAILURE or DISCARD retries the same
-spawn. Only confirmed SUCCESS attempts enter the deterministic v3 training
-dataset. Every attempt still receives a provenance record under
-`provenance/attempts/`; successful dataset episodes are mirrored under
-`provenance/episodes/`. Torque is disabled on FINISH, operator quit, or error.
+through the frozen SHA order; FAILURE or DISCARD retains its raw v3 episode
+and retries the same plan item with a new linked attempt ID. The manifest's
+accepted episode indices select exactly one SUCCESS per plan item for the
+later Real48/Real96 views. Torque is disabled on FINISH, operator quit, or
+error.
 
 Every accepted click immediately changes the selected button to `...`, draws
 a white pressed border, displays `ACCEPTED`, and locks all buttons while the

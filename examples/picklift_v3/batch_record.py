@@ -16,8 +16,11 @@ import numpy as np
 from examples.picklift_v3.backend import RealSO101Backend, SyntheticBackend
 from examples.picklift_v3.operator_ui import OperatorUI
 from examples.picklift_v3.record import (
-    COLLECTION_PROTOCOL_VERSION,
     FPS,
+    REAL96_COLLECTION_PROTOCOL_VERSION,
+    REAL96_PLAN_FIELDS,
+    REAL96_SESSION_FIELDS,
+    REAL96_SPAWN_PROTOCOL_VERSION,
     Backend,
     capture_episode,
     create_dataset,
@@ -27,7 +30,7 @@ from examples.picklift_v3.record import (
     write_json,
 )
 
-BATCH_WORKFLOW_VERSION = "picklift_continuous_batch_v3_absolute_live_reset"
+BATCH_WORKFLOW_VERSION = "picklift_continuous_batch_v4_real96_attempt_ledger"
 SPAWN_FIELDS = (
     "spawn_id",
     "spawn_region",
@@ -35,6 +38,7 @@ SPAWN_FIELDS = (
     "spawn_y_cm",
     "spawn_yaw_deg",
 )
+REAL96_BATCH_FIELDS = REAL96_SESSION_FIELDS
 
 
 class LiveResetFollower:
@@ -109,12 +113,23 @@ def validate_batch_config(batch_cfg: dict) -> list[dict]:
     successes_per_spawn = batch_cfg.get("successes_per_spawn")
     if not isinstance(successes_per_spawn, int) or successes_per_spawn <= 0:
         raise ValueError("successes_per_spawn must be a positive integer")
+    if successes_per_spawn != 1:
+        raise ValueError("Real96 requires successes_per_spawn=1 per frozen plan item")
     target_successes = len(spawns) * successes_per_spawn
     max_attempts = batch_cfg.get("max_attempts")
     if not isinstance(max_attempts, int) or max_attempts < target_successes:
         raise ValueError("max_attempts must be an integer >= the planned success count")
     if base.get("operator_ui") is not True or base.get("result") != "pending":
         raise ValueError("continuous batch requires operator_ui=true and result=pending")
+    if base.get("spawn_protocol_version") != REAL96_SPAWN_PROTOCOL_VERSION:
+        raise ValueError(f"batch v4 requires spawn_protocol_version={REAL96_SPAWN_PROTOCOL_VERSION}")
+    if base.get("collection_protocol_version") != REAL96_COLLECTION_PROTOCOL_VERSION:
+        raise ValueError(
+            f"batch v4 requires collection_protocol_version={REAL96_COLLECTION_PROTOCOL_VERSION}"
+        )
+    missing_batch_fields = [key for key in REAL96_BATCH_FIELDS if key not in base]
+    if missing_batch_fields:
+        raise ValueError(f"missing Real96 batch fields: {', '.join(missing_batch_fields)}")
 
     configs = []
     seen_spawn_ids = set()
@@ -122,6 +137,7 @@ def validate_batch_config(batch_cfg: dict) -> list[dict]:
         if not isinstance(spawn, dict):
             raise ValueError("every spawn must be an object")
         missing = [field for field in SPAWN_FIELDS if field not in spawn]
+        missing.extend(field for field in REAL96_PLAN_FIELDS if field not in spawn)
         if missing:
             raise ValueError(f"spawn missing fields: {', '.join(missing)}")
         if spawn["spawn_id"] in seen_spawn_ids:
@@ -129,14 +145,10 @@ def validate_batch_config(batch_cfg: dict) -> list[dict]:
         seen_spawn_ids.add(spawn["spawn_id"])
         cfg = _attempt_config(base, spawn, repetition=0, successes_per_spawn=successes_per_spawn)
         validate_config(cfg)
-        if cfg["collection_protocol_version"] != COLLECTION_PROTOCOL_VERSION:
-            raise ValueError(
-                f"continuous batch v3 requires collection_protocol_version={COLLECTION_PROTOCOL_VERSION}"
-            )
         if cfg["alignment_mode"] != "direct_absolute":
-            raise ValueError("continuous batch v3 requires alignment_mode=direct_absolute")
+            raise ValueError("continuous batch v4 requires alignment_mode=direct_absolute")
         if cfg.get("max_relative_target") is not None:
-            raise ValueError("continuous batch v3 requires max_relative_target=null")
+            raise ValueError("continuous batch v4 requires max_relative_target=null")
         configs.append(cfg)
 
     roots = {Path(cfg["dataset_root"]).resolve() for cfg in configs}
@@ -161,6 +173,7 @@ def _batch_manifest(
     success_counts: list[int],
     last_attempt: dict | None,
     complete: bool,
+    accepted_episode_indices: list[int],
 ) -> dict:
     base = configs[0]
     stable_keys = (
@@ -193,13 +206,19 @@ def _batch_manifest(
         "camera_acquisition_fps",
         "record_fps",
         "formal_data",
+        *REAL96_BATCH_FIELDS,
     )
     promoted_provenance_keys = (
         "backend",
         "control_mode",
         "collection_commit",
+        "collection_repo_path",
+        "collection_git_dirty",
         "lerobot_version",
         "lerobot_dataset_version",
+        "python_version",
+        "torch_version",
+        "opencv_python_version",
         "joint_order",
         "task_frame",
         "alignment_reference",
@@ -229,19 +248,24 @@ def _batch_manifest(
         "complete": complete,
         "attempt_count": attempts,
         "saved_episode_count": saved_episodes,
+        "raw_attempt_episode_count": attempts,
+        "accepted_dataset_episode_indices": accepted_episode_indices,
         "target_success_count": len(configs) * batch_cfg["successes_per_spawn"],
         "successes_per_spawn": batch_cfg["successes_per_spawn"],
         "max_attempts": batch_cfg["max_attempts"],
         "planned_spawns": [
             {
-                **{field: spawn[field] for field in SPAWN_FIELDS},
+                **{field: spawn[field] for field in (*SPAWN_FIELDS, *REAL96_PLAN_FIELDS)},
                 "target_successes": batch_cfg["successes_per_spawn"],
                 "saved_successes": success_counts[index],
             }
             for index, spawn in enumerate(batch_cfg["spawns"])
         ],
         "advance_rule": "success advances; failure/discard retries the same spawn",
-        "training_view_rule": "only operator-confirmed SUCCESS attempts enter the v3 dataset",
+        "training_view_rule": (
+            "raw v3 dataset retains every started attempt; accepted_dataset_episode_indices "
+            "select exactly one SUCCESS per frozen plan_item"
+        ),
         "inter_episode_control": "live absolute Leader-to-Follower reset with no dataset writes",
         "ready_pose_policy": "operator_visual_similar_ready_area_no_numeric_threshold",
         "last_attempt": last_attempt,
@@ -273,6 +297,9 @@ def record_batch(
     spawn_index = 0
     success_counts = [0] * len(configs)
     last_attempt = None
+    accepted_episode_indices: list[int] = []
+    attempt_ordinals: dict[str, int] = {}
+    previous_attempt_ids: dict[str, str] = {}
     operator_quit = False
     try:
         while saved_episodes < target_successes and attempt_index < batch_cfg["max_attempts"]:
@@ -283,10 +310,16 @@ def record_batch(
                 repetition,
                 successes_per_spawn,
             )
+            plan_item_id = cfg["plan_item_id"]
+            attempt_ordinal = attempt_ordinals.get(plan_item_id, 0) + 1
+            attempt_id = f"{plan_item_id}_attempt_{attempt_ordinal:02d}"
+            cfg["attempt_id"] = attempt_id
+            cfg["attempt_ordinal"] = attempt_ordinal
+            cfg["previous_attempt_id"] = previous_attempt_ids.get(plan_item_id)
             ready_message = (
                 f"{spawn_ui_summary(cfg)}\n"
-                "Place cube; bring both arms to a similar ready area\n"
-                "Check view + gripper; yaw changed; no angle"
+                "Place cube at exact plan pose; open both grippers\n"
+                "Bring arms to similar ready area; check view"
             )
             if backend is None:
                 if not ui.wait_for_ready(last_frame, ready_message):
@@ -346,11 +379,8 @@ def record_batch(
             outcome = replace(outcome, result=result, success=result == "success")
             ui.show_saving(outcome.frame, result=outcome.result)
             saved_to_training = outcome.result == "success"
-            episode_index = saved_episodes if saved_to_training else None
-            if saved_to_training:
-                dataset.save_episode()
-            else:
-                dataset.clear_episode_buffer()
+            episode_index = attempt_index
+            dataset.save_episode()
             provenance = episode_provenance(
                 cfg,
                 backend,
@@ -361,13 +391,25 @@ def record_batch(
                 collection_workflow_version=BATCH_WORKFLOW_VERSION,
             )
             provenance["post_end_control_mode"] = "live_follow_no_recording"
+            provenance["attempt_id"] = attempt_id
+            provenance["attempt_ordinal"] = attempt_ordinal
+            provenance["previous_attempt_id"] = cfg["previous_attempt_id"]
+            provenance["accepted_success_index"] = saved_episodes if saved_to_training else None
+            provenance["all_attempts_retained"] = True
             write_json(
                 root / f"provenance/attempts/attempt_{attempt_index:06d}.json",
                 provenance,
             )
+            write_json(
+                root / f"provenance/episodes/episode_{attempt_index:06d}.json",
+                provenance,
+            )
+            previous_attempt_ids[plan_item_id] = attempt_id
+            attempt_ordinals[plan_item_id] = attempt_ordinal
             if saved_to_training:
+                accepted_episode_indices.append(attempt_index)
                 write_json(
-                    root / f"provenance/episodes/episode_{saved_episodes:06d}.json",
+                    root / f"provenance/accepted/accepted_{saved_episodes:06d}.json",
                     provenance,
                 )
                 saved_episodes += 1
@@ -388,6 +430,7 @@ def record_batch(
                 success_counts=success_counts,
                 last_attempt=last_attempt,
                 complete=saved_episodes >= target_successes,
+                accepted_episode_indices=accepted_episode_indices,
             )
             write_json(root / "provenance/dataset.json", manifest)
             write_json(root / "provenance/session.json", manifest)
@@ -426,6 +469,7 @@ def record_batch(
                 success_counts=success_counts,
                 last_attempt=last_attempt,
                 complete=complete,
+                accepted_episode_indices=accepted_episode_indices,
             )
             manifest["operator_quit"] = operator_quit
             write_json(root / "provenance/dataset.json", manifest)

@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "plan_id": "task1_picklift_real96_collection_v1",
+  "status": "frozen_collection_not_started",
+  "freeze_date": "2026-08-02",
+  "purpose": "Collect a balanced same-operator Real96 Task1 bank with a predeclared nested Real48 subset.",
+  "task_contract": {
+    "contract_id": "task1_picklift_final_v2",
+    "operational_task_id": "PickLift-Nexus-v1",
+    "predecessor_task_id": "PickLift-Nexus-v1",
+    "pose_manifest": "../manifests/task1-picklift-real96-poses-v1.json",
+    "pose_manifest_sha256": "1845f6e51f7afecfb21caf8278141aab4371e3e8667f2d81a14dbb318478f7d8",
+    "subset_manifest": "../manifests/task1-picklift-real48-real96-subsets-v1.json",
+    "subset_manifest_sha256": "bdf7ad387cd4d8f619ead947d40c7642682859a3986d6e30df591f767b24ac5b"
+  },
+  "collection_target": {
+    "accepted_success_episodes": 96,
+    "sessions": 4,
+    "accepted_success_episodes_per_session": 24,
+    "same_experienced_operator": true,
+    "control_source": "leader_follower",
+    "complete_all_96_before_training": true
+  },
+  "frozen_distribution": {
+    "cells": "12 cells, eight plan items per cell",
+    "Real48": "48 fixed plan members: 24 center, 24 offset, yaw 24/24, quadrants six each",
+    "Real96": "96 fixed plan members: 48 center, 48 offset, yaw 48/48, quadrants twelve each",
+    "nested_subset": "Real48 is the strict predeclared 48-plan-item subset of Real96; it is not the first 48 chronological successes.",
+    "nominal_pose_note": "There are 96 unique plan items but 72 unique nominal x/y/yaw tuples because center/yaw repetitions are intentional.",
+    "source_designs": "Center placement follows the prior Real24 collection; +/-15 mm quadrants and yaw 0/45 balance follow the frozen Quest-Sim48-v7 pose-bank design."
+  },
+  "session_design": [
+    {
+      "session_index": 1,
+      "members": "Real48 center yaw0 plus extension Q((i+3) mod4) yaw45"
+    },
+    {
+      "session_index": 2,
+      "members": "Real48 Q((i+2) mod4) yaw45 plus extension center yaw0 repetition"
+    },
+    {
+      "session_index": 3,
+      "members": "Real48 center yaw45 plus extension Q((i+1) mod4) yaw0"
+    },
+    {
+      "session_index": 4,
+      "members": "Real48 Q(i mod4) yaw0 plus extension center yaw45 repetition"
+    }
+  ],
+  "data_contract": {
+    "format": "LeRobot Dataset v3",
+    "fps": 20,
+    "canonical_front": "uint8 RGB 640x480",
+    "observation_state": "float32[6] pre-action state in Real dataset units",
+    "action": "float32[6] actual command sent to the follower",
+    "task": "Pick up the red cube.",
+    "wrist_camera": false,
+    "failed_attempts": "retained separately with original outcome and excluded from the accepted-success subset"
+  },
+  "interaction_dependency": {
+    "target_profile_id": "task1_continuous_grip_three_target_v1",
+    "quest_product_implementation_required_for_leader_follower_collection": false,
+    "reason": "Leader-follower collection declares its own control source and does not fabricate Quest-only target fields."
+  },
+  "freeze_outputs_after_collection": [
+    "immutable raw tree inventory and SHA-256",
+    "attempt ledger including failures",
+    "Real48 accepted subset manifest",
+    "Real96 accepted subset manifest",
+    "official LeRobot Dataset v3 loader QA",
+    "position/yaw/session balance validation"
+  ],
+  "authorization_boundary": {
+    "contract_frozen": true,
+    "hardware_collection_started": false,
+    "training_started": false,
+    "policy_evaluation_started": false,
+    "push": false
+  }
+}

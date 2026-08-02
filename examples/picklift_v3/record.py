@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
+import platform
 import re
 import subprocess
 import threading
@@ -42,6 +44,8 @@ REAL_ACK = "I_HAVE_COMPLETED_THE_POWERED_SAFETY_CHECK"
 SPAWN_PROTOCOL_VERSION = "picklift_spawn_v5"
 COLLECTION_PROTOCOL_VERSION = "picklift_collection_v6_absolute_camera_sequence"
 CAMERA_EVIDENCE_VERSION = "picklift_camera_sequence_evidence_v1"
+REAL96_SPAWN_PROTOCOL_VERSION = "picklift_spawn_v6_real96_fixed_pose"
+REAL96_COLLECTION_PROTOCOL_VERSION = "picklift_collection_v7_real96_attempt_ledger"
 SPAWN_PROTOCOLS = {
     "picklift_spawn_v1": {
         "x": (20.0, 40.0),
@@ -81,6 +85,19 @@ SPAWN_PROTOCOLS = {
         "cell_size_cm": 5.0,
     },
     "picklift_spawn_v5": {
+        "x": (20.0, 35.0),
+        "y": (-10.0, 10.0),
+        "row_axis": "x",
+        "column_axis": "y",
+        "x_description": "task-grid +X forward",
+        "y_description": "task-grid +Y lateral",
+        "cell_edges": {
+            "x": (20.0, 25.0, 30.0, 35.0),
+            "y": (-10.0, -5.0, 0.0, 5.0, 10.0),
+        },
+        "cell_size_cm": 5.0,
+    },
+    REAL96_SPAWN_PROTOCOL_VERSION: {
         "x": (20.0, 35.0),
         "y": (-10.0, 10.0),
         "row_axis": "x",
@@ -153,6 +170,48 @@ SUCCESS_CONTRACT = {
     "failure_definition": "task_success_criteria_not_met",
     "discard_definition": "recording_configuration_or_safety_anomaly",
 }
+REAL96_PLAN_FIELDS = (
+    "plan_item_id",
+    "session_index",
+    "session_order",
+    "global_order",
+    "order_sha256",
+    "cell",
+    "row",
+    "column",
+    "cell_index",
+    "subset_role",
+    "subset_memberships",
+    "real48_member",
+    "position_kind",
+    "quadrant",
+    "quadrant_name",
+    "replicate_index",
+    "x_forward_m",
+    "y_lateral_m",
+    "yaw_degrees_modulo_90",
+    "nominal_pose_key",
+    "control_source",
+)
+REAL96_SESSION_FIELDS = (
+    "research_contract_commit",
+    "research_contract_parent",
+    "task_contract_id",
+    "task_contract_version",
+    "collection_plan_id",
+    "collection_plan_sha256",
+    "pose_manifest_id",
+    "pose_manifest_sha256",
+    "subset_manifest_id",
+    "subset_manifest_sha256",
+    "session_sequence_sha256",
+    "ready_pose_profile",
+    "ready_pose_state_sha256",
+    "follower_calibration_path",
+    "follower_calibration_sha256",
+    "leader_calibration_path",
+    "leader_calibration_sha256",
+)
 
 
 class Backend(Protocol):
@@ -195,6 +254,27 @@ def git_commit() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+def git_root() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def git_dirty() -> bool:
+    return bool(
+        subprocess.run(["git", "status", "--porcelain"], check=True, capture_output=True, text=True).stdout
+    )
+
+
+def installed_version(*distribution_names: str) -> str:
+    for name in distribution_names:
+        try:
+            return importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return "not_installed_or_unknown"
 
 
 def spawn_contract(protocol_version: str) -> dict:
@@ -277,6 +357,13 @@ def spawn_region_for(
 
 def spawn_ui_summary(cfg: dict) -> str:
     cell_count = spawn_contract(cfg["spawn_protocol_version"]).get("grid_shape", {}).get("cells", 9)
+    if cfg["spawn_protocol_version"] == REAL96_SPAWN_PROTOCOL_VERSION:
+        return (
+            f"Real96 S{cfg['session_index']} #{cfg['session_order']}/24 | {cfg['cell']}\n"
+            f"X={cfg['spawn_x_cm']:g}cm Y={cfg['spawn_y_cm']:+g}cm | "
+            f"yaw={cfg['spawn_yaw_deg']:g}°\n"
+            "Both grippers OPEN; similar ready area"
+        )
     if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
         return (
             f"picklift_spawn_v5 | {cell_count} cells\n"
@@ -375,6 +462,31 @@ def validate_config(cfg: dict) -> None:
                 raise ValueError(f"{COLLECTION_PROTOCOL_VERSION} requires alignment_mode=direct_absolute")
             if cfg.get("max_relative_target") is not None:
                 raise ValueError(f"{COLLECTION_PROTOCOL_VERSION} requires max_relative_target=null")
+    elif cfg["spawn_protocol_version"] == REAL96_SPAWN_PROTOCOL_VERSION:
+        missing_plan_fields = [key for key in REAL96_PLAN_FIELDS if key not in cfg]
+        if missing_plan_fields:
+            raise ValueError(f"missing Real96 plan fields: {', '.join(missing_plan_fields)}")
+        if cfg.get("collection_protocol_version") != REAL96_COLLECTION_PROTOCOL_VERSION:
+            raise ValueError(
+                f"Real96 requires collection_protocol_version={REAL96_COLLECTION_PROTOCOL_VERSION}"
+            )
+        if cfg.get("task_spec_revision") != "task1_picklift_final_v2":
+            raise ValueError("Real96 requires task_spec_revision=task1_picklift_final_v2")
+        if cfg.get("alignment_mode") != "direct_absolute" or cfg.get("max_relative_target") is not None:
+            raise ValueError("Real96 requires direct_absolute with max_relative_target=null")
+        if cfg.get("control_source") != "leader_follower":
+            raise ValueError("Real96 requires control_source=leader_follower")
+        if cfg.get("yaw_annotation_mode") != "predeclared_nominal_0_or_45":
+            raise ValueError("Real96 requires predeclared nominal yaw annotation")
+        yaw_deg = float(cfg["spawn_yaw_deg"])
+        if yaw_deg not in {0.0, 45.0} or yaw_deg != float(cfg["yaw_degrees_modulo_90"]):
+            raise ValueError("Real96 yaw must be the frozen nominal 0 or 45 degrees")
+        if abs(float(cfg["spawn_x_cm"]) / 100 - float(cfg["x_forward_m"])) > 1e-9:
+            raise ValueError("spawn_x_cm does not match frozen Real96 x_forward_m")
+        if abs(float(cfg["spawn_y_cm"]) / 100 - float(cfg["y_lateral_m"])) > 1e-9:
+            raise ValueError("spawn_y_cm does not match frozen Real96 y_lateral_m")
+        if cfg["spawn_region"] != cfg["cell"]:
+            raise ValueError("spawn_region must equal the frozen Real96 cell")
     else:
         yaw_deg = float(cfg["spawn_yaw_deg"])
         if not 0 <= yaw_deg <= 90:
@@ -614,12 +726,19 @@ def episode_provenance(
     common = {
         **{k: cfg[k] for k in REQUIRED},
         **{k: cfg[k] for k in V5_REQUIRED if k in cfg},
+        **{k: cfg[k] for k in REAL96_PLAN_FIELDS if k in cfg},
+        **{k: cfg[k] for k in REAL96_SESSION_FIELDS if k in cfg},
         "backend": "real" if cfg["mode"] == "real" else "synthetic",
         "control_mode": "leader_follower",
         "spawn_contract": spawn_contract(cfg["spawn_protocol_version"]),
         "collection_commit": git_commit(),
+        "collection_repo_path": git_root(),
+        "collection_git_dirty": git_dirty(),
         "lerobot_version": lerobot_version,
         "lerobot_dataset_version": CODEBASE_VERSION,
+        "python_version": platform.python_version(),
+        "torch_version": installed_version("torch"),
+        "opencv_python_version": installed_version("opencv-python", "opencv-python-headless"),
         "control_hz": cfg["control_hz"],
         "camera_acquisition_fps": cfg["camera_acquisition_fps"],
         "record_fps": FPS,
@@ -655,6 +774,20 @@ def episode_provenance(
     }
     if cfg["spawn_protocol_version"] == "picklift_spawn_v5":
         common["success_contract"] = SUCCESS_CONTRACT
+    elif cfg["spawn_protocol_version"] == REAL96_SPAWN_PROTOCOL_VERSION:
+        common["success_contract"] = {
+            **SUCCESS_CONTRACT,
+            "minimum_visual_lift_height_relation": "strictly_greater_than_0.05m",
+            "minimum_stable_hold_control_steps": 25,
+            "hold_control_hz": 50,
+        }
+        common["field_applicability"] = {
+            "raw_human_target": "not_applicable_not_fabricated",
+            "reachable_target": "not_applicable_not_fabricated",
+            "quest_grip_state": "not_applicable_not_fabricated",
+            "actual_applied_action": "required_action_field",
+            "termination_reason": "required",
+        }
     common["configured_termination_reason"] = cfg["termination_reason"]
     common["termination_reason"] = outcome.termination_reason
     common["configured_result"] = cfg["result"]
