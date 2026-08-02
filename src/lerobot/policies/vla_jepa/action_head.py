@@ -267,11 +267,15 @@ class VLAJEPAActionHead(nn.Module):
 
     def _build_inputs(
         self,
-        conditioning_tokens: torch.Tensor,
         actions: torch.Tensor,
         state: torch.Tensor | None,
         timesteps: torch.Tensor,
     ) -> torch.Tensor:
+        """Build the DiT's own token sequence: [state?, future queries, noisy actions].
+
+        The conditioning tokens are not part of this sequence; they reach the DiT as
+        `encoder_hidden_states` through cross-attention.
+        """
         action_features = self.action_encoder(actions, timesteps)
         pos_ids = torch.arange(action_features.shape[1], device=actions.device)
         action_features = action_features + self.position_embedding(pos_ids)[None]
@@ -298,7 +302,7 @@ class VLAJEPAActionHead(nn.Module):
         velocity = actions - noise
         t_discretized = (t * self.config.action_num_timestep_buckets).long()
 
-        hidden_states = self._build_inputs(conditioning_tokens, noisy_actions, state, t_discretized)
+        hidden_states = self._build_inputs(noisy_actions, state, t_discretized)
         pred = self.model(
             hidden_states=hidden_states,
             encoder_hidden_states=conditioning_tokens,
@@ -339,7 +343,7 @@ class VLAJEPAActionHead(nn.Module):
             timesteps = torch.full(
                 (batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long
             )
-            hidden_states = self._build_inputs(conditioning_tokens, actions, state, timesteps)
+            hidden_states = self._build_inputs(actions, state, timesteps)
             pred = self.model(
                 hidden_states=hidden_states,
                 encoder_hidden_states=conditioning_tokens,

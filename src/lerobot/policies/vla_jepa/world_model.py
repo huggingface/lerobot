@@ -114,9 +114,9 @@ class ACRoPEAttention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = qk_scale or self.head_dim**-0.5
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop_prob = attn_drop
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
-        self.proj_drop_prob = proj_drop
         self.proj_drop = nn.Dropout(proj_drop)
         self.use_sdpa = use_sdpa
         self.d_dim = int(2 * ((self.head_dim // 3) // 2))
@@ -231,8 +231,15 @@ class ACRoPEAttention(nn.Module):
             v = merge(v, action_v)
 
         if attn_mask is not None or self.use_sdpa:
+            # Attention dropout (not projection dropout), and only while training — SDPA does
+            # not consult `self.training` on its own the way `nn.Dropout` does.
             x = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.proj_drop_prob, is_causal=self.is_causal, attn_mask=attn_mask
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop_prob if self.training else 0.0,
+                is_causal=self.is_causal,
+                attn_mask=attn_mask,
             )
         else:
             attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -334,8 +341,14 @@ class ActionConditionedVideoPredictor(nn.Module):
         self.use_extrinsics = use_extrinsics
         self.predictor_embed = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
         self.action_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
-        self.state_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
-        self.extrinsics_encoder = nn.Linear(action_embed_dim - 1, predictor_embed_dim, bias=True)
+        # `extrinsics_encoder` only feeds the `use_extrinsics` branch of `forward`. Building it
+        # unconditionally left ~2.1M parameters that never received a gradient (and were only
+        # tolerated by the trainer's global `find_unused_parameters=True`). There was a
+        # `state_encoder` here too, which nothing ever called. Checkpoints written before this
+        # change carry both; they surface as unexpected keys and are ignored on load.
+        self.extrinsics_encoder = (
+            nn.Linear(action_embed_dim - 1, predictor_embed_dim, bias=True) if use_extrinsics else None
+        )
 
         self.img_height, self.img_width = img_size
         self.patch_size = patch_size
