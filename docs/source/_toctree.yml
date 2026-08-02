@@ -167,6 +167,8 @@
     title: reBot B601-DM
   title: "Robots"
 - sections:
+  - local: accessible_teleop
+    title: Accessible Teleoperation
   - local: phone_teleop
     title: Phone
   - local: isaac_teleop

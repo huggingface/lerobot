@@ -162,6 +162,7 @@ pyserial-dep = ["pyserial>=3.5,<4.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
+websockets-dep = ["websockets>=13.0,<17.0"]
 motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
@@ -202,6 +203,10 @@ intelrealsense = [
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
+# Browser-driven teleoperation for operators who cannot use a leader arm. The control page
+# loads MediaPipe from a CDN on first use, so face tracking needs network access once; the
+# joystick and keyboard channels work fully offline.
+accessible-teleop = ["lerobot[websockets-dep]"]
 
 # Policies
 diffusion = ["lerobot[diffusers-dep]"]
@@ -301,6 +306,7 @@ all = [
     "lerobot[feetech]",
     "lerobot[damiao]",
     "lerobot[robstride]",
+    "lerobot[accessible-teleop]",
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
@@ -374,7 +380,11 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
+lerobot = [
+    "envs/*.json",
+    "annotations/steerable_pipeline/prompts/*.txt",
+    "teleoperators/accessible_teleop/assets/*.html",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
