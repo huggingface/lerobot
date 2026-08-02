@@ -20,16 +20,16 @@ action batch immediately before `env.step(...)` in the eval rollout loop.
 At `trigger_step` (0-indexed episode step, must be `>= 1`), repeat the previous
 valid executed action for `duration` environment steps, then resume policy actions.
 
-| Flag | Meaning | Default |
-| --- | --- | --- |
-| `--fault.enabled` | Master switch | `false` |
-| `--fault.type` | Fault implementation | `action_hold` |
-| `--fault.trigger_step` | Step where hold begins (`>= 1`) | `55` |
-| `--fault.duration` | Hold length in env steps | `8` |
-| `--fault.probability` | Activation probability at trigger | `1.0` |
-| `--fault.seed` | RNG seed for activation decisions | `42` |
-| `--fault.env_ids` | Vector-env indices (`null` = all) | `null` |
-| `--fault.log_path` | JSONL event log path (relative paths are under `output_dir`) | `<output_dir>/fault_events.jsonl` |
+| Flag                   | Meaning                                                      | Default                           |
+| ---------------------- | ------------------------------------------------------------ | --------------------------------- |
+| `--fault.enabled`      | Master switch                                                | `false`                           |
+| `--fault.type`         | Fault implementation                                         | `action_hold`                     |
+| `--fault.trigger_step` | Step where hold begins (`>= 1`)                              | `55`                              |
+| `--fault.duration`     | Hold length in env steps                                     | `8`                               |
+| `--fault.probability`  | Activation probability at trigger                            | `1.0`                             |
+| `--fault.seed`         | RNG seed for activation decisions                            | `42`                              |
+| `--fault.env_ids`      | Vector-env indices (`null` = all)                            | `null`                            |
+| `--fault.log_path`     | JSONL event log path (relative paths are under `output_dir`) | `<output_dir>/fault_events.jsonl` |
 
 Fault injection is **policy-agnostic**: it runs after action postprocessing and before
 `env.step`, so any LeRobot policy that works with `lerobot-eval` can be tested
