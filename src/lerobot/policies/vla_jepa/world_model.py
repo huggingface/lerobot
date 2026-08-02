@@ -326,6 +326,7 @@ class ActionConditionedVideoPredictor(nn.Module):
         num_heads: int,
         mlp_ratio: float,
         num_action_tokens_per_step: int,
+        dropout: float = 0.0,
         use_extrinsics: bool = False,
     ) -> None:
         super().__init__()
@@ -350,8 +351,8 @@ class ActionConditionedVideoPredictor(nn.Module):
                     num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
                     qkv_bias=True,
-                    drop=0.0,
-                    attn_drop=0.0,
+                    drop=dropout,
+                    attn_drop=dropout,
                     drop_path=0.0,
                     norm_layer=lambda dim: nn.LayerNorm(dim, eps=1e-6),
                     grid_size=self.grid_height,

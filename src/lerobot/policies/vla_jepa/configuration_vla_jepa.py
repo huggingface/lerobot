@@ -80,8 +80,12 @@ class VLAJEPAConfig(PreTrainedConfig):
     action_noise_beta_alpha: float = 1.5
     action_noise_beta_beta: float = 1.0
     action_noise_s: float = 0.999
-    num_target_vision_tokens: int = 32
+    # Size of the action head's learned position-embedding table. Kept at 1024 to match the
+    # published checkpoints; only raise it if `chunk_size` approaches that.
     action_max_seq_len: int = 1024
+    # Unused. Retained because the published checkpoints serialize it and draccus rejects
+    # config.json keys that the dataclass no longer declares.
+    num_target_vision_tokens: int = 32
 
     # total video frames loaded per sample
     num_video_frames: int = 8
@@ -219,6 +223,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     def observation_delta_indices(self) -> list[int]:
         # load video_horizon frames starting from current timestep: [t, t+1, ..., t+video_horizon-1]
         # matches original repo's observation_indices=list(range(video_horizon))
+        # Only the world model consumes frames past index 0, so without it asking for the full
+        # window would decode `num_video_frames` frames per camera per sample and drop them.
+        if not self.enable_world_model:
+            return [0]
         return list(range(self.num_video_frames))
 
     @property
