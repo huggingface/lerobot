@@ -1,0 +1,67 @@
+{
+  "dataset": {
+    "episodes": 24,
+    "frames": 4263,
+    "repo_id": "local/task1_picklift_real24_budget_extension_v1_accepted",
+    "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+    "stats_sha256": "f1e71f8febee549d59c470508e1e3ed681436ed34099c35ef84896fd3de80fd8",
+    "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712"
+  },
+  "evidence": {
+    "hashes_sha256": "b64940223ac272698a1a5b4822cde628371ddd07b477728eb580d6fa1dbbebbd",
+    "manifest_sha256": "733963ced68162f99e9cf61c4c010830813df5ff46d806c37d6a8f800ec388f1",
+    "root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_budget_extension_act_v1/training_result_v1",
+    "run_summary_sha256": "09ad4843bc100086cbe682bf4e5c0a0ded44a75f869c33089f31c45d8b5a29d9"
+  },
+  "experiment_id": "task1_picklift_real24_budget_extension_act_v1",
+  "full_training": {
+    "checkpoint_hashes": {
+      "020000": "6080fa72bdab45c21c86c1dc4cda85df4f2814a2ae7433026a09ceb3d000aebb",
+      "040000": "d023f8d8f6ed34384cb0f09eb76e9be8a1912443c88b1771612c1fba821f596d",
+      "060000": "dcc7c6c0caecd5192a824b091af62687edd5908fc6416b902366c9736abedb21",
+      "080000": "2739faf64817e3465dbc17dfb007391b6b25c4d7cf7839f81822545dd22e7c81",
+      "100000": "0b91103890fc78dc0fd3bff61457e4d06945041d68466f49f21bc6d40d4a9f29"
+    },
+    "duration_wall_seconds": 5043,
+    "final_kld_loss": 0.0,
+    "final_l1_loss": 0.029,
+    "final_loss": 0.029,
+    "full_log_sha256": "e1b7e2186296400b72fc9c5765e3d3ad841337cdf0dd4fa95fde784a044a8bfd",
+    "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+    "selected_checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_budget_extension_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "selected_model_sha256": "0b91103890fc78dc0fd3bff61457e4d06945041d68466f49f21bc6d40d4a9f29",
+    "selected_step": 100000,
+    "steps": 100000
+  },
+  "hardware_accessed": false,
+  "offline_validation": {
+    "input_shapes": {
+      "observation.images.front": [
+        1,
+        3,
+        480,
+        640
+      ],
+      "observation.state": [
+        1,
+        6
+      ]
+    },
+    "output_finite": true,
+    "output_shape": [
+      1,
+      6
+    ],
+    "status": "pass"
+  },
+  "rollout_executed": false,
+  "schema": "task1_picklift_real24_budget_extension_act_result_index_v1",
+  "smoke": {
+    "duration_wall_seconds": 34.73,
+    "final_loss": 2.504,
+    "model_sha256": "17530a809c6a15532dd45e4f1406b4cf1856734c0f214a06711632acdcb02991",
+    "offline_validation": "pass",
+    "steps": 500
+  },
+  "status": "offline_training_and_validation_complete_no_rollout_started"
+}
