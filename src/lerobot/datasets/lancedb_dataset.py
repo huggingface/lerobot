@@ -575,12 +575,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
         plans = self._plan_batch(indices)
         rows, row_pos = self._batch_rows(plans)
 
-        # Video prep (byte-index, header ranges, decoder creation) needs only the
-        # batch's file set, so it overlaps the frames-table fetch. Stage 2
-        # (_ensure_decoders) fetches each batch's real frame-window byte ranges.
+        # Video prep (byte-index, header ranges, decoder creation, window ranges)
+        # needs only the batch's files and frame indices, so it overlaps the
+        # frames-table fetch. The timestamp coverage check in _ensure_decoders is
+        # the safety net: any drift costs a re-fetch, never a wrong frame.
         prepared_future = None
         if self.meta.video_keys:
-            prepared_future = self._prefetch_pool.submit(self._prepare_files, self._batch_file_keys(plans))
+            windows = self._plan_file_windows(plans)
+            prepared_future = self._prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
@@ -597,15 +599,20 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     item[cam_key] = self.image_transforms(item[cam_key])
         return items
 
-    def _batch_file_keys(self, plans: list[dict]) -> list[tuple]:
-        """The sorted set of video files this batch touches (per sample, per camera)."""
-        return sorted(
-            {
-                self._video_file_key(key, plan["ep_idx"])
-                for plan in plans
-                for key in self.meta.video_keys
-            }
-        )
+    def _plan_file_windows(self, plans: list[dict]) -> dict[tuple, list[tuple[int, int]]]:
+        """Map each batch sample's video windows to (file key -> frame spans).
+
+        Positions come from episode metadata alone; stage 2 re-derives ranges
+        from real timestamps and fetches anything missed.
+        """
+        fps = float(self.meta.fps)
+        windows: dict[tuple, list[tuple[int, int]]] = {}
+        for plan in plans:
+            ep_idx = plan["ep_idx"]
+            for key in self.meta.video_keys:
+                file_key, span = self._planned_file_window(key, ep_idx, plan, fps)
+                windows.setdefault(file_key, []).append(span)
+        return windows
 
     def _plan_batch(self, indices: list[int]) -> list[dict]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
@@ -638,6 +645,16 @@ class LanceDBDataset(torch.utils.data.Dataset):
     def _batch_rows(self, plans: list[dict]) -> tuple[list[int], dict[int, int]]:
         rows = sorted({row for plan in plans for row in plan["rows"]})
         return rows, {row: pos for pos, row in enumerate(rows)}
+
+    def _planned_file_window(
+        self, key: str, ep_idx: int, plan: dict, fps: float
+    ) -> tuple[tuple[str, int, int], tuple[int, int]]:
+        ep_start, _ = self._episode_bounds(ep_idx)
+        _, _, from_ts_arr = self._video_locator[key]
+        window = plan["windows"].get(key, [plan["abs_idx"]])
+        base = round(float(from_ts_arr[ep_idx]) * fps) - ep_start
+        first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
+        return self._video_file_key(key, ep_idx), (first, base + max(window))
 
     def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
         batch = self._frames_perm.__getitems__(rows)
@@ -720,12 +737,14 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 )
         return requests
 
-    def _prepare_files(self, file_keys: list[tuple]) -> dict[tuple, tuple]:
+    def _prepare_files(
+        self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
+    ) -> dict[tuple, tuple]:
         """Stage 1 of video decoding: everything that doesn't need timestamps.
 
         Loads byte-index metadata, fetches container head/moov/first-packet ranges
-        for uncached files, and creates their decoders. Timestamp-independent, so
-        it runs in a background thread.
+        for uncached files, creates their decoders, and prefetches the batch's
+        frame-window byte ranges. Timestamp-independent, so it runs in a background thread.
         """
         # Lazy: torchcodec is a platform-conditional extra (no wheel on some
         # platforms); upstream video_utils imports it lazily for the same reason.
@@ -775,6 +794,21 @@ class LanceDBDataset(torch.utils.data.Dataset):
             for key in new_files:
                 if key[0] in self.meta.depth_keys:
                     prepared[key] = (None, sources[key])
+
+        if windows:
+            window_spans: dict[tuple, list[tuple[int, int]]] = {}
+            for key, frame_windows in windows.items():
+                meta = self._file_meta[key]
+                source = prepared[key][1]
+                spans = [
+                    span
+                    for first, last in frame_windows
+                    for span in [self._window_byte_range(key[0], meta, first, last)]
+                    if not source.covers(*span)
+                ]
+                if spans:
+                    window_spans[key] = spans
+            self._fetch_spans(window_spans, {key: prepared[key][1] for key in window_spans})
         return prepared
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
