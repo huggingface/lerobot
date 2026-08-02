@@ -57,8 +57,7 @@ VIDEO_BLOB_COLUMN = "video_bytes"
 VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "kf_positions")
 # ffmpeg reads more bytes than the frames requested. Padding each prefetched range
 # to cover those known reads keeps them off the slow fallback path.
-_HEAD_BYTES = 256 * 1024
-_OPEN_READAHEAD = 256 * 1024
+_OPEN_PROBE_BYTES = 256 * 1024
 _RANGE_SLACK = 64 * 1024
 
 
@@ -421,8 +420,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
             self.delta_indices = get_delta_indices(delta_timestamps, self.meta.fps)
 
         # Episode boundaries (absolute frame index space) for delta clamping + padding.
-        self._ep_from = np.asarray(self.meta.episodes["dataset_from_index"], dtype=np.int64)
-        self._ep_to = np.asarray(self.meta.episodes["dataset_to_index"], dtype=np.int64)
+        self._ep_from = self._episode_numpy("dataset_from_index", np.int64)
+        self._ep_to = self._episode_numpy("dataset_to_index", np.int64)
         # Integrity: episode ranges must tile [0, total_frames) exactly. Public
         # datasets ship broken meta often (droid orphans, berkeley tails, agibot empties).
         if len(self._ep_from) and (
@@ -470,9 +469,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # it (episodes share files in v3.0; timestamps shift by from_timestamp).
         self._video_locator = {
             key: (
-                np.asarray(self.meta.episodes[f"videos/{key}/chunk_index"], dtype=np.int64),
-                np.asarray(self.meta.episodes[f"videos/{key}/file_index"], dtype=np.int64),
-                np.asarray(self.meta.episodes[f"videos/{key}/from_timestamp"], dtype=np.float64),
+                self._episode_numpy(f"videos/{key}/chunk_index", np.int64),
+                self._episode_numpy(f"videos/{key}/file_index", np.int64),
+                self._episode_numpy(f"videos/{key}/from_timestamp", np.float64),
             )
             for key in self.meta.video_keys
         }
@@ -486,6 +485,12 @@ class LanceDBDataset(torch.utils.data.Dataset):
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 16
         self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30) # 2GB cap
+
+    def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
+        # Read straight from the underlying Arrow column, not HF Dataset __getitem__
+        # which row-formats every element (~1M calls at droid scale, ~10s in __init__).
+        column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
+        return column.astype(dtype, copy=False)
 
     def _ensure_open(self) -> None:
         if self._frames_perm is not None:
@@ -772,7 +777,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             for key in new_files:
                 meta = self._file_meta[key]
                 spans = [
-                    (0, min(_HEAD_BYTES, meta["file_size"])),
+                    (0, min(_OPEN_PROBE_BYTES, meta["file_size"])),
                     # Slack past the moov covers the next box header ffmpeg reads.
                     (
                         meta["moov_offset"],
@@ -781,7 +786,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 ]
                 if len(meta["kf_positions"]):
                     first_packet = int(meta["kf_positions"][0])
-                    spans.append((first_packet, min(first_packet + _OPEN_READAHEAD, meta["file_size"])))
+                    spans.append((first_packet, min(first_packet + _OPEN_PROBE_BYTES, meta["file_size"])))
                 spans_by_key[key] = spans
             self._fetch_spans(spans_by_key, sources)
 
@@ -898,10 +903,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         """Fetch byte-index columns for files not yet in the per-worker cache."""
         if not missing:
             return
-        row_ids = ",".join(str(self._video_row_ids[file_key]) for file_key in missing)
+        row_ids = [self._video_row_ids[file_key] for file_key in missing]
         batch = (
-            self._videos_table.search()
-            .where(f"_rowid IN ({row_ids})")
+            self._videos_table.take_row_ids(row_ids)
             .select(["video_key", "chunk_index", "file_index", *VIDEO_INDEX_COLUMNS])
             .to_arrow()
         )
@@ -930,7 +934,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 "kf_indices": index_values[index_offsets[i] : index_offsets[i + 1]],
                 "kf_positions": position_values[position_offsets[i] : position_offsets[i + 1]],
             }
-            self._file_meta.move_to_end(file_key)
         while len(self._file_meta) > 2048:
             self._file_meta.popitem(last=False)
 
