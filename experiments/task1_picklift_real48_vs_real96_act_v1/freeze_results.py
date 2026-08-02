@@ -52,6 +52,7 @@ def main() -> None:
         "dataset_audit": CONTRACT_EVIDENCE / "dataset_audit.json",
         "training_contract": CONTRACT_EVIDENCE / "training_contract_verification.json",
         "runtime_snapshot": CONTRACT_EVIDENCE / "runtime_snapshot.json",
+        "result_independent_verification": CONTRACT_EVIDENCE / "result_independent_verification.json",
     }
     for condition in ("real48", "real96"):
         paths[f"{condition}_config_smoke"] = EXPERIMENT_ROOT / f"{condition}_train_config_smoke.json"
