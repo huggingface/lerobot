@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs.types import NormalizationMode
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -199,7 +201,19 @@ def make_vla_jepa_pre_post_processors(
     ]
     output_steps: list[ProcessorStep] = []
     if config.clip_normalized_actions:
-        output_steps.append(ClipActionsProcessorStep())
+        # Clipping to [-1, 1] is a range assertion under MIN_MAX, but under MEAN_STD the same
+        # clamp truncates every action beyond 1 sigma. That shows up as a hesitant, low-amplitude
+        # policy with no error anywhere, so refuse to add the step instead of honoring the flag.
+        action_norm_mode = config.normalization_mapping.get("ACTION")
+        if action_norm_mode == NormalizationMode.MIN_MAX:
+            output_steps.append(ClipActionsProcessorStep())
+        else:
+            logging.warning(
+                f"`clip_normalized_actions=True` is ignored: it clips normalized actions to "
+                f"[-1, 1], which is only a no-op bound under MIN_MAX, but ACTION uses "
+                f"{getattr(action_norm_mode, 'value', action_norm_mode)}. Under MEAN_STD this "
+                f"would clamp every action to 1 sigma."
+            )
     if config.pre_snap_gripper_action:
         output_steps.append(
             PreSnapGripperProcessorStep(gripper_dim=config.gripper_dim, threshold=config.gripper_threshold)
