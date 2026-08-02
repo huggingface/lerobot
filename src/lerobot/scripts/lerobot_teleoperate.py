@@ -208,7 +208,10 @@ def teleop_loop(
         # given that it is the identity processor as default
         obs = robot.get_observation()
 
-        if robot.name == "unitree_g1":
+        # accessible_teleop integrates a velocity command into a position, so it needs the
+        # robot's measured pose to start from; without it the first engaged action would
+        # command its configured start pose and the arm would jump to reach it.
+        if robot.name == "unitree_g1" or teleop.name == "accessible_teleop":
             teleop.send_feedback(obs)
 
         # Get teleop action

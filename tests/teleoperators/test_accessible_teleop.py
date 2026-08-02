@@ -404,10 +404,14 @@ def test_control_page_is_served_and_drives_the_robot(connected_teleop):
         thread.join(timeout=10.0)
         assert teleop.is_connected
 
-        # Nothing has been engaged, so the teleoperator claims no pose.
+        # Nothing has been engaged, so the pose is held rather than withheld: callers pass
+        # this action straight to send_action, which cannot accept an empty one.
         socket.send(json.dumps({"type": "input", "keys": {"KeyF": False}, "engaged": False}))
         _wait_for_frame(teleop)
-        assert teleop.get_action() == {}
+        idle = teleop.get_action()
+        assert set(idle) == set(teleop.action_features)
+        time.sleep(0.05)
+        assert teleop.get_action() == pytest.approx(idle)
 
         socket.send(json.dumps({"type": "input", "keys": {"KeyF": True}, "engaged": True}))
         _wait_for_frame(teleop)
@@ -450,6 +454,108 @@ def test_stale_input_stops_the_robot(connected_teleop):
         held = teleop.get_action()["shoulder_pan.pos"]
         time.sleep(0.2)
         assert teleop.get_action()["shoulder_pan.pos"] == pytest.approx(held)
+
+
+@pytestmark_ws
+def test_every_action_is_complete_enough_for_a_motor_bus(connected_teleop):
+    """An action with no entries reaches the bus as a write addressed to no motors.
+
+    `MotorsBus.sync_write` takes the control table from the first motor in the request, so an
+    empty mapping raises StopIteration deep inside the transport. Nothing between this
+    teleoperator and the bus filters that out: the default processors are the identity, and
+    `send_action` forwards whatever it is given.
+    """
+    import threading
+
+    from websockets.sync.client import connect as ws_connect
+
+    teleop = connected_teleop
+    thread = threading.Thread(target=teleop.connect, kwargs={"calibrate": False}, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 10.0
+    while teleop._bridge is None or not teleop._bridge.is_running:
+        assert time.monotonic() < deadline, "bridge never started"
+        time.sleep(0.02)
+
+    with ws_connect(teleop._bridge.url.replace("http://", "ws://") + "ws") as socket:
+        thread.join(timeout=10.0)
+        # Before any input at all, while idle, and while driving.
+        assert set(teleop.get_action()) == set(teleop.action_features)
+
+        socket.send(json.dumps({"type": "input", "keys": {}, "engaged": False}))
+        _wait_for_frame(teleop)
+        assert set(teleop.get_action()) == set(teleop.action_features)
+
+        socket.send(json.dumps({"type": "input", "keys": {"KeyF": True}, "engaged": True}))
+        time.sleep(0.1)
+        assert set(teleop.get_action()) == set(teleop.action_features)
+
+
+@pytestmark_ws
+def test_an_idle_second_page_cannot_override_the_page_holding_the_clutch(connected_teleop):
+    import threading
+
+    from websockets.sync.client import connect as ws_connect
+
+    teleop = connected_teleop
+    thread = threading.Thread(target=teleop.connect, kwargs={"calibrate": False}, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 10.0
+    while teleop._bridge is None or not teleop._bridge.is_running:
+        assert time.monotonic() < deadline, "bridge never started"
+        time.sleep(0.02)
+    ws_url = teleop._bridge.url.replace("http://", "ws://") + "ws"
+
+    with ws_connect(ws_url) as driver, ws_connect(ws_url) as bystander:
+        thread.join(timeout=10.0)
+        driver.send(json.dumps({"type": "input", "keys": {"KeyF": True}, "engaged": True}))
+        _wait_for_frame(teleop)
+        # The second page reports after the first, and would win on recency alone.
+        bystander.send(json.dumps({"type": "input", "keys": {}, "engaged": False}))
+        time.sleep(0.1)
+
+        frame, _ = teleop._bridge.read_frame()
+        assert frame.engaged, "an idle page took the clutch away from the page being driven"
+        assert frame.keys.get("KeyF")
+
+        # Once the driving page releases, the freshest frame wins again.
+        driver.send(json.dumps({"type": "input", "keys": {}, "engaged": False}))
+        time.sleep(0.1)
+        frame, _ = teleop._bridge.read_frame()
+        assert not frame.engaged
+
+
+@pytestmark_ws
+def test_a_page_that_goes_quiet_loses_the_clutch_to_a_live_page(connected_teleop):
+    import threading
+
+    from websockets.sync.client import connect as ws_connect
+
+    teleop = connected_teleop
+    teleop.config.input_timeout_s = 0.1
+    thread = threading.Thread(target=teleop.connect, kwargs={"calibrate": False}, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + 10.0
+    while teleop._bridge is None or not teleop._bridge.is_running:
+        assert time.monotonic() < deadline, "bridge never started"
+        time.sleep(0.02)
+    ws_url = teleop._bridge.url.replace("http://", "ws://") + "ws"
+
+    with ws_connect(ws_url) as frozen, ws_connect(ws_url) as live:
+        thread.join(timeout=10.0)
+        # A backgrounded tab stops its loop while still claiming the clutch.
+        frozen.send(json.dumps({"type": "input", "keys": {"KeyF": True}, "engaged": True}))
+        _wait_for_frame(teleop)
+        time.sleep(0.2)
+
+        live.send(json.dumps({"type": "input", "keys": {}, "engaged": False}))
+        time.sleep(0.05)
+        frame, age = teleop._bridge.read_frame()
+        assert not frame.engaged, "a frozen page kept the clutch closed"
+        assert age < teleop.config.input_timeout_s
 
 
 def _wait_for_frame(teleop: AccessibleTeleop, timeout_s: float = 5.0) -> None:

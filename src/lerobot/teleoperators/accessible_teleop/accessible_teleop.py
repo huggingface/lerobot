@@ -28,6 +28,8 @@ from .config_accessible_teleop import (
     ChannelCalibration,
     InputSource,
     JointBinding,
+    binding_from_dict,
+    binding_to_dict,
 )
 from .control import InputFrame, JointController
 from .web_bridge import ControlBridge
@@ -64,11 +66,17 @@ class AccessibleTeleop(Teleoperator):
         ```
 
     Safety:
-        The teleoperator returns an empty action until the operator engages the clutch on the
-        page. The first engaged action commands :pyattr:`AccessibleTeleopConfig.start_pose`,
-        which the follower may be far away from. Either call :pymeth:`send_feedback` with the
-        robot's current positions first, or run the follower with ``--robot.max_relative_target``
-        so that the approach is rate limited by the robot as well.
+        The commanded pose only changes while the operator holds the clutch closed, so the
+        action is a steady hold until they ask for movement. What it holds *at* matters:
+        :pymeth:`send_feedback` anchors it on the follower's measured positions, and
+        ``lerobot-teleoperate`` and ``lerobot-record`` call it on every cycle before reading
+        the action, so the first engagement continues from wherever the arm actually is.
+
+        Drive this teleoperator from a loop that does not feed it the robot's observation and
+        it has nothing to anchor on: it starts from
+        :pyattr:`AccessibleTeleopConfig.start_pose`, which the follower may be far away from.
+        Run the follower with ``--robot.max_relative_target`` so that the approach is rate
+        limited by the robot as well.
     """
 
     config_class = AccessibleTeleopConfig
@@ -94,7 +102,7 @@ class AccessibleTeleop(Teleoperator):
         )
         self._bridge: ControlBridge | None = None
         self._last_step: float | None = None
-        self._armed = False
+        self._anchored = False
         self._stale_logged = False
 
     # ── features ─────────────────────────────────────────────────────────
@@ -148,7 +156,7 @@ class AccessibleTeleop(Teleoperator):
         self._bridge.release_clutch()
         self._bridge.stop()
         self._bridge = None
-        self._armed = False
+        self._anchored = False
         self._last_step = None
         logger.info(f"{self} disconnected.")
 
@@ -221,7 +229,7 @@ class AccessibleTeleop(Teleoperator):
 
         for joint, raw in (profile.get("bindings") or {}).items():
             if joint in self.bindings:
-                self.bindings[joint] = _binding_from_profile(raw)
+                self.bindings[joint] = binding_from_dict(raw)
         for channel, raw in (profile.get("calibrations") or {}).items():
             self.channel_calibrations[channel] = ChannelCalibration(**raw)
         logger.info(f"Loaded accessible teleop profile from {fpath}")
@@ -229,7 +237,7 @@ class AccessibleTeleop(Teleoperator):
     def _save_calibration(self, fpath: Path | None = None) -> None:
         fpath = self.calibration_fpath if fpath is None else fpath
         profile = {
-            "bindings": {joint: _binding_to_profile(b) for joint, b in self.bindings.items()},
+            "bindings": {joint: binding_to_dict(b) for joint, b in self.bindings.items()},
             "calibrations": {ch: asdict(c) for ch, c in self.channel_calibrations.items()},
         }
         with open(fpath, "w") as f:
@@ -260,9 +268,6 @@ class AccessibleTeleop(Teleoperator):
         else:
             self._stale_logged = False
 
-        if frame.engaged:
-            self._armed = True
-
         now = time.perf_counter()
         dt_s = 0.0 if self._last_step is None else now - self._last_step
         self._last_step = now
@@ -270,11 +275,9 @@ class AccessibleTeleop(Teleoperator):
         pose = self.controller.step(frame, dt_s)
         self._publish_state(frame, age)
 
-        if not self._armed:
-            # Nothing has been engaged yet, so there is no pose this teleoperator is
-            # entitled to command.
-            return {}
-
+        # Always a full action. Returning nothing would be the honest answer before the
+        # operator engages, but callers pass this straight to `send_action`, and an empty
+        # action reaches the motor bus as a write with no motors in it.
         return {f"{joint}.pos": pose[joint] for joint in self.config.joints}
 
     @check_if_not_connected
@@ -298,10 +301,12 @@ class AccessibleTeleop(Teleoperator):
             return
 
         self.controller.reset(positions)
+        self._anchored = True
 
     def sync_to(self, pose: dict[str, float]) -> None:
         """Re-anchor the commanded pose without going through the feedback dict format."""
         self.controller.reset(pose)
+        self._anchored = True
 
     def _publish_state(self, frame: InputFrame, age: float | None) -> None:
         limits = self.config.joint_limits
@@ -310,15 +315,13 @@ class AccessibleTeleop(Teleoperator):
             {
                 "pose": pose,
                 "velocity": self.controller.velocity,
-                "atLimit": {
-                    joint: bool(
-                        joint in limits
-                        and (pose[joint] <= limits[joint][0] + 1e-6 or pose[joint] >= limits[joint][1] - 1e-6)
-                    )
-                    for joint in pose
-                },
+                "atLimit": {joint: _blocked_direction(pose[joint], limits.get(joint)) != 0 for joint in pose},
+                # Which way the joint has stopped accepting commands. A joint resting against
+                # a mechanical stop still moves perfectly well in the other direction, and an
+                # operator who is not told that reasonably concludes their input is broken.
+                "blocked": {joint: _blocked_direction(pose[joint], limits.get(joint)) for joint in pose},
                 "engaged": frame.engaged,
-                "armed": self._armed,
+                "anchored": self._anchored,
                 "inputAgeMs": None if age is None else round(age * 1000),
             }
         )
@@ -326,21 +329,22 @@ class AccessibleTeleop(Teleoperator):
     def _warn_about_start_pose(self) -> None:
         pose = ", ".join(f"{j}={v:g}" for j, v in self.controller.pose.items())
         print("\n" + "=" * 78)
-        print("The robot will move to the start pose the first time you engage the clutch.")
+        print("Until this teleoperator is given the robot's measured positions, it commands")
+        print("the configured start pose, which the follower may be far away from:")
         print(f"  start pose: {pose}")
-        print("Clear the workspace, and consider running the follower with a relative-target")
-        print("limit, for example --robot.max_relative_target=5.")
+        print("lerobot-teleoperate and lerobot-record do this for you on every cycle. In your")
+        print("own loop, call send_feedback(robot.get_observation()) before get_action().")
+        print("Either way, run the follower with a limit such as --robot.max_relative_target=5.")
         print("=" * 78 + "\n")
 
 
-def _binding_to_profile(binding: JointBinding) -> dict[str, Any]:
-    payload = asdict(binding)
-    payload["source"] = binding.source.value
-    return payload
-
-
-def _binding_from_profile(raw: dict[str, Any]) -> JointBinding:
-    payload = dict(raw)
-    payload["source"] = InputSource(payload.get("source", InputSource.NONE.value))
-    fields = JointBinding.__dataclass_fields__
-    return JointBinding(**{k: v for k, v in payload.items() if k in fields})
+def _blocked_direction(position: float, limits: tuple[float, float] | None) -> int:
+    """Return +1 or -1 for the direction a joint can no longer travel, or 0 when it is free."""
+    if limits is None:
+        return 0
+    low, high = limits
+    if position >= high - 1e-6:
+        return 1
+    if position <= low + 1e-6:
+        return -1
+    return 0

@@ -298,6 +298,11 @@ def record_loop(
 
         # Get action from teleop
         if isinstance(teleop, Teleoperator):
+            # accessible_teleop has to be anchored on the measured pose *before* it produces
+            # an action, or its first engaged command would make the arm jump to the
+            # configured start pose.
+            if teleop.name == "accessible_teleop":
+                teleop.send_feedback(obs)
             act = teleop.get_action()
             if robot.name == "unitree_g1":
                 teleop.send_feedback(obs)

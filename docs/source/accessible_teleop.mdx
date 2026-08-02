@@ -63,10 +63,29 @@ The control page opens automatically at `http://127.0.0.1:8777`. `connect()` blo
    joint feels twitchy, and lower the speed on joints that carry the arm's weight.
 4. **Drive.** Press **Engage control** or the space bar. Press it again, or **Stop**, to release.
 
+A few things about the page are worth knowing before you use it:
+
+- **Joysticks are relative.** Wherever you press becomes the zero point, and the command is your
+  offset from there. Nothing jumps when you make contact, and **Movement needed for full speed** sets
+  how far you have to travel — lower it if your comfortable range is small.
+- **A pad only appears once something is bound to it**, and a pad with a single bound axis is drawn as
+  a track along that axis. The other axis is ignored, so a wobble cannot leak into a joint you did not
+  mean to drive.
+- **Robot view** shows any camera attached to the machine, opened by the browser rather than relayed
+  through Python. In fullscreen the joysticks come with you and the space bar still works.
+- **One page drives at a time.** Open several and the one holding its clutch closed wins; the others
+  say so in the header. A page that is hidden or backgrounded releases its clutch, because its update
+  loop stops and it can no longer be steering.
+- **A joint at its limit says which way it cannot go**, so a control that appears dead is
+  distinguishable from one that is refusing to push a joint further into a mechanical stop.
+
 The profile is saved automatically to
 `~/.cache/huggingface/lerobot/calibration/teleoperators/accessible_teleop/<id>.json` whenever you
 change it, and reloaded on the next run. It holds both the bindings and the captured ranges, so it is
 the thing to copy between machines or to hand to someone setting up the same operator elsewhere.
+
+It sits alongside the motor calibration files but is not one: it describes an operator rather than a
+piece of hardware. Nothing about it is specific to the arm you happen to be driving.
 
 ## Available channels
 
@@ -88,11 +107,14 @@ and the two directions of a movement land on opposite signs.
 This teleoperator commands absolute joint positions it integrates itself, so it has to be careful
 about where it thinks the robot is.
 
-- **It stays silent until you engage.** `get_action()` returns an empty dict until the operator engages
-  the clutch for the first time.
-- **The first engaged command is the start pose.** The follower may be somewhere else entirely. Either
-  run with `--robot.max_relative_target` so the robot rate-limits the approach, or feed the follower's
-  observation back with [`send_feedback`](#anchoring-on-the-robots-real-position) before engaging.
+- **Nothing moves until you engage.** The commanded pose only changes while the clutch is held closed,
+  so until then every cycle repeats the same action and the arm holds still.
+- **It anchors on where the arm really is.** `lerobot-teleoperate` and `lerobot-record` hand this
+  teleoperator the follower's observation before reading each action, so the pose it holds is the
+  pose the arm is already in and engaging cannot produce a jump. Drive it from your own loop without
+  doing that and it starts from `start_pose` instead, which the follower may be far away from — see
+  [anchoring](#anchoring-on-the-robots-real-position). Run with `--robot.max_relative_target` either
+  way, so the robot rate-limits any approach.
 - **Silence stops the robot.** If no input frame arrives within `input_timeout_s` (0.5 s by default) the
   clutch is released, so a closed tab, a crashed browser, or a dead Wi-Fi link cannot leave a joint
   travelling.
@@ -128,9 +150,9 @@ Leave a few degrees of margin, and remember the gripper is a percentage rather t
 
 ### Anchoring on the robot's real position
 
-`send_feedback` accepts the follower's observation and re-anchors the commanded pose, which removes
-the jump on first engage. The stock `lerobot-teleoperate` loop does not call it, so wire it up
-yourself when you need it:
+`send_feedback` accepts the follower's observation and re-anchors the commanded pose, which is what
+removes the jump on first engage. The stock loops do this for you. In a loop of your own, call it
+before `get_action()` on every cycle:
 
 ```python
 from lerobot.robots.so_follower import SO101Follower, SOFollowerRobotConfig
@@ -144,9 +166,7 @@ teleop.connect()
 while True:
     observation = robot.get_observation()
     teleop.send_feedback(observation)  # ignored while the clutch is engaged
-    action = teleop.get_action()
-    if action:
-        robot.send_action(action)
+    robot.send_action(teleop.get_action())
 ```
 
 ## Configuring it from the command line
@@ -171,23 +191,24 @@ lerobot-teleoperate \
 A saved profile takes precedence over these values, because it represents what the operator actually
 tuned. Delete the calibration file to start from the config again.
 
-| Option              | Default               | Purpose                                         |
-| ------------------- | --------------------- | ----------------------------------------------- |
-| `joints`            | the six SO-101 joints | Which joints to command, in page order          |
-| `bindings`          | all unbound           | Per-joint input and tuning                      |
-| `joint_limits`      | ±75°, gripper 0–100   | Travel limit in the follower's normalized units |
-| `start_pose`        | mid-range, gripper 50 | Pose commanded on first engage                  |
-| `host` / `web_port` | `127.0.0.1` / `8777`  | Where the page is served                        |
-| `open_browser`      | `true`                | Open the page automatically                     |
-| `connect_timeout_s` | `180`                 | How long `connect` waits for the page           |
-| `input_timeout_s`   | `0.5`                 | Silence tolerated before the clutch is released |
-| `max_step_s`        | `0.06`                | Largest integration step honoured               |
-| `face_tracking`     | `true`                | Serve the face channels at all                  |
+| Option              | Default               | Purpose                                           |
+| ------------------- | --------------------- | ------------------------------------------------- |
+| `joints`            | the six SO-101 joints | Which joints to command, in page order            |
+| `bindings`          | all unbound           | Per-joint input and tuning                        |
+| `joint_limits`      | ±75°, gripper 0–100   | Travel limit in the follower's normalized units   |
+| `start_pose`        | mid-range, gripper 50 | Pose held until the robot's own position is known |
+| `host` / `web_port` | `127.0.0.1` / `8777`  | Where the page is served                          |
+| `open_browser`      | `true`                | Open the page automatically                       |
+| `connect_timeout_s` | `180`                 | How long `connect` waits for the page             |
+| `input_timeout_s`   | `0.5`                 | Silence tolerated before the clutch is released   |
+| `max_step_s`        | `0.06`                | Largest integration step honoured                 |
+| `face_tracking`     | `true`                | Serve the face channels at all                    |
 
 ## Recording datasets
 
-The teleoperator emits the same `{joint}.pos` action keys as a leader arm, so `lerobot-record` works
-unchanged:
+The teleoperator emits the same `{joint}.pos` action keys as a leader arm, and holds a steady pose
+whenever the clutch is open, so `lerobot-record` works unchanged. Episodes recorded before the
+operator engages contain that held pose rather than a gap:
 
 ```bash
 lerobot-record \

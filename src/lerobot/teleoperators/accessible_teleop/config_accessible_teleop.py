@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from ..config import TeleoperatorConfig
 
@@ -142,6 +143,46 @@ class JointBinding:
     deadzone: float = 0.12
     smoothing: float = 0.72
     speed: float = 30.0
+
+
+def binding_to_dict(binding: JointBinding) -> dict[str, Any]:
+    """Convert a binding to JSON-safe primitives, for the page and the saved profile."""
+    payload = asdict(binding)
+    payload["source"] = binding.source.value
+    return payload
+
+
+def binding_from_dict(raw: dict[str, Any]) -> JointBinding:
+    """Rebuild a binding from JSON, falling back to defaults on anything unusable.
+
+    The two sources of these dicts are a browser and a file the operator may have edited by
+    hand, so neither is trusted. An unrecognised source leaves the joint unbound rather than
+    raising, which loses one binding instead of the whole profile.
+    """
+    defaults = JointBinding()
+    try:
+        source = InputSource(raw.get("source", InputSource.NONE.value))
+    except ValueError:
+        source = InputSource.NONE
+
+    def number(key: str, fallback: float) -> float:
+        value = raw.get(key, fallback)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    return JointBinding(
+        source=source,
+        channel=raw.get("channel") or None,
+        positive_key=raw.get("positive_key") or None,
+        negative_key=raw.get("negative_key") or None,
+        invert=bool(raw.get("invert", False)),
+        gain=number("gain", defaults.gain),
+        deadzone=number("deadzone", defaults.deadzone),
+        smoothing=number("smoothing", defaults.smoothing),
+        speed=number("speed", defaults.speed),
+    )
 
 
 def default_bindings() -> dict[str, JointBinding]:

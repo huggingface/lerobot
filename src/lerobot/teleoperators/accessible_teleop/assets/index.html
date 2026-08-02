@@ -190,6 +190,10 @@ limitations under the License.
         margin-left: auto;
         font-variant-numeric: tabular-nums;
       }
+      .warn-text {
+        color: var(--warn);
+        margin: 8px 0 0;
+      }
       .row {
         display: flex;
         gap: 10px;
@@ -252,6 +256,52 @@ limitations under the License.
         grid-template-columns: 1fr 1fr;
         gap: 14px;
       }
+      .pads:has(> [hidden]) {
+        grid-template-columns: 1fr;
+      }
+      #scene-wrap {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #000;
+      }
+      #scene {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+        background: #000;
+      }
+      #scene-wrap:fullscreen #scene {
+        width: 100vw;
+        height: 100vh;
+        aspect-ratio: auto;
+      }
+      #scene-overlay {
+        display: none;
+      }
+      /* The overlay only earns its space in fullscreen, where the rest of the page is gone
+         and the operator still needs the clutch state and their joysticks. */
+      #scene-wrap:fullscreen #scene-overlay {
+        position: absolute;
+        inset: auto 0 0 0;
+        display: flex;
+        gap: 32px;
+        align-items: flex-end;
+        justify-content: space-between;
+        padding: 24px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+      }
+      #scene-wrap:fullscreen .pads {
+        width: 340px;
+      }
+      #scene-status {
+        font-size: 18px;
+      }
+      #scene-status.is-live {
+        color: var(--live);
+      }
       .pad {
         position: relative;
         aspect-ratio: 1;
@@ -259,7 +309,24 @@ limitations under the License.
         border-radius: 12px;
         background: radial-gradient(circle at center, #141a21, #0e1319);
         touch-action: none;
-        cursor: crosshair;
+        cursor: grab;
+      }
+      /* One bound axis needs a track, not a square: the shape tells you which way it moves. */
+      .pad[data-axes="x"] {
+        aspect-ratio: 4 / 1;
+        border-radius: 999px;
+        cursor: ew-resize;
+      }
+      .pad[data-axes="y"] {
+        aspect-ratio: 1 / 3;
+        margin: 0 auto;
+        width: 90px;
+        border-radius: 999px;
+        cursor: ns-resize;
+      }
+      .pad.is-holding {
+        cursor: grabbing;
+        border-color: var(--accent);
       }
       .pad.is-active {
         border-color: var(--accent);
@@ -280,6 +347,24 @@ limitations under the License.
         inset: 12px;
         border: 1px dashed var(--line);
         border-radius: 50%;
+      }
+      .pad[data-axes="x"] b,
+      .pad[data-axes="y"] b {
+        inset: 6px;
+        border-radius: 999px;
+      }
+      /* Marks where the finger landed, so the operator can see what they are moving from. */
+      .pad u {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        margin: -5px 0 0 -5px;
+        border-radius: 50%;
+        background: var(--muted);
+        opacity: 0;
+      }
+      .pad.is-holding u {
+        opacity: 0.7;
       }
       .keys {
         display: flex;
@@ -380,42 +465,72 @@ limitations under the License.
         <section>
           <h2>Joint and input map</h2>
           <div id="arm-banner" class="banner">
-            Nothing has been sent to the robot yet. The first time you engage control, the arm
-            moves to its start pose. Clear the workspace first.
+            This teleoperator has not been told where the arm actually is, so it is holding
+            its configured start pose. Engaging control could move the arm there. Clear the
+            workspace first.
           </div>
           <div id="joints"></div>
         </section>
       </div>
 
       <div>
-        <section>
+        <section id="scene-section">
+          <h2>Robot view</h2>
+          <div class="row" style="margin-bottom: 12px">
+            <label>
+              <select id="scene-device" aria-label="Camera for the robot view"></select>
+            </label>
+            <button id="scene-start">Start view</button>
+            <button id="scene-full" disabled>Fullscreen</button>
+          </div>
+          <div id="scene-wrap">
+            <video id="scene" playsinline muted autoplay></video>
+            <div id="scene-overlay"><div id="scene-status" class="sub"></div></div>
+          </div>
+          <p class="sub" id="scene-note" style="margin: 10px 0 0">
+            Point a camera at the workspace. In fullscreen the joysticks come with you, and
+            Space still engages control.
+          </p>
+        </section>
+
+        <section id="pads-section">
           <h2>On-screen joysticks</h2>
-          <div class="pads">
-            <div>
+          <div class="pads" id="pads">
+            <div id="pad_a_wrap">
               <div
                 class="pad"
                 id="pad_a"
                 role="application"
                 tabindex="0"
-                aria-label="Joystick A. Drag, or focus and use the arrow keys."
+                aria-label="Joystick A. Press anywhere and move from there, or focus and use the arrow keys."
               >
-                <b></b><i></i>
+                <b></b><u></u><i></i>
               </div>
               <div class="sub" style="margin-top: 6px">Pad A</div>
             </div>
-            <div>
+            <div id="pad_b_wrap">
               <div
                 class="pad"
                 id="pad_b"
                 role="application"
                 tabindex="0"
-                aria-label="Joystick B. Drag, or focus and use the arrow keys."
+                aria-label="Joystick B. Press anywhere and move from there, or focus and use the arrow keys."
               >
-                <b></b><i></i>
+                <b></b><u></u><i></i>
               </div>
               <div class="sub" style="margin-top: 6px">Pad B</div>
             </div>
           </div>
+          <div class="tune" id="pads-tune" style="margin-top: 14px">
+            <label>
+              <span>Movement needed for full speed <b id="pad-travel-value">60 px</b></span>
+              <input id="pad-travel" type="range" min="15" max="200" step="5" value="60" />
+            </label>
+          </div>
+          <p class="sub" style="margin: 10px 0 0">
+            Press anywhere on the pad and move from that point; wherever you land becomes the
+            centre, so nothing jumps and a short movement can reach full speed.
+          </p>
         </section>
 
         <section id="face-section">
@@ -480,7 +595,7 @@ limitations under the License.
         tracking: false,
         capture: null,
         socket: null,
-        armed: false,
+        anchored: false,
       };
 
       const $ = (id) => document.getElementById(id);
@@ -542,12 +657,22 @@ limitations under the License.
 
       // ── joysticks ──────────────────────────────────────────────────────
 
+      // How far the finger travels for full deflection, in CSS pixels. Small values suit a
+      // small comfortable range of movement, which is the whole point of this teleoperator.
+      let padTravel = Number(localStorage.getItem("padTravel")) || 60;
+
       for (const pad of ["pad_a", "pad_b"]) {
         const element = $(pad);
         const knob = element.querySelector("i");
+        const origin = element.querySelector("u");
         let pointer = null;
+        let anchor = null;
 
         const apply = (x, y) => {
+          // An axis nothing is bound to should not be able to contribute a stray command.
+          const axes = padAxes(pad);
+          if (!axes.x) x = 0;
+          if (!axes.y) y = 0;
           const length = Math.hypot(x, y);
           if (length > 1) {
             x /= length;
@@ -557,22 +682,32 @@ limitations under the License.
           knob.style.transform = `translate(${x * 38}%, ${-y * 38}%)`;
           element.classList.toggle("is-active", Math.hypot(x, y) > 0.02);
         };
+        // Relative to where the finger landed, not to the centre of the pad. Absolute
+        // mapping means touching near an edge commands full speed instantly, and forces the
+        // operator to cross the whole pad to reach it.
         const fromPointer = (event) => {
-          const rect = element.getBoundingClientRect();
+          if (!anchor) return;
           apply(
-            clamp(((event.clientX - rect.left) / rect.width) * 2 - 1, -1, 1),
-            clamp(1 - ((event.clientY - rect.top) / rect.height) * 2, -1, 1),
+            clamp((event.clientX - anchor.x) / padTravel, -1, 1),
+            clamp(-(event.clientY - anchor.y) / padTravel, -1, 1),
           );
         };
         const release = () => {
           pointer = null;
+          anchor = null;
+          element.classList.remove("is-holding");
           apply(0, 0);
         };
 
         element.addEventListener("pointerdown", (event) => {
           pointer = event.pointerId;
+          anchor = { x: event.clientX, y: event.clientY };
           element.setPointerCapture(event.pointerId);
-          fromPointer(event);
+          element.classList.add("is-holding");
+          const rect = element.getBoundingClientRect();
+          origin.style.left = `${event.clientX - rect.left}px`;
+          origin.style.top = `${event.clientY - rect.top}px`;
+          apply(0, 0);
         });
         element.addEventListener("pointermove", (event) => {
           if (pointer === event.pointerId) fromPointer(event);
@@ -599,6 +734,16 @@ limitations under the License.
           apply(0, 0);
         });
       }
+
+      const padTravelInput = $("pad-travel");
+      padTravelInput.value = String(padTravel);
+      const showPadTravel = () => ($("pad-travel-value").textContent = `${padTravel} px`);
+      showPadTravel();
+      padTravelInput.addEventListener("input", () => {
+        padTravel = Number(padTravelInput.value);
+        localStorage.setItem("padTravel", String(padTravel));
+        showPadTravel();
+      });
 
       // ── keyboard ───────────────────────────────────────────────────────
 
@@ -635,6 +780,13 @@ limitations under the License.
         state.keys = {};
         setEngaged(false);
       });
+      document.addEventListener("visibilitychange", () => {
+        // A hidden tab stops running its loop, so it must not walk away still engaged.
+        if (document.hidden) {
+          state.keys = {};
+          setEngaged(false);
+        }
+      });
 
       // ── joint map ──────────────────────────────────────────────────────
 
@@ -645,6 +797,30 @@ limitations under the License.
         for (const joint of BOOTSTRAP.joints) {
           jointsRoot.appendChild(renderJoint(joint));
         }
+        syncPadVisibility();
+      }
+
+      /** Which axes of a pad any joint is actually bound to. */
+      function padAxes(pad) {
+        const bound = (axis) =>
+          Object.values(state.bindings).some(
+            (binding) => binding.source === "joystick" && binding.channel === `${pad}.${axis}`,
+          );
+        return { x: bound("x"), y: bound("y") };
+      }
+
+      /** Show a joystick only once a joint is bound to it; an unused pad is just clutter. */
+      function syncPadVisibility() {
+        let anyVisible = false;
+        for (const pad of ["pad_a", "pad_b"]) {
+          const axes = padAxes(pad);
+          const used = axes.x || axes.y;
+          $(`${pad}_wrap`).hidden = !used;
+          // A pad with one bound axis is drawn as a track along that axis.
+          $(pad).dataset.axes = axes.x && axes.y ? "xy" : axes.x ? "x" : "y";
+          anyVisible ||= used;
+        }
+        $("pads-section").hidden = !anyVisible;
       }
 
       function renderJoint(joint) {
@@ -719,12 +895,22 @@ limitations under the License.
         if (binding.source === "face" && binding.channel) {
           const calibrate = document.createElement("button");
           const ready = state.calibrations[binding.channel]?.ready;
+          calibrate.dataset.role = "calibrate";
           calibrate.textContent = ready ? "Recalibrate" : "Calibrate";
-          calibrate.disabled = !state.tracking;
           calibrate.addEventListener("click", () => startCapture(binding.channel));
           row.appendChild(calibrate);
         }
         card.appendChild(row);
+
+        if (binding.source === "face" && binding.channel && !state.calibrations[binding.channel]?.ready) {
+          // Silence here is the worst outcome: the joint looks bound but cannot move.
+          const warning = document.createElement("p");
+          warning.className = "sub warn-text";
+          warning.dataset.role = "face-warning";
+          card.appendChild(warning);
+        }
+
+        syncTrackingControls(card);
 
         if (binding.source === "keyboard") {
           const keys = document.createElement("div");
@@ -813,6 +999,36 @@ limitations under the License.
         }
       }
 
+      /**
+       * Reflect the current tracking state in the joint cards, in place.
+       *
+       * Whether a face channel can be calibrated depends on the camera, which starts long
+       * after the cards are built and drops out whenever the face leaves frame. Rebuilding
+       * the cards on every flip would throw away focus and interrupt whatever the operator
+       * is doing, so the few affected controls are updated directly instead.
+       */
+      function syncTrackingControls(root) {
+        for (const card of root ? [root] : jointsRoot.children) {
+          const calibrate = card.querySelector("[data-role='calibrate']");
+          if (calibrate) {
+            calibrate.disabled = !state.tracking;
+            calibrate.title = state.tracking ? "" : "Start the camera first";
+          }
+          const warning = card.querySelector("[data-role='face-warning']");
+          if (warning) {
+            warning.textContent = state.tracking
+              ? "This joint stays still until you calibrate the channel."
+              : "This joint stays still until you start the camera and calibrate the channel.";
+          }
+        }
+      }
+
+      function setTracking(next) {
+        if (state.tracking === next) return;
+        state.tracking = next;
+        syncTrackingControls();
+      }
+
       function startCapture(channel) {
         const neutral = state.faceSignals[channel] ?? 0;
         state.capture = { channel, neutral, min: 0, max: 0, until: performance.now() + CAPTURE_MS };
@@ -890,7 +1106,7 @@ limitations under the License.
         const result = landmarker.detectForVideo(video, timestamp);
         const shapes = result.faceBlendshapes?.[0]?.categories;
         if (!shapes) {
-          state.tracking = false;
+          setTracking(false);
           setDot("face", "warn", "face not found");
           return;
         }
@@ -906,9 +1122,82 @@ limitations under the License.
             (at("mouthSmileLeft") + at("mouthSmileRight")) / 2 - at("mouthPucker"),
           "face.eye_wink": at("eyeBlinkRight") - at("eyeBlinkLeft"),
         };
-        state.tracking = true;
+        setTracking(true);
         setDot("face", "ok", "tracking");
       }
+
+      // ── robot view ─────────────────────────────────────────────────────
+
+      // A camera watching the workspace is served straight to the page by the browser rather
+      // than relayed through Python: no extra latency, and no video on the control socket.
+
+      const scene = $("scene");
+      const sceneWrap = $("scene-wrap");
+      const sceneDevice = $("scene-device");
+      let sceneStream = null;
+
+      async function listSceneCameras() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((device) => device.kind === "videoinput");
+        const chosen = sceneDevice.value;
+        sceneDevice.replaceChildren();
+        for (const [index, camera] of cameras.entries()) {
+          // Labels stay empty until the user has granted camera access once.
+          const name = camera.label || `Camera ${index + 1}`;
+          sceneDevice.appendChild(new Option(name, camera.deviceId, false, camera.deviceId === chosen));
+        }
+        if (!cameras.length) sceneDevice.appendChild(new Option("No camera found", ""));
+      }
+
+      async function startScene() {
+        const deviceId = sceneDevice.value;
+        stopScene();
+        sceneStream = await navigator.mediaDevices.getUserMedia({
+          video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        });
+        scene.srcObject = sceneStream;
+        await scene.play();
+        $("scene-full").disabled = false;
+        $("scene-start").textContent = "Restart view";
+        await listSceneCameras();
+      }
+
+      function stopScene() {
+        for (const track of sceneStream?.getTracks() ?? []) track.stop();
+        sceneStream = null;
+      }
+
+      $("scene-start").addEventListener("click", async () => {
+        $("scene-note").textContent = "Starting the camera\u2026";
+        try {
+          await startScene();
+          $("scene-note").textContent =
+            "In fullscreen the joysticks come with you, and Space still engages control.";
+        } catch (error) {
+          $("scene-note").textContent = `Camera unavailable: ${error.message}`;
+        }
+      });
+      sceneDevice.addEventListener("change", () => {
+        if (sceneStream) startScene().catch(() => {});
+      });
+      $("scene-full").addEventListener("click", () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else sceneWrap.requestFullscreen();
+      });
+
+      // Carry the joysticks into fullscreen rather than duplicating them: moving the nodes
+      // keeps their pointer handlers and their current values intact.
+      const padsHome = $("pads");
+      document.addEventListener("fullscreenchange", () => {
+        if (document.fullscreenElement === sceneWrap) {
+          $("scene-overlay").appendChild(padsHome);
+        } else {
+          $("pads-section").appendChild(padsHome);
+        }
+        $("scene-full").textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+      });
+
+      listSceneCameras().catch(() => {});
 
       // ── readouts ───────────────────────────────────────────────────────
 
@@ -920,8 +1209,18 @@ limitations under the License.
       }
 
       function renderState(message) {
-        state.armed = message.armed;
-        $("arm-banner").hidden = message.armed;
+        state.anchored = message.anchored;
+        $("arm-banner").hidden = message.anchored;
+        const status = $("scene-status");
+        status.classList.toggle("is-live", Boolean(message.engaged));
+        status.textContent = message.engaged
+          ? "Control is live \u00b7 Space to release"
+          : "Control released \u00b7 Space to engage";
+        if (message.clients > 1) {
+          setDot("link", "warn", `${message.clients} pages open \u00b7 close the others`);
+        } else {
+          setDot("link", "ok", "connected");
+        }
         for (const card of jointsRoot.children) {
           const joint = card.dataset.joint;
           const position = message.pose?.[joint];
@@ -933,8 +1232,11 @@ limitations under the License.
           const span = (high - low) / 2 || 1;
           const offset = (position - centre) / span;
           fill(bar, offset, offset < 0);
+          const blocked = message.blocked?.[joint] ?? 0;
+          const [, negative, positive] = JOINT_LABELS[joint] ?? [joint, "negative", "positive"];
+          const note = blocked ? ` \u00b7 at limit, cannot ${blocked > 0 ? positive : negative}` : "";
           card.querySelector("[data-role='readout']").textContent =
-            `${signed(position)}${bar.dataset.unit}${message.atLimit?.[joint] ? " \u00b7 at limit" : ""}`;
+            `${signed(position)}${bar.dataset.unit}${note}`;
           card.classList.toggle("is-live", Math.abs(message.velocity?.[joint] ?? 0) > 0.01);
         }
         $("pose").innerHTML = Object.entries(message.pose ?? {})

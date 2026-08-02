@@ -35,8 +35,9 @@ from .config_accessible_teleop import (
     JOYSTICK_CHANNELS,
     AccessibleTeleopConfig,
     ChannelCalibration,
-    InputSource,
     JointBinding,
+    binding_from_dict,
+    binding_to_dict,
 )
 from .control import InputFrame
 
@@ -77,9 +78,10 @@ class ControlBridge:
         self._on_profile_change = on_profile_change
 
         self._lock = threading.Lock()
-        self._frame = InputFrame()
-        self._frame_monotonic: float | None = None
-        self._clients = 0
+        # Input is tracked per page rather than globally: a second page left open on another
+        # screen must not be able to overwrite the input of the page actually being driven.
+        self._frames: dict[int, tuple[InputFrame, float | None]] = {}
+        self._next_client_id = 0
         self._client_seen = threading.Event()
 
         self._server: Server | None = None
@@ -106,7 +108,7 @@ class ControlBridge:
     @property
     def client_count(self) -> int:
         with self._lock:
-            return self._clients
+            return len(self._frames)
 
     def start(self) -> None:
         self._server = serve(
@@ -136,26 +138,39 @@ class ControlBridge:
     # ── operator input ───────────────────────────────────────────────────
 
     def read_frame(self) -> tuple[InputFrame, float | None]:
-        """Return the latest input frame and its age in seconds.
+        """Return the input frame in charge of the robot, and its age in seconds.
+
+        With several pages open, the one holding its clutch closed wins; among equals the
+        freshest frame wins. Without that rule an idle second page would overwrite the
+        driving page's input sixty times a second, and the clutch could never latch.
 
         The age is ``None`` when no frame has arrived yet. A stale frame is the caller's
         problem to act on: the bridge never invents input.
         """
+        now = time.monotonic()
         with self._lock:
+            stamped = [(frame, at) for frame, at in self._frames.values() if at is not None]
+            if not stamped:
+                return InputFrame(), None
+            # A page that stopped reporting, because it was backgrounded or its tab froze,
+            # must not keep the clutch it was holding when it went quiet.
+            fresh = [entry for entry in stamped if now - entry[1] <= self.config.input_timeout_s]
+            engaged = [entry for entry in fresh if entry[0].engaged]
+            frame, at = max(engaged or fresh or stamped, key=lambda entry: entry[1])
             frame = InputFrame(
-                channels=dict(self._frame.channels),
-                keys=dict(self._frame.keys),
-                engaged=self._frame.engaged,
-                tracking=self._frame.tracking,
+                channels=dict(frame.channels),
+                keys=dict(frame.keys),
+                engaged=frame.engaged,
+                tracking=frame.tracking,
             )
-            stamped = self._frame_monotonic
-        age = None if stamped is None else time.monotonic() - stamped
-        return frame, age
+        return frame, now - at
 
     def release_clutch(self) -> None:
         """Force the clutch open, e.g. because input went stale or the loop is shutting down."""
         with self._lock:
-            self._frame.engaged = False
+            for client_id, (frame, at) in self._frames.items():
+                frame.engaged = False
+                self._frames[client_id] = (frame, at)
 
     def publish_state(self, state: dict[str, Any]) -> None:
         """Hand the page the robot-facing state it should display."""
@@ -187,7 +202,7 @@ class ControlBridge:
 
     def _bootstrap(self) -> dict[str, Any]:
         with self._lock:
-            bindings = {joint: _binding_to_json(b) for joint, b in self.bindings.items()}
+            bindings = {joint: binding_to_dict(b) for joint, b in self.bindings.items()}
             calibrations = {ch: asdict(c) for ch, c in self.calibrations.items()}
         return {
             "joints": list(self.config.joints),
@@ -206,9 +221,17 @@ class ControlBridge:
 
     def _handle_connection(self, connection: "ServerConnection") -> None:
         with self._lock:
-            self._clients += 1
+            client_id = self._next_client_id
+            self._next_client_id += 1
+            self._frames[client_id] = (InputFrame(), None)
+            client_count = len(self._frames)
         self._client_seen.set()
         logger.info("Control page connected")
+        if client_count > 1:
+            logger.warning(
+                f"{client_count} control pages are open; only the one holding its clutch "
+                "closed drives the robot."
+            )
 
         state_period = 1.0 / STATE_BROADCAST_HZ
         next_state = 0.0
@@ -219,27 +242,25 @@ class ControlBridge:
                 except TimeoutError:
                     message = None
                 if message is not None:
-                    self._handle_message(message)
+                    self._handle_message(client_id, message)
 
                 now = time.monotonic()
                 if now >= next_state:
                     next_state = now + state_period
                     with self._lock:
                         state = dict(self._state)
+                        state["clients"] = len(self._frames)
                     if state:
                         connection.send(json.dumps({"type": "state", **state}))
         except Exception as exc:  # noqa: BLE001 - a dropped page must not kill the robot loop
             logger.debug(f"Control page connection ended: {exc}")
         finally:
+            # A page that goes away takes its input, and any clutch it was holding, with it.
             with self._lock:
-                self._clients -= 1
-                remaining = self._clients
-                # A page that goes away can no longer hold the clutch open.
-                if remaining == 0:
-                    self._frame.engaged = False
+                self._frames.pop(client_id, None)
             logger.info("Control page disconnected")
 
-    def _handle_message(self, message: str | bytes) -> None:
+    def _handle_message(self, client_id: int, message: str | bytes) -> None:
         try:
             payload = json.loads(message)
         except (TypeError, ValueError):
@@ -248,7 +269,7 @@ class ControlBridge:
 
         kind = payload.get("type")
         if kind == "input":
-            self._apply_input(payload)
+            self._apply_input(client_id, payload)
         elif kind == "profile":
             self._apply_profile(payload)
         elif kind == "stop":
@@ -256,7 +277,7 @@ class ControlBridge:
         else:
             logger.debug(f"Ignoring unknown message type from control page: {kind!r}")
 
-    def _apply_input(self, payload: dict[str, Any]) -> None:
+    def _apply_input(self, client_id: int, payload: dict[str, Any]) -> None:
         channels = payload.get("channels") or {}
         keys = payload.get("keys") or {}
         frame = InputFrame(
@@ -266,8 +287,7 @@ class ControlBridge:
             tracking=bool(payload.get("tracking", False)),
         )
         with self._lock:
-            self._frame = frame
-            self._frame_monotonic = time.monotonic()
+            self._frames[client_id] = (frame, time.monotonic())
 
     def _apply_profile(self, payload: dict[str, Any]) -> None:
         bindings = payload.get("bindings") or {}
@@ -275,7 +295,7 @@ class ControlBridge:
         with self._lock:
             for joint, raw in bindings.items():
                 if joint in self.bindings:
-                    self.bindings[joint] = _binding_from_json(raw)
+                    self.bindings[joint] = binding_from_dict(raw)
             for channel, raw in calibrations.items():
                 self.calibrations[channel] = ChannelCalibration(
                     neutral=float(raw.get("neutral", 0.0)),
@@ -290,28 +310,3 @@ class ControlBridge:
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _binding_to_json(binding: JointBinding) -> dict[str, Any]:
-    payload = asdict(binding)
-    payload["source"] = binding.source.value
-    return payload
-
-
-def _binding_from_json(raw: dict[str, Any]) -> JointBinding:
-    defaults = JointBinding()
-    try:
-        source = InputSource(raw.get("source", InputSource.NONE.value))
-    except ValueError:
-        source = InputSource.NONE
-    return JointBinding(
-        source=source,
-        channel=raw.get("channel") or None,
-        positive_key=raw.get("positive_key") or None,
-        negative_key=raw.get("negative_key") or None,
-        invert=bool(raw.get("invert", False)),
-        gain=float(raw.get("gain", defaults.gain)),
-        deadzone=float(raw.get("deadzone", defaults.deadzone)),
-        smoothing=float(raw.get("smoothing", defaults.smoothing)),
-        speed=float(raw.get("speed", defaults.speed)),
-    )
