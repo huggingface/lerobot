@@ -30,10 +30,19 @@ Only Qwen + the action head are used. The world model is not needed at inference
 
 Available presets via `action_model_type`:
 
-| Preset  | Hidden dim | Heads | Head dim |
-| ------- | ---------- | ----- | -------- |
-| `DiT-B` | 768        | 12    | 64       |
-| `DiT-L` | 1536       | 32    | 48       |
+| Preset  | Heads | Head dim |
+| ------- | ----- | -------- |
+| `DiT-B` | 12    | 64       |
+| `DiT-L` | 32    | 48       |
+
+The preset only sets the attention geometry, and each entry can be overridden by
+`action_num_heads` / `action_attention_head_dim`. Two widths follow from it:
+
+- the DiT's **internal** width is `heads x head_dim` (768 for `DiT-B`), derived rather than configured;
+- the DiT's **output** width, and the width of the action-decoder and state-encoder MLPs, is
+  `action_hidden_size` (default 1024).
+
+So `DiT-B` runs a 768-wide transformer that projects to 1024. The two are independent.
 
 ### World model details
 
@@ -64,21 +73,38 @@ All checkpoints use `Qwen/Qwen3-VL-2B-Instruct` as the language backbone.
 
 Key parameters in `VLAJEPAConfig`:
 
-| Parameter                    | Default | Description                                                                                                                                                                                                     |
-| ---------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chunk_size`                 | 7       | Number of actions predicted per inference call                                                                                                                                                                  |
-| `n_action_steps`             | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                                                      |
-| `num_video_frames`           | 8       | Video clip length fed to the world model                                                                                                                                                                        |
-| `enable_world_model`         | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                                                 |
-| `world_model_loss_weight`    | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                                                  |
+| Parameter                 | Default | Description                                                                                                                                                                     |
+| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`              | 7       | Number of actions predicted per inference call                                                                                                                                  |
+| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                      |
+| `num_video_frames`        | 8       | Video clip length fed to the world model                                                                                                                                        |
+| `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                 |
+| `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                  |
 | `causal_world_model_context` | `False` | Encode the world-model context causally (one prefix-only V-JEPA2 pass per context position) so bidirectional attention can't leak future frames into the predictor input. Costs `t_enc_ctx` extra encoder calls |
-| `num_inference_timesteps`    | 4       | Euler integration steps for action denoising                                                                                                                                                                    |
-| `freeze_qwen`                | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                                                     |
-| `reinit_modules`             | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment))                                 |
-| `gripper_dim`                | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                                                     |
-| `gripper_threshold`          | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                                                     |
-| `pre_snap_gripper_action`    | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                                                       |
-| `binarize_gripper_action`    | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                                                   |
+| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                                                                                                                                    |
+| `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
+| `reinit_modules`          | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
+| `resize_images_to`        | `None`  | `(height, width)` every camera frame is resized to before the Qwen3-VL vision tower. `None` keeps the native resolution, and Qwen3-VL's patch count grows with it, so a 720x1280 camera can exhaust GPU memory. The published checkpoints use `[224, 224]` |
+| `gripper_dim`             | 6       | Index of the gripper dimension in the action vector. Ignored when `gripper_joint_names` matches a dataset action name                                                            |
+| `gripper_joint_names`     | `["gripper"]` | Action-dimension names identifying the gripper; the matched index wins over `gripper_dim`                                                                                  |
+| `gripper_threshold`       | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action`. Note `binarize` runs *after* unnormalization, so this is compared against the gripper's physical value |
+| `pre_snap_gripper_action` | `False` | Snap the gripper dim to {0, 1} before unnormalization. LIBERO-specific, see below                                                                                                |
+| `binarize_gripper_action` | `False` | Binarize the gripper dim to {-1, 1} after unnormalization. LIBERO-specific, see below                                                                                            |
+| `clip_normalized_actions` | `True`  | Clip normalized actions to [-1, 1] before unnormalizing. Only applied when `ACTION` uses `MIN_MAX`; ignored (with a warning) under `MEAN_STD`, where it would truncate at 1 sigma |
+| `world_model_num_views`   | `None`  | Camera views the world-model predictor is built for. Baked into checkpoint shapes. `None` falls back to `jepa_tubelet_size`, which is what the published checkpoints encode       |
+
+<Tip warning={true}>
+
+`pre_snap_gripper_action` and `binarize_gripper_action` are a port of the starVLA LIBERO eval
+loop and are only correct for LIBERO's action convention. `pre_snap` writes {0, 1} into
+*normalized* space, the unnormalizer maps those to the midpoint and the max, and `binarize` then
+compares that **physical** value against `gripper_threshold` (0.5). For a gripper measured in
+degrees, mm or [0, 100], both values land above the threshold and the commanded gripper becomes a
+constant. They default to `False` for that reason; enable them only for LIBERO-style setups, and
+set `gripper_threshold` in the gripper's own units if you do. The processor factory warns when the
+dataset stats show the range cannot work.
+
+</Tip>
 
 ---
 
@@ -188,14 +214,20 @@ lerobot-eval \
 
 ## Fine-tuning on datasets with a different number of cameras
 
-The pretrained world model predictor was trained with `embed_dim = jepa_tubelet_size × 1024` (default `jepa_tubelet_size=2`).
+The pretrained world model predictor was trained with `embed_dim = world_model_num_views × 1024`, i.e. two camera views.
+
+<Tip>
+
+This view count used to be read from `jepa_tubelet_size`, which also names the JEPA encoder's *temporal* tubelet size. `world_model_num_views` is the field for it now; leaving it at `None` falls back to `jepa_tubelet_size` so the published checkpoints keep loading unchanged.
+
+</Tip>
 
 **Default behaviour — view padding / trimming (no action required)**
 
-When fine-tuning from `VLA-JEPA-Pretrain` the model automatically adjusts the number of views fed to the world model to match `jepa_tubelet_size`:
+When fine-tuning from `VLA-JEPA-Pretrain` the model automatically adjusts the number of views fed to the world model to match `world_model_num_views`:
 
 - **Single-view datasets (e.g. BridgeV2):** the single-view latent is duplicated to produce a two-view world-model input, preserving the JEPA self-supervised signal without any weight mismatch.
-- **>2-view datasets (e.g. DROID with 3 views):** all views are passed to the Qwen backbone (for richer context), but only the first `jepa_tubelet_size` views (one wrist + one third-person, following the configured view order) are used for the world model.
+- **>2-view datasets (e.g. DROID with 3 views):** all views are passed to the Qwen backbone (for richer context), but only the first `world_model_num_views` views (one wrist + one third-person, following the configured view order) are used for the world model.
 
 **Option 1 — Disable the world model**
 
@@ -211,7 +243,7 @@ lerobot-train \
 
 **Option 2 — Reinitialize the predictor input projection**
 
-If you want to change `jepa_tubelet_size` to a value other than 2, load the checkpoint with `strict=False` and reinitialize `model.video_predictor.predictor_embed` for the new `embed_dim`. All other predictor block weights (attention, MLP, norm, output projection) are camera-count-agnostic and can be reused from the pretrained checkpoint.
+If you want to change `world_model_num_views` to a value other than 2, load the checkpoint with `strict=False` and reinitialize `model.video_predictor.predictor_embed` for the new `embed_dim`. All other predictor block weights (attention, MLP, norm, output projection) are camera-count-agnostic and can be reused from the pretrained checkpoint.
 
 ---
 
