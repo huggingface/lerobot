@@ -41,6 +41,12 @@ COMPLETED_SESSION_FREEZES = {
         "raw_tree_sha256": "ed02dda9b55400b3a4be6a837c98fff3db83ff4c7ffd5de2466c64eb39773f4b",
         "accepted_success_episodes": 24,
     },
+    3: {
+        "session_id": "task1_real96_s03",
+        "freeze_id": "task1_picklift_real96_s03_raw_attempts_freeze_v1",
+        "raw_tree_sha256": "4cc2705007a6be46c1493321d75ab137dacbeb687d809699a42aef9706638c42",
+        "accepted_success_episodes": 24,
+    },
 }
 
 
