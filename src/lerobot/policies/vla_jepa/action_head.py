@@ -189,15 +189,20 @@ class DiT(ModelMixin, ConfigMixin):
 
 @dataclass
 class ActionModelPreset:
-    hidden_size: int
+    """Default head geometry per `action_model_type`.
+
+    Only the attention geometry is preset; the DiT's width comes from
+    `config.action_hidden_size`, so there is deliberately no `hidden_size` here.
+    """
+
     attention_head_dim: int
     num_attention_heads: int
 
 
 DIT_PRESETS = {
-    "DiT-B": ActionModelPreset(hidden_size=768, attention_head_dim=64, num_attention_heads=12),
-    "DiT-L": ActionModelPreset(hidden_size=1536, attention_head_dim=48, num_attention_heads=32),
-    "DiT-test": ActionModelPreset(hidden_size=16, attention_head_dim=8, num_attention_heads=2),
+    "DiT-B": ActionModelPreset(attention_head_dim=64, num_attention_heads=12),
+    "DiT-L": ActionModelPreset(attention_head_dim=48, num_attention_heads=32),
+    "DiT-test": ActionModelPreset(attention_head_dim=8, num_attention_heads=2),
 }
 
 
@@ -248,7 +253,10 @@ class VLAJEPAActionHead(nn.Module):
         )
         self.future_tokens = nn.Embedding(config.num_embodied_action_tokens_per_instruction, inner_dim)
         self.position_embedding = nn.Embedding(
-            max(1024, config.chunk_size + config.num_action_tokens_per_timestep + 4),
+            max(
+                config.action_max_seq_len,
+                config.chunk_size + config.num_action_tokens_per_timestep + 4,
+            ),
             inner_dim,
         )
         self.beta_dist = Beta(config.action_noise_beta_alpha, config.action_noise_beta_beta)

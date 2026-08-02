@@ -110,6 +110,7 @@ class VLAJEPAModel(nn.Module):
                 num_heads=config.predictor_num_heads,
                 mlp_ratio=config.predictor_mlp_ratio,
                 num_action_tokens_per_step=config.num_action_tokens_per_timestep,
+                dropout=config.predictor_dropout,
             )
         else:
             self.video_encoder = None
