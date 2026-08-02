@@ -202,7 +202,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+            policy = cls._load_as_safetensor(
+                instance, model_file, config.device, strict, pretrained_name_or_path=model_id
+            )
         else:
             try:
                 model_file = hf_hub_download(
@@ -216,7 +218,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
-                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
+                policy = cls._load_as_safetensor(
+                    instance, model_file, config.device, strict, pretrained_name_or_path=model_id
+                )
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
@@ -227,11 +231,21 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return policy
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor(
+        cls,
+        model: T,
+        model_file: str,
+        map_location: str,
+        strict: bool,
+        *,
+        pretrained_name_or_path: str | None = None,
+    ) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
             model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )
-        log_model_loading_keys(missing_keys, unexpected_keys)
+        log_model_loading_keys(
+            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+        )
         return model
 
     @abc.abstractmethod

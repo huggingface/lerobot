@@ -467,10 +467,24 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return super().from_pretrained(pretrained_name_or_path, **kwargs)
 
     @classmethod
-    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+    def _load_as_safetensor(
+        cls,
+        model: T,
+        model_file: str,
+        map_location: str,
+        strict: bool,
+        *,
+        pretrained_name_or_path: str | None = None,
+    ) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_as_safetensor(
+                model,
+                model_file,
+                map_location,
+                strict,
+                pretrained_name_or_path=pretrained_name_or_path,
+            )
 
         from safetensors.torch import load_file
 
@@ -501,5 +515,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         from lerobot.policies.utils import log_model_loading_keys
 
         missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
-        log_model_loading_keys(missing_keys, unexpected_keys)
+        log_model_loading_keys(
+            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+        )
         return model

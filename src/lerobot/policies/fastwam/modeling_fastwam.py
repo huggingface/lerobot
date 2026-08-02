@@ -88,7 +88,15 @@ class FastWAMPolicy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def _load_as_safetensor(
+        cls,
+        model,
+        model_file: str,
+        map_location: str,
+        strict: bool,
+        *,
+        pretrained_name_or_path: str | None = None,
+    ):
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
         `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
@@ -113,7 +121,13 @@ class FastWAMPolicy(PreTrainedPolicy):
                     mismatched.append(key)
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            return super()._load_as_safetensor(
+                model,
+                model_file,
+                map_location,
+                strict,
+                pretrained_name_or_path=pretrained_name_or_path,
+            )
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
