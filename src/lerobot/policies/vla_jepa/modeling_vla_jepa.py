@@ -91,7 +91,7 @@ class VLAJEPAModel(nn.Module):
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
-            num_views = config.jepa_tubelet_size
+            num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
             if image_size is None:
@@ -204,7 +204,7 @@ class VLAJEPAModel(nn.Module):
         "mean" returns the scalar loss.
         """
         # Match the world model's expected view count: pad with the first view, or trim extras.
-        num_views = self.config.jepa_tubelet_size
+        num_views = self.config.num_world_model_views
         if videos.shape[1] < num_views:
             missing = num_views - videos.shape[1]
             videos = torch.cat([videos, videos[:, :1].repeat(1, missing, 1, 1, 1, 1)], dim=1)

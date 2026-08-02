@@ -90,7 +90,16 @@ class VLAJEPAConfig(PreTrainedConfig):
     predictor_mlp_ratio: float = 4.0
     predictor_dropout: float = 0.0
     world_model_loss_weight: float = 0.1
-    jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
+    # Temporal tubelet size of the JEPA encoder (e.g. 2 for vjepa2-vitl-fpc64-256). When the
+    # world model is enabled the encoder's own `config.tubelet_size` is authoritative and this
+    # is only used for the `num_video_frames` sanity check below.
+    jepa_tubelet_size: int = 2
+    # Number of camera views the world model's predictor is built for; its embedding width is
+    # `encoder_hidden_size * world_model_num_views`, so it is baked into the checkpoint shapes.
+    # Views beyond this are trimmed and missing ones are padded with the first view.
+    # `None` falls back to `jepa_tubelet_size`, which is what the published checkpoints
+    # (trained before the two meanings were separated) actually encode.
+    world_model_num_views: int | None = None
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
 
     resize_images_to: tuple[int, int] | None = None
@@ -132,6 +141,11 @@ class VLAJEPAConfig(PreTrainedConfig):
                 f"`video_horizon` ({self.num_video_frames}) must be >= 2 * `jepa_tubelet_size` "
                 f"({self.jepa_tubelet_size}) to have at least one context and one GT temporal position."
             )
+
+    @property
+    def num_world_model_views(self) -> int:
+        """Camera views the world model predictor is built for (see `world_model_num_views`)."""
+        return self.world_model_num_views or self.jepa_tubelet_size
 
     @property
     def resolved_gripper_dim(self) -> int:
