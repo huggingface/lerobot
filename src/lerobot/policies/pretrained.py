@@ -203,7 +203,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
             policy = cls._load_as_safetensor(
-                instance, model_file, config.device, strict, pretrained_name_or_path=model_id
+                instance,
+                model_file,
+                config.device,
+                strict,
+                pretrained_name_or_path=model_id,
+                revision=revision,
             )
         else:
             try:
@@ -219,7 +224,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     local_files_only=local_files_only,
                 )
                 policy = cls._load_as_safetensor(
-                    instance, model_file, config.device, strict, pretrained_name_or_path=model_id
+                    instance,
+                    model_file,
+                    config.device,
+                    strict,
+                    pretrained_name_or_path=model_id,
+                    revision=revision,
                 )
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
@@ -239,12 +249,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         strict: bool,
         *,
         pretrained_name_or_path: str | None = None,
+        revision: str | None = None,
     ) -> T:
         missing_keys, unexpected_keys = load_model_as_safetensor(
             model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
         )
         log_model_loading_keys(
-            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+            missing_keys,
+            unexpected_keys,
+            pretrained_name_or_path=pretrained_name_or_path,
+            revision=revision,
         )
         return model
 

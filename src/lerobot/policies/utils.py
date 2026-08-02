@@ -101,6 +101,7 @@ def log_model_loading_keys(
     unexpected_keys: list[str],
     *,
     pretrained_name_or_path: str | None = None,
+    revision: str | None = None,
 ) -> None:
     """Log missing and unexpected keys when loading a model.
 
@@ -109,6 +110,8 @@ def log_model_loading_keys(
         unexpected_keys (list[str]): Keys that were found but not expected.
         pretrained_name_or_path: Optional checkpoint id/path used to build a
             concrete migration command when legacy normalization keys are detected.
+        revision: Optional Hub revision that was loaded; included in the migration
+            command so users migrate the same checkpoint they actually used.
     """
     if missing_keys:
         logging.warning(f"Missing key(s) when loading model: {missing_keys}")
@@ -119,6 +122,8 @@ def log_model_loading_keys(
             migration_command = (
                 f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {checkpoint}"
             )
+            if revision is not None:
+                migration_command += f" --revision {revision}"
             logging.warning(
                 "This checkpoint still uses the legacy in-policy normalization system "
                 "(unexpected keys like 'normalize_inputs.buffer_*'). Those stats are not "

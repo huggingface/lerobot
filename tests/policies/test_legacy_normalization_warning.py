@@ -45,6 +45,23 @@ def test_log_model_loading_keys_warns_with_migration_command(caplog):
     assert "legacy in-policy normalization" in joined
     assert "migrate_policy_normalization.py" in joined
     assert "--pretrained-path lerobot/diffusion_pusht" in joined
+    assert "--revision" not in joined
+
+
+def test_log_model_loading_keys_includes_revision_in_migration_command(caplog):
+    unexpected = ["normalize_inputs.buffer_observation_state.mean"]
+
+    with caplog.at_level(logging.WARNING):
+        log_model_loading_keys(
+            [],
+            unexpected,
+            pretrained_name_or_path="lerobot/diffusion_pusht",
+            revision="legacy-branch",
+        )
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "--pretrained-path lerobot/diffusion_pusht" in joined
+    assert "--revision legacy-branch" in joined
 
 
 def test_log_model_loading_keys_skips_migration_warning_for_unrelated_keys(caplog):

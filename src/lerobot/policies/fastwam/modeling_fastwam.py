@@ -96,6 +96,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         strict: bool,
         *,
         pretrained_name_or_path: str | None = None,
+        revision: str | None = None,
     ):
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
@@ -127,6 +128,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 map_location,
                 strict,
                 pretrained_name_or_path=pretrained_name_or_path,
+                revision=revision,
             )
         if strict:
             raise RuntimeError(
@@ -149,7 +151,10 @@ class FastWAMPolicy(PreTrainedPolicy):
             state_dict.pop(key, None)
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
         log_model_loading_keys(
-            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+            missing_keys,
+            unexpected_keys,
+            pretrained_name_or_path=pretrained_name_or_path,
+            revision=revision,
         )
         if map_location and map_location != "cpu":
             model.to(map_location)

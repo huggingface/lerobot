@@ -475,6 +475,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         strict: bool,
         *,
         pretrained_name_or_path: str | None = None,
+        revision: str | None = None,
     ) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
@@ -484,6 +485,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 map_location,
                 strict,
                 pretrained_name_or_path=pretrained_name_or_path,
+                revision=revision,
             )
 
         from safetensors.torch import load_file
@@ -516,6 +518,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
         missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
         log_model_loading_keys(
-            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+            missing_keys,
+            unexpected_keys,
+            pretrained_name_or_path=pretrained_name_or_path,
+            revision=revision,
         )
         return model
