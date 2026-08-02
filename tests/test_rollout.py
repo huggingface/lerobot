@@ -108,6 +108,66 @@ def test_sentry_config_defaults():
     assert cfg.target_video_file_size_mb is None
 
 
+# ---------------------------------------------------------------------------
+# Compile warmup camera watchdog
+# ---------------------------------------------------------------------------
+
+
+def test_warmup_observation_timeout_retries_on_next_tick(monkeypatch):
+    import lerobot.rollout.strategies.core as core
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = SimpleNamespace(ready=False)
+    robot = MagicMock()
+    robot.get_observation.side_effect = TimeoutError("latest frame is too old")
+    sleep = MagicMock()
+    monkeypatch.setattr(core, "precise_sleep", sleep)
+    monkeypatch.setattr(core.time, "perf_counter", lambda: 0.0)
+
+    observation = strategy._get_observation_or_wait_for_warmup(
+        robot, use_torch_compile=True, loop_start=0.0, control_interval=1.0
+    )
+
+    assert observation is None
+    robot.get_observation.assert_called_once_with()
+    sleep.assert_called_once()
+
+
+def test_warmup_observation_read_starts_compile():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = SimpleNamespace(ready=False)
+    robot = MagicMock()
+    expected_observation = {"camera": object()}
+    robot.get_observation.return_value = expected_observation
+
+    observation = strategy._get_observation_or_wait_for_warmup(
+        robot, use_torch_compile=True, loop_start=0.0, control_interval=1.0
+    )
+
+    assert observation is expected_observation
+
+
+@pytest.mark.parametrize("use_torch_compile, engine_ready", [(False, False), (True, True)])
+def test_observation_timeout_propagates_outside_compile_warmup(use_torch_compile, engine_ready):
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = SimpleNamespace(ready=engine_ready)
+    robot = MagicMock()
+    robot.get_observation.side_effect = TimeoutError("latest frame is too old")
+
+    with pytest.raises(TimeoutError, match="latest frame"):
+        strategy._get_observation_or_wait_for_warmup(
+            robot, use_torch_compile=use_torch_compile, loop_start=0.0, control_interval=1.0
+        )
+
+
 def test_rollout_config_passes_policy_pretrained_revision(monkeypatch):
     from lerobot.configs import PreTrainedConfig, parser
     from lerobot.rollout import RolloutConfig
