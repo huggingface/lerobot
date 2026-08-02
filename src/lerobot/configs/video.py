@@ -38,8 +38,10 @@ HW_VIDEO_CODECS = [
     "h264_vaapi",  # Linux Intel/AMD
     "h264_qsv",  # Intel Quick Sync
 ]
+GST_VIDEO_CODECS: list[str] = ["nvv4l2av1enc", "nvv4l2h265enc", "nvv4l2h264enc"]
+
 VALID_VIDEO_CODECS: frozenset[str] = frozenset(
-    {"h264", "hevc", "libsvtav1", "libaom-av1", "auto", *HW_VIDEO_CODECS}
+    {"h264", "hevc", "libsvtav1", "libaom-av1", "auto", *HW_VIDEO_CODECS, *GST_VIDEO_CODECS}
 )
 # Aliases for legacy video codec names.
 VIDEO_CODECS_ALIASES: dict[str, str] = {"av1": "libsvtav1"}
@@ -94,7 +96,7 @@ class VideoEncoderConfig:
     fast_decode: int = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the
     # two backends (encoding and decoding).
-    video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.
+    video_backend: str = "pyav"  # Encoding backend: "pyav" or "gstreamer".
     # Extra codec options merged last, e.g. {"tune": "film"}.
     extra_options: dict[str, Any] = field(default_factory=dict)
 
@@ -155,6 +157,10 @@ class VideoEncoderConfig:
             from lerobot.datasets import detect_available_encoders_pyav
 
             return detect_available_encoders_pyav(encoders)
+        if self.video_backend == "gstreamer":
+            from lerobot.datasets.gstreamer_utils import detect_available_encoders_gst
+
+            return detect_available_encoders_gst(encoders)
         return []
 
     def validate(self) -> None:
@@ -166,6 +172,14 @@ class VideoEncoderConfig:
             check_video_encoder_parameters_pyav(
                 self.vcodec, self.pix_fmt, self.get_codec_options(), channels=self._DEFAULT_CHANNELS
             )
+        elif self.video_backend == "gstreamer":
+            from lerobot.datasets.gstreamer_utils import GST_VIDEO_CODECS as _GST_ELEMENTS
+
+            if self.vcodec not in _GST_ELEMENTS:
+                raise ValueError(
+                    f"vcodec {self.vcodec!r} is not a GStreamer encoder. With "
+                    f"video_backend='gstreamer', use one of {sorted(_GST_ELEMENTS)}."
+                )
 
     def resolve_vcodec(self) -> None:
         """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.
@@ -180,8 +194,9 @@ class VideoEncoderConfig:
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":
-            available = self.detect_available_encoders(HW_VIDEO_CODECS)
-            for encoder in HW_VIDEO_CODECS:
+            candidates = GST_VIDEO_CODECS if self.video_backend == "gstreamer" else HW_VIDEO_CODECS
+            available = self.detect_available_encoders(candidates)
+            for encoder in candidates:
                 if encoder in available:
                     logger.info(f"Auto-selected video codec: {encoder}")
                     self.vcodec = encoder
@@ -213,6 +228,12 @@ class VideoEncoderConfig:
         def set_if(key: str, value: Any) -> None:
             if value is not None:
                 opts[key] = value if not as_strings else str(value)
+
+        if self.video_backend == "gstreamer":
+            from lerobot.datasets.gstreamer_utils import gst_codec_options
+
+            gst_opts = gst_codec_options(self.vcodec, self.crf, self.preset, self.g, self.extra_options)
+            return {k: str(v) for k, v in gst_opts.items()} if as_strings else gst_opts
 
         # GOP size is not a codec-specific option, so it is always set.
         set_if("g", self.g)

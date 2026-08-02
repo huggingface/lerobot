@@ -492,6 +492,25 @@ def encode_video_frames(
     with Image.open(input_list[0]) as dummy_image:
         width, height = dummy_image.size
 
+    if video_encoder.video_backend == "gstreamer":
+        if is_depth:
+            raise NotImplementedError("Depth encoding is only supported with video_backend='pyav'.")
+        from .gstreamer_utils import GStreamerVideoWriter
+
+        with GStreamerVideoWriter(
+            video_path=video_path,
+            fps=fps,
+            width=width,
+            height=height,
+            vcodec=vcodec,
+            options=video_encoder.get_codec_options(encoder_threads),
+            crf=video_encoder.crf,
+        ) as writer:
+            for path in input_list:
+                with Image.open(path) as img:
+                    writer.write(np.asarray(img.convert("RGB")))
+        return
+
     video_options = video_encoder.get_codec_options(encoder_threads, as_strings=True)
 
     # Set logging level
@@ -782,6 +801,8 @@ class _CameraEncoderThread(threading.Thread):
 
         container = None
         output_stream = None
+        gst_writer = None
+        use_gstreamer = self.video_encoder.video_backend == "gstreamer" and not self.is_depth
         stats_tracker = RunningQuantileStats()
         frame_count = 0
 
@@ -808,8 +829,22 @@ class _CameraEncoderThread(threading.Thread):
                     if not self.is_depth and frame_data.dtype != np.uint8:
                         frame_data = (frame_data * 255).astype(np.uint8)
 
+                if use_gstreamer and gst_writer is None:
+                    from .gstreamer_utils import GStreamerVideoWriter
+
+                    height, width = frame_data.shape[:2]
+                    gst_writer = GStreamerVideoWriter(
+                        video_path=self.video_path,
+                        fps=self.fps,
+                        width=width,
+                        height=height,
+                        vcodec=self.video_encoder.vcodec,
+                        options=self.video_encoder.get_codec_options(self.encoder_threads),
+                        crf=self.video_encoder.crf,
+                    )
+
                 # Open container on first frame (to get width/height)
-                if container is None:
+                if container is None and not use_gstreamer:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
                     container = av.open(str(self.video_path), "w")
@@ -824,7 +859,9 @@ class _CameraEncoderThread(threading.Thread):
                     output_stream.time_base = Fraction(1, self.fps)
 
                 # Encode frame with explicit timestamps
-                if not self.is_depth:
+                if use_gstreamer:
+                    gst_writer.write(frame_data)
+                elif not self.is_depth:
                     pil_img = Image.fromarray(frame_data)
                     video_frame = av.VideoFrame.from_image(pil_img)
                 else:
@@ -836,11 +873,12 @@ class _CameraEncoderThread(threading.Thread):
                         use_log=self.video_encoder.use_log,
                         video_backend=self.video_encoder.video_backend,
                     )
-                video_frame.pts = frame_count
-                video_frame.time_base = Fraction(1, self.fps)
-                packet = output_stream.encode(video_frame)
-                if packet:
-                    container.mux(packet)
+                if not use_gstreamer:
+                    video_frame.pts = frame_count
+                    video_frame.time_base = Fraction(1, self.fps)
+                    packet = output_stream.encode(video_frame)
+                    if packet:
+                        container.mux(packet)
 
                 # Update stats with downsampled frame (per-channel stats like compute_episode_stats)
                 img_chw = frame_data.transpose(2, 0, 1)  # HWC -> CHW
@@ -853,6 +891,9 @@ class _CameraEncoderThread(threading.Thread):
                 frame_count += 1
 
             # Flush encoder
+            if gst_writer is not None:
+                gst_writer.close()
+
             if output_stream is not None:
                 packet = output_stream.encode()
                 if packet:
@@ -875,6 +916,9 @@ class _CameraEncoderThread(threading.Thread):
             if container is not None:
                 with contextlib.suppress(Exception):
                     container.close()
+            if gst_writer is not None:
+                with contextlib.suppress(Exception):
+                    gst_writer.close()
             self.result_queue.put(("error", str(e)))
 
 
