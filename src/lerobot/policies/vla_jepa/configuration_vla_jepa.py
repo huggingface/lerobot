@@ -22,7 +22,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +146,24 @@ class VLAJEPAConfig(PreTrainedConfig):
             self.state_dim = self.robot_state_feature.shape[0]
 
     def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
-        """Add `observation.state` to `input_features` if missing, so it gets normalized."""
-        if OBS_STATE in self.input_features or OBS_STATE not in dataset_features:
-            return
-        shape = tuple(dataset_features[OBS_STATE]["shape"])
-        self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
+        """Derive action/state dims and dimension names from the dataset actually being used.
+
+        `input_features` keeps the *pretrained* model's feature keys (rename_map needs them),
+        so `validate_features` can read stale dims off a pretrained config. `make_policy` calls
+        this before instantiating the policy, so the dims and names are correct by the time
+        either the model or the processor pipeline is built. Also adds `observation.state` to
+        `input_features` if missing, so it gets normalized.
+        """
+        if OBS_STATE in dataset_features:
+            self.state_dim = dataset_features[OBS_STATE]["shape"][0]
+            if OBS_STATE not in self.input_features:
+                shape = tuple(dataset_features[OBS_STATE]["shape"])
+                self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
+        if ACTION in dataset_features:
+            self.action_dim = dataset_features[ACTION]["shape"][0]
+            names = dataset_features[ACTION].get("names")
+            if names:
+                self.action_feature_names = list(names)
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
