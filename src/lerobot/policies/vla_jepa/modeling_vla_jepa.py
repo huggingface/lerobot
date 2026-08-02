@@ -171,7 +171,7 @@ class VLAJEPAModel(nn.Module):
 
     def _encode_qwen(
         self, images: list[list[Tensor]], instructions: list[str], *, need_action_tokens: bool
-    ) -> tuple[Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor | None]:
         """Run Qwen and gather the embodied-action (and optionally action) token hidden states."""
         qwen_inputs = self.qwen.build_inputs(
             images=images,
