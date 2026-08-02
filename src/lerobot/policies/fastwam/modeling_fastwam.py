@@ -136,6 +136,8 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         from safetensors.torch import load_file
 
+        from lerobot.policies.utils import log_model_loading_keys
+
         logging.warning(
             "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
             "every compatible weight: %s",
@@ -145,7 +147,10 @@ class FastWAMPolicy(PreTrainedPolicy):
         state_dict = load_file(model_file, device="cpu")
         for key in mismatched:
             state_dict.pop(key, None)
-        model.load_state_dict(state_dict, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        log_model_loading_keys(
+            missing_keys, unexpected_keys, pretrained_name_or_path=pretrained_name_or_path
+        )
         if map_location and map_location != "cpu":
             model.to(map_location)
         return model
