@@ -59,6 +59,8 @@ _EOS_TIMEOUT_NS = 30 * 1_000_000_000
 
 _BPP_AT_CRF30 = 0.89
 
+_MP4_TIMESCALE = 12000
+
 _GST_INITIALISED = False
 
 
@@ -232,7 +234,8 @@ class GStreamerVideoWriter:
             f"caps=video/x-raw,format=RGB,width={self.width},height={self.height},"
             f"framerate={self.fps}/1 "
             f"! {convert}"
-            f"{self.vcodec} {props} ! {parser} ! mp4mux ! "
+            f"{self.vcodec} {props} ! {parser} ! "
+            f"mp4mux trak-timescale={_MP4_TIMESCALE} ! "
             f"filesink location={self.video_path} sync=false"
         )
         logger.debug("GStreamer encode pipeline: %s", desc)
