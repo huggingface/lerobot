@@ -102,13 +102,11 @@ def clamp_action_chunk(
 @ProcessorStepRegistry.register("chunk_safety_processor")
 @dataclass
 class ChunkSafetyProcessorStep(PolicyActionProcessorStep):
-    """Catches an unsafe predicted action chunk before it reaches the robot.
+    """Checks a predicted action chunk as a sequence, not just action-by-action.
 
-    The existing runtime safety check only looks at one action right before
-    it's sent, so a chunk that's fine step-by-step but erratic as a sequence
-    goes through uncaught. This step checks the whole chunk and clamps only
-    the values that violate a limit. Each of its three checks is independent
-    and off by default.
+    Clamps only the values that violate a limit, leaving the rest of the
+    chunk untouched. Each of its three checks — absolute bounds,
+    discontinuity, jerk — is independent and off by default.
 
     Attributes:
         enabled: Whether to apply any of the checks below.
