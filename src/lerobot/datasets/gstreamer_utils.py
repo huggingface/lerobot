@@ -61,6 +61,12 @@ _BPP_AT_CRF30 = 0.89
 
 _MP4_TIMESCALE = 12000
 
+
+def _gst_quote(value: Any) -> str:
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 _GST_INITIALISED = False
 
 
@@ -236,7 +242,7 @@ class GStreamerVideoWriter:
             f"! {convert}"
             f"{self.vcodec} {props} ! {parser} ! "
             f"mp4mux trak-timescale={_MP4_TIMESCALE} ! "
-            f"filesink location={self.video_path} sync=false"
+            f"filesink location={_gst_quote(self.video_path)} sync=false"
         )
         logger.debug("GStreamer encode pipeline: %s", desc)
         self.pipeline = gst.parse_launch(desc)
