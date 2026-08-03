@@ -135,13 +135,30 @@ def clamp_action_chunk(
 @ProcessorStepRegistry.register("chunk_safety_processor")
 @dataclass
 class ChunkSafetyProcessorStep(PolicyActionProcessorStep):
-    """Clamps a predicted action chunk for safety before it reaches the robot.
+    """Catches an unsafe predicted action chunk before it reaches the robot.
 
-    Unlike ``ensure_safe_goal_position``, which only ever sees the single
-    action about to execute, this step runs on whatever the pipeline hands
-    it — a full ``(batch, time, action_dim)`` chunk during RTC-style
-    inference, or a single ``(batch, action_dim)`` action during sync
-    inference (where the step-to-step checks below are a no-op).
+    A policy predicts a whole sequence of upcoming actions at once (a
+    "chunk"), not just the next one. The existing runtime safety check only
+    ever looks at one action right before it's sent, so a chunk that's
+    individually in-bounds step-by-step but erratic as a sequence — a sudden
+    jump, or a jerky run of steps that suggests the policy has gone off
+    distribution — goes through uncaught. This step looks at the chunk as a
+    whole and fixes just the bad values rather than discarding the chunk.
+
+    Three independent checks, each optional and off by default:
+
+    - **Absolute bounds** — keeps every action within a safe min/max range,
+      e.g. a robot's physical joint limits.
+    - **Discontinuity** — caps how far an action can jump from the one
+      before it.
+    - **Jerk** — caps how abruptly that jump itself can change, i.e. sudden
+      acceleration spikes.
+
+    Recommended starting point: enable absolute bounds and discontinuity —
+    both have an obvious source of truth (your robot's joint limits and
+    existing per-motor safety config). Leave jerk off unless you've measured
+    typical motion from your own robot's data; a sane jerk limit is much
+    harder to guess than a position or speed limit.
 
     Attributes:
         enabled: Whether to apply any of the checks below.
