@@ -15,6 +15,8 @@
 [Action Chunking with Transformers (ACT)](https://huggingface.co/papers/2304.13705) is an imitation-learning method that predicts short action chunks instead of single steps. It learns from teleoperated data and often achieves high success rates.
 {% elif model_name == "diffusion" %}
 [Diffusion Policy](https://huggingface.co/papers/2303.04137) treats visuomotor control as a generative diffusion process, producing smooth, multi-step action trajectories that excel at contact-rich manipulation.
+{% elif model_name == "flow_matching" %}
+[Flow Matching](https://huggingface.co/papers/2210.02747) is an action-chunking imitation-learning policy that generates robot actions by integrating a learned conditional velocity field from Gaussian noise to normalized action trajectories.
 {% elif model_name == "pi0" %}
 [π₀ (Pi0)](https://www.physicalintelligence.company/blog/pi0) is a general-purpose robot foundation model from Physical Intelligence: a generalist Vision-Language-Action policy that understands visual inputs, interprets natural language instructions, and controls a variety of different robots across diverse tasks. The LeRobot implementation is adapted from their open-source OpenPI repository.
 {% elif model_name == "pi05" %}
@@ -71,6 +73,7 @@ running on your robot, upload it to this repo, and embed it here:
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
 {% set policy_docs = {
   "act": "act",
+  "flow_matching": "flow_matching",
   "smolvla": "smolvla",
   "pi0": "pi0",
   "pi0_fast": "pi0fast",

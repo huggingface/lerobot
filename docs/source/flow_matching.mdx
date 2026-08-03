@@ -1,0 +1,185 @@
+# Flow Matching Policy
+
+Flow Matching is an action-chunking policy that learns a continuous velocity field from Gaussian noise
+to normalized robot actions. The implementation follows the straight Optimal Transport probability path
+described in [Flow Matching for Generative Modeling](https://huggingface.co/papers/2210.02747).
+
+This is a compact conditional baseline rather than a reproduction of a robot-specific paper. It applies
+the general Flow Matching objective to action trajectories and conditions the vector field on the input
+features declared by the LeRobot dataset.
+
+## Architecture
+
+The policy has three components:
+
+1. An observation encoder projects robot state and environment state and encodes each RGB camera with a
+   torchvision ResNet.
+2. A transformer predicts the action velocity from the noisy action chunk, continuous time, and the
+   encoded observation history.
+3. An Euler solver integrates the learned velocity field from Gaussian noise at `t=0` to actions at `t=1`.
+
+For a normalized action chunk `a`, Gaussian noise `z`, and uniformly sampled `t`, training uses:
+
+```text
+x_t = (1 - t) z + t a
+target_velocity = a - z
+loss = MSE(v_theta(x_t, t, observation), target_velocity)
+```
+
+The implementation supports state-only, vision-only, and mixed state/vision datasets. It also supports
+copy-padding masks, optional classifier-free guidance, and optional CLIP task-text conditioning for
+multi-task datasets.
+
+## Training
+
+Flow Matching without language conditioning is included in the base LeRobot installation. Install the
+policy extra when using task text:
+
+```bash
+pip install -e ".[flow_matching]"
+```
+
+Train it with the standard pipeline:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=flow_matching \
+  --policy.device=cuda \
+  --output_dir=outputs/train/flow_matching \
+  --job_name=flow_matching \
+  --policy.repo_id=${HF_USER}/flow_matching_my_robot \
+  --wandb.enable=true
+```
+
+The dataset provides `input_features`, `output_features`, and normalization statistics automatically.
+
+### Important configuration
+
+| Parameter | Default | Meaning |
+| --- | ---: | --- |
+| `n_obs_steps` | `2` | Observation history length |
+| `horizon` | `16` | Full action trajectory modeled during training |
+| `n_action_steps` | `8` | Actions executed before replanning |
+| `num_inference_steps` | `10` | Euler integration steps |
+| `hidden_dim` | `256` | Transformer width |
+| `num_layers` | `4` | Transformer layers |
+| `text_encoder_name` | `None` | Optional CLIP model used to encode task descriptions |
+| `freeze_text_encoder` | `true` | Freeze CLIP while training its projection into the policy |
+| `conditioning_dropout_prob` | `0.1` | Unconditional examples used to train guidance |
+| `guidance_scale` | `1.0` | Inference guidance strength; `1.0` disables the extra field evaluation |
+
+For a faster smoke run, reduce the model and integration depth:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --policy.type=flow_matching \
+  --policy.hidden_dim=128 \
+  --policy.num_layers=2 \
+  --policy.num_heads=4 \
+  --policy.feed_forward_dim=256 \
+  --policy.num_inference_steps=4 \
+  --steps=100 \
+  --batch_size=8 \
+  --policy.device=cuda
+```
+
+## LIBERO benchmark
+
+LIBERO combines 40 language-conditioned tasks across its four standard evaluation suites. Enable the
+text encoder when training one policy on the mixed dataset; otherwise the policy cannot distinguish
+different task goals that share similar observations.
+
+On Linux, install both policy and simulator dependencies:
+
+```bash
+pip install -e ".[flow_matching,libero]"
+export MUJOCO_GL=egl
+```
+
+The following command trains on the public LeRobot v3 dataset. `batch_size` is per process, so four
+processes give an effective batch size of 256:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --multi_gpu \
+  --num_machines=1 \
+  --num_processes=4 \
+  --mixed_precision=bf16 \
+  --dynamo_backend=no \
+  $(which lerobot-train) \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --dataset.image_transforms.enable=true \
+  --policy.type=flow_matching \
+  --policy.text_encoder_name=openai/clip-vit-base-patch16 \
+  --policy.freeze_text_encoder=true \
+  --policy.use_group_norm=false \
+  --policy.pretrained_backbone_weights=DEFAULT \
+  --policy.device=cuda \
+  --policy.push_to_hub=false \
+  --output_dir=outputs/train/flow_matching_libero \
+  --job_name=flow_matching_libero \
+  --seed=1000 \
+  --steps=100000 \
+  --batch_size=64 \
+  --num_workers=16 \
+  --prefetch_factor=4 \
+  --wandb.enable=false \
+  --save_checkpoint=true \
+  --save_freq=10000 \
+  --log_freq=100
+```
+
+After training, evaluate 10 episodes per task over all four standard suites (400 rollouts total):
+
+```bash
+MUJOCO_GL=egl lerobot-eval \
+  --policy.path=Piersondong/flow_matching_libero \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1 \
+  --seed=1000 \
+  --output_dir=outputs/eval/flow_matching_libero \
+  --job_name=flow_matching_libero_standard_400
+```
+
+Report per-suite success rates, their unweighted mean, the seed, training steps, effective batch size,
+and the exact checkpoint. See the dedicated [LIBERO guide](./libero) for environment details.
+
+## Evaluation
+
+Evaluate a trained checkpoint through the normal recording workflow:
+
+```bash
+lerobot-record \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_robot \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+  --dataset.repo_id=${HF_USER}/eval_flow_matching \
+  --dataset.num_episodes=10 \
+  --dataset.single_task="Pick up the object" \
+  --policy.path=${HF_USER}/flow_matching_my_robot
+```
+
+## Reproducibility status
+
+Unit tests cover training, masked loss, multi-camera-compatible image encoding, classifier-free guidance,
+action queues, processors, factory construction, and checkpoint round trips. A benchmark result must only
+be added here together with its exact dataset, training command, evaluation protocol, seed, and a public
+checkpoint; the current implementation does not claim an unpublished benchmark score.
+
+## Reference
+
+```bibtex
+@inproceedings{lipman2023flow,
+  title={Flow Matching for Generative Modeling},
+  author={Yaron Lipman and Ricky T. Q. Chen and Heli Ben-Hamu and Maximilian Nickel and Matt Le},
+  booktitle={The Eleventh International Conference on Learning Representations},
+  year={2023},
+  url={https://openreview.net/forum?id=PqvMRDCJT9t}
+}
+```

@@ -216,6 +216,7 @@ pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 molmoact2 = ["lerobot[transformers-dep]", "lerobot[peft-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "lerobot[accelerate-dep]"]
 multi_task_dit = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
+flow_matching = ["lerobot[transformers-dep]"]
 groot = [
     "lerobot[transformers-dep]",
     "lerobot[peft-dep]",
@@ -310,6 +311,7 @@ all = [
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[diffusion]",
+    "lerobot[flow_matching]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
     "lerobot[pi]",

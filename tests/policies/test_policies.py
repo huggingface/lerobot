@@ -58,7 +58,7 @@ _POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     "diffusion": ("diffusers",),
 }
 
-_ALL_POLICIES = ["act", "diffusion", "tdmpc", "vqbet"]
+_ALL_POLICIES = ["act", "diffusion", "flow_matching", "tdmpc", "vqbet"]
 AVAILABLE_POLICIES = [
     p for p in _ALL_POLICIES if all(is_package_available(pkg) for pkg in _POLICY_REQUIRED_PACKAGES.get(p, ()))
 ]
@@ -392,6 +392,24 @@ def test_multikey_construction(multikey: bool):
             },
             "",
             marks=pytest.mark.skipif(not is_package_available("diffusers"), reason="diffusers not installed"),
+        ),
+        (
+            "lerobot/pusht",
+            "flow_matching",
+            {
+                "input_features": {
+                    OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+                },
+                "horizon": 8,
+                "n_action_steps": 4,
+                "hidden_dim": 64,
+                "num_layers": 2,
+                "num_heads": 4,
+                "feed_forward_dim": 128,
+                "num_inference_steps": 2,
+                "conditioning_dropout_prob": 0.0,
+            },
+            "",
         ),
         ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
         (

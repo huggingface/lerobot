@@ -55,6 +55,8 @@
 - sections:
   - local: act
     title: ACT
+  - local: flow_matching
+    title: Flow Matching
   - local: smolvla
     title: SmolVLA
   - local: pi0
