@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
 import datasets
+import numpy as np
 import pandas as pd
 import tqdm
 
@@ -302,6 +303,46 @@ def update_meta_data(
     df["dataset_from_index"] = df["dataset_from_index"] + dst_meta.info.total_frames
     df["dataset_to_index"] = df["dataset_to_index"] + dst_meta.info.total_frames
     df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
+
+    # Per-episode stats still describe the pre-merge values of the bookkeeping columns
+    # reindexed above. index/episode_index shift by a constant; task_index is relabeled,
+    # so recompute it from the episode's (stable) task strings via the unified tasks table.
+    shift_stat_keys = ("min", "max", "mean", "q01", "q10", "q50", "q90", "q99")
+    for name, offset in (
+        ("episode_index", dst_meta.info.total_episodes),
+        ("index", dst_meta.info.total_frames),
+    ):
+        for stat in shift_stat_keys:
+            col = f"stats/{name}/{stat}"
+            if col in df.columns:
+                df[col] = df[col] + offset
+
+    if any(c.startswith("stats/task_index/") for c in df.columns):
+        quantiles = {"q01": 0.01, "q10": 0.10, "q50": 0.50, "q90": 0.90, "q99": 0.99}
+        ids_per_row = [
+            np.array([dst_meta.tasks.loc[t, "task_index"] for t in tasks], dtype=np.float64)
+            for tasks in df["tasks"]
+        ]
+
+        def _task_stat(ids, stat):
+            if stat == "min":
+                return ids.min()
+            if stat == "max":
+                return ids.max()
+            if stat == "std":
+                return ids.std()
+            if stat in quantiles:
+                return np.quantile(ids, quantiles[stat])
+            return ids.mean()
+
+        for stat in ("min", "max", "mean", "std", *quantiles):
+            col = f"stats/task_index/{stat}"
+            if col in df.columns:
+                # np.full_like preserves each cell container and dtype so the parquet schema is unchanged.
+                df[col] = [
+                    np.full_like(orig, _task_stat(ids, stat))
+                    for orig, ids in zip(df[col], ids_per_row, strict=True)
+                ]
 
     return df
 
