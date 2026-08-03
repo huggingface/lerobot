@@ -230,8 +230,7 @@ class TestEncoding:
         from lerobot.datasets.video_utils import concatenate_video_files
 
         def clip(path):
-            with GStreamerVideoWriter(path, fps=10, width=FRAME_W, height=FRAME_H,
-                                      vcodec=codec, crf=30) as w:
+            with GStreamerVideoWriter(path, fps=10, width=FRAME_W, height=FRAME_H, vcodec=codec, crf=30) as w:
                 for frame in frames:
                     w.write(frame)
             return path
@@ -239,8 +238,7 @@ class TestEncoding:
         acc = clip(tmp_path / "e1.mp4")
         for episode in range(2, 4):
             out = tmp_path / f"acc{episode}.mp4"
-            concatenate_video_files([acc, clip(tmp_path / f"e{episode}.mp4")],
-                                    out, compatibility_check=False)
+            concatenate_video_files([acc, clip(tmp_path / f"e{episode}.mp4")], out, compatibility_check=False)
             acc = out
 
         with av.open(str(acc)) as container:
@@ -253,8 +251,7 @@ class TestEncoding:
         from lerobot.datasets.gstreamer_utils import GStreamerVideoWriter
 
         out = tmp_path / "a directory" / "a file.mp4"
-        with GStreamerVideoWriter(out, fps=10, width=FRAME_W, height=FRAME_H,
-                                  vcodec=codec, crf=30) as writer:
+        with GStreamerVideoWriter(out, fps=10, width=FRAME_W, height=FRAME_H, vcodec=codec, crf=30) as writer:
             for frame in frames:
                 writer.write(frame)
         assert out.stat().st_size > 0
