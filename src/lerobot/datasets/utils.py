@@ -523,17 +523,6 @@ def create_lerobot_dataset_card(
     )
 
 
-def is_float_in_list(target, float_list, threshold=1e-6):
-    return any(abs(target - x) <= threshold for x in float_list)
-
-
-def find_float_index(target, float_list, threshold=1e-6):
-    for i, x in enumerate(float_list):
-        if abs(target - x) <= threshold:
-            return i
-    return -1
-
-
 def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
     """
     Safe shards the dataset.
