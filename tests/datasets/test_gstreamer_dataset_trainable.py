@@ -19,7 +19,11 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 
 from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -39,7 +43,7 @@ def check(name, ok, detail=""):
 
 
 def frame(ep: int, i: int, cam: int) -> np.ndarray:
-    """Distinct per (episode, frame, camera) so a mis-seek is detectable."""
+    """Distinct per (episode, frame, camera) so a bad seek is detectable."""
     rng = np.random.default_rng(ep * 100000 + i * 10 + cam)
     x = np.linspace(0, 255, W, dtype=np.float32)[None, :]
     y = np.linspace(0, 255, H, dtype=np.float32)[:, None]
