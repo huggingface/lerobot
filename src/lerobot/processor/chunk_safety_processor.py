@@ -14,17 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Chunk-level safety validation for predicted action chunks.
-
-Today's only runtime safety check, ``ensure_safe_goal_position``
-(``lerobot.robots.utils``), clamps one action at a time, right before it is
-sent to the robot. It never sees the rest of a policy's predicted chunk, so a
-chunk that is individually-in-bounds per step but bad as a *sequence* (a
-sudden jump, or a jerky run of steps) is never caught. This module adds that
-check as an ordinary ``ProcessorStep``, so it composes into the existing
-postprocessor pipeline instead of being a separate imperative call.
-"""
-
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -61,36 +50,14 @@ def clamp_action_chunk(
     min_action: float | Sequence[float] | None = None,
     max_action: float | Sequence[float] | None = None,
 ) -> tuple[Tensor, bool]:
-    """Clamp a predicted action (or action chunk) for safety.
-
-    Applies up to three checks, each *clamping* a violation rather than
-    rejecting the whole chunk:
-
-    1. Absolute per-dim bounds (``min_action``/``max_action``).
-    2. Discontinuity: the step-to-step delta is capped at ``max_relative_target``.
-    3. Jerk: the change in that delta (second difference) is capped at ``max_jerk``.
-
-    Checks 2 and 3 only apply when a time dimension is present (``actions``
-    is ``(batch, time, action_dim)`` with ``time >= 2``) — for a single
-    action (``(batch, action_dim)``, e.g. sync inference with no explicit
-    chunk) they're a no-op and only the absolute bounds check runs.
+    """Clamp a predicted action (or action chunk) for safety, per-dim or scalar.
 
     Args:
-        actions: ``(batch, time, action_dim)`` chunk, or ``(batch,
-            action_dim)`` single action.
-        max_relative_target: Max ``|actions[t] - actions[t-1]|``, scalar or
-            per-dim. ``None`` disables this check.
-        max_jerk: Max ``|delta[t] - delta[t-1]|``, scalar or per-dim.
-            ``None`` disables this check.
-        min_action: Absolute per-dim (or scalar) lower bound. ``None``
-            disables this side of the bounds check.
-        max_action: Absolute per-dim (or scalar) upper bound. ``None``
-            disables this side of the bounds check.
-
-    Returns:
-        Tuple of ``(clamped_actions, was_clamped)``. ``clamped_actions`` is a
-        new tensor if anything was clamped, otherwise the original tensor is
-        returned unchanged.
+        actions: (B, T, action_dim) chunk, or (B, action_dim) single action.
+        max_relative_target: Max |actions[t] - actions[t-1]|. None disables this check.
+        max_jerk: Max |delta[t] - delta[t-1]|. None disables this check.
+        min_action: Absolute lower bound. None disables this side of the bounds check.
+        max_action: Absolute upper bound. None disables this side of the bounds check.
     """
     action_dim = actions.shape[-1]
     device, dtype = actions.device, actions.dtype
