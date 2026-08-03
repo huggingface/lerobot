@@ -207,6 +207,56 @@ pip install 'lerobot[feetech]'        # Feetech motor support
 
 _Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
 
+### PyTorch CUDA variant (Linux only)
+
+On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+
+<!-- prettier-ignore-start -->
+
+<hfoptions id="cuda_variant">
+<hfoption id="uv-source">
+
+**Source install via `uv` (`uv sync` or `uv pip install -e .`)**
+
+`torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
+
+To override for a different CUDA variant:
+
+```bash
+uv pip install --force-reinstall torch torchvision \
+    --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
+```
+
+</hfoption>
+<hfoption id="pip-conda">
+
+**Source install via `pip`/`conda`, or `pip install lerobot` from PyPI**
+
+PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor **580.65**.
+
+To pick a specific CUDA variant:
+
+**Using `pip` or `conda`** — install torch first with an explicit index, then lerobot:
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+pip install -e ".[all]"          # source
+# — or —
+pip install lerobot              # from PyPI
+```
+
+**Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.6):
+
+```bash
+uv pip install --torch-backend cu128 lerobot
+```
+
+Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus various `rocm*` and `xpu`. Swap as needed for your driver.
+
+</hfoption>
+</hfoptions>
+<!-- prettier-ignore-end -->
+
 ### Troubleshooting
 
 If you encounter build errors, you may need to install additional system dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.

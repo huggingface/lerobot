@@ -20,7 +20,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_reader import DatasetReader
-from lerobot.utils.import_utils import get_safe_default_codec
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 # ── Loading ──────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ def test_try_load_returns_true_when_data_exists(tmp_path, lerobot_dataset_factor
         root=dataset.root,
         episodes=None,
         tolerance_s=1e-4,
-        video_backend=get_safe_default_codec(),
+        video_backend=get_safe_default_video_backend(),
         delta_timestamps=None,
         image_transforms=None,
     )
@@ -58,7 +58,7 @@ def test_try_load_returns_false_when_no_data(tmp_path):
         root=meta.root,
         episodes=None,
         tolerance_s=1e-4,
-        video_backend=get_safe_default_codec(),
+        video_backend=get_safe_default_video_backend(),
         delta_timestamps=None,
         image_transforms=None,
     )

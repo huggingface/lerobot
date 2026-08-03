@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
 import dataclasses
@@ -19,23 +21,81 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
-import packaging
-import safetensors
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
+from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .utils import log_model_loading_keys
 
+if TYPE_CHECKING or _peft_available:
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+else:
+    PEFT_TYPE_TO_CONFIG_MAPPING = None
+    PeftType = None
+    get_peft_model = None
+
+if TYPE_CHECKING:
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+
+def _build_card_context(
+    cfg: TrainPipelineConfig | None,
+    dataset_meta: LeRobotDatasetMetadata | None,
+    input_features: dict | None,
+    output_features: dict | None,
+) -> dict:
+    """Collect optional data for the model-card template.
+
+    Returns plain values only (no Markdown) — the template in
+    ``lerobot/templates/lerobot_modelcard_template.md`` decides how and whether to show
+    each one. Everything is best-effort: anything unavailable is left empty/None and the
+    template simply skips that section, so this never breaks a Hub push.
+    """
+    context = {
+        "training": None,
+        "input_features": input_features or {},
+        "output_features": output_features or {},
+        "dataset": None,
+        "robot_type": None,
+        "cameras": [],
+    }
+
+    if cfg is not None:
+        optimizer = getattr(cfg, "optimizer", None)
+        context["training"] = {
+            "steps": cfg.steps,
+            "batch_size": cfg.batch_size,
+            "seed": cfg.seed,
+            "optimizer": getattr(optimizer, "type", None) if optimizer else None,
+            "lr": getattr(optimizer, "lr", None) if optimizer else None,
+            "lerobot_version": __version__,
+        }
+
+    if dataset_meta is not None:
+        context["dataset"] = {
+            "repo_id": dataset_meta.repo_id,
+            "episodes": dataset_meta.total_episodes,
+            "frames": dataset_meta.total_frames,
+            "fps": dataset_meta.fps,
+            "tasks": [str(task) for task in dataset_meta.tasks.index],
+        }
+        context["robot_type"] = dataset_meta.robot_type
+        context["cameras"] = [key.split(".")[-1] for key in dataset_meta.camera_keys]
+
+    return context
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -67,10 +127,43 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
-    def _save_pretrained(self, save_directory: Path) -> None:
+    def save_pretrained(
+        self,
+        save_directory: str | Path,
+        *,
+        state_dict: dict[str, Tensor] | None = None,
+        repo_id: str | None = None,
+        push_to_hub: bool = False,
+        card_kwargs: dict | None = None,
+        **push_to_hub_kwargs,
+    ) -> str | None:
+        """Save the policy to a directory (and optionally push to the Hub).
+
+        Overrides `HubMixin.save_pretrained` to add a `state_dict` argument (mirroring
+        `transformers.PreTrainedModel.save_pretrained`). Under FSDP, `self.state_dict()` would
+        return sharded tensors, so the caller gathers the full state dict via a cross-rank
+        collective and passes it here for `_save_pretrained` to write directly.
+        """
+        save_directory = Path(save_directory)
+        save_directory.mkdir(parents=True, exist_ok=True)
+        self._save_pretrained(save_directory, state_dict=state_dict)
+        if push_to_hub:
+            if repo_id is None:
+                repo_id = save_directory.name
+            return self.push_to_hub(repo_id=repo_id, card_kwargs=card_kwargs, **push_to_hub_kwargs)
+        return None
+
+    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        if state_dict is None:
+            save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+            return
+        # A pre-gathered (e.g. FSDP full) state dict was supplied: write it directly.
+        # `save_torch_state_dict` discards shared-tensor duplicates just like `save_model` does;
+        # pin `max_shard_size` above the total size so the output stays a single `model.safetensors`
+        total_bytes = sum(t.numel() * t.element_size() for t in state_dict.values())
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=max(total_bytes, 1))
 
     @classmethod
     def from_pretrained(
@@ -135,26 +228,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
-
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = load_model_as_safetensor(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
         log_model_loading_keys(missing_keys, unexpected_keys)
-
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
         return model
 
     @abc.abstractmethod
@@ -171,6 +248,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Does things like clearing caches.
         """
         raise NotImplementedError
+
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
@@ -208,6 +289,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
+        state_dict: dict[str, Tensor] | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
     ):
         api = HfApi()
         repo_id = api.create_repo(
@@ -225,10 +308,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 peft_model.save_pretrained(saved_path)
                 self.config.save_pretrained(saved_path)
             else:
-                self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+                # Calls _save_pretrained and stores model tensors
+                self.save_pretrained(saved_path, state_dict=state_dict)
 
             card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
+                cfg.dataset.repo_id,
+                self.config.type,
+                self.config.license,
+                self.config.tags,
+                cfg=cfg,
+                dataset_meta=dataset_meta,
             )
             card.save(str(saved_path / "README.md"))
 
@@ -243,12 +332,27 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 ignore_patterns=["*.tmp", "*.log"],
             )
 
+            # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact
+            # "Model pushed to <url>" line to end a remote run early. Keep the wording
+            # and URL format in sync (it falls back to status polling if they drift).
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
+        self,
+        dataset_repo_id: str,
+        model_type: str,
+        license: str | None,
+        tags: list[str] | None,
+        cfg: TrainPipelineConfig | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
     ) -> ModelCard:
-        base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
+        base_model_mapping = {
+            "smolvla": "lerobot/smolvla_base",
+            "pi0": "lerobot/pi0_base",
+            "pi05": "lerobot/pi05_base",
+            "pi0_fast": "lerobot/pi0fast-base",
+            "xvla": "lerobot/xvla-base",
+        }
 
         card_data = ModelCardData(
             license=license or "apache-2.0",
@@ -257,13 +361,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
             datasets=dataset_repo_id,
-            base_model=base_model,
+            base_model=base_model_mapping.get(model_type),
         )
+
+        context = _build_card_context(
+            cfg, dataset_meta, self.config.input_features, self.config.output_features
+        )
+        # Used by the template to pre-fill commands and the "Fine-tuned from" line.
+        context["policy_repo_id"] = getattr(self.config, "repo_id", None)
+        context["base_model"] = base_model_mapping.get(model_type)
 
         template_card = (
             files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
         )
-        card = ModelCard.from_template(card_data, template_str=template_card)
+        card = ModelCard.from_template(card_data, template_str=template_card, **context)
         card.validate()
         return card
 
@@ -271,7 +382,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         peft_config=None,
         peft_cli_overrides: dict | None = None,
-    ) -> "PreTrainedPolicy":
+    ) -> PreTrainedPolicy:
         """
         Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
 
@@ -285,7 +396,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             peft_cli_overrides: Optional dict of CLI overrides (method_type, target_modules, r, etc.)
                 These are merged with policy defaults to build the final config.
         """
-        from peft import get_peft_model
+        require_package("peft", extra="peft")
 
         # If user provided a complete config, use it directly (with overrides)
         if peft_config is not None:
@@ -356,7 +467,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Returns:
             Preprocessed dict with renamed keys and init_type mapped to method-specific key.
         """
-        from peft import PeftType
+        require_package("peft", extra="peft")
 
         cli_overrides = cli_overrides.copy()
 
@@ -381,7 +492,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _build_peft_config(self, cli_overrides: dict):
         """Build a PEFT config from policy defaults and CLI overrides."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Determine PEFT method type (default to LORA)
         method_type_str = cli_overrides.get("method_type") or "lora"
@@ -408,7 +519,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _apply_peft_cli_overrides(self, peft_config, cli_overrides: dict):
         """Apply CLI overrides to an existing PEFT config."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Get method type from existing config or CLI override
         method_type_str = cli_overrides.get("method_type")

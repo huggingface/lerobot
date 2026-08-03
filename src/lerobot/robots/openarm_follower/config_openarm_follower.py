@@ -66,6 +66,10 @@ class OpenArmFollowerConfigBase:
     # Whether to disable torque when disconnecting
     disable_torque_on_disconnect: bool = True
 
+    # When True, expose `.vel` and `.torque` per motor in observation features.
+    # Default False for compatibility with the position-only openarm_mini teleoperator.
+    use_velocity_and_torque: bool = False
+
     # Safety limit for relative target positions
     # Set to a positive scalar for all motors, or a dict mapping motor names to limits
     max_relative_target: float | dict[str, float] | None = None

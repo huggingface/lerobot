@@ -17,9 +17,9 @@
 import pytest
 import torch
 
-from lerobot.policies.rtc.action_interpolator import ActionInterpolator
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.utils.action_interpolator import ActionInterpolator
 
 # ====================== Fixtures ======================
 

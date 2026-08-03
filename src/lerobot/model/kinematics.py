@@ -18,12 +18,25 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.import_utils import _placo_available, require_package
+from lerobot.utils.import_utils import require_package
 
-if TYPE_CHECKING or _placo_available:
+_placo_runtime_error: ImportError | None = None
+
+if TYPE_CHECKING:
     import placo  # type: ignore[import-not-found]
 else:
-    placo = None
+    try:
+        import placo  # type: ignore[import-not-found]
+    except ImportError as _placo_import_err:
+        placo = None
+        _placo_runtime_error = _placo_import_err
+
+
+def _raise_if_placo_unusable() -> None:
+    if placo is None and _placo_runtime_error is not None:
+        raise ImportError(
+            f"placo is installed but failed to import: {_placo_runtime_error!s}"
+        ) from _placo_runtime_error
 
 
 class RobotKinematics:
@@ -44,6 +57,7 @@ class RobotKinematics:
             joint_names (list[str] | None): List of joint names to use for the kinematics solver
         """
         require_package("placo", extra="placo-dep")
+        _raise_if_placo_unusable()
 
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)

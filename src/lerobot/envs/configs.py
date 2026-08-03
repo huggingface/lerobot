@@ -322,12 +322,13 @@ class HILSerlRobotEnvConfig(EnvConfig):
 class LiberoEnv(EnvConfig):
     task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
     task_ids: list[int] | None = None
-    fps: int = 30
+    fps: int = 20  # Must match robosuite's default control_freq (20 Hz)
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
+    hard_reset: bool = True
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
@@ -354,6 +355,11 @@ class LiberoEnv(EnvConfig):
     control_mode: str = "relative"  # or "absolute"
 
     def __post_init__(self):
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
+        if not self.hard_reset and not self.init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
+
         if self.obs_type == "pixels":
             self.features[LIBERO_KEY_PIXELS_AGENTVIEW] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
@@ -412,6 +418,8 @@ class LiberoEnv(EnvConfig):
             "render_mode": self.render_mode,
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
+            "control_freq": self.fps,
+            "hard_reset": self.hard_reset,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
@@ -503,7 +511,7 @@ class MetaworldEnv(EnvConfig):
 class RoboCasaEnv(EnvConfig):
     task: str = "CloseFridge"
     fps: int = 20
-    episode_length: int = 1000
+    episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
@@ -757,7 +765,7 @@ class RoboTwinEnvConfig(EnvConfig):
 
     task: str = "beat_block_hammer"  # single task or comma-separated list
     fps: int = 25
-    episode_length: int = 300
+    episode_length: int = 1200
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
@@ -768,6 +776,9 @@ class RoboTwinEnvConfig(EnvConfig):
     # must equal what SAPIEN actually renders.
     observation_height: int = 240
     observation_width: int = 320
+    # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
+    # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
+    action_mode: str = "joint"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
@@ -784,6 +795,8 @@ class RoboTwinEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
+        if self.action_mode == "ee":
+            self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(16,))
         cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
         for cam in cam_list:
             self.features[f"pixels/{cam}"] = PolicyFeature(
@@ -826,6 +839,7 @@ class RoboTwinEnvConfig(EnvConfig):
             observation_height=self.observation_height,
             observation_width=self.observation_width,
             episode_length=self.episode_length,
+            action_mode=self.action_mode,
         )
 
 

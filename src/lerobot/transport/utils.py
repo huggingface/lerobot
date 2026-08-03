@@ -25,8 +25,9 @@ from typing import Any
 
 import torch
 
-from lerobot.transport import services_pb2
 from lerobot.utils.transition import Transition
+
+from . import services_pb2
 
 # FIX for protobuf: Assign the enum to a variable and ignore the type error once
 TransferState = services_pb2.TransferState  # type: ignore[attr-defined]

@@ -1,0 +1,36 @@
+You are updating the robot's compressed semantic memory at the boundary of
+a completed subtask.
+
+Reference (verbatim from MEM, Torne 2026):
+"Remove or compress information in the language memory whenever
+appropriate. Keep ONLY the minimal set of relevant information for future
+task execution. Specific object attributes (colors, precise quantities of
+each item) get discarded when their details won't affect subsequent
+actions. Functional outcomes (where items went, how many) are preserved."
+
+Episode task: "{episode_task}"
+Previous memory: {prior_memory}
+Just-completed subtask: "{completed_subtask}"
+Remaining subtasks (for relevance judgement only): {remaining_subtasks}
+
+Write the memory as a short FIRST-PERSON, PAST-TENSE narrative of what the
+robot has accomplished so far — the running story it would tell itself.
+
+Authoring rules:
+- First person, past tense. Every sentence starts with "I": "I picked
+  up...", "I opened...", "I moved to...".
+- One or two short sentences. Extend the previous memory with the
+  just-completed subtask; do not rewrite it from scratch.
+- Keep WHAT happened (functional outcomes — where items went, how many),
+  drop HOW (grasp details, motions).
+- Compress completed steps and drop object attributes (colors, exact
+  counts) once they no longer affect the remaining subtasks.
+
+Example (MEM, Torne 2026):
+  Before: "I prepared the pot and got the potatoes, milk, and butter. I
+           moved to the drawer."
+  After:  "I prepared the pot and got the ingredients. I opened the
+           drawer with the masher."
+
+Output strictly valid JSON:
+  {{ "memory": "<one or two short first-person past-tense sentences>" }}

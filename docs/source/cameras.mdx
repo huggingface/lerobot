@@ -136,6 +136,10 @@ config = RealSenseCameraConfig(
     height=480,
     color_mode=ColorMode.RGB,
     use_depth=True,
+    # Optional fixed color controls. Omit them to leave the current sensor settings unchanged.
+    exposure=120,
+    gain=64,
+    white_balance=4600,
     rotation=Cv2Rotation.NO_ROTATION
 )
 
@@ -154,8 +158,25 @@ finally:
 ```
 <!-- prettier-ignore-end -->
 
+Manual color controls disable the corresponding automatic exposure or white-balance mode. Their
+supported ranges vary by camera model; an invalid value raises an error at connection time that
+includes the range reported by the sensor. Requesting an unsupported control also raises an error.
+Omitted controls leave the sensor's existing automatic or manual setting unchanged. These options
+require `use_rgb=True`.
+
+Manual color controls require a dedicated RGB module. Cameras without one, such as the RealSense
+D405, do not support them and raise an error at connection time.
+
 </hfoption>
 </hfoptions>
+
+### Working with depth
+
+The Intel RealSense and Reachy 2 cameras can capture both color and depth in lockstep. Calling `read()` returns the **color** frame as `(H, W, 3)` `uint8`. Calling `read_depth()` returns the **depth map** as `(H, W, 1)` `uint16`, where each pixel value is the distance from the sensor expressed in **millimetres**. A pixel value of `0` typically means "no measurement available" (out-of-range, occluded, or low-confidence).
+
+During recording, the control loop peeks the freshest buffered frames non-blockingly via `read_latest()` (color) and `read_latest_depth()` (depth), adding the depth map as a sibling feature (e.g. `front_depth` next to `front`).
+
+For how depth streams are stored and encoded when recording a dataset, see the [Depth streams](./video_encoding_parameters#depth-streams) section of the video encoding guide.
 
 ## Use your phone's camera
 
