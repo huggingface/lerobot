@@ -92,6 +92,20 @@ LIBERO supports two control modes — `relative` (default) and `absolute`. Diffe
 --env.control_mode=relative   # or "absolute"
 ```
 
+### Reset performance
+
+By default, LeRobot preserves LIBERO's hard-reset behavior. With fixed initial
+states enabled, you can opt into soft resets to skip rebuilding the simulator
+model and renderer on every episode:
+
+```bash
+--env.init_states=true --env.hard_reset=false
+```
+
+Soft resets are faster but are not bit-identical to hard resets after the
+environment's settling steps, so camera observations and policy results may
+differ slightly. Use hard resets when reproducing benchmark results.
+
 ### Policy inputs and outputs
 
 **Observations:**
