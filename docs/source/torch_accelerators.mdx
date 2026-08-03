@@ -25,6 +25,37 @@ import torch
 print(torch.<backend_name>.is_available())  # <backend_name> is cuda, mps, or xpu
 ```
 
+## Windows with NVIDIA CUDA
+
+On Windows, installing from a source checkout with `uv sync` uses the default PyTorch build from PyPI. That build may be **CPU-only**, even when an NVIDIA GPU and driver are present. LeRobot keeps CUDA wheel selection in `pyproject.toml` limited to Linux so Windows machines without an NVIDIA GPU are not forced onto CUDA wheels.
+
+If you need CUDA on Windows:
+
+1. Complete the usual source install (`uv sync` or `uv pip install -e ...`).
+2. Open the [PyTorch get-started selector](https://pytorch.org/get-started/locally/), choose **Windows**, **Pip**, your Python version, and the CUDA build that matches your driver.
+3. Reinstall `torch` and `torchvision` with the index URL from the selector, for example:
+
+```bash
+uv pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+Replace `cu128` with the CUDA tag shown by the selector (for example `cu126` or `cu130`).
+
+4. Verify the CUDA build:
+
+```python
+import torch
+
+print(torch.__version__)
+print(torch.version.cuda)
+print(torch.cuda.is_available())
+```
+
+You should see a CUDA build tag in `torch.__version__` (for example `2.x.x+cu128`), a non-`None` `torch.version.cuda`, and `True` from `torch.cuda.is_available()`.
+
+> [!NOTE]
+> This manual override may need to be repeated after you recreate the virtual environment or run a full `uv sync` again, which can restore the default Windows (often CPU-only) PyTorch build.
+
 ## How to run training or evaluation
 
 To select the desired accelerator, use the `--policy.device` flag when running `lerobot-train` or `lerobot-eval`. For example, to use MPS on Apple Silicon, run:

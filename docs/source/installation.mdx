@@ -209,7 +209,7 @@ _Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full 
 
 ### PyTorch CUDA variant (Linux only)
 
-On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+On Linux, the install path determines which CUDA wheel you get. macOS installs use the PyPI default (MPS) and can skip this section. On Windows with an NVIDIA GPU, `uv sync` may install a CPU-only PyTorch build — see [Windows with NVIDIA CUDA](./torch_accelerators#windows-with-nvidia-cuda) for the override steps.
 
 <!-- prettier-ignore-start -->
 
