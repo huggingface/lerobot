@@ -28,13 +28,12 @@ ROOT = Path(tempfile.gettempdir()) / "nvenc_seek_validation"
 REPO = "turnkeyrobo/nvenc_seek_validation"
 W, H, FPS = 640, 360, 30
 EPISODES, FRAMES = 4, 90
-CAMERAS = ["observation.images.left_wrist", "observation.images.right_wrist",
-           "observation.images.top"]
+CAMERAS = ["observation.images.left_wrist", "observation.images.right_wrist", "observation.images.top"]
 FAILURES: list[str] = []
 
 
 def check(name, ok, detail=""):
-    print("  %s  %s%s" % ("PASS" if ok else "FAIL", name, ("  " + detail) if detail else ""))
+    print("  {}  {}{}".format("PASS" if ok else "FAIL", name, ("  " + detail) if detail else ""))
     if not ok:
         FAILURES.append(name)
 
@@ -56,17 +55,19 @@ def main() -> None:
 
     features = {
         "action": {"dtype": "float32", "shape": [14], "names": [f"j{i}" for i in range(14)]},
-        "observation.state": {"dtype": "float32", "shape": [14],
-                              "names": [f"j{i}" for i in range(14)]},
+        "observation.state": {"dtype": "float32", "shape": [14], "names": [f"j{i}" for i in range(14)]},
     }
     for cam in CAMERAS:
-        features[cam] = {"dtype": "video", "shape": [H, W, 3],
-                         "names": ["height", "width", "channels"]}
+        features[cam] = {"dtype": "video", "shape": [H, W, 3], "names": ["height", "width", "channels"]}
 
     print("=== writing a dataset through the production path (gstreamer/NVENC) ===")
     ds = LeRobotDataset.create(
-        repo_id=REPO, fps=FPS, features=features, root=str(ROOT),
-        robot_type="tkr_yam", use_videos=True,
+        repo_id=REPO,
+        fps=FPS,
+        features=features,
+        root=str(ROOT),
+        robot_type="tkr_yam",
+        use_videos=True,
         rgb_encoder=RGBEncoderConfig(video_backend="gstreamer", vcodec="nvv4l2av1enc", crf=30),
     )
     for ep in range(EPISODES):
@@ -82,18 +83,20 @@ def main() -> None:
         # Serialise the per-camera encoders: three concurrent NVENC sessions
         # exhaust the Orin's encoder and fail with 'Cuda failure: status=3'.
         ds.save_episode(parallel_encoding=False)
-        print("    episode %d written" % ep)
+        print(f"    episode {ep} written")
     ds.finalize()
 
     print("=== the encoder actually used ===")
     import glob
+
     vids = sorted(glob.glob(str(ROOT / "videos" / "**" / "*.mp4"), recursive=True))
-    check("videos were produced", len(vids) >= 3, "%d files" % len(vids))
+    check("videos were produced", len(vids) >= 3, f"{len(vids)} files")
     for v in vids[:3]:
-        print("    %s  %.1f MB" % (Path(v).name, Path(v).stat().st_size / 1e6))
+        print(f"    {Path(v).name}  {Path(v).stat().st_size / 1e6:.1f} MB")
 
     print("=== every video seeks (this is what was broken) ===")
     from torchcodec.decoders import VideoDecoder
+
     all_ok = True
     for v in vids:
         d = VideoDecoder(v)
@@ -106,16 +109,17 @@ def main() -> None:
                 bad.append(t)
         all_ok &= not bad
         if bad:
-            print("    %s FAILED at %s" % (Path(v).name, bad))
+            print(f"    {Path(v).name} FAILED at {bad}")
     check("all videos seekable", all_ok)
 
     print("=== reload and read in SHUFFLED order, as training does ===")
     ds2 = LeRobotDataset(REPO, root=str(ROOT))
-    check("frame count", len(ds2) == EPISODES * FRAMES, "%d" % len(ds2))
+    check("frame count", len(ds2) == EPISODES * FRAMES, f"{len(ds2)}")
 
     g = torch.Generator().manual_seed(0)
-    dl = torch.utils.data.DataLoader(ds2, batch_size=8, shuffle=True, num_workers=2,
-                                     generator=g, drop_last=True)
+    dl = torch.utils.data.DataLoader(
+        ds2, batch_size=8, shuffle=True, num_workers=2, generator=g, drop_last=True
+    )
     seen, batches = 0, 0
     try:
         for batch in dl:
@@ -130,7 +134,7 @@ def main() -> None:
     except Exception as e:
         ok = False
         err = str(e).splitlines()[-1][:90]
-    check("shuffled DataLoader reads batches", ok, err or "%d batches, %d samples" % (batches, seen))
+    check("shuffled DataLoader reads batches", ok, err or f"{batches} batches, {seen} samples")
 
     print("=== random single-frame access matches sequential ===")
     idx = [7, 45, 130, 200, 310]
@@ -146,7 +150,7 @@ def main() -> None:
 
     print()
     if FAILURES:
-        print("FAILED: %d" % len(FAILURES))
+        print(f"FAILED: {len(FAILURES)}")
         for f in FAILURES:
             print("  -", f)
         raise SystemExit(1)
