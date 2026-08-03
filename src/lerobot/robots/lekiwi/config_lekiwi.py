@@ -49,13 +49,18 @@ class LeKiwiConfig(RobotConfig):
     use_degrees: bool = True
 
     # Arm servo tracking gains, written by `configure()` on every connect.
-    # Defaults are the values previously hard-coded there, so behaviour is unchanged
-    # unless a user sets them. Exposed because the right gains depend on the arm's load:
-    # a higher P is needed for a shoulder that must climb against gravity, while a lower
-    # one avoids shakiness on a lightly loaded arm.
-    arm_p_coefficient: int = 16
-    arm_i_coefficient: int = 0
-    arm_d_coefficient: int = 32
+    # Set a scalar to use one value for every arm motor, or a dict mapping motor name
+    # to value, following the same convention as `max_relative_target` above.
+    # Defaults are the values previously hard-coded in `configure()`, so behaviour is
+    # unchanged unless a user sets them.
+    #
+    # Exposed because the right gains depend on the arm's load, and can differ per joint:
+    # a shoulder climbing against gravity needs a higher P, while a gripper whose job is
+    # to stall against an object should usually keep I at 0, since integral action winds
+    # up against a blocked joint.
+    arm_p_coefficient: int | dict[str, int] = 16
+    arm_i_coefficient: int | dict[str, int] = 0
+    arm_d_coefficient: int | dict[str, int] = 32
 
 
 @dataclass

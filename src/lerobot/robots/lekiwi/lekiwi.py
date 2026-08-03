@@ -193,11 +193,15 @@ class LeKiwi(Robot):
         self.bus.configure_motors()
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
-            # Tracking gains from the config; defaults match the
-            # previously hard-coded 16/0/32, so unset behaviour is unchanged.
-            self.bus.write("P_Coefficient", name, self.config.arm_p_coefficient)
-            self.bus.write("I_Coefficient", name, self.config.arm_i_coefficient)
-            self.bus.write("D_Coefficient", name, self.config.arm_d_coefficient)
+            # Tracking gains from the config. A scalar applies to
+            # every arm motor; a dict maps motor name to value. Defaults match
+            # the previously hard-coded 16/0/32, so behaviour is unchanged.
+            for register, setting in (
+                ("P_Coefficient", self.config.arm_p_coefficient),
+                ("I_Coefficient", self.config.arm_i_coefficient),
+                ("D_Coefficient", self.config.arm_d_coefficient),
+            ):
+                self.bus.write(register, name, setting[name] if isinstance(setting, dict) else setting)
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
