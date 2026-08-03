@@ -16,6 +16,7 @@ import copy
 from typing import TYPE_CHECKING
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -538,7 +539,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
         """Fused attention via F.scaled_dot_product_attention (sdpa convention:
-        repeat_kv, bf16, bool mask). Not bit-identical to eager_attention_forward."""
+        repeat_kv, common dtype, bool mask). Not bit-identical to eager_attention_forward."""
         num_att_heads = self.num_attention_heads
         num_key_value_groups = num_att_heads // self.num_key_value_heads
         output_dtype = value_states.dtype
@@ -555,12 +556,14 @@ class SmolVLMWithExpertModel(nn.Module):
             value = value[:, :, None, :, :].expand(batch, kv_heads, num_key_value_groups, slen, hdim)
             value = value.reshape(batch, kv_heads * num_key_value_groups, slen, hdim)
 
-        query = query.to(dtype=torch.bfloat16)
-        key = key.to(dtype=torch.bfloat16)
-        value = value.to(dtype=torch.bfloat16)
+        # Promote instead of forcing bf16, so fp32 layers keep eager's precision.
+        common_dtype = torch.promote_types(query.dtype, key.dtype)
+        query = query.to(dtype=common_dtype)
+        key = key.to(dtype=common_dtype)
+        value = value.to(dtype=common_dtype)
 
-        # Bool mask is the sdpa convention; fully-masked padding rows return zeros, unlike eager.
-        att_output = nn.functional.scaled_dot_product_attention(
+        # Bool mask is the sdpa convention; fully-masked padding rows return zeros.
+        att_output = F.scaled_dot_product_attention(
             query,
             key,
             value,
