@@ -99,6 +99,15 @@ class TestCodecOptions:
 
 
 class TestConfigIntegration:
+    @pytest.fixture(autouse=True)
+    def _encoders_available(self, monkeypatch):
+        """Whether an encoder exists is a property of the machine, not of the config."""
+        monkeypatch.setattr(
+            RGBEncoderConfig,
+            "detect_available_encoders",
+            lambda self, encoders: [encoders] if isinstance(encoders, str) else list(encoders),
+        )
+
     def test_gstreamer_codecs_are_valid_vcodec_values(self):
         cfg = RGBEncoderConfig(vcodec="nvv4l2h265enc", video_backend="gstreamer")
         assert cfg.vcodec == "nvv4l2h265enc"
@@ -224,9 +233,7 @@ class TestEncoding:
                 gc.collect()
             print("survived")
         """)
-        result = subprocess.run(
-            [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
-        )
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, f"exit {result.returncode}: {result.stderr[-2000:]}"
         assert "survived" in result.stdout
 
