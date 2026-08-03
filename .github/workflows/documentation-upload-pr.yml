@@ -33,7 +33,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.repository == 'huggingface/lerobot'
-    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@6108e850ae1cf2f71bb0815a600bcd50c39abfa7  # main
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@7ccf6c02dc2e3aea1b07f6668f783b20c3bf407c  # main
     with:
       package_name: lerobot
     secrets:
