@@ -24,9 +24,10 @@ import pytest
 import torch
 from torch import nn
 from transformers import DynamicCache
-from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextRotaryEmbedding,
+    Qwen3_5VisionModel,
     Qwen3_5VisionRotaryEmbedding,
 )
 
@@ -39,7 +40,9 @@ from lerobot.policies.g05.modeling_g05 import (
     G05GatedDeltaNet,
     G05NativeBackend,
     G05Policy,
+    G05TextGeneration,
 )
+from lerobot.policies.g05.processor_g05 import G05TokenType
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 
@@ -164,6 +167,31 @@ class TinyLanguageTrainingBackend(G05NativeBackend):
         )
 
 
+class TinyVisionTower(nn.Module):
+    def __init__(self, *, temporal_freq: int = 0):
+        super().__init__()
+        self.config = SimpleNamespace(
+            patch_size=2,
+            spatial_merge_size=1,
+            temporal_patch_size=2,
+            temporal_freq=temporal_freq,
+        )
+        self.calls = 0
+
+    def forward(self, patches, grid):
+        self.calls += 1
+        tokens = int((grid[:, 1] * grid[:, 2]).sum())
+        return SimpleNamespace(pooler_output=patches.new_zeros(tokens, 4))
+
+
+def _vision_backend(*, temporal_freq: int = 0):
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = nn.Module()
+    backend.model.vision_tower = TinyVisionTower(temporal_freq=temporal_freq)
+    return backend
+
+
 def _features():
     return {
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
@@ -200,6 +228,68 @@ def _policy_batch(task: str = "  Pick café cup\nverbatim  "):
 def test_factory_wiring_is_lazy():
     assert make_policy_config("g05", checkpoint_profile="custom").type == "g05"
     assert get_policy_class("g05") is G05Policy
+
+
+def test_single_frame_vision_uses_native_transformers_path():
+    backend = _vision_backend()
+
+    encoded, grid = backend._encode_camera(torch.zeros(2, 1, 3, 4, 4))
+
+    assert backend.model.vision_tower.calls == 1
+    assert encoded.shape == (2, 4, 4)
+    assert grid == (1, 2, 2)
+
+
+def test_native_transformers_vision_matches_manual_single_frame_path():
+    config = Qwen3_5VisionConfig(
+        depth=1,
+        hidden_size=8,
+        intermediate_size=16,
+        num_heads=2,
+        patch_size=2,
+        temporal_patch_size=2,
+        spatial_merge_size=1,
+        out_hidden_size=8,
+        num_position_embeddings=16,
+    )
+    config.temporal_freq = 0
+    config.token_drop_layer = None
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = nn.Module()
+    backend.model.vision_tower = Qwen3_5VisionModel(config)
+    frames = torch.randn(2, 1, 3, 4, 4)
+
+    with torch.no_grad():
+        native, native_grid = backend._encode_camera_transformers(frames)
+        manual, manual_grid = backend._encode_camera_temporal(frames)
+
+    torch.testing.assert_close(native, manual, rtol=0, atol=0)
+    assert native_grid == manual_grid
+
+
+def test_multiframe_vision_requires_temporal_checkpoint_metadata():
+    backend = _vision_backend()
+
+    with pytest.raises(ValueError, match="temporal_freq > 0"):
+        backend._encode_camera(torch.zeros(1, 2, 3, 4, 4))
+
+
+def test_multiframe_vision_keeps_g05_temporal_path(monkeypatch):
+    backend = _vision_backend(temporal_freq=2)
+    expected = (torch.ones(1, 4, 4), (1, 2, 2))
+    calls = []
+
+    def temporal_path(frames):
+        calls.append(frames.shape)
+        return expected
+
+    monkeypatch.setattr(backend, "_encode_camera_temporal", temporal_path)
+
+    actual = backend._encode_camera(torch.zeros(1, 6, 3, 4, 4))
+
+    assert calls == [torch.Size((1, 6, 3, 4, 4))]
+    assert actual is expected
 
 
 def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens():
@@ -524,6 +614,7 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
                     token_types=torch.zeros(len(samples), 1)
                 ),
                 eov_token_id=2,
+                eos_token_id=3,
                 decode=lambda ids: "Subtask: pick",
             )
             self.generated = 0
@@ -539,7 +630,13 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
         def _generate_text(self, last_hidden, *, token_types, positions, cache, **kwargs):
             self.generated += 1
             generated = torch.tensor([[1, 2]] * last_hidden.shape[0])
-            return generated, cache, last_hidden, token_types, positions
+            state = G05TextGeneration(
+                token_ids=generated,
+                stop_tokens=generated[:, -1],
+                history=generated[:, :-1],
+                history_mask=None,
+            )
+            return state, cache, last_hidden, token_types, positions
 
         def _infer_flow(self, *, token_types, **kwargs):
             return torch.zeros(token_types.shape[0], 4, 20)
@@ -557,6 +654,157 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
     system2 = backend.predict_action({**batch, G05_RUNTIME_PREDICT_COT: True})
     assert backend.generated == 1
     assert system2["cot_text"] == ["Subtask: pick"]
+
+
+def test_checkpoint_sampling_honors_penalties_and_greedy_contract():
+    backend = TinyLanguageTrainingBackend(ce_weight=1.0)
+    logits = torch.tensor([[10.0, 1.0, 0.0]])
+    history = torch.tensor([[0]])
+
+    backend.model_config["ar"] = {
+        "do_sample": False,
+        "temperature": 1.0,
+        "repetition_penalty": 100.0,
+    }
+    assert backend._sample_next_token(logits, history).item() == 0
+
+    backend.model_config["ar"] = {
+        "do_sample": True,
+        "temperature": 1.0,
+        "top_k": 1,
+        "top_p": 1.0,
+        "repetition_penalty": 100.0,
+        "no_repeat_ngram_size": 0,
+    }
+    assert backend._sample_next_token(logits, history).item() == 1
+
+    backend.model_config["ar"] = {
+        "do_sample": True,
+        "temperature": 1.0,
+        "top_k": 0,
+        "top_p": 1.0,
+        "repetition_penalty": 1.0,
+        "no_repeat_ngram_size": 2,
+    }
+    banned_logits = torch.tensor([[0.0, 0.0, 100.0]])
+    assert backend._sample_next_token(banned_logits, torch.tensor([[1, 2, 1]])).item() != 2
+
+
+def test_batched_generation_stops_before_eov_and_masks_finished_rows():
+    class ScheduledBackend(G05NativeBackend):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.model_config = {"ar": {"do_sample": False}, "embodiment": "libero"}
+            self.model = SimpleNamespace(
+                vlm=SimpleNamespace(logits=lambda hidden: torch.zeros(hidden.shape[0], 16))
+            )
+            self.processor = SimpleNamespace(pad_token_id=0)
+            self.schedule = [torch.tensor([7, 5]), torch.tensor([6, 7])]
+            self.decoded = []
+
+        def _sample_next_token(self, logits, history=None, history_mask=None):
+            return self.schedule.pop(0).to(logits.device)
+
+        def _decode_token(self, token_ids, *, token_types, positions, cache, active_mask=None):
+            self.decoded.append((token_ids.clone(), active_mask.clone()))
+            next_types = torch.where(
+                active_mask[:, None],
+                torch.full((len(token_ids), 1), float(G05TokenType.PRED_TEXT)),
+                torch.full((len(token_ids), 1), float(G05TokenType.PADDING)),
+            ).to(token_types)
+            next_positions = positions[..., -1:] + 1
+            return (
+                torch.ones(len(token_ids), 4),
+                torch.cat((token_types, next_types), dim=1),
+                torch.cat((positions, next_positions), dim=-1),
+            )
+
+    backend = ScheduledBackend()
+    generation, _, _, _, _ = backend._generate_text(
+        torch.zeros(2, 4),
+        token_types=torch.ones(2, 1),
+        positions=torch.zeros(3, 2, 1, dtype=torch.long),
+        cache=object(),
+        max_new_tokens=4,
+        stop_token_ids=7,
+    )
+
+    torch.testing.assert_close(generation.token_ids, torch.tensor([[7, 0], [5, 7]]))
+    torch.testing.assert_close(generation.stop_tokens, torch.tensor([7, 7]))
+    assert len(backend.decoded) == 1
+    torch.testing.assert_close(backend.decoded[0][0], torch.tensor([0, 5]))
+    torch.testing.assert_close(backend.decoded[0][1], torch.tensor([False, True]))
+    torch.testing.assert_close(generation.history, torch.tensor([[0], [5]]))
+    torch.testing.assert_close(generation.history_mask, torch.tensor([[False], [True]]))
+
+
+def test_action_generation_commits_exact_cot_stop_and_keeps_history():
+    class ScheduledBackend(G05NativeBackend):
+        def __init__(self):
+            nn.Module.__init__(self)
+            self.model_config = {"ar": {"do_sample": False}, "embodiment": "libero"}
+            self.model = SimpleNamespace(vlm=SimpleNamespace(logits=lambda hidden: torch.zeros(1, 128)))
+            self.processor = SimpleNamespace(pad_token_id=0)
+            self.schedule = [torch.tensor([99]), torch.tensor([100]), torch.tensor([2])]
+            self.decoded = []
+
+        def _sample_next_token(self, logits, history=None, history_mask=None):
+            return self.schedule.pop(0).to(logits.device)
+
+        def _decode_token(self, token_ids, *, token_types, positions, cache, active_mask=None):
+            self.decoded.append(token_ids.clone())
+            return (
+                torch.ones(1, 4),
+                torch.cat((token_types, torch.ones(1, 1)), dim=1),
+                torch.cat((positions, positions[..., -1:] + 1), dim=-1),
+            )
+
+    backend = ScheduledBackend()
+    generation, _, _, _, _ = backend._generate_text(
+        torch.zeros(1, 4),
+        token_types=torch.ones(1, 1),
+        positions=torch.zeros(3, 1, 1, dtype=torch.long),
+        cache=object(),
+        max_new_tokens=4,
+        stop_token_ids=2,
+        initial_history=torch.tensor([[8, 9]]),
+        forced_first_tokens=torch.tensor([7]),
+    )
+
+    torch.testing.assert_close(generation.token_ids, torch.tensor([[7, 100, 2]]))
+    assert [tokens.item() for tokens in backend.decoded] == [7, 100]
+    torch.testing.assert_close(generation.history, torch.tensor([[8, 9, 7, 100]]))
+
+
+def test_decode_token_restores_finished_linear_attention_rows():
+    class MutatingVLM(nn.Module):
+        def embed(self, token_ids):
+            return torch.zeros(*token_ids.shape, 4)
+
+        def forward(self, inputs_embeds, *, cache, **kwargs):
+            cache.layers[0].conv_states.add_(1)
+            cache.layers[0].recurrent_states.add_(1)
+            return torch.ones(inputs_embeds.shape[0], 1, 4), cache
+
+    backend = G05NativeBackend.__new__(G05NativeBackend)
+    nn.Module.__init__(backend)
+    backend.model = nn.Module()
+    backend.model.vlm = MutatingVLM()
+    layer = SimpleNamespace(conv_states=torch.zeros(2, 1), recurrent_states=torch.zeros(2, 1))
+    cache = SimpleNamespace(layers=[layer])
+
+    _, token_types, _ = backend._decode_token(
+        torch.tensor([0, 5]),
+        token_types=torch.ones(2, 1),
+        positions=torch.zeros(3, 2, 1, dtype=torch.long),
+        cache=cache,
+        active_mask=torch.tensor([False, True]),
+    )
+
+    torch.testing.assert_close(layer.conv_states, torch.tensor([[0.0], [1.0]]))
+    torch.testing.assert_close(layer.recurrent_states, torch.tensor([[0.0], [1.0]]))
+    assert token_types[0, -1] == float(G05TokenType.PADDING)
+    assert token_types[1, -1] == float(G05TokenType.PRED_TEXT)
 
 
 def test_native_training_applies_ar_loss_config_and_reaches_language_head():

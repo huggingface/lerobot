@@ -25,6 +25,7 @@ import shutil
 import time
 from collections import deque
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ import torch
 import torch.nn.functional as functional
 from huggingface_hub import snapshot_download
 from safetensors.torch import load_file
-from torch import Tensor, nn
+from torch import Tensor, distributed, nn
 from transformers import DynamicCache
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
@@ -416,6 +417,164 @@ class _CodecDecoder(nn.Module):
         return hidden_states
 
 
+def _sample_codec_vectors(samples: Tensor, count: int) -> Tensor:
+    if samples.shape[0] >= count:
+        indices = torch.randperm(samples.shape[0], device=samples.device)[:count]
+    else:
+        indices = torch.randint(0, samples.shape[0], (count,), device=samples.device)
+    return samples[indices].float()
+
+
+def _codec_kmeans(samples: Tensor, num_clusters: int, num_iterations: int = 10) -> tuple[Tensor, Tensor]:
+    dimension = samples.shape[-1]
+    means = _sample_codec_vectors(samples, num_clusters)
+    for _ in range(num_iterations):
+        distances = (
+            samples.float().square().sum(1, keepdim=True)
+            - 2 * samples.float() @ means.t()
+            + means.float().square().sum(1, keepdim=True).t()
+        )
+        buckets = distances.argmin(-1)
+        counts = torch.bincount(buckets, minlength=num_clusters)
+        safe_counts = counts.masked_fill(counts == 0, 1)
+        new_means = torch.zeros(num_clusters, dimension, device=samples.device)
+        new_means.scatter_add_(0, buckets[:, None].expand(-1, dimension), samples.float())
+        new_means = new_means / safe_counts.float()[:, None]
+        means = torch.where((counts == 0)[:, None], means, new_means)
+    distances = (
+        samples.float().square().sum(1, keepdim=True)
+        - 2 * samples.float() @ means.t()
+        + means.float().square().sum(1, keepdim=True).t()
+    )
+    counts = torch.bincount(distances.argmin(-1), minlength=num_clusters).float()
+    return means, counts
+
+
+def _codec_ema_inplace(moving_average: Tensor, value: Tensor, decay: float) -> None:
+    moving_average.data.mul_(decay).add_(value.float(), alpha=1 - decay)
+
+
+def _codec_rotation_trick(encoded: Tensor, quantized: Tensor) -> Tensor:
+    encoded_float = encoded.float()
+    quantized_float = quantized.float()
+    encoded_norm = encoded_float.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    quantized_norm = quantized_float.norm(dim=1, keepdim=True).clamp(min=1e-8)
+    rotated = encoded_float / encoded_norm * quantized_norm
+    return (quantized_float - rotated).detach() + rotated
+
+
+def _time_shift_positive(actions: Tensor) -> Tensor:
+    shifted = torch.zeros_like(actions)
+    shifted[:, 0] = actions[:, 0]
+    shifted[:, 1:] = actions[:, :-1]
+    return shifted
+
+
+class _ActionTimeContrastiveLoss(nn.Module):
+    def __init__(self, mode: str, temperature_init: float, bias_init: float) -> None:
+        super().__init__()
+        if mode not in {"siglip", "infonce"}:
+            raise ValueError(f"unsupported action-time contrastive mode: {mode!r}")
+        self.mode = mode
+        if mode == "siglip":
+            self.logit_scale = nn.Parameter(torch.tensor(float(temperature_init)).log())
+            self.logit_bias = nn.Parameter(torch.tensor(float(bias_init)))
+        else:
+            self.register_buffer("temperature", torch.tensor(float(temperature_init)))
+
+    @staticmethod
+    def _flatten(hidden_states: Tensor) -> Tensor:
+        return functional.normalize(hidden_states.flatten(1), dim=-1)
+
+    def forward(self, anchor_states: Tensor, positive_states: Tensor) -> tuple[Tensor, dict[str, Tensor]]:
+        anchors = self._flatten(anchor_states)
+        positives = self._flatten(positive_states)
+        batch_size = anchors.shape[0]
+        if positives.shape[0] % batch_size:
+            raise ValueError("positive batch must be an integer multiple of anchor batch")
+        if self.mode == "siglip":
+            logits = anchors @ positives.t() * self.logit_scale.exp() + self.logit_bias
+            labels = torch.zeros_like(logits)
+            row_indices = torch.arange(batch_size, device=logits.device)
+            for positive_index in range(positives.shape[0] // batch_size):
+                labels[row_indices, row_indices + positive_index * batch_size] = 1
+            signed_labels = 2 * labels - 1
+            loss = -functional.logsigmoid(signed_labels * logits).mean()
+            positive_logits = logits[labels == 1]
+            negative_logits = logits[labels == 0]
+            average_negative = negative_logits.mean() if negative_logits.numel() else logits.new_zeros(())
+            return loss, {
+                "consist/loss": loss.detach(),
+                "contrastive/loss": loss.detach(),
+                "contrastive/temperature": self.logit_scale.exp().detach(),
+                "contrastive/logit_bias": self.logit_bias.detach(),
+                "contrastive/avg_pos_sim": positive_logits.mean().detach(),
+                "contrastive/avg_neg_sim": average_negative.detach(),
+            }
+
+        if batch_size < 2:
+            raise ValueError("action-time 'infonce' mode requires batch_size >= 2")
+        shift = torch.randint(1, batch_size, (1,), device=anchors.device).item()
+        negatives = anchors[(torch.arange(batch_size, device=anchors.device) + shift) % batch_size]
+        losses = []
+        metrics: dict[str, Tensor] = {}
+        for positive_index in range(positives.shape[0] // batch_size):
+            positive = positives[positive_index * batch_size : (positive_index + 1) * batch_size]
+            positive_similarity = (anchors * positive).sum(-1)
+            negative_similarity = (anchors * negatives).sum(-1)
+            losses.append(
+                -functional.logsigmoid(self.temperature * (positive_similarity - negative_similarity)).mean()
+            )
+            metrics[f"contrastive/pos_sim_{positive_index}"] = positive_similarity.mean().detach()
+            metrics[f"contrastive/neg_sim_{positive_index}"] = negative_similarity.mean().detach()
+        loss = torch.stack(losses).mean()
+        metrics.update(
+            {
+                "consist/loss": loss.detach(),
+                "contrastive/loss": loss.detach(),
+                "contrastive/temperature": self.temperature.detach(),
+            }
+        )
+        return loss, metrics
+
+
+def _codec_consistency_loss(
+    residuals: list[Tensor],
+    level_codes: list[Tensor],
+    original_batch_size: int,
+    layer_weights: list[float],
+) -> tuple[Tensor, dict[str, Tensor]]:
+    if not residuals or len(residuals) != len(level_codes) or len(level_codes) != len(layer_weights):
+        raise ValueError("consistency residuals, codes, and layer weights must have equal nonzero lengths")
+    device = residuals[0].device
+    sequence_length = residuals[0].shape[-1]
+    prefix_match = torch.ones(original_batch_size, sequence_length, device=device)
+    total_loss = torch.tensor(0.0, device=device)
+    hamming = 0.0
+    metrics: dict[str, Tensor] = {}
+    for level, (level_residuals, codes, weight) in enumerate(
+        zip(residuals, level_codes, layer_weights, strict=True)
+    ):
+        original_residuals = level_residuals[:original_batch_size]
+        positive_residuals = level_residuals[original_batch_size:]
+        original_codes = codes[:original_batch_size]
+        positive_codes = codes[original_batch_size:]
+        diverged = (original_codes != positive_codes).float().detach()
+        token_change_rate = diverged.mean()
+        hamming += float(token_change_rate.item())
+        residual_difference = (positive_residuals - original_residuals.detach()).norm(dim=1)
+        active = prefix_match * diverged
+        layer_loss = (active * residual_difference).mean()
+        total_loss = total_loss + float(weight) * layer_loss
+        metrics[f"consist/tcr_layer_{level}"] = token_change_rate.detach()
+        metrics[f"consist/active_frac_{level}"] = active.mean().detach()
+        metrics[f"consist/loss_layer_{level}"] = layer_loss.detach()
+        prefix_match = prefix_match * (original_codes == positive_codes).float().detach()
+    metrics["consist/loss"] = total_loss.detach()
+    metrics["consist/hamming_dist"] = torch.tensor(hamming * sequence_length, device=device)
+    return total_loss, metrics
+
+
 class _CodecQuantizer(nn.Module):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()
@@ -423,6 +582,12 @@ class _CodecQuantizer(nn.Module):
         codebook_dim = int(config["codebook_dim"])
         codebook_size = int(config["codebook_size"])
         self.input_dim = input_dim
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
+        self.decay = float(config.get("ema_decay", 0.95))
+        self.threshold_ema_dead = float(config.get("threshold_ema_dead", 2.0))
+        self.use_rotation_trick = bool(config.get("use_rotation_trick", False))
+        self.epsilon = 1e-5
         self.in_proj = nn.Linear(input_dim, codebook_dim, bias=False)
         self.out_proj = nn.Linear(codebook_dim, input_dim, bias=False)
         self.register_buffer("codebook", torch.zeros(codebook_size, codebook_dim))
@@ -430,39 +595,146 @@ class _CodecQuantizer(nn.Module):
         self.register_buffer("cluster_size", torch.zeros(codebook_size))
         self.register_buffer("inited", torch.tensor(False))
 
-    def encode(self, values: Tensor) -> tuple[Tensor, Tensor]:
-        projected = self.in_proj(values.transpose(1, 2))
-        flat = projected.reshape(-1, projected.shape[-1]).float()
+    def _initialize_codebook(self, encodings: Tensor) -> None:
+        if self.inited.item():
+            return
+        if not distributed.is_initialized() or distributed.get_rank() == 0:
+            means, counts = _codec_kmeans(encodings.float(), self.codebook_size)
+        else:
+            means = torch.zeros(self.codebook_size, self.codebook_dim, device=encodings.device)
+            counts = torch.zeros(self.codebook_size, device=encodings.device)
+        if distributed.is_initialized():
+            distributed.broadcast(means, src=0)
+            distributed.broadcast(counts, src=0)
+        self.codebook.copy_(means)
+        self.embed_avg.copy_(means)
+        self.cluster_size.copy_(counts)
+        self.inited.fill_(True)
+
+    def _update_codebook(self, encodings: Tensor, one_hot_codes: Tensor) -> None:
+        cluster_size = one_hot_codes.sum(0)
+        embed_sum = encodings.t() @ one_hot_codes
+        if distributed.is_initialized():
+            distributed.all_reduce(cluster_size, op=distributed.ReduceOp.SUM)
+            distributed.all_reduce(embed_sum, op=distributed.ReduceOp.SUM)
+        _codec_ema_inplace(self.cluster_size, cluster_size, self.decay)
+        _codec_ema_inplace(self.embed_avg, embed_sum.t(), self.decay)
+        total = self.cluster_size.sum()
+        smoothed = (self.cluster_size + self.epsilon) / (total + self.codebook_size * self.epsilon) * total
+        self.codebook.copy_((self.embed_avg / smoothed[:, None]).float())
+
+    def _replace_dead_codes(self, encodings: Tensor) -> None:
+        if self.threshold_ema_dead <= 0:
+            return
+        dead = self.cluster_size < self.threshold_ema_dead
+        if not dead.any():
+            return
+        count = int(dead.sum().item())
+        if not distributed.is_initialized() or distributed.get_rank() == 0:
+            replacements = _sample_codec_vectors(encodings.float(), count)
+        else:
+            replacements = torch.zeros(count, self.codebook_dim, device=encodings.device)
+        if distributed.is_initialized():
+            distributed.broadcast(replacements, src=0)
+        self.codebook[dead] = replacements.to(self.codebook.dtype)
+
+    def forward(self, values: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        original_dtype = values.dtype
+        projected = self.in_proj(values.float().transpose(1, 2)).transpose(1, 2)
+        encodings = projected.transpose(1, 2).reshape(-1, self.codebook_dim)
+        if not torch.compiler.is_compiling() and not self.inited.item():
+            self._initialize_codebook(encodings.detach())
         codebook = self.codebook.float()
         distances = (
-            flat.square().sum(dim=1, keepdim=True)
-            - 2 * flat @ codebook.t()
+            encodings.square().sum(dim=1, keepdim=True)
+            - 2 * encodings @ codebook.t()
             + codebook.square().sum(dim=1)[None]
         )
-        codes = distances.argmin(dim=-1).reshape(values.shape[0], values.shape[2])
-        quantized = functional.embedding(codes, self.codebook)
-        quantized = self.out_proj(quantized).transpose(1, 2)
-        return quantized.to(values.dtype), codes
+        flat_codes = distances.argmin(dim=-1)
+        codes = flat_codes.reshape(values.shape[0], values.shape[2])
+        quantized = (
+            functional.embedding(flat_codes, codebook)
+            .reshape(values.shape[0], values.shape[2], self.codebook_dim)
+            .transpose(1, 2)
+        )
+        inference_fast_path = not self.training and not torch.is_grad_enabled()
+        commitment_loss = (
+            torch.zeros(values.shape[0], device=values.device)
+            if inference_fast_path
+            else functional.mse_loss(projected, quantized.detach(), reduction="none").mean((1, 2))
+        )
+        if self.training and torch.is_grad_enabled():
+            one_hot_codes = functional.one_hot(flat_codes, self.codebook_size).float()
+            self._update_codebook(encodings.detach(), one_hot_codes)
+            self._replace_dead_codes(encodings.detach())
+        if inference_fast_path:
+            straight_through = quantized
+        elif self.use_rotation_trick:
+            straight_through = _codec_rotation_trick(projected, quantized)
+        else:
+            straight_through = (quantized - projected).detach() + projected
+        output = self.out_proj(straight_through.transpose(1, 2)).transpose(1, 2)
+        return output.to(original_dtype), commitment_loss, codes
+
+    def encode(self, values: Tensor) -> tuple[Tensor, Tensor]:
+        quantized, _, codes = self(values)
+        return quantized, codes
 
     def decode_codes(self, codes: Tensor) -> Tensor:
-        return self.out_proj(functional.embedding(codes, self.codebook)).transpose(1, 2)
+        return self.out_proj(functional.embedding(codes, self.codebook.float())).transpose(1, 2)
 
 
 class _ResidualCodecQuantizer(nn.Module):
     def __init__(self, config: Mapping[str, Any]) -> None:
         super().__init__()
-        self.quantizers = nn.ModuleList([_CodecQuantizer(config) for _ in range(int(config["n_codebooks"]))])
+        self.n_codebooks = int(config["n_codebooks"])
+        self.quantizer_dropout = float(config.get("quantizer_dropout", 0.5))
+        self.quantizers = nn.ModuleList([_CodecQuantizer(config) for _ in range(self.n_codebooks)])
+
+    def forward(
+        self, values: Tensor, *, return_level_data: bool = False
+    ) -> tuple[Tensor, Tensor, Tensor] | tuple[Tensor, Tensor, Tensor, list[Tensor], list[Tensor]]:
+        batch_size = values.shape[0]
+        if self.training:
+            levels_per_sample = torch.full((batch_size,), float(self.n_codebooks + 1), device=values.device)
+            dropout_mask = torch.rand(batch_size, device=values.device) < self.quantizer_dropout
+            sampled_levels = torch.randint(1, self.n_codebooks + 1, (batch_size,), device=values.device)
+            levels_per_sample[dropout_mask] = sampled_levels[dropout_mask].float()
+        else:
+            levels_per_sample = torch.full((batch_size,), self.n_codebooks + 0.5, device=values.device)
+        residual = values
+        quantized = torch.zeros_like(values)
+        codes = []
+        commitment_loss = values.new_zeros(())
+        consistency_residual = values
+        consistency_residuals = []
+        level_codes = []
+        for level, quantizer in enumerate(self.quantizers):
+            active = (level < levels_per_sample).float()
+            if return_level_data:
+                consistency_residuals.append(
+                    quantizer.in_proj(consistency_residual.float().transpose(1, 2)).transpose(1, 2)
+                )
+            current, current_commitment, current_codes = quantizer(residual)
+            quantized = quantized + current * active[:, None, None]
+            residual = residual - current
+            commitment_loss = commitment_loss + (current_commitment * active).mean()
+            codes.append(current_codes)
+            if return_level_data:
+                level_codes.append(current_codes)
+                consistency_residual = consistency_residual - current.detach()
+        stacked_codes = torch.stack(codes, dim=1)
+        if return_level_data:
+            return quantized, stacked_codes, commitment_loss, consistency_residuals, level_codes
+        return quantized, stacked_codes, commitment_loss
 
     def encode(self, values: Tensor) -> Tensor:
-        residual = values
-        codes = []
-        for quantizer in self.quantizers:
-            quantized, level_codes = quantizer.encode(residual)
-            residual = residual - quantized
-            codes.append(level_codes)
-        return torch.stack(codes, dim=1)
+        _, codes, _ = self(values)
+        return codes
 
     def from_codes(self, codes: Tensor) -> Tensor:
+        if not 1 <= codes.shape[1] <= len(self.quantizers):
+            raise ValueError("invalid number of residual codebooks")
         quantized = torch.zeros(
             codes.shape[0],
             self.quantizers[0].input_dim,
@@ -491,6 +763,17 @@ class _ActionCodecModel(nn.Module):
         )
         self.encoder = _CodecEncoder(config)
         self.rvq = _ResidualCodecQuantizer(config)
+        self.action_time_contrastive_loss: _ActionTimeContrastiveLoss | None = None
+        if (
+            float(config.get("consistency_loss_weight", 0.0)) > 0
+            and str(config.get("consistency_loss_type", "action_time_contrastive"))
+            == "action_time_contrastive"
+        ):
+            self.action_time_contrastive_loss = _ActionTimeContrastiveLoss(
+                mode=str(config.get("action_time_contrastive_mode", "siglip")),
+                temperature_init=float(config.get("action_time_contrastive_temperature_init", 0.07)),
+                bias_init=float(config.get("action_time_contrastive_bias_init", -10.0)),
+            )
         self.decoder = _CodecDecoder(config)
         self.conv_out = nn.ConvTranspose2d(
             int(config["encoder_channels"]),
@@ -509,22 +792,59 @@ class _ActionCodecModel(nn.Module):
     def code_a(self) -> int:
         return int(self.config["max_component_dim"]) - int(self.config["conv_in_action_kernel"]) + 1
 
-    def _pad(self, values: Tensor) -> Tensor:
-        maximum = int(self.config["max_component_dim"])
-        if values.shape[-1] < maximum:
-            return functional.pad(values, (0, maximum - values.shape[-1]))
-        return values[..., :maximum]
-
-    def encode(self, components: dict[str, Tensor]) -> dict[str, Tensor]:
+    def _normalize_components(self, components: Mapping[str, Tensor]) -> tuple[list[str], Tensor, int]:
+        if not components:
+            raise ValueError("ActionCodec requires at least one action component")
         names = list(components)
-        batch_size = next(iter(components.values())).shape[0]
-        values = torch.cat([self._pad(components[name].float()) for name in names], dim=0)
+        batch_size = components[names[0]].shape[0]
+        horizon = int(self.config["horizon"])
+        maximum = int(self.config["max_component_dim"])
+        normalized = []
+        for name in names:
+            values = components[name].float()
+            if values.ndim != 3 or values.shape[0] != batch_size:
+                raise ValueError(f"component {name!r} must have shape [B,T,D] with a shared batch size")
+            values = values[:, :horizon, :maximum]
+            values = functional.pad(
+                values,
+                (0, maximum - values.shape[-1], 0, horizon - values.shape[-2]),
+            )
+            normalized.append(values)
+        return names, torch.cat(normalized), batch_size
+
+    def _encode_tensor(
+        self,
+        values: Tensor,
+        *,
+        return_level_data: bool = False,
+        return_encoder_hidden: bool = False,
+    ) -> tuple[Any, ...]:
         if self.block_dct is not None:
             values = self.block_dct.dct(values)
         patch = int(self.config["horizon_patch_size"])
-        values = values.reshape(values.shape[0], -1, patch, values.shape[-1]).transpose(1, 2)
-        latent = self.encoder(self.conv_in(values)).flatten(2)
-        codes = self.rvq.encode(latent)
+        hidden_states = values.reshape(values.shape[0], -1, patch, values.shape[-1]).transpose(1, 2)
+        hidden_states = self.encoder(self.conv_in(hidden_states)).flatten(2)
+        quantized = self.rvq(hidden_states, return_level_data=return_level_data)
+        if return_encoder_hidden:
+            return (*quantized, hidden_states)
+        return quantized
+
+    def _decode_tensor(self, hidden_states: Tensor) -> Tensor:
+        hidden_states = hidden_states.reshape(
+            hidden_states.shape[0],
+            hidden_states.shape[1],
+            self.code_h,
+            self.code_a,
+        )
+        values = self.conv_out(self.decoder(hidden_states))
+        values = values.transpose(1, 2).reshape(values.shape[0], -1, values.shape[-1])
+        if self.block_dct is not None:
+            values = self.block_dct.idct(values, int(self.config["horizon"]))
+        return values[:, : int(self.config["horizon"])]
+
+    def encode(self, components: dict[str, Tensor]) -> dict[str, Tensor]:
+        names, values, batch_size = self._normalize_components(components)
+        _, codes, _ = self._encode_tensor(values)
         return {
             name: codes[index * batch_size : (index + 1) * batch_size] for index, name in enumerate(names)
         }
@@ -533,20 +853,136 @@ class _ActionCodecModel(nn.Module):
         names = list(components)
         batch_size = next(iter(components.values())).shape[0]
         codes = torch.cat([components[name] for name in names], dim=0)
-        quantized = self.rvq.from_codes(codes)
-        quantized = quantized.reshape(
-            quantized.shape[0],
-            quantized.shape[1],
-            self.code_h,
-            self.code_a,
-        )
-        decoded = self.conv_out(self.decoder(quantized))
-        decoded = decoded.transpose(1, 2).reshape(decoded.shape[0], -1, decoded.shape[-1])
-        if self.block_dct is not None:
-            decoded = self.block_dct.idct(decoded, int(self.config["horizon"]))
+        decoded = self._decode_tensor(self.rvq.from_codes(codes))
         return {
             name: decoded[index * batch_size : (index + 1) * batch_size, :, : dimensions[name]]
             for index, name in enumerate(names)
+        }
+
+    def forward(
+        self,
+        components: dict[str, Tensor],
+        d_original: dict[str, int] | None = None,
+        x_pos_dict: dict[str, Tensor] | None = None,
+        layer_weights: list[float] | None = None,
+    ) -> dict[str, Tensor | dict[str, Tensor]]:
+        """Run reconstruction, RVQ commitment, and optional consistency training losses."""
+
+        names, values, batch_size = self._normalize_components(components)
+        target = values.clone()
+        original_dims = d_original or {name: components[name].shape[-1] for name in names}
+        packed_batch_size = batch_size * len(names)
+        consistency_type = str(self.config.get("consistency_loss_type", "action_time_contrastive"))
+        consistency_weight = float(self.config.get("consistency_loss_weight", 0.0))
+        use_consistency = consistency_weight > 0
+        if x_pos_dict is None and use_consistency and consistency_type == "action_time_contrastive":
+            x_pos_dict = {name: _time_shift_positive(components[name]) for name in names}
+
+        if x_pos_dict is None:
+            quantized, packed_codes, commitment_loss = self._encode_tensor(values)
+            consistency_residuals = level_codes = encoder_hidden = None
+        else:
+            if set(x_pos_dict) != set(names):
+                raise ValueError("x_pos_dict must contain exactly the same keys as components")
+            _, positive_values, positive_batch_size = self._normalize_components(x_pos_dict)
+            if positive_batch_size != batch_size:
+                raise ValueError("x_pos_dict must use the same batch size as components")
+            return_level_data = use_consistency and consistency_type == "token_residual"
+            return_encoder_hidden = use_consistency and consistency_type == "action_time_contrastive"
+            encoded = self._encode_tensor(
+                torch.cat((values, positive_values)),
+                return_level_data=return_level_data,
+                return_encoder_hidden=return_encoder_hidden,
+            )
+            if return_level_data and return_encoder_hidden:
+                (
+                    all_quantized,
+                    all_codes,
+                    commitment_loss,
+                    consistency_residuals,
+                    level_codes,
+                    encoder_hidden,
+                ) = encoded
+            elif return_level_data:
+                all_quantized, all_codes, commitment_loss, consistency_residuals, level_codes = encoded
+                encoder_hidden = None
+            elif return_encoder_hidden:
+                all_quantized, all_codes, commitment_loss, encoder_hidden = encoded
+                consistency_residuals = level_codes = None
+            else:
+                all_quantized, all_codes, commitment_loss = encoded
+                consistency_residuals = level_codes = encoder_hidden = None
+            quantized = all_quantized[:packed_batch_size]
+            packed_codes = all_codes[:packed_batch_size]
+
+        reconstructed = self._decode_tensor(quantized)
+        reconstruction_loss = functional.mse_loss(reconstructed, target)
+        loss = float(self.config.get("reconstruction_loss_weight", 1.0)) * reconstruction_loss
+        loss = loss + float(self.config.get("commitment_loss_weight", 0.25)) * commitment_loss
+        loss_dict: dict[str, Tensor] = {
+            "loss": loss,
+            "reconstruction_loss": reconstruction_loss.detach(),
+            "commitment_loss": commitment_loss.detach(),
+        }
+        for index, name in enumerate(names):
+            dimension = original_dims.get(name, int(self.config["max_component_dim"]))
+            component_slice = slice(index * batch_size, (index + 1) * batch_size)
+            loss_dict[f"recon/{name}"] = functional.mse_loss(
+                reconstructed[component_slice, :, :dimension],
+                target[component_slice, :, :dimension],
+            ).detach()
+
+        for level, quantizer in enumerate(self.rvq.quantizers):
+            cluster_size = quantizer.cluster_size.float()
+            total = cluster_size.sum()
+            if total > 0:
+                probabilities = cluster_size / total
+                perplexity = torch.exp(-(probabilities * torch.log(probabilities + 1e-10)).sum())
+                utilization = (cluster_size >= quantizer.threshold_ema_dead).float().mean()
+            else:
+                perplexity = cluster_size.new_tensor(1.0)
+                utilization = cluster_size.new_tensor(0.0)
+            loss_dict[f"codebook/perplexity_l{level}"] = perplexity.detach()
+            loss_dict[f"codebook/utilization_l{level}"] = utilization.detach()
+
+        if x_pos_dict is not None and use_consistency and consistency_type == "token_residual":
+            if consistency_residuals is None or level_codes is None:
+                raise RuntimeError("token-residual consistency state was not returned")
+            effective_layer_weights = layer_weights or [1.0] * int(self.config["n_codebooks"])
+            consistency_loss, consistency_metrics = _codec_consistency_loss(
+                consistency_residuals,
+                level_codes,
+                packed_batch_size,
+                effective_layer_weights,
+            )
+            loss = loss + consistency_weight * consistency_loss
+            loss_dict["loss"] = loss
+            loss_dict.update(consistency_metrics)
+        elif x_pos_dict is not None and use_consistency and consistency_type == "action_time_contrastive":
+            if self.action_time_contrastive_loss is None or encoder_hidden is None:
+                raise RuntimeError("action-time contrastive loss was not initialized")
+            consistency_loss, consistency_metrics = self.action_time_contrastive_loss(
+                encoder_hidden[:packed_batch_size], encoder_hidden[packed_batch_size:]
+            )
+            loss = loss + consistency_weight * consistency_loss
+            loss_dict["loss"] = loss
+            loss_dict.update(consistency_metrics)
+
+        return {
+            "loss": loss,
+            "reconstructions": {
+                name: reconstructed[
+                    index * batch_size : (index + 1) * batch_size,
+                    :,
+                    : original_dims.get(name, int(self.config["max_component_dim"])),
+                ]
+                for index, name in enumerate(names)
+            },
+            "codes": {
+                name: packed_codes[index * batch_size : (index + 1) * batch_size]
+                for index, name in enumerate(names)
+            },
+            "loss_dict": loss_dict,
         }
 
 
@@ -674,7 +1110,22 @@ class G05NativeActionCodec:
 
     def __init__(self, config: Mapping[str, Any], *, action_token_begin: int) -> None:
         self.config = dict(config)
-        architecture = self.config["model_arch"]
+        architecture = dict(self.config["model_arch"])
+        for key in (
+            "action_time_contrastive_bias_init",
+            "action_time_contrastive_mode",
+            "action_time_contrastive_temperature_init",
+            "commitment_loss_weight",
+            "consistency_loss_type",
+            "consistency_loss_weight",
+            "ema_decay",
+            "quantizer_dropout",
+            "reconstruction_loss_weight",
+            "threshold_ema_dead",
+            "use_rotation_trick",
+        ):
+            if key in self.config:
+                architecture[key] = self.config[key]
         self.module = _NativeCodecModule(architecture)
         self.model = self.module.model
         self.action_token_begin = action_token_begin
@@ -726,6 +1177,27 @@ class G05NativeActionCodec:
     def to(self, device: torch.device | str) -> G05NativeActionCodec:
         self.module.to(device=device, dtype=torch.float32)
         return self
+
+    def train(self, mode: bool = True) -> G05NativeActionCodec:
+        self.module.train(mode)
+        return self
+
+    def eval(self) -> G05NativeActionCodec:
+        return self.train(False)
+
+    def training_objective(
+        self,
+        components: dict[str, Tensor],
+        d_original: dict[str, int] | None = None,
+        x_pos_dict: dict[str, Tensor] | None = None,
+        layer_weights: list[float] | None = None,
+    ) -> dict[str, Tensor | dict[str, Tensor]]:
+        return self.model(
+            components,
+            d_original=d_original,
+            x_pos_dict=x_pos_dict,
+            layer_weights=layer_weights,
+        )
 
     def _split(self, actions: Tensor) -> dict[str, Tensor]:
         splits = torch.split(actions[..., : sum(self.parts.values())], list(self.parts.values()), dim=-1)
@@ -830,6 +1302,16 @@ class G05NativeActionCodec:
 
 
 G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
+
+
+@dataclass
+class G05TextGeneration:
+    """Generated tokens plus the state needed to continue into ActionCodec decoding."""
+
+    token_ids: Tensor
+    stop_tokens: Tensor
+    history: Tensor | None
+    history_mask: Tensor | None
 
 
 def _autoregressive_ce_loss(
@@ -1397,8 +1879,32 @@ class G05NativeBackend(nn.Module):
         hidden_states = residual + block.attn.proj(spatial)
         return hidden_states + block.mlp(block.norm2(hidden_states))
 
-    def _encode_camera(self, frames: Tensor) -> tuple[Tensor, tuple[int, int, int]]:
-        """Encode one camera, including G0.5's causal temporal-memory mixing."""
+    def _encode_camera_transformers(self, frames: Tensor) -> tuple[Tensor, tuple[int, int, int]]:
+        """Encode a single-frame camera through Transformers' native Qwen3.5 vision forward."""
+
+        tower = self.model.vision_tower
+        batch_size, num_frames, _, height, width = frames.shape
+        if num_frames != 1:
+            raise ValueError("the native Transformers vision path requires one frame per camera")
+        patch_size = int(tower.config.patch_size)
+        merge_size = int(tower.config.spatial_merge_size)
+        temporal_patch_size = int(tower.config.temporal_patch_size)
+        grid_h, grid_w = height // patch_size, width // patch_size
+        patches = self._patchify(
+            frames.reshape(batch_size, *frames.shape[2:]),
+            patch_size,
+            temporal_patch_size,
+            merge_size,
+        )
+        grid = torch.tensor((1, grid_h, grid_w), dtype=torch.long, device=frames.device).expand(
+            batch_size, -1
+        )
+        encoded = tower(patches, grid).pooler_output
+        tokens_per_frame = (grid_h // merge_size) * (grid_w // merge_size)
+        return encoded.reshape(batch_size, tokens_per_frame, -1), (1, grid_h, grid_w)
+
+    def _encode_camera_temporal(self, frames: Tensor) -> tuple[Tensor, tuple[int, int, int]]:
+        """Encode one camera with G0.5's causal temporal-memory extension."""
 
         tower = self.model.vision_tower
         batch_size, num_frames, _, height, width = frames.shape
@@ -1492,6 +1998,19 @@ class G05NativeBackend(nn.Module):
             merged = tower.merger(hidden_states)
         tokens_per_frame = (grid_h // merge_size) * (grid_w // merge_size)
         return merged.reshape(batch_size, tokens_per_frame, -1), (1, grid_h, grid_w)
+
+    def _encode_camera(self, frames: Tensor) -> tuple[Tensor, tuple[int, int, int]]:
+        """Use upstream Qwen vision for one frame and G0.5 temporal vision for history."""
+
+        if frames.shape[1] == 1:
+            return self._encode_camera_transformers(frames)
+        temporal_frequency = int(getattr(self.model.vision_tower.config, "temporal_freq", 0))
+        if temporal_frequency <= 0:
+            raise ValueError(
+                "multi-frame G0.5 vision requires a checkpoint with temporal_freq > 0; "
+                "single-frame checkpoints use Transformers' native Qwen3.5 vision path"
+            )
+        return self._encode_camera_temporal(frames)
 
     def _encode_vision(self, pixel_values: Mapping[str, Tensor]) -> Tensor:
         features = []
@@ -1651,9 +2170,14 @@ class G05NativeBackend(nn.Module):
         token_types: Tensor,
         positions: Tensor,
         cache,
+        active_mask: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         embeddings = self.model.vlm.embed(token_ids[:, None])
         batch_size = token_ids.shape[0]
+        if active_mask is None:
+            active_mask = torch.ones(batch_size, dtype=torch.bool, device=token_ids.device)
+        elif active_mask.shape != (batch_size,):
+            raise ValueError("active_mask must have shape [batch]")
         next_positions = positions.amax(dim=-1, keepdim=True) + 1
         prefix_length = token_types.shape[1]
         prefix_mask = (token_types == G05TokenType.PADDING).to(embeddings.dtype)
@@ -1668,24 +2192,116 @@ class G05NativeBackend(nn.Module):
         full_mask[..., :prefix_length].masked_fill_(
             prefix_mask[:, None, None].bool(), torch.finfo(embeddings.dtype).min
         )
+        frozen_linear_states = []
+        inactive = ~active_mask
+        if inactive.any():
+            for layer in cache.layers:
+                if hasattr(layer, "keys") or not hasattr(layer, "conv_states"):
+                    continue
+                frozen_linear_states.append(
+                    (
+                        layer,
+                        layer.conv_states[inactive].clone(),
+                        layer.recurrent_states[inactive].clone(),
+                    )
+                )
         hidden_states, cache = self.model.vlm(
             embeddings,
             full_attention_mask=full_mask,
-            linear_attention_mask=torch.ones(batch_size, 1, dtype=embeddings.dtype, device=embeddings.device),
+            linear_attention_mask=active_mask[:, None].to(embeddings.dtype),
             position_ids=next_positions,
             cache=cache,
         )
+        for layer, conv_states, recurrent_states in frozen_linear_states:
+            layer.conv_states[inactive] = conv_states
+            layer.recurrent_states[inactive] = recurrent_states
         next_types = torch.full(
             (batch_size, 1),
             float(G05TokenType.PRED_TEXT),
             dtype=token_types.dtype,
             device=token_types.device,
         )
+        next_types.masked_fill_(inactive[:, None], float(G05TokenType.PADDING))
         return (
             hidden_states[:, -1],
             torch.cat((token_types, next_types), dim=1),
             torch.cat((positions, next_positions), dim=-1),
         )
+
+    def _sample_next_token(
+        self,
+        logits: Tensor,
+        history: Tensor | None = None,
+        history_mask: Tensor | None = None,
+    ) -> Tensor:
+        """Apply the checkpoint's autoregressive sampling contract."""
+
+        ar_config = self.model_config.get("ar") or {}
+        do_sample = bool(ar_config.get("do_sample", False))
+        temperature = float(ar_config.get("temperature", 0.7))
+        if not do_sample or temperature == 0:
+            return logits.float().argmax(dim=-1)
+
+        scores = logits.float().clone()
+        if history is not None and history.numel():
+            if history_mask is not None and history_mask.shape != history.shape:
+                raise ValueError("history_mask must have the same shape as history")
+            repetition_penalty = float(ar_config.get("repetition_penalty", 1.0))
+            if repetition_penalty != 1:
+                if history_mask is None:
+                    previous_scores = scores.gather(1, history)
+                    previous_scores = torch.where(
+                        previous_scores < 0,
+                        previous_scores * repetition_penalty,
+                        previous_scores / repetition_penalty,
+                    )
+                    scores.scatter_(1, history, previous_scores)
+                else:
+                    for batch_index in range(history.shape[0]):
+                        row = history[batch_index, history_mask[batch_index]]
+                        if not row.numel():
+                            continue
+                        previous_scores = scores[batch_index, row]
+                        previous_scores = torch.where(
+                            previous_scores < 0,
+                            previous_scores * repetition_penalty,
+                            previous_scores / repetition_penalty,
+                        )
+                        scores[batch_index].scatter_(0, row, previous_scores)
+
+            ngram_size = int(ar_config.get("no_repeat_ngram_size", 0))
+            if ngram_size > 0:
+                histories = (
+                    history.tolist()
+                    if history_mask is None
+                    else [history[index, history_mask[index]].tolist() for index in range(history.shape[0])]
+                )
+                for batch_index, row in enumerate(histories):
+                    if len(row) < ngram_size - 1:
+                        continue
+                    prefix = tuple(row[-(ngram_size - 1) :]) if ngram_size > 1 else ()
+                    banned = {
+                        row[index + ngram_size - 1]
+                        for index in range(len(row) - ngram_size + 1)
+                        if tuple(row[index : index + ngram_size - 1]) == prefix
+                    }
+                    if banned:
+                        scores[batch_index, list(banned)] = -torch.inf
+
+        scores /= temperature
+        top_k = min(int(ar_config.get("top_k", 128)), scores.shape[-1])
+        if top_k > 0:
+            threshold = torch.topk(scores, top_k, dim=-1).values[:, -1:]
+            scores.masked_fill_(scores < threshold, -torch.inf)
+        top_p = float(ar_config.get("top_p", 0.95))
+        if top_p < 1:
+            sorted_scores, sorted_indices = torch.sort(scores, descending=True, dim=-1)
+            cumulative = sorted_scores.softmax(dim=-1).cumsum(dim=-1)
+            remove = cumulative > top_p
+            remove[:, 1:] = remove[:, :-1].clone()
+            remove[:, 0] = False
+            scores.scatter_(1, sorted_indices, sorted_scores.masked_fill(remove, -torch.inf))
+        return torch.multinomial(scores.softmax(dim=-1), num_samples=1).squeeze(1)
 
     def _generate_text(
         self,
@@ -1695,34 +2311,76 @@ class G05NativeBackend(nn.Module):
         positions: Tensor,
         cache,
         max_new_tokens: int,
-        stop_token_id: int,
-    ) -> tuple[Tensor, Any, Tensor, Tensor, Tensor]:
+        stop_token_ids: int | tuple[int, ...],
+        initial_history: Tensor | None = None,
+        initial_history_mask: Tensor | None = None,
+        forced_first_tokens: Tensor | None = None,
+    ) -> tuple[G05TextGeneration, Any, Tensor, Tensor, Tensor]:
         generated = []
-        finished = torch.zeros(last_hidden.shape[0], dtype=torch.bool, device=last_hidden.device)
-        for _ in range(max_new_tokens):
+        batch_size = last_hidden.shape[0]
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=last_hidden.device)
+        stop_tokens = torch.full((batch_size,), -1, dtype=torch.long, device=last_hidden.device)
+        stop_ids = (stop_token_ids,) if isinstance(stop_token_ids, int) else stop_token_ids
+        history = initial_history
+        history_mask = initial_history_mask
+        track_history_mask = batch_size > 1 and self.model_config.get("embodiment") not in {
+            "so100",
+            "so101",
+        }
+        if track_history_mask and history is not None and history_mask is None:
+            history_mask = torch.ones_like(history, dtype=torch.bool)
+
+        for step in range(max_new_tokens):
             logits = self.model.vlm.logits(last_hidden)
-            next_token = logits.argmax(dim=-1)
-            next_token = torch.where(
-                finished,
-                torch.full_like(next_token, stop_token_id),
-                next_token,
-            )
+            next_token = self._sample_next_token(logits, history, history_mask)
+            if step == 0 and forced_first_tokens is not None:
+                next_token = torch.where(forced_first_tokens.ge(0), forced_first_tokens, next_token)
+            next_token = next_token.masked_fill(finished, self.processor.pad_token_id)
             generated.append(next_token)
-            last_hidden, token_types, positions = self._decode_token(
-                next_token,
+
+            is_stop = torch.zeros_like(finished)
+            for token_id in stop_ids:
+                is_stop |= next_token.eq(token_id)
+            stop_tokens = torch.where(is_stop & (~finished), next_token, stop_tokens)
+            finished |= is_stop
+            if bool(finished.all()):
+                break
+
+            active = ~finished
+            history_token = next_token
+            if track_history_mask:
+                history_token = history_token.masked_fill(~active, self.processor.pad_token_id)
+                history_mask = (
+                    active.unsqueeze(1)
+                    if history_mask is None
+                    else torch.cat((history_mask, active.unsqueeze(1)), dim=1)
+                )
+            history = (
+                history_token.unsqueeze(1)
+                if history is None
+                else torch.cat((history, history_token.unsqueeze(1)), dim=1)
+            )
+
+            decoded_hidden, token_types, positions = self._decode_token(
+                next_token.masked_fill(~active, self.processor.pad_token_id),
                 token_types=token_types,
                 positions=positions,
                 cache=cache,
+                active_mask=active,
             )
-            finished |= next_token == stop_token_id
-            if bool(finished.all()):
-                break
+            last_hidden = torch.where(active[:, None], decoded_hidden, last_hidden)
         generated_ids = (
             torch.stack(generated, dim=1)
             if generated
             else torch.empty(last_hidden.shape[0], 0, dtype=torch.long, device=last_hidden.device)
         )
-        return generated_ids, cache, last_hidden, token_types, positions
+        return (
+            G05TextGeneration(generated_ids, stop_tokens, history, history_mask),
+            cache,
+            last_hidden,
+            token_types,
+            positions,
+        )
 
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
         cache = DynamicCache(config=self.model.action_expert.config)
@@ -1914,18 +2572,19 @@ class G05NativeBackend(nn.Module):
         result: dict[str, Any] = {}
         last_hidden = hidden_states[:, -1]
         token_types = sequence.token_types
+        cot_generation: G05TextGeneration | None = None
         predict_cot = bool(batch.get(G05_RUNTIME_PREDICT_COT, self.model_config.get("predict_cot", False)))
         if predict_cot:
-            generated, cache, last_hidden, token_types, positions = self._generate_text(
+            cot_generation, cache, last_hidden, token_types, positions = self._generate_text(
                 last_hidden,
                 token_types=sequence.token_types,
                 positions=positions,
                 cache=cache,
                 max_new_tokens=int(self.model_config["ar"].get("max_new_tokens", 300)),
-                stop_token_id=self.processor.eov_token_id,
+                stop_token_ids=(self.processor.eov_token_id, self.processor.eos_token_id),
             )
             sequence.token_types = token_types
-            result["generated_ids"] = generated
+            result["generated_ids"] = cot_generation.token_ids
             result["cot_text"] = [
                 self.processor.decode(
                     ids[
@@ -1933,13 +2592,13 @@ class G05NativeBackend(nn.Module):
                             (
                                 index
                                 for index, token_id in enumerate(ids.tolist())
-                                if token_id == self.processor.eov_token_id
+                                if token_id in {self.processor.eov_token_id, self.processor.eos_token_id}
                             ),
                             len(ids),
                         )
                     ]
                 )
-                for ids in generated
+                for ids in cot_generation.token_ids
             ]
         sequence.token_types = token_types
         if bool(self.model_config.get("continuous_action", False)):
@@ -1961,18 +2620,23 @@ class G05NativeBackend(nn.Module):
                         "select the continuous flow head for this checkpoint."
                     )
             else:
-                generated_action, _, _, _, _ = self._generate_text(
+                action_generation, _, _, _, _ = self._generate_text(
                     last_hidden,
                     token_types=sequence.token_types,
                     positions=positions,
                     cache=cache,
                     max_new_tokens=self.action_tokenizer.action_token_length + 32,
-                    stop_token_id=self.processor.eos_token_id,
+                    stop_token_ids=self.processor.eos_token_id,
+                    initial_history=cot_generation.history if cot_generation is not None else None,
+                    initial_history_mask=(
+                        cot_generation.history_mask if cot_generation is not None else None
+                    ),
+                    forced_first_tokens=(cot_generation.stop_tokens if cot_generation is not None else None),
                 )
                 decoded_actions = []
                 decoded_tokens = []
                 absent_keys = []
-                for token_row in generated_action:
+                for token_row in action_generation.token_ids:
                     is_action = (token_row >= self.processor.action_token_begin) & (
                         token_row < self.processor.action_token_end_with_markers
                     )
@@ -2066,6 +2730,7 @@ def _native_backend(config: G05Config) -> nn.Module:
     model_config = dict(config.author_model_config)
     model_config.update(
         {
+            "embodiment": config.embodiment,
             "predict_cot": config.predict_cot,
             "discrete_action": config.discrete_action,
             "continuous_action": config.continuous_action,

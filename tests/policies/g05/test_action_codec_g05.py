@@ -89,3 +89,96 @@ def test_native_action_codec_language_roundtrip_and_absent_groups() -> None:
     empty, absent = codec.decode_language_tokens(torch.empty(0, dtype=torch.long), horizon=8, action_dim=8)
     assert absent == set(codec.parts)
     assert torch.equal(empty, torch.zeros_like(empty))
+
+
+def test_native_action_codec_complete_training_objective() -> None:
+    config = _tiny_codec_config()
+    config.update(
+        {
+            "commitment_loss_weight": 0.25,
+            "consistency_loss_weight": 0.0,
+            "quantizer_dropout": 0.0,
+            "reconstruction_loss_weight": 1.0,
+            "threshold_ema_dead": 0.0,
+        }
+    )
+    codec = G05NativeActionCodec(config, action_token_begin=100).train()
+    components = {
+        "left_control": torch.randn(2, 8, 3),
+        "right_control": torch.randn(2, 8, 3),
+    }
+
+    output = codec.training_objective(components)
+    loss_dict = output["loss_dict"]
+
+    assert output["codes"]["left_control"].shape == (2, 2, codec.code_length)
+    assert output["reconstructions"]["right_control"].shape == (2, 8, 3)
+    torch.testing.assert_close(
+        output["loss"],
+        loss_dict["reconstruction_loss"] + 0.25 * loss_dict["commitment_loss"],
+    )
+    assert "codebook/perplexity_l0" in loss_dict
+    assert "codebook/utilization_l1" in loss_dict
+    assert all(quantizer.inited for quantizer in codec.model.rvq.quantizers)
+
+    output["loss"].backward()
+    assert codec.model.conv_in.weight.grad is not None
+    assert torch.isfinite(codec.model.conv_in.weight.grad).all()
+
+
+def test_native_action_codec_token_residual_consistency_objective() -> None:
+    config = _tiny_codec_config()
+    config.update(
+        {
+            "consistency_loss_type": "token_residual",
+            "consistency_loss_weight": 0.5,
+            "quantizer_dropout": 0.0,
+            "threshold_ema_dead": 0.0,
+        }
+    )
+    codec = G05NativeActionCodec(config, action_token_begin=100).train()
+    components = {
+        "left_control": torch.randn(2, 8, 3),
+        "right_control": torch.randn(2, 8, 3),
+    }
+    positives = {name: values.roll(1, dims=1) for name, values in components.items()}
+
+    output = codec.training_objective(
+        components,
+        x_pos_dict=positives,
+        layer_weights=[1.0, 0.5],
+    )
+
+    assert "consist/loss" in output["loss_dict"]
+    assert "consist/tcr_layer_0" in output["loss_dict"]
+    assert torch.isfinite(output["loss"])
+
+
+def test_native_action_codec_action_time_contrastive_objective() -> None:
+    config = _tiny_codec_config()
+    config.update(
+        {
+            "action_time_contrastive_bias_init": -10.0,
+            "action_time_contrastive_mode": "siglip",
+            "action_time_contrastive_temperature_init": 0.07,
+            "consistency_loss_type": "action_time_contrastive",
+            "consistency_loss_weight": 0.5,
+            "quantizer_dropout": 0.0,
+            "threshold_ema_dead": 0.0,
+        }
+    )
+    codec = G05NativeActionCodec(config, action_token_begin=100).train()
+    components = {
+        "left_control": torch.randn(2, 8, 3),
+        "right_control": torch.randn(2, 8, 3),
+    }
+
+    output = codec.training_objective(components)
+    loss_dict = output["loss_dict"]
+
+    assert "contrastive/loss" in loss_dict
+    assert "contrastive/temperature" in loss_dict
+    assert "model.action_time_contrastive_loss.logit_scale" in codec.module.state_dict()
+    output["loss"].backward()
+    assert codec.model.action_time_contrastive_loss is not None
+    assert codec.model.action_time_contrastive_loss.logit_scale.grad is not None
