@@ -771,13 +771,6 @@ def eval_main(cfg: EvalPipelineConfig):
     }
 
     processor_pretrained_path = cfg.policy.pretrained_path
-    if getattr(cfg.policy, "type", None) == "lingbot_vla_v2":
-        from lerobot.policies.lingbot_vla_v2.checkpoint_lingbot_vla_v2 import (
-            is_raw_lingbot_vla_v2_checkpoint,
-        )
-
-        if is_raw_lingbot_vla_v2_checkpoint(processor_pretrained_path):
-            processor_pretrained_path = None
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,

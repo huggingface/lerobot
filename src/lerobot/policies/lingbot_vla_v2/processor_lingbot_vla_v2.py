@@ -50,8 +50,7 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import _transformers_available
 
-from .checkpoint_lingbot_vla_v2 import is_raw_lingbot_vla_v2_checkpoint
-from .configuration_lingbot_vla_v2 import LingbotVLAV2Config
+from .configuration_lingbot_vla_v2 import LingbotVLAV2Config, resolve_robot_config_and_stats
 
 if _transformers_available:
     from transformers import AutoProcessor
@@ -89,8 +88,13 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
     the postprocessing side to map model actions back to the raw dataset keys.
     """
 
-    robot_config_path: str
+    robot_config_path: str | None = None
     norm_stats_path: str | None = None
+    # Parsed contents of the robot config / normalization stats. When set, they take
+    # precedence over the paths and are what ``get_config`` serializes, so a saved
+    # checkpoint is self-contained and portable across machines.
+    robot_config: dict | None = None
+    norm_stats: dict | None = None
     processor_path: str = "Qwen/Qwen3-VL-4B-Instruct"
     chunk_size: int = 50
     max_state_dim: int = 55
@@ -122,10 +126,25 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         processor = AutoProcessor.from_pretrained(
             self.processor_path,
             padding_side="right",
-            trust_remote_code=True,
             max_pixels=self.image_max_pixels,
             min_pixels=self.image_min_pixels,
         )
+        # Resolve the robot config / norm stats contents from the paths when they were
+        # not supplied directly, so ``get_config`` can serialize a portable checkpoint.
+        if self.robot_config is None and self.robot_config_path:
+            import yaml
+
+            with open(self.robot_config_path) as f:
+                self.robot_config = yaml.safe_load(f)
+        if self.norm_stats is None:
+            import json
+
+            stats_path = self.norm_stats_path
+            if stats_path is None and self.robot_config:
+                stats_path = self.robot_config.get("norm_stats")
+            if stats_path:
+                with open(stats_path) as f:
+                    self.norm_stats = json.load(f)
         data_config = SimpleNamespace(
             joints=[f"{{'{k}': {v}}}" for k, v in self.canonical_joints.items()],
             norm_type=[f"{{'{k}': '{v}'}}" for k, v in self.canonical_norm_type.items()],
@@ -151,6 +170,8 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             processor=processor,
             chunk_size=self.chunk_size,
             norm_stats_path=self.norm_stats_path,
+            robot_config=self.robot_config,
+            norm_stats=self.norm_stats,
         )
 
     def _iter_items(self, observation: dict, action, task):
@@ -223,9 +244,11 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
         return self._feature_transform.unapply({"actions": actions})
 
     def get_config(self) -> dict[str, Any]:
+        # Serialize the parsed contents rather than the (machine-specific) paths so a
+        # pushed checkpoint reloads anywhere.
         return {
-            "robot_config_path": self.robot_config_path,
-            "norm_stats_path": self.norm_stats_path,
+            "robot_config": self.robot_config,
+            "norm_stats": self.norm_stats,
             "processor_path": self.processor_path,
             "chunk_size": self.chunk_size,
             "max_state_dim": self.max_state_dim,
@@ -261,10 +284,11 @@ def make_lingbot_vla_v2_pre_post_processors(
     """Build the LingBot-VLA 2.0 pre- and post-processing pipelines.
 
     Normalization + slot mapping live inside the feature-transform step (using the
-    per-slot ``norm_stats`` JSON), so this pipeline does not add a separate
+    per-slot ``norm_stats``), so this pipeline does not add a separate
     LeRobot normalizer.
     """
-    if not config.robot_config_path:
+    resolve_robot_config_and_stats(config)
+    if not config.robot_config:
         raise ValueError(
             "LingBot-VLA 2.0 requires `config.robot_config_path` (the per-embodiment "
             "robot config mapping raw features onto the canonical slots)."
@@ -273,6 +297,8 @@ def make_lingbot_vla_v2_pre_post_processors(
     feature_step = LingbotVLAV2FeatureTransformStep(
         robot_config_path=config.robot_config_path,
         norm_stats_path=config.norm_stats_path,
+        robot_config=config.robot_config,
+        norm_stats=config.norm_stats,
         processor_path=config.processor_path or config.tokenizer_path,
         chunk_size=config.chunk_size,
         max_state_dim=config.max_state_dim,
@@ -310,29 +336,10 @@ def make_lingbot_vla_v2_pre_post_processors(
     )
 
 
-def _apply_lingbot_vla_v2_step_overrides(
-    pipeline: PolicyProcessorPipeline,
-    overrides: dict[str, Any] | None,
-) -> None:
-    if not overrides:
-        return
-    rename_override = overrides.get("rename_observations_processor")
-    if rename_override:
-        for step in pipeline.steps:
-            if isinstance(step, RenameObservationsProcessorStep):
-                step.rename_map = rename_override.get("rename_map", step.rename_map)
-    device_override = overrides.get("device_processor")
-    if device_override:
-        for step in pipeline.steps:
-            if isinstance(step, DeviceProcessorStep):
-                step.device = device_override.get("device", step.device)
-
-
 def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     config: LingbotVLAV2Config,
     pretrained_path: str,
     *,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     preprocessor_overrides: dict[str, Any] | None = None,
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
@@ -342,20 +349,28 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Load processors for a LeRobot checkpoint or build them for a raw upstream checkpoint."""
-    if is_raw_lingbot_vla_v2_checkpoint(pretrained_path):
-        preprocessor, postprocessor = make_lingbot_vla_v2_pre_post_processors(
-            config=config,
-            dataset_stats=dataset_stats,
-        )
-        _apply_lingbot_vla_v2_step_overrides(preprocessor, preprocessor_overrides)
-        _apply_lingbot_vla_v2_step_overrides(postprocessor, postprocessor_overrides)
-        return preprocessor, postprocessor
+    """Load the processors saved alongside a LeRobot checkpoint.
+
+    The LingBot pipeline carries no LeRobot normalizer / unnormalizer steps (slot
+    mapping and normalization live inside the feature-transform step), so the generic
+    normalizer overrides injected by the training script are filtered out here — the
+    pipeline loader rejects override keys that match no step.
+    """
+    preprocessor_overrides = {
+        key: value
+        for key, value in (preprocessor_overrides or {}).items()
+        if key in {"device_processor", "rename_observations_processor"}
+    }
+    postprocessor_overrides = {
+        key: value for key, value in (postprocessor_overrides or {}).items() if key == "device_processor"
+    }
+    if "device_processor" not in postprocessor_overrides and "device_processor" in preprocessor_overrides:
+        postprocessor_overrides["device_processor"] = preprocessor_overrides["device_processor"]
 
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
-        overrides=preprocessor_overrides or {},
+        overrides=preprocessor_overrides,
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
         revision=pretrained_revision,
@@ -363,7 +378,7 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=postprocessor_config_filename,
-        overrides=postprocessor_overrides or {},
+        overrides=postprocessor_overrides,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
         revision=pretrained_revision,

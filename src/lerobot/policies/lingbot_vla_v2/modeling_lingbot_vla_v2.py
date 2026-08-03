@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import builtins
-import json
-import os
-from pathlib import Path
-from typing import TypeVar
+from collections import deque
 
 import einops
 import torch
@@ -17,6 +13,12 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.cache_utils import Cache
 from transformers.utils import logging
 
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import populate_queues
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
+from .configuration_lingbot_vla_v2 import resolve_robot_config_and_stats
 from .configuration_lingbot_vla_v2_internal import LingbotVLAV2Config
 from .qwen3vl_in_vla import (
     Qwen3VLForConditionalGeneration,
@@ -42,14 +44,6 @@ from .utils import (
 )
 from .flex_attention import build_block_mask, flex_attention_forward, flex_attention_with_block_mask
 
-LingBotVLAWeightLoader = None  # noqa: N816  # lerobot PreTrainedPolicy handles weight loading
-from .checkpoint_lingbot_vla_v2 import (
-    LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX,
-    apply_lingbot_vla_v2_upstream_config,
-    is_raw_lingbot_vla_v2_checkpoint,
-    remap_lingbot_vla_v2_upstream_key,
-    validate_lingbot_vla_v2_upstream_loading_keys,
-)
 from .moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
 from .qwen2_action_expert import (
     Qwen2ForCausalLM,
@@ -65,7 +59,6 @@ except ImportError:
 
 
 logger = logging.get_logger(__name__)
-T = TypeVar("T", bound="LingbotVLAV2Policy")
 
 
 class QwenvlWithExpertV2Config(PretrainedConfig):
@@ -550,7 +543,7 @@ class FlowMatchingV2(FlowMatchingV1):
         image_grid_thw=None,
     ):
         if image_grid_thw is None:
-            raise ValueError("LingbotVlaV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
+            raise ValueError("LingbotVLAV2Policy requires image_grid_thw from the Qwen3-VL image processor.")
         bsize = images.shape[0]
         device = images.device
         dtype = images.dtype
@@ -1251,150 +1244,6 @@ class FlowMatchingV2(FlowMatchingV1):
         return seq_wise_loss, router_z_loss, moe_metrics
 
 
-class LingbotVlaV2Policy(PreTrainedModel):
-    config_class = LingbotVLAV2Config
-    name = "torch_lingbot_vla_v2"
-    supports_gradient_checkpointing = True
-    _no_split_modules = ["Qwen2DecoderLayer", "FixQwen2RMSNorm", "FixAdaRMSNorm"]
-
-    def get_parallel_plan(self):
-        from lingbotvla.distributed.parallel_plan import ParallelPlan
-        from torch.distributed._tensor import Shard
-
-        ep_plan = {
-            "model.qwenvl_with_expert.qwen_expert.model.layers.*.mlp.experts.gate_proj": Shard(0),
-            "model.qwenvl_with_expert.qwen_expert.model.layers.*.mlp.experts.up_proj": Shard(0),
-            "model.qwenvl_with_expert.qwen_expert.model.layers.*.mlp.experts.down_proj": Shard(0),
-        }
-        return ParallelPlan(ep_plan=ep_plan)
-
-    @classmethod
-    def get_weight_loader(cls):
-        return LingBotVLAWeightLoader()
-
-    def __init__(self, config: LingbotVLAV2Config, eval: bool = False):
-        super().__init__(config)
-        self.config = config
-        self.language_tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_path)
-        self.model = FlowMatchingV2(config, eval)
-        if not getattr(self.config, "use_lm_head", False):
-            del self.model.qwenvl_with_expert.qwenvl.lm_head
-        del self.model.qwenvl_with_expert.qwen_expert.lm_head
-        self.reset()
-        torch.set_float32_matmul_precision("high")
-
-    def reset(self):
-        return None
-
-    def get_optim_params(self) -> dict:
-        return self.parameters()
-
-    def forward(
-        self,
-        images,
-        img_masks,
-        state,
-        lang_tokens,
-        lang_masks,
-        actions,
-        joint_mask=None,
-        action_is_pad=None,
-        noise=None,
-        time=None,
-        depth_targets=None,
-        image_grid_thw=None,
-        future_depth_targets=None,
-        future_video_targets=None,
-        future_video_cls_targets=None,
-        future_video_current_patch=None,
-        **kwargs,
-    ) -> tuple[Tensor, dict[str, Tensor]]:
-        loss_dict = {}
-        if getattr(self.config, "action_fp32", False):
-            state = state.float()
-            actions = actions.float()
-        (
-            losses,
-            loss_depth,
-            loss_future_depth,
-            loss_future_video,
-            depth_preds,
-            seq_wise_loss,
-            router_z_loss,
-            moe_metrics,
-            future_depth_preds,
-            future_video_preds,
-            current_video_preds,
-        ) = self.model.forward(
-            images,
-            img_masks,
-            lang_tokens,
-            lang_masks,
-            state,
-            actions,
-            noise,
-            time,
-            loss_type=self.config.loss_type,
-            depth_targets=depth_targets,
-            image_grid_thw=image_grid_thw,
-            future_depth_targets=future_depth_targets,
-            future_video_targets=future_video_targets,
-            future_video_cls_targets=future_video_cls_targets,
-            future_video_current_patch=future_video_current_patch,
-        )
-
-        if joint_mask is not None:
-            if "repeat" in self.config.loss_type:
-                joint_mask = joint_mask.repeat(2, 1, 1)
-            assert len(joint_mask.shape) == 3
-
-            masked_losses = losses * joint_mask
-            valid_counts = joint_mask.sum(dim=(1, 2)).clamp(min=1)
-            batch_mean_losses = masked_losses.sum(dim=(1, 2)) / valid_counts
-            loss_vla = masked_losses.sum() / joint_mask.sum().clamp(min=1)
-        else:
-            losses = losses[:, :, : self.config.action_dim]
-            batch_mean_losses = losses.mean(dim=(1, 2))
-            loss_vla = losses.mean()
-
-        loss_dict["batch_mean_losses"] = batch_mean_losses.detach()
-        total_loss = (
-            loss_vla + loss_depth + loss_future_depth + loss_future_video + seq_wise_loss + router_z_loss
-        )
-        loss_dict["router_z_loss"] = (
-            router_z_loss.detach() if torch.is_tensor(router_z_loss) else router_z_loss
-        )
-        if moe_metrics:
-            loss_dict.update(moe_metrics)
-        return (
-            total_loss,
-            loss_vla,
-            loss_depth,
-            loss_future_depth,
-            loss_future_video,
-            seq_wise_loss,
-            loss_dict,
-            depth_preds,
-            future_depth_preds,
-            future_video_preds,
-            current_video_preds,
-        )
-
-    def sample_actions(self, *args, **kwargs) -> Tensor:
-        return self.model.sample_actions(*args, **kwargs)
-
-
-ModelClass = LingbotVlaV2Policy
-
-__all__ = [
-    "LingbotVlaV2Policy",
-    "Qwen3VLForConditionalGeneration",
-    "Qwen3VLTextModel",
-    "Qwen3VLPreTrainedModel",
-    "Qwen2ForCausalLM",
-]
-
-
 # ============================================================================
 # LeRobot policy wrapper
 # ============================================================================
@@ -1403,13 +1252,6 @@ __all__ = [
 # ``PreTrainedPolicy`` interface (train ``forward`` + rolling ``select_action``),
 # mirroring the v1 ``lingbot_vla`` policy. The LeRobot dataclass config carries
 # every field ``FlowMatchingV2`` reads, so it is passed straight through.
-from collections import deque  # noqa: E402
-
-from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
-from lerobot.policies.utils import populate_queues  # noqa: E402
-from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
-
-from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config  # noqa: E402
 
 
 class LingbotVLAV2Policy(PreTrainedPolicy):
@@ -1432,151 +1274,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
     config_class = LeRobotLingbotVLAV2Config
     name = "lingbot_vla_v2"
-    _no_split_modules = ["Qwen2DecoderLayer", "FixQwen2RMSNorm", "FixAdaRMSNorm"]
-
-    @classmethod
-    def from_pretrained(
-        cls: builtins.type[T],
-        pretrained_name_or_path: str | Path,
-        *,
-        config=None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        strict: bool = True,
-        **kwargs,
-    ) -> T:
-        """Load either a LeRobot checkpoint or the raw upstream LingBot-VLA 2.0 checkpoint."""
-        if not is_raw_lingbot_vla_v2_checkpoint(pretrained_name_or_path):
-            return super().from_pretrained(
-                pretrained_name_or_path,
-                config=config,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                strict=strict,
-                **kwargs,
-            )
-
-        if config is None:
-            config = cls.config_class()
-        config = apply_lingbot_vla_v2_upstream_config(config)
-
-        checkpoint_dir = cls._resolve_raw_upstream_checkpoint(
-            pretrained_name_or_path,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-        )
-        logger.info("Loading LingBot-VLA 2.0 raw upstream checkpoint from %s", checkpoint_dir)
-
-        policy = cls(config, **kwargs)
-        cls._load_raw_upstream_checkpoint(policy, checkpoint_dir)
-        policy.to(config.device)
-        policy.eval()
-        return policy
-
-    @staticmethod
-    def _resolve_raw_upstream_checkpoint(
-        pretrained_name_or_path: str | Path,
-        *,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-    ) -> str:
-        model_id = str(pretrained_name_or_path)
-        if os.path.isdir(model_id):
-            return model_id
-
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(
-            repo_id=model_id,
-            revision=revision,
-            cache_dir=cache_dir,
-            force_download=force_download,
-            proxies=proxies,
-            resume_download=resume_download,
-            token=token,
-            local_files_only=local_files_only,
-            allow_patterns=[
-                "config.json",
-                "configuration.json",
-                LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX,
-                "model-*.safetensors",
-                "tokenizer*",
-                "preprocessor_config.json",
-                "video_preprocessor_config.json",
-                "special_tokens_map.json",
-                "added_tokens.json",
-                "vocab.json",
-            ],
-        )
-
-    @staticmethod
-    def _load_raw_upstream_checkpoint(policy: LingbotVLAV2Policy, checkpoint_dir: str) -> None:
-        try:
-            from safetensors.torch import load_file
-        except ImportError as exc:
-            raise ImportError(
-                "safetensors is required to load the sharded LingBot-VLA 2.0 upstream checkpoint. "
-                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
-            ) from exc
-
-        index_path = Path(checkpoint_dir) / LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX
-        if not index_path.exists():
-            raise FileNotFoundError(f"{LINGBOT_VLA_V2_SAFE_WEIGHTS_INDEX} not found in {checkpoint_dir}")
-
-        with index_path.open() as f:
-            index = json.load(f)
-        weight_map = index.get("weight_map", {})
-        remapped_weight_map = {
-            remap_lingbot_vla_v2_upstream_key(key): shard_name for key, shard_name in weight_map.items()
-        }
-        model_keys = set(policy.state_dict().keys())
-        checkpoint_keys = set(remapped_weight_map.keys())
-        missing_keys = sorted(model_keys - checkpoint_keys)
-        unexpected_keys = sorted(checkpoint_keys - model_keys)
-        _, allowed_skipped = validate_lingbot_vla_v2_upstream_loading_keys(
-            missing_keys,
-            unexpected_keys,
-            use_depth=getattr(policy.config, "use_depth", False),
-        )
-
-        loaded_keys = 0
-        for shard_name in sorted(set(weight_map.values())):
-            shard_path = Path(checkpoint_dir) / shard_name
-            shard_state = load_file(str(shard_path), device=str(policy.config.device))
-            remapped_shard_state = {}
-            for key, tensor in shard_state.items():
-                remapped_key = remap_lingbot_vla_v2_upstream_key(key)
-                if remapped_key in model_keys:
-                    remapped_shard_state[remapped_key] = tensor
-            policy.load_state_dict(remapped_shard_state, strict=False)
-            loaded_keys += len(remapped_shard_state)
-
-        logger.info(
-            "Loaded LingBot-VLA 2.0 raw upstream checkpoint: 0 missing required keys, "
-            "%s tensors loaded, %s allowed upstream-only tensors skipped.",
-            loaded_keys,
-            len(allowed_skipped),
-        )
+    _no_split_modules = ["Qwen3VLTextDecoderLayer", "Qwen3VLVisionBlock", "Qwen2DecoderLayer"]
 
     def __init__(self, config: LeRobotLingbotVLAV2Config, **kwargs):
         super().__init__(config)
@@ -1608,7 +1306,16 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
     def _build_action_unapply_transform(self):
         """Build a lightweight (processor-free) FeatureTransform for inference unapply."""
         cfg = self.config
-        if not getattr(cfg, "robot_config_path", None):
+        try:
+            resolve_robot_config_and_stats(cfg)
+        except OSError as exc:
+            logging.get_logger(__name__).warning(
+                "Could not load the robot config for the inference action de-normalizer (%s); "
+                "select_action will return actions in the normalized canonical space.",
+                exc,
+            )
+            return None
+        if not getattr(cfg, "robot_config", None):
             return None
         try:
             from types import SimpleNamespace
@@ -1640,6 +1347,8 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
                 processor=None,
                 chunk_size=cfg.chunk_size,
                 norm_stats_path=cfg.norm_stats_path,
+                robot_config=cfg.robot_config,
+                norm_stats=cfg.norm_stats,
             )
         except Exception as exc:  # noqa: BLE001 - de-normalizer is best-effort at build time
             logging.get_logger(__name__).warning(
@@ -1784,6 +1493,3 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             actions = self.predict_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
         return self._queues[ACTION].popleft()
-
-
-__all__ = __all__ + ["LingbotVLAV2Policy"]

@@ -20,6 +20,7 @@ IMAGE_KEYS = (
 )
 IGNORE_INDEX = -100
 
+
 def dict_apply(func, d):
     """
     Apply a function to all values in a dictionary recursively.

@@ -19,6 +19,30 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
+def resolve_robot_config_and_stats(config: "LingbotVLAV2Config") -> None:
+    """Fill ``config.robot_config`` / ``config.norm_stats`` from their path fields.
+
+    The parsed contents are serialized into config.json on save, so a checkpoint stays
+    self-contained and loadable on machines where the original paths do not exist.
+    Existing embedded contents always win over the paths.
+    """
+    if config.robot_config is None and config.robot_config_path:
+        import yaml
+
+        with open(config.robot_config_path) as f:
+            config.robot_config = yaml.safe_load(f)
+
+    if config.norm_stats is None:
+        import json
+
+        stats_path = config.norm_stats_path
+        if stats_path is None and config.robot_config:
+            stats_path = config.robot_config.get("norm_stats")
+        if stats_path:
+            with open(stats_path) as f:
+                config.norm_stats = json.load(f)
+
+
 @PreTrainedConfig.register_subclass("lingbot_vla_v2")
 @dataclass
 class LingbotVLAV2Config(PreTrainedConfig):
@@ -82,6 +106,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # single-arm mapping built from the dataset's own features.
     robot_config_path: str | None = None
     norm_stats_path: str | None = None
+    # Parsed contents of the two files above. They are filled in when the processor /
+    # policy is built and are serialized into config.json so a saved checkpoint is
+    # self-contained and stays valid on machines where the original paths do not exist.
+    robot_config: dict | None = None
+    norm_stats: dict | None = None
     # Path (or hub id) to the Qwen3-VL processor (image processor + tokenizer). Falls
     # back to ``tokenizer_path`` when None.
     processor_path: str | None = None

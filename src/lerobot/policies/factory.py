@@ -48,6 +48,7 @@ from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
+from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -203,22 +204,27 @@ def make_pre_post_processors(
                 ),
             )
 
+        if isinstance(policy_cfg, LingbotVLAV2Config):
+            from .lingbot_vla_v2.processor_lingbot_vla_v2 import (
+                make_lingbot_vla_v2_pre_post_processors_from_pretrained,
+            )
+
+            return make_lingbot_vla_v2_pre_post_processors_from_pretrained(
+                config=policy_cfg,
+                pretrained_path=pretrained_path,
+                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+                preprocessor_config_filename=kwargs.get(
+                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                postprocessor_config_filename=kwargs.get(
+                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+                ),
+                pretrained_revision=pretrained_revision,
+            )
+
         preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
         postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
-        if getattr(policy_cfg, "type", None) == "lingbot_vla_v2":
-            preprocessor_overrides = {
-                key: value
-                for key, value in preprocessor_overrides.items()
-                if key in {"device_processor", "rename_observations_processor"}
-            }
-            postprocessor_overrides = {
-                key: value for key, value in postprocessor_overrides.items() if key == "device_processor"
-            }
-            if (
-                "device_processor" not in postprocessor_overrides
-                and "device_processor" in preprocessor_overrides
-            ):
-                postprocessor_overrides["device_processor"] = preprocessor_overrides["device_processor"]
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,

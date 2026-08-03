@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import yaml
 import torch
@@ -73,10 +74,10 @@ class FeatureInfo(BaseModel):
 class FeatureTransform:
     def __init__(
         self,
-        robot_config_path,
-        data_config,
-        model_config,
-        processor,
+        robot_config_path=None,
+        data_config=None,
+        model_config=None,
+        processor=None,
         disabled_image_features=False,
         do_normalize=True,
         chunk_size=50,
@@ -85,16 +86,28 @@ class FeatureTransform:
         use_depth_align=False,
         image_augment=False,
         use_future_image=False,
+        robot_config=None,
+        norm_stats=None,
     ):
-        assert os.path.exists(robot_config_path), f"{robot_config_path} does not exist."
-        with open(robot_config_path) as f:
-            robot_config = yaml.safe_load(f)
-        f.close()
-
-        if norm_stats_path is None:
-            norm_stats_path = robot_config.pop("norm_stats")
+        # ``robot_config`` / ``norm_stats`` accept the already-parsed contents so a
+        # serialized checkpoint can ship self-contained configs (no absolute paths).
+        if robot_config is None:
+            if robot_config_path is None:
+                raise ValueError("FeatureTransform requires `robot_config` or `robot_config_path`.")
+            if not os.path.exists(robot_config_path):
+                raise FileNotFoundError(f"{robot_config_path} does not exist.")
+            with open(robot_config_path) as f:
+                robot_config = yaml.safe_load(f)
         else:
-            robot_config.pop("norm_stats")
+            # Deep-copy: get_feature_mapping pops per-entry keys (subtract_state etc.)
+            # and must never mutate the caller's config (it is serialized on save).
+            robot_config = copy.deepcopy(robot_config)
+
+        # The raw YAML's "norm_stats" entry is a path, not a feature category; drop it
+        # regardless of how the stats themselves are supplied.
+        norm_stats_ref = robot_config.pop("norm_stats", None)
+        if norm_stats_path is None and norm_stats is None:
+            norm_stats_path = norm_stats_ref
 
         self.feature_config = FeatureInfo()
         if getattr(data_config, "joints", None) is not None:
@@ -137,15 +150,15 @@ class FeatureTransform:
 
         self.org_features = org_features
 
-        self.normalizer = self.get_normalizer(norm_stats_path, do_normalize, data_config)
+        self.normalizer = self.get_normalizer(
+            norm_stats_path, do_normalize, data_config, norm_stats=norm_stats
+        )
 
-    def get_normalizer(self, norm_stats_path, do_normalize, data_config):
+    def get_normalizer(self, norm_stats_path, do_normalize, data_config, norm_stats=None):
         if not do_normalize:
             return None
 
         action_state_norm_type = {k: v for d in data_config.norm_type for k, v in ast.literal_eval(d).items()}
-
-        assert norm_stats_path is not None
         norm_type = {}
         for feature in self.actions:
             base_name = feature.split("action.")[-1]
@@ -160,12 +173,18 @@ class FeatureTransform:
         for feature in self.images:
             norm_type[feature] = "identity"
 
-        with open(norm_stats_path) as f:
-            norm_stats = json.load(f)
-        f.close()
+        if norm_stats is None:
+            if norm_stats_path is None:
+                raise ValueError(
+                    "FeatureTransform requires `norm_stats` or `norm_stats_path` when do_normalize=True."
+                )
+            with open(norm_stats_path) as f:
+                norm_stats = json.load(f)
 
         normalizer = Normalizer(
-            norm_stats=norm_stats["norm_stats"],
+            # Deep-copy: Normalizer converts stats to ndarrays in place and must not
+            # mutate the caller's config (it is serialized on save).
+            norm_stats=copy.deepcopy(norm_stats["norm_stats"]),
             norm_type=norm_type,
         )
 
