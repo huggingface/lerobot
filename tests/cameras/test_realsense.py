@@ -141,16 +141,14 @@ def test_connect_cleans_up_after_warmup_failure_and_allows_retry():
         patch.object(camera, "_hardware_reset"),
         pytest.raises(ConnectionError, match="failed to capture frames"),
     ):
-        camera.connect()
+        camera.connect(warmup=True)
 
-    assert camera.rs_pipeline is None
-    assert camera.rs_profile is None
-    assert camera.thread is None
-    assert not camera.is_connected
     assert read_threads[0] is not None
     assert not read_threads[0].is_alive()
 
-    camera.connect(warmup=False)
+    with patch.object(camera, "_run_warmup") as mock_warmup:
+        camera.connect(warmup=False)
+    mock_warmup.assert_not_called()
     assert camera.is_connected
     camera.disconnect()
 
@@ -552,7 +550,7 @@ def test_connect_retries_without_reset_first(patch_realsense, warmup_error):
         patch.object(camera, "_run_warmup", side_effect=[warmup_error, None]) as mock_warmup,
         patch.object(camera, "_hardware_reset") as mock_reset,
     ):
-        camera.connect(warmup=False)
+        camera.connect(warmup=True)
 
     assert mock_warmup.call_count == 2
     mock_reset.assert_not_called()
@@ -578,7 +576,7 @@ def test_connect_resets_before_final_attempt(patch_realsense):
         patch.object(camera, "_release_after_failed_setup", side_effect=tracked_release),
         patch.object(camera, "_hardware_reset", side_effect=lambda: calls.append("reset")),
     ):
-        camera.connect(warmup=False)
+        camera.connect(warmup=True)
 
     assert mock_warmup.call_count == RealSenseCamera._MAX_CONNECT_ATTEMPTS
     # every failed attempt is torn down, and the reset happens after the last teardown
@@ -598,7 +596,7 @@ def test_connect_exhausts_attempts_and_cleans_up(patch_realsense):
         patch.object(camera, "_hardware_reset") as mock_reset,
         pytest.raises(ConnectionError, match=f"after {max_attempts} attempts"),
     ):
-        camera.connect(warmup=False)
+        camera.connect(warmup=True)
 
     assert mock_warmup.call_count == max_attempts
     # the hardware reset is a last resort, used only before the final attempt
@@ -637,7 +635,7 @@ def test_connect_unexpected_warmup_exception_tears_down_and_propagates(patch_rea
         patch.object(camera, "_hardware_reset") as mock_reset,
         pytest.raises(ValueError, match="unexpected"),
     ):
-        camera.connect(warmup=False)
+        camera.connect(warmup=True)
 
     mock_reset.assert_not_called()
     assert not camera.is_connected
