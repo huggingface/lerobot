@@ -182,9 +182,24 @@ class LingBotVAConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
+        """Observation frame deltas for the training clip, sized to what the VAE actually reads.
+
+        ``diffusers``' ``AutoencoderKLWan._encode`` runs ``iter_ = 1 + (n - 1) // 4`` passes over
+        ``x[:, :, :1]`` then ``x[:, :, 1 + 4*(i-1) : 1 + 4*i]``, so it only ever consumes the first
+        ``4 * (iter_ - 1) + 1`` frames of an ``n``-frame clip. Asking for ``frame_chunk_size * 4``
+        frames (the previous formula) therefore decoded 3 frames per sample that never reached the
+        encoder: at ``frame_chunk_size=2`` the deltas were ``[0, 4, ..., 28]`` and only
+        ``[0, 4, 8, 12, 16]`` were used -- verified by ablation, scrambling the tail left the latents
+        bit-identical.
+
+        Requesting exactly ``4 * (frame_chunk_size - 1) + 1`` frames yields the same
+        ``frame_chunk_size`` latent frames with every loaded frame used, and drops the wasted video
+        decode. The stride is unchanged, so the frames that do reach the model are the same ones.
+        """
         temporal_downsample = 4
         stride = max(1, self.action_per_frame // temporal_downsample)
-        return list(range(0, self.frame_chunk_size * temporal_downsample * stride, stride))
+        num_frames = temporal_downsample * (self.frame_chunk_size - 1) + 1
+        return [i * stride for i in range(num_frames)]
 
     @property
     def action_delta_indices(self) -> list[int]:
