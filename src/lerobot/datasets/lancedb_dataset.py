@@ -326,6 +326,45 @@ def is_lance_dataset(
     return len(paths) > 0
 
 
+def resolve_lance_root(
+    repo_id: str | None, root: str | Path | None, storage_options: dict | None = None
+) -> tuple[str, Path]:
+    """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``.
+
+    For an object-store URI (``s3://``, ``gs://``, ``hf://`` ...) the ``meta/``
+    directory is materialized once into a local cache. Shared by LanceDBDataset and
+    the training factory so both agree on remote roots (a bare ``Path(root)`` would
+    collapse ``s3://b/k`` to ``s3:/b/k`` and silently fall back to a Hub download).
+    """
+    if root is not None and _is_remote_uri(root):
+        db_uri = str(root).rstrip("/")
+        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", db_uri)
+        if not (local_root / "meta").exists():
+            _materialize_meta(_connect(db_uri, storage_options), local_root)
+        return db_uri, local_root
+    root_path = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+    if (root_path / f"{FRAMES_TABLE}.lance").exists():
+        return str(root_path), root_path
+    if repo_id is not None:
+        return f"hf://datasets/{repo_id}", root_path
+    raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")
+
+
+def lance_metadata(
+    repo_id: str | None, root: str | Path | None, revision: str | None = None,
+    storage_options: dict | None = None,
+) -> LeRobotDatasetMetadata:
+    """LeRobotDatasetMetadata for a Lance dataset, materializing remote-URI ``meta/``.
+
+    Lets the training factory resolve metadata (for delta-timestamp resolution)
+    without tripping over a remote-URI root.
+    """
+    _, local_root = resolve_lance_root(repo_id, root, storage_options)
+    return LeRobotDatasetMetadata(
+        repo_id if repo_id is not None else str(local_root), root=local_root, revision=revision
+    )
+
+
 class LanceDBDataset(torch.utils.data.Dataset):
     """Map-style dataset over a Lance-backed LeRobot dataset.
 
@@ -375,19 +414,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self._storage_options = storage_options
 
-        if root is not None and _is_remote_uri(root):
-            self._db_uri = str(root).rstrip("/")
-            self.root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", self._db_uri)
-            if not (self.root / "meta").exists():
-                _materialize_meta(_connect(self._db_uri, self._storage_options), self.root)
-        else:
-            self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-            if (self.root / f"{FRAMES_TABLE}.lance").exists():
-                self._db_uri = str(self.root)
-            elif repo_id is not None:
-                self._db_uri = f"hf://datasets/{repo_id}"
-            else:
-                raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {self.root}.")
+        self._db_uri, self.root = resolve_lance_root(repo_id, root, self._storage_options)
 
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision

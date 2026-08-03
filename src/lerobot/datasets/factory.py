@@ -26,7 +26,7 @@ from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
-from .lancedb_dataset import LanceDBDataset, is_lance_dataset
+from .lancedb_dataset import LanceDBDataset, is_lance_dataset, lance_metadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
@@ -124,8 +124,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | LanceDBDataset | 
     )
 
     if isinstance(cfg.dataset.repo_id, str):
-        ds_meta = LeRobotDatasetMetadata(
-            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+        # Detect Lance BEFORE building metadata: a Lance dataset can live at an
+        # object-store URI (s3://, gs://, hf://), and LeRobotDatasetMetadata(root=...)
+        # would collapse the URI via Path() and silently fall back to a Hub download.
+        lance = is_lance_dataset(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision)
+        if lance and cfg.dataset.streaming:
+            raise ValueError(
+                "dataset.streaming=True is not supported for Lance datasets: LanceDBDataset "
+                "already reads directly from the Hub without downloading data files."
+            )
+        ds_meta = (
+            lance_metadata(cfg.dataset.repo_id, cfg.dataset.root, cfg.dataset.revision)
+            if lance
+            else LeRobotDatasetMetadata(
+                cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+            )
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         if not cfg.dataset.streaming:
@@ -135,11 +148,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | LanceDBDataset | 
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 depth_output_unit=cfg.dataset.depth_output_unit,
-            )
-        elif is_lance_dataset(cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision):
-            raise ValueError(
-                "dataset.streaming=True is not supported for Lance datasets: LanceDBDataset "
-                "already reads directly from the Hub without downloading data files."
             )
         else:
             dataset = StreamingLeRobotDataset(

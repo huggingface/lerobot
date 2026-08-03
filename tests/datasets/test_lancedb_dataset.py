@@ -297,6 +297,31 @@ def test_factory_autodetect_and_train_e2e(video_dataset_roots):
             break
 
 
+def test_make_dataset_accepts_uri_root(video_dataset_roots):
+    """make_dataset must handle a URI root (s3://, gs://, file://) end-to-end.
+
+    Regression: the factory built LeRobotDatasetMetadata(root=cfg.dataset.root) before
+    Lance detection; Path() collapsed 'file:///x' -> 'file:/x' and the root was
+    silently ignored (Hub download of a different copy). DUMMY_REPO_ID is not on the
+    Hub, so a regressed factory would fail here instead of reading the local URI.
+    """
+    _, lance_root = video_dataset_roots
+
+    def build(root: str):
+        cfg = TrainPipelineConfig(
+            dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=root),
+            policy=make_policy_config("act"),
+        )
+        return make_dataset(cfg)
+
+    uri_ds = build(f"file://{lance_root}")
+    plain_ds = build(str(lance_root))
+    assert isinstance(uri_ds, LanceDBDataset)
+    # the URI root reads the SAME local dataset (not a Hub fallback), bit-exact with plain path
+    assert len(uri_ds) == len(plain_ds)
+    assert_items_equal(uri_ds[0], plain_ds[0])
+
+
 def test_pickle_and_dataloader(dataset_roots):
     _, lance_root = dataset_roots
     lance_ds = LanceDBDataset(root=lance_root)
