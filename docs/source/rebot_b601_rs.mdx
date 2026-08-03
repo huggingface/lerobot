@@ -1,0 +1,243 @@
+# reBot B601-RS
+
+[reBot B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) is the RobStride-motor variant of Seeed Studio's open-source, low-cost robot arm for embodied-AI and imitation learning. It is the same 6-DOF + gripper chassis as the [B601-DM](./rebot_b601), but driven by **RobStride RS CAN motors** (the `rs-06` base joints and `rs-00` wrists/gripper) instead of Damiao motors. It is a **follower** arm, teleoperated by the `StarArm102` / `reBot Arm 102` leader (FashionStar UART smart servos).
+
+This page covers **calibration** and **teleoperation** for both single-arm and bimanual (dual-arm) setups.
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/rebot_arm/rs_0pos.jpg"
+    alt="reBot B601-RS follower arm at its zero position"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="reBot Arm 102 leader arm at its zero position"
+    width="48%"
+  />
+</div>
+
+_Left: the B601-RS follower at its zero position. Right: the reBot Arm 102 leader at its zero position. Images courtesy of [Seeed Studio](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/)._
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the reBot support:
+
+```bash
+pip install -e ".[rebot]"
+```
+
+This pulls in `motorbridge` (CAN motor control, including the RobStride `add_robstride_motor` / MIT-mode API used by the B601-RS follower) and `motorbridge-smart-servo` (FashionStar UART servos for the reBot Arm 102 leader). `motorbridge` 0.4+ talks the CAN bus through `python-can`, so a SocketCAN interface is required for the RS follower.
+
+## Registered device types
+
+| Type                        | Kind                                          |
+| --------------------------- | --------------------------------------------- |
+| `rebot_b601_rs_follower`    | single-arm B601-RS follower robot             |
+| `bi_rebot_b601_rs_follower` | bimanual (dual-arm) follower robot            |
+| `rebot_102_leader`          | single-arm reBot Arm 102 leader teleoperator  |
+| `bi_rebot_102_leader`       | bimanual (dual-arm) leader teleoperator       |
+
+The bimanual type composes two single-arm instances and namespaces each arm's
+observation/action keys with a `left_` / `right_` prefix. Per-arm settings are
+passed through nested `left_arm_config.*` / `right_arm_config.*` arguments.
+
+## Find the CAN interface
+
+The RS follower talks to its motors over a CAN bus (typically a SocketCAN
+interface such as `can0`, or a USB-CAN adapter). List available CAN channels
+and bring the interface up:
+
+```bash
+ip -details link show type can
+sudo ip link set can0 up type can bitrate 1000000
+```
+
+For the leader (a USB serial device), find the port with:
+
+```bash
+lerobot-find-port
+```
+
+<Tip warning={true}>
+  On Linux, remove `brltty` (`sudo apt remove brltty`) so it does not hold the
+  leader's USB serial port. You may also need to grant access to the serial
+  devices: `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
+</Tip>
+
+## Calibration
+
+Neither arm stores a persistent hardware calibration: every time it connects, the motors are re-zeroed against the pose the arm is physically holding. Calibration simply records that zero pose. When prompted, **manually move the arm to its zero position** (the default sit-down pose, gripper fully closed) and press <kbd>ENTER</kbd>.
+
+### Follower (B601-RS)
+
+<hfoptions id="calibrate-follower">
+<hfoption id="Single arm">
+
+```bash
+lerobot-calibrate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower
+```
+
+The RS follower defaults to `can_adapter=socketcan`, so `--robot.port` is the CAN channel name (e.g. `can0`).
+
+</hfoption>
+<hfoption id="Dual arm">
+
+Connect the bimanual follower (each arm on its own CAN channel); calibration runs for the left arm, then the right arm.
+
+```bash
+lerobot-calibrate \
+    --robot.type=bi_rebot_b601_rs_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.port=can0 \
+    --robot.right_arm_config.port=can1
+```
+
+Per-arm calibration files are saved with `_left` / `_right` suffixes on the id.
+
+</hfoption>
+</hfoptions>
+
+### Leader (reBot Arm 102)
+
+<hfoptions id="calibrate-leader">
+<hfoption id="Single arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+## Teleoperation
+
+Once both arms are calibrated, drive the follower with the leader.
+
+<hfoptions id="teleoperate">
+<hfoption id="Single arm">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+The bimanual leader and follower reuse the single-arm classes; each arm is
+configured through nested `left_arm_config.*` / `right_arm_config.*` arguments,
+so a bimanual reBot Arm 102 leader drives a bimanual B601-RS follower.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=bi_rebot_b601_rs_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.port=can0 \
+    --robot.right_arm_config.port=can1 \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+<Tip>
+  The leader and follower share the same joint names (`shoulder_pan,
+  shoulder_lift, elbow_flex, wrist_flex, wrist_yaw, wrist_roll, gripper`), so
+  leader actions map directly onto the follower.
+</Tip>
+
+If the motion of a joint is reversed, flip its sign in the leader's `joint_directions` (the gripper also carries a scale to widen its range to the follower):
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
+```
+
+### Tuning MIT gains
+
+RobStride motors run in MIT mode. The per-joint stiffness/damping (`mit_kp` / `mit_kd`) and the gripper's MIT gains (`gripper_mit_kp` / `gripper_mit_kd`) ship with sane defaults but can be overridden, e.g. to soften a joint:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --robot.mit_kp='[50,150,150,50,50,50,12]' \
+    --robot.mit_kd='[3,10,10,5,4,4,0.05]'
+```
+
+### Limiting gripper torque
+
+The RS gripper is driven by an MIT impedance torque rather than a position target, so its grip force is bounded by two torque-limit parameters:
+
+- **`gripper_mit_torque_limit`** (default: `3.5` N·m) — max feedforward torque while the gripper is **moving**.
+- **`gripper_mit_hold_torque_limit`** (default: `1.0` N·m) — max feedforward torque at **near-zero speed** (grasping / holding). This gentler limit prevents the gripper from crushing objects or overcurrenting when it has reached its target.
+
+Lower either value to soften the grip — e.g. for fragile objects:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader \
+    --robot.gripper_mit_torque_limit=2.0 \
+    --robot.gripper_mit_hold_torque_limit=0.5
+```
+
+### Limiting per-step motion (safety)
+
+`max_relative_target` is a LeRobot-wide safety parameter that caps the maximum change in joint position (in **degrees**) allowed per control step. If the commanded goal differs from the current position by more than this limit, the target is clipped to the cap. This prevents dangerous jumps when the leader is moved abruptly or when a policy outputs an outlier action.
+
+By default it is `None` (no limit). For safety during teleoperation, it is recommended to set a limit such as `5.0` degrees. If you need to fully utilize the arm's range of motion without per-step constraints, you can disable this feature by leaving it as `None`.
+
+Set it to a float to cap all joints uniformly, or pass a `dict` to set per-joint limits:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader \
+    --robot.max_relative_target=5.0
+```
+
+## Recording datasets
+
+Swap `lerobot-teleoperate` for `lerobot-record` (with the same `--robot.*` / `--teleop.*` arguments, plus `--dataset.*`) to record demonstrations for training. See [Imitation Learning for Robots](./il_robots) for the full workflow.
+
+For hardware assembly and wiring, see the [Seeed Studio reBot wiki](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/).

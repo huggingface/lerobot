@@ -31,12 +31,14 @@ import draccus
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_rebot_b601_follower,
+    bi_rebot_b601_rs_follower,
     bi_so_follower,
     koch_follower,
     lekiwi,
     make_robot_from_config,
     omx_follower,
     rebot_b601_follower,
+    rebot_b601_rs_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401

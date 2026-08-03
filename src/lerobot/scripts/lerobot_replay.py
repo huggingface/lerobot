@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
     bi_rebot_b601_follower,
+    bi_rebot_b601_rs_follower,
     bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
@@ -67,6 +68,7 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    rebot_b601_rs_follower,
     so_follower,
     unitree_g1,
 )
