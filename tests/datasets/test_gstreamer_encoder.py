@@ -19,6 +19,8 @@
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.configs.video import GST_VIDEO_CODECS, RGBEncoderConfig
 from lerobot.datasets.gstreamer_utils import (
     GST_BITRATE_ONLY_CODECS,
