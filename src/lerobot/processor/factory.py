@@ -20,7 +20,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.types import PolicyAction, RobotAction, RobotObservation
+from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .batch_processor import AddBatchDimensionProcessorStep

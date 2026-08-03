@@ -59,6 +59,7 @@ The `lerobot-rollout --strategy.type=dagger` mode requires **teleoperators with 
 
 - `bi_openarm_mini` - Bimanual OpenArm Mini
 - `so_leader` - SO100 / SO101 leader arm
+- `bi_so_leader` - Bimanual SO100 / SO101 leader arms
 
 > [!IMPORTANT]
 > The provided commands default to `bi_openarm_follower` + `bi_openarm_mini`.

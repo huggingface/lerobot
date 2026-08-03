@@ -36,3 +36,22 @@ def test_dataset_config_none_episodes_ok():
 
 def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
+
+
+def test_dataset_config_bucket_streaming_ok():
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True)
+
+
+def test_dataset_config_invalid_repo_type():
+    with pytest.raises(ValueError, match="repo_type"):
+        DatasetConfig(repo_id="user/repo", repo_type="model")
+
+
+def test_dataset_config_bucket_requires_streaming():
+    with pytest.raises(ValueError, match="streaming-only"):
+        DatasetConfig(repo_id="user/repo", repo_type="bucket")
+
+
+def test_dataset_config_bucket_rejects_eval_split():
+    with pytest.raises(ValueError, match="eval_split"):
+        DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True, eval_split=0.1)
