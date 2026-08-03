@@ -48,9 +48,24 @@ To use LingBot-VLA 2.0 in LeRobot, specify the policy type as:
 policy.type=lingbot_vla_v2
 ```
 
-When fine-tuning directly from the released upstream checkpoint, use LeRobot's standard
-checkpoint entry point, `policy.path`. Do not pass `policy.type` in that command; LeRobot
-infers `lingbot_vla_v2` from the raw upstream checkpoint.
+When fine-tuning from the released upstream checkpoint, first repackage it into the
+LeRobot format with the one-shot converter (the raw upstream checkpoint only carries a
+minimal `config.json` and is no longer loaded at runtime):
+
+```bash
+python -m lerobot.policies.lingbot_vla_v2.convert_upstream_checkpoint \
+  --input robbyant/lingbot-vla-v2-6b \
+  --output ./lingbot-vla-v2-6b-lerobot \
+  --robot-config-path /path/to/robot_config.yaml \
+  --norm-stats-path /path/to/norm_stats.json
+```
+
+The converted checkpoint is self-contained: `config.json` carries
+`type: lingbot_vla_v2`, and the robot config / normalization stats are embedded in the
+saved processor configs, so it loads on any machine. Then use LeRobot's standard
+checkpoint entry point, `policy.path`, pointing at the converted directory (or its Hub
+repo if you pushed it). Do not pass `policy.type` in that command; LeRobot infers
+`lingbot_vla_v2` from the checkpoint's `config.json`.
 
 LingBot-VLA 2.0 also requires the per-robot slot mapping and normalization assets used by
 its feature transform:
@@ -63,7 +78,7 @@ its feature transform:
 
 | Checkpoint                   | Params | Notes                                                                                                            |
 | ---------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------- |
-| `robbyant/lingbot-vla-v2-6b` | ~6B    | "Native Depth" variant; action path loads with `use_depth=False` (the 84 distillation-head tensors are skipped). |
+| `robbyant/lingbot-vla-v2-6b` | ~6B    | "Native Depth" variant; raw upstream format — convert it first (see above). Action path runs with `use_depth=False` (the 84 distillation-head tensors are dropped at conversion time). |
 
 ## Training / fine-tuning
 
@@ -73,7 +88,7 @@ robot-config assets:
 ```bash
 lerobot-train \
   --dataset.repo_id=<your/dataset> \
-  --policy.path=robbyant/lingbot-vla-v2-6b \
+  --policy.path=<converted-lingbot-vla-v2-6b> \
   --policy.repo_id=<your/lingbot_vla_v2_policy> \
   --policy.robot_config_path=/path/to/robot_config.yaml \
   --policy.norm_stats_path=/path/to/norm_stats.json \
@@ -135,7 +150,7 @@ Example 8-GPU launch:
 ```bash
 accelerate launch --num_processes=8 $(which lerobot-train) \
   --dataset.repo_id=<your/dataset> \
-  --policy.path=robbyant/lingbot-vla-v2-6b \
+  --policy.path=<converted-lingbot-vla-v2-6b> \
   --policy.robot_config_path=/path/to/robot_config.yaml \
   --policy.norm_stats_path=/path/to/norm_stats.json \
   --policy.dtype=bfloat16 \

@@ -19,6 +19,7 @@ CUDA GPU with Triton; skips otherwise (CPU CI falls back to the eager path autom
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("transformers")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="Triton grouped-MoE requires CUDA")

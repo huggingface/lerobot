@@ -19,6 +19,7 @@ change the pretrained model's outputs beyond floating-point reassociation)."""
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("transformers")
 import torch.nn.functional as F  # noqa: E402
 
 
