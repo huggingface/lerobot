@@ -109,9 +109,9 @@ output is an ordinary MP4, identical in kind to what the PyAV backend writes.
 NVIDIA Jetson is the current case. Its encoder is provided by the
 `nvvideo4linux2` plugin:
 
-| Encoder | Platform | CLI Value |
-| ------- | -------- | --------- |
-| `nvv4l2av1enc` | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2av1enc --dataset.rgb_encoder.video_backend=gstreamer` |
+| Encoder         | Platform      | CLI Value                                                                                  |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `nvv4l2av1enc`  | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2av1enc --dataset.rgb_encoder.video_backend=gstreamer`  |
 | `nvv4l2h265enc` | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2h265enc --dataset.rgb_encoder.video_backend=gstreamer` |
 | `nvv4l2h264enc` | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2h264enc --dataset.rgb_encoder.video_backend=gstreamer` |
 
