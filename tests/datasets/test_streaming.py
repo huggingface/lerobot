@@ -410,37 +410,7 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
     for i in range(ds_num_frames):
         streaming_frame = next(streaming_ds)
         frame_idx = streaming_frame["index"]
-        target_frame = ds[frame_idx]
-
-        assert set(streaming_frame.keys()) == set(target_frame.keys()), (
-            f"Keys differ between streaming frame and target one. Differ at: {set(streaming_frame.keys()) - set(target_frame.keys())}"
-        )
-
-        key_checks = []
-        for key in streaming_frame:
-            left = streaming_frame[key]
-            right = target_frame[key]
-
-            if isinstance(left, str):
-                check = left == right
-
-            elif isinstance(left, torch.Tensor):
-                if (
-                    key not in ds.meta.camera_keys
-                    and "is_pad" not in key
-                    and f"{key}_is_pad" in streaming_frame
-                ):
-                    # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
-                    left = left[~streaming_frame[f"{key}_is_pad"]]
-                    right = right[~target_frame[f"{key}_is_pad"]]
-
-                check = torch.allclose(left, right) and left.shape == right.shape
-
-            key_checks.append((key, check))
-
-        assert all(t[1] for t in key_checks), (
-            f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
-        )
+        assert_frame_matches(streaming_frame, ds[frame_idx], ds, context=f"i: {i}, frame_idx: {frame_idx}")
 
 
 @pytest.mark.parametrize(
@@ -506,40 +476,7 @@ def test_frames_with_delta_consistency_with_shards(
     for i in range(ds_num_frames):
         streaming_frame = next(streaming_ds)
         frame_idx = streaming_frame["index"]
-        target_frame = ds[frame_idx]
-
-        assert set(streaming_frame.keys()) == set(target_frame.keys()), (
-            f"Keys differ between streaming frame and target one. Differ at: {set(streaming_frame.keys()) - set(target_frame.keys())}"
-        )
-
-        key_checks = []
-        for key in streaming_frame:
-            left = streaming_frame[key]
-            right = target_frame[key]
-
-            if isinstance(left, str):
-                check = left == right
-
-            elif isinstance(left, torch.Tensor):
-                if (
-                    key not in ds.meta.camera_keys
-                    and "is_pad" not in key
-                    and f"{key}_is_pad" in streaming_frame
-                ):
-                    # comparing frames only on non-padded regions. Padding is applied to last-valid broadcasting
-                    left = left[~streaming_frame[f"{key}_is_pad"]]
-                    right = right[~target_frame[f"{key}_is_pad"]]
-
-                check = torch.allclose(left, right) and left.shape == right.shape
-
-            elif isinstance(left, float):
-                check = left == right.item()  # right is a torch.Tensor
-
-            key_checks.append((key, check))
-
-        assert all(t[1] for t in key_checks), (
-            f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
-        )
+        assert_frame_matches(streaming_frame, ds[frame_idx], ds, context=f"i: {i}, frame_idx: {frame_idx}")
 
 
 class _StopConstructionError(Exception):
