@@ -173,7 +173,10 @@ def test_robometer_config_registered(monkeypatch):
     _patch_build(monkeypatch)
     assert "robometer" in RewardModelConfig.get_known_choices()
     assert RewardModelConfig.get_choice_class("robometer") is RobometerConfig
-    assert isinstance(make_reward_model_config("robometer", device="cpu"), RobometerConfig)
+    config = make_reward_model_config("robometer", device="cpu")
+    assert isinstance(config, RobometerConfig)
+    assert config.max_frames == 16
+    assert config.average_temporal_patches is False
 
 
 def test_robometer_factory_returns_in_tree_class():
@@ -248,6 +251,24 @@ def test_robometer_compute_reward_reads_pre_encoded_inputs(monkeypatch):
     rewards = model.compute_reward(batch)
 
     assert torch.allclose(rewards, torch.tensor([0.9, 0.6]))
+
+
+@skip_if_package_missing("transformers")
+def test_robometer_compute_sequence_returns_progress_and_success_probabilities(monkeypatch):
+    from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+
+    progress = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
+    success_logits = torch.tensor([[0.0, 5.0], [0.0, -5.0]])
+    _patch_build(monkeypatch)
+
+    cfg = RobometerConfig(device="cpu", progress_loss_type="l2")
+    model = RobometerRewardModel(cfg)
+    monkeypatch.setattr(model, "_compute_rbm_logits", lambda _inputs: (progress, success_logits))
+
+    sequence = model.compute_sequence(_make_batch({"input_ids": torch.zeros(2, 2, dtype=torch.long)}))
+
+    assert torch.allclose(sequence["progress"], progress)
+    assert torch.allclose(sequence["success_probability"], torch.sigmoid(success_logits))
 
 
 @skip_if_package_missing("transformers")

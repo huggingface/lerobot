@@ -16,12 +16,16 @@
 
 """Compute per-frame Robometer progress and success curves for a LeRobot dataset.
 
-For each episode, builds per-frame sub-samples using the frame-steps
-strategy from the Robometer eval server: for each original frame ``t``,
-linspace-subsample ``[0, t]`` into ``K`` frames (default 4, matching
-``NUM_SUBSAMPLED_FRAMES`` in the eval server), run one forward through
-the Robometer processor + model, and keep the last-frame progress value.
-All sub-samples are the same size ``K`` so they batch cleanly.
+Supports both upstream Robometer inference modes:
+
+- ``frame_steps``: for each sampled frame ``t``, truncate a linspace over
+  ``[0, t]`` into ``K`` context frames and retain the last prediction.
+- ``full_trajectory``: run one sampled trajectory through Robometer and retain
+  every progress/success output.
+
+Inference can run below the dataset frame rate (upstream examples use 1–3 FPS).
+Predictions are linearly interpolated back to every dataset frame so existing
+LeRobot consumers continue to receive dense arrays.
 
 The parquet uses the same schema as SARM's
 :mod:`lerobot.rewards.sarm.compute_rabc_weights` so existing consumers —
@@ -52,6 +56,7 @@ from typing import Any
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
@@ -66,6 +71,9 @@ DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 
 # Upstream Robometer eval server uses K=4 for frame-steps sub-samples.
 DEFAULT_NUM_SUBSAMPLED_FRAMES = 4
+DEFAULT_INFERENCE_MODE = "frame_steps"
+DEFAULT_INFERENCE_FPS = 1.0
+DEFAULT_MAX_FRAMES = 16
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
@@ -97,20 +105,72 @@ def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> lis
     and last frames are always included. Each entry is a fixed-size array
     so the model can batch them.
     """
-    return [np.linspace(0, t, num_subsampled_frames).round().astype(np.int64) for t in range(num_frames)]
+    return [np.linspace(0, t, num_subsampled_frames, dtype=np.int64) for t in range(num_frames)]
+
+
+def _build_inference_indices(num_frames: int, dataset_fps: float, inference_fps: float) -> np.ndarray:
+    """Select frames at ``inference_fps`` while always retaining both endpoints."""
+    if num_frames < 1:
+        return np.empty(0, dtype=np.int64)
+    if dataset_fps <= 0 or inference_fps <= 0:
+        raise ValueError("dataset_fps and inference_fps must be > 0")
+    if inference_fps >= dataset_fps:
+        return np.arange(num_frames, dtype=np.int64)
+
+    step = dataset_fps / inference_fps
+    indices = np.arange(0, num_frames, step).astype(np.int64)
+    return np.unique(np.append(indices, num_frames - 1))
+
+
+def _limit_trajectory_indices(indices: np.ndarray, max_frames: int | None) -> np.ndarray:
+    """Uniformly cap a full-trajectory sample without dropping its endpoints."""
+    if max_frames is None or len(indices) <= max_frames:
+        return indices
+    if max_frames < 2:
+        raise ValueError("max_frames must be >= 2 for full-trajectory inference")
+    positions = np.linspace(0, len(indices) - 1, max_frames, dtype=np.int64)
+    return indices[positions]
+
+
+def _interpolate_dense(indices: np.ndarray, values: np.ndarray, num_frames: int) -> np.ndarray:
+    """Interpolate sparse inference outputs onto every original dataset frame."""
+    if len(indices) != len(values):
+        raise ValueError(f"Expected one value per inference index, got {len(values)} for {len(indices)}")
+    if len(indices) == 0:
+        return np.empty(0, dtype=np.float32)
+    return np.interp(np.arange(num_frames), indices, values).astype(np.float32)
+
+
+def _sample_scalar(sample: dict[str, Any], key: str, default: float | bool) -> float | bool:
+    """Read a scalar dataset field without assuming its tensor/array wrapper."""
+    value = sample.get(key, default)
+    if isinstance(value, (torch.Tensor, np.ndarray)):
+        value = value.reshape(-1)[0].item()
+    return value
 
 
 def compute_robometer_progress(
     dataset_repo_id: str,
     reward_model_path: str,
     output_path: str | None = None,
+    csv_output_path: str | None = None,
     device: str = "cuda",
     batch_size: int = 32,
     num_subsampled_frames: int = DEFAULT_NUM_SUBSAMPLED_FRAMES,
+    inference_mode: str = DEFAULT_INFERENCE_MODE,
+    inference_fps: float = DEFAULT_INFERENCE_FPS,
+    max_frames: int | None = DEFAULT_MAX_FRAMES,
     episodes: list[int] | None = None,
     image_key: str | None = None,
 ) -> Path:
     """Run Robometer over a dataset and write per-frame progress + success."""
+    if inference_mode not in {"frame_steps", "full_trajectory"}:
+        raise ValueError(f"Unsupported inference_mode: {inference_mode!r}")
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    if num_subsampled_frames < 1:
+        raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
+
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
     if image_key is not None:
@@ -123,7 +183,7 @@ def compute_robometer_progress(
         image_key=config.image_key,
         task_key=config.task_key,
         default_task=config.default_task,
-        max_frames=num_subsampled_frames,
+        max_frames=num_subsampled_frames if inference_mode == "frame_steps" else max_frames,
         use_multi_image=config.use_multi_image,
         use_per_frame_progress_token=config.use_per_frame_progress_token,
     )
@@ -141,6 +201,11 @@ def compute_robometer_progress(
     all_episode: list[int] = []
     all_frame: list[int] = []
     all_progress: list[float] = []
+    all_success: list[float] = []
+    all_is_inference_frame: list[bool] = []
+    all_mc_return: list[float] = []
+    all_is_terminal: list[bool] = []
+    all_intervention: list[bool] = []
 
     for episode_idx in tqdm(episode_indices, desc="Episodes"):
         ep = dataset.meta.episodes[episode_idx]
@@ -150,21 +215,49 @@ def compute_robometer_progress(
         if num_frames <= 0:
             continue
 
-        first_sample = dataset[ep_start]
+        episode_samples = [dataset[ep_start + i] for i in range(num_frames)]
+        first_sample = episode_samples[0]
         task = _resolve_task(first_sample, default=config.default_task or "perform the task")
 
-        ep_frames = torch.stack([dataset[ep_start + i][image_key] for i in range(num_frames)])
+        ep_frames = torch.stack([sample[image_key] for sample in episode_samples])
 
-        sub_indices = _build_subsample_indices(num_frames, num_subsampled_frames)
+        inference_indices = _build_inference_indices(num_frames, dataset.fps, inference_fps)
+        if inference_mode == "full_trajectory":
+            inference_indices = _limit_trajectory_indices(inference_indices, max_frames)
 
-        progress_per_frame = np.zeros(num_frames, dtype=np.float32)
+        progress_at_inference = np.zeros(len(inference_indices), dtype=np.float32)
+        success_at_inference = np.zeros(len(inference_indices), dtype=np.float32)
 
-        for start in tqdm(range(0, num_frames, batch_size), desc=f"  Ep {episode_idx}", leave=False):
-            end = min(start + batch_size, num_frames)
-            frames_batch = torch.stack([ep_frames[sub_indices[i]] for i in range(start, end)])
+        if inference_mode == "frame_steps":
+            sub_indices = _build_subsample_indices(num_frames, num_subsampled_frames)
+            for start in tqdm(
+                range(0, len(inference_indices), batch_size),
+                desc=f"  Ep {episode_idx}",
+                leave=False,
+            ):
+                end = min(start + batch_size, len(inference_indices))
+                frame_ids = inference_indices[start:end]
+                frames_batch = torch.stack([ep_frames[sub_indices[i]] for i in frame_ids])
 
+                transition = {
+                    TransitionKey.OBSERVATION: {image_key: frames_batch},
+                    TransitionKey.COMPLEMENTARY_DATA: {"task": task},
+                }
+                encoded = encoder(transition)
+                obs = encoded[TransitionKey.OBSERVATION]
+                batch = {
+                    key: value.to(device) if isinstance(value, torch.Tensor) else value
+                    for key, value in obs.items()
+                }
+
+                with torch.no_grad():
+                    sequence = model.compute_sequence(batch)
+                progress_at_inference[start:end] = sequence["progress"][:, -1].cpu().numpy()
+                success_at_inference[start:end] = sequence["success_probability"][:, -1].cpu().numpy()
+        else:
+            frames = ep_frames[inference_indices].unsqueeze(0)
             transition = {
-                TransitionKey.OBSERVATION: {image_key: frames_batch},
+                TransitionKey.OBSERVATION: {image_key: frames},
                 TransitionKey.COMPLEMENTARY_DATA: {"task": task},
             }
             encoded = encoder(transition)
@@ -173,35 +266,68 @@ def compute_robometer_progress(
                 key: value.to(device) if isinstance(value, torch.Tensor) else value
                 for key, value in obs.items()
             }
-
             with torch.no_grad():
-                rewards = model.compute_reward(batch)
-            progress_per_frame[start:end] = rewards.cpu().numpy()
+                sequence = model.compute_sequence(batch)
+            progress_at_inference[:] = sequence["progress"][0].cpu().numpy()
+            success_at_inference[:] = sequence["success_probability"][0].cpu().numpy()
+
+        progress_per_frame = _interpolate_dense(inference_indices, progress_at_inference, num_frames)
+        success_per_frame = _interpolate_dense(inference_indices, success_at_inference, num_frames)
+        inference_frame_mask = np.zeros(num_frames, dtype=bool)
+        inference_frame_mask[inference_indices] = True
 
         for local in range(num_frames):
             all_index.append(ep_start + local)
             all_episode.append(episode_idx)
             all_frame.append(local)
             all_progress.append(float(progress_per_frame[local]))
+            all_success.append(float(success_per_frame[local]))
+            all_is_inference_frame.append(bool(inference_frame_mask[local]))
+            all_mc_return.append(float(_sample_scalar(episode_samples[local], "mc_return", float("nan"))))
+            all_is_terminal.append(bool(_sample_scalar(episode_samples[local], "is_terminal", False)))
+            all_intervention.append(bool(_sample_scalar(episode_samples[local], "intervention", False)))
 
         if device.startswith("cuda"):
             torch.cuda.empty_cache()
 
+    progress_arr = np.asarray(all_progress, dtype=np.float32)
     table = pa.table(
         {
             "index": np.asarray(all_index, dtype=np.int64),
             "episode_index": np.asarray(all_episode, dtype=np.int64),
             "frame_index": np.asarray(all_frame, dtype=np.int64),
-            "progress_sparse": np.asarray(all_progress, dtype=np.float32),
+            # ``progress_sparse`` is retained for existing RA-BC consumers.
+            "progress_sparse": progress_arr,
+            "progress": progress_arr,
+            # Map Robometer progress [0,1] onto the VF support [-1,0].
+            "predicted_value": progress_arr - 1.0,
+            "success_probability": np.asarray(all_success, dtype=np.float32),
+            "is_inference_frame": np.asarray(all_is_inference_frame, dtype=bool),
+            "mc_return": np.asarray(all_mc_return, dtype=np.float32),
+            "is_terminal": np.asarray(all_is_terminal, dtype=bool),
+            "intervention": np.asarray(all_intervention, dtype=bool),
         }
-    ).replace_schema_metadata({b"reward_model_path": reward_model_path.encode()})
+    ).replace_schema_metadata(
+        {
+            b"reward_model_path": reward_model_path.encode(),
+            b"inference_mode": inference_mode.encode(),
+            b"inference_fps": str(inference_fps).encode(),
+            b"max_frames": str(max_frames).encode(),
+            b"num_subsampled_frames": str(num_subsampled_frames).encode(),
+        }
+    )
 
     out = Path(dataset.root) / DEFAULT_OUTPUT_FILENAME if output_path is None else Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, out)
     logging.info(f"Saved {len(table)} frame values to {out}")
 
-    progress_arr = np.asarray(all_progress, dtype=np.float32)
+    if csv_output_path is not None:
+        csv_out = Path(csv_output_path)
+        csv_out.parent.mkdir(parents=True, exist_ok=True)
+        pacsv.write_csv(table.replace_schema_metadata(), csv_out)
+        logging.info("Saved VF-compatible dense CSV to %s", csv_out)
+
     if progress_arr.size:
         logging.info(
             f"Progress: mean={float(progress_arr.mean()):.4f}, "
@@ -238,6 +364,12 @@ Examples:
         "--reward-model-path", type=str, default=None, help="Robometer checkpoint repo id or local path."
     )
     parser.add_argument("--output-path", type=str, default=None, help="Output parquet path.")
+    parser.add_argument(
+        "--csv-output-path",
+        type=str,
+        default=None,
+        help="Optional dense CSV with VF-compatible predicted_value and target columns.",
+    )
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (default: cuda).")
     parser.add_argument(
         "--batch-size", type=int, default=32, help="Sub-samples per Qwen forward (default: 32)."
@@ -247,6 +379,24 @@ Examples:
         type=int,
         default=DEFAULT_NUM_SUBSAMPLED_FRAMES,
         help=f"Frames per sub-sample (default: {DEFAULT_NUM_SUBSAMPLED_FRAMES}, matches eval server).",
+    )
+    parser.add_argument(
+        "--inference-mode",
+        choices=("frame_steps", "full_trajectory"),
+        default=DEFAULT_INFERENCE_MODE,
+        help="Upstream Robometer inference mode (default: frame_steps).",
+    )
+    parser.add_argument(
+        "--inference-fps",
+        type=float,
+        default=DEFAULT_INFERENCE_FPS,
+        help="Frame rate scored by Robometer before dense interpolation (default: 1.0).",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=DEFAULT_MAX_FRAMES,
+        help="Maximum sampled frames in full_trajectory mode (default: 16).",
     )
     parser.add_argument(
         "--episodes", type=int, nargs="+", default=None, help="Process only these episode indices."
@@ -278,9 +428,13 @@ Examples:
         dataset_repo_id=args.dataset_repo_id,
         reward_model_path=reward_model_path,
         output_path=args.output_path,
+        csv_output_path=args.csv_output_path,
         device=args.device,
         batch_size=args.batch_size,
         num_subsampled_frames=args.num_subsampled_frames,
+        inference_mode=args.inference_mode,
+        inference_fps=args.inference_fps,
+        max_frames=args.max_frames,
         episodes=args.episodes,
         image_key=args.image_key,
     )

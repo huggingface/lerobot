@@ -33,6 +33,12 @@ Usage:
         --camera-key observation.images.top \
         --output-dir ./my_videos \
         --gif
+
+    # Local dense Robometer CSV/parquet
+    python examples/dataset/create_progress_videos.py \
+        --repo-id lilkm/rollout_stackblocks_iter1_rollout \
+        --episode 0 \
+        --progress-path outputs/robometer/iter1_progress.csv
 """
 
 from __future__ import annotations
@@ -59,7 +65,7 @@ TASK_FONT_SCALE = 0.55
 
 
 def download_episode_metadata(
-    repo_id: str, episode: int, progress_file: str = "sarm_progress.parquet"
+    repo_id: str, episode: int, progress_file: str | None = "sarm_progress.parquet"
 ) -> Path:
     """Download only the metadata and per-frame progress file for a dataset.
 
@@ -72,12 +78,15 @@ def download_episode_metadata(
     Returns:
         Local cache path for the downloaded snapshot.
     """
-    logging.info("[1/4] Downloading metadata + %s for %s (episode %d) ...", progress_file, repo_id, episode)
+    allow_patterns = ["meta/**"]
+    if progress_file is not None:
+        allow_patterns.append(progress_file)
+    logging.info("[1/4] Downloading metadata for %s (episode %d) ...", repo_id, episode)
     local_path = Path(
         snapshot_download(
             repo_id=repo_id,
             repo_type="dataset",
-            allow_patterns=["meta/**", progress_file],
+            allow_patterns=allow_patterns,
             ignore_patterns=["*.mp4"],
         )
     )
@@ -222,7 +231,10 @@ def download_video_file(repo_id: str, local_path: Path, video_rel: str) -> Path:
 
 
 def load_progress_data(
-    local_path: Path, episode: int, progress_file: str = "sarm_progress.parquet"
+    local_path: Path,
+    episode: int,
+    progress_file: str = "sarm_progress.parquet",
+    progress_path: Path | None = None,
 ) -> np.ndarray | None:
     """Load per-frame progress values for an episode.
 
@@ -230,24 +242,28 @@ def load_progress_data(
         local_path: Dataset cache root.
         episode: Episode index.
         progress_file: Filename of the per-frame progress parquet.
+        progress_path: Optional local CSV/parquet path. Takes precedence over
+            ``progress_file``.
 
     Returns:
         Sorted (N, 2) array of (frame_index, progress), or None if unavailable.
     """
-    parquet_path = local_path / progress_file
-    if not parquet_path.exists():
-        logging.warning("%s not found", progress_file)
+    path = progress_path if progress_path is not None else local_path / progress_file
+    if not path.exists():
+        logging.warning("%s not found", path)
         return None
-    df = pd.read_parquet(parquet_path)
-    logging.info("   %s columns: %s", progress_file, list(df.columns))
+    df = pd.read_csv(path) if path.suffix.lower() == ".csv" else pd.read_parquet(path)
+    logging.info("   %s columns: %s", path, list(df.columns))
     episode_df = df[df["episode_index"] == episode].copy()
     if episode_df.empty:
-        logging.warning("No progress rows for episode %d in %s", episode, progress_file)
+        logging.warning("No progress rows for episode %d in %s", episode, path)
         return None
     episode_df = episode_df.sort_values("frame_index")
 
     if "progress_dense" in episode_df.columns and episode_df["progress_dense"].notna().any():
         progress_column = "progress_dense"
+    elif "progress" in episode_df.columns:
+        progress_column = "progress"
     elif "progress_sparse" in episode_df.columns:
         progress_column = "progress_sparse"
     else:
@@ -586,6 +602,7 @@ def process_dataset(
     output_dir: Path,
     create_gif: bool = False,
     progress_file: str = "sarm_progress.parquet",
+    progress_path: Path | None = None,
 ) -> Path | None:
     """Full pipeline: download, extract metadata, composite progress, write output.
 
@@ -597,6 +614,7 @@ def process_dataset(
         create_gif: If True, also generate a GIF from the MP4.
         progress_file: Filename of the per-frame progress parquet inside the
             dataset repo.
+        progress_path: Optional local CSV/parquet progress file.
 
     Returns:
         Path to the final output file, or None on failure.
@@ -604,7 +622,11 @@ def process_dataset(
     safe_name = repo_id.replace("/", "_")
     logging.info("Processing: %s  |  episode %d", repo_id, episode)
 
-    local_path = download_episode_metadata(repo_id, episode, progress_file)
+    local_path = download_episode_metadata(
+        repo_id,
+        episode,
+        progress_file=None if progress_path is not None else progress_file,
+    )
     logging.info("   Local cache: %s", local_path)
 
     episode_meta = load_episode_meta(local_path, episode, camera_key)
@@ -612,14 +634,23 @@ def process_dataset(
 
     video_path = download_video_file(repo_id, local_path, episode_meta["video_rel"])
 
-    progress_data = load_progress_data(local_path, episode, progress_file)
+    progress_data = load_progress_data(
+        local_path,
+        episode,
+        progress_file,
+        progress_path=progress_path,
+    )
     if progress_data is None:
-        logging.error("Could not load progress data from %s. Skipping overlay.", progress_file)
+        logging.error(
+            "Could not load progress data from %s. Skipping overlay.",
+            progress_path or progress_file,
+        )
         return None
 
     logging.info("   Progress frames: %d", len(progress_data))
 
-    output_path = output_dir / f"{safe_name}_ep{episode}_progress.mp4"
+    camera_suffix = episode_meta["camera"].removeprefix("observation.images.").replace(".", "_")
+    output_path = output_dir / f"{safe_name}_ep{episode}_{camera_suffix}_progress.mp4"
     final_path = composite_progress_video(
         video_path=video_path,
         from_timestamp=episode_meta["from_ts"],
@@ -679,6 +710,12 @@ def main() -> None:
             "(default: 'sarm_progress.parquet')."
         ),
     )
+    parser.add_argument(
+        "--progress-path",
+        type=Path,
+        default=None,
+        help="Local dense progress CSV/parquet. Takes precedence over --progress-file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -692,6 +729,7 @@ def main() -> None:
         output_dir=args.output_dir,
         create_gif=args.gif,
         progress_file=args.progress_file,
+        progress_path=args.progress_path,
     )
 
     if result:

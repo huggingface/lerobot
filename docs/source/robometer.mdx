@@ -63,12 +63,46 @@ In LeRobot datasets, the preprocessor reads:
 | ------------------------- | ------------------------ | ----------------------------------------------------- |
 | `reward_model.image_key`  | `observation.images.top` | Camera/video observation used by ROBOMETER            |
 | `reward_model.task_key`   | `task`                   | Key in complementary data that stores the task string |
-| `reward_model.max_frames` | `8`                      | Maximum number of frames passed to ROBOMETER          |
+| `reward_model.max_frames` | `16`                     | Maximum number of frames passed to ROBOMETER          |
 
 The model predicts per-frame progress and success internally. The LeRobot reward API returns a scalar per sample:
 
 - `reward_output="progress"` (default): return the last-frame progress, clamped to `[0, 1]`.
 - `reward_output="success"`: return `1.0` if the last-frame success probability is above `success_threshold`, otherwise `0.0`.
+
+Call `compute_sequence()` when the complete outputs are needed. It returns
+`progress` and `success_probability` tensors with shape `(batch, frames)`,
+matching upstream ROBOMETER inference.
+
+### Export Dense Dataset Curves
+
+The dataset exporter supports the two upstream inference modes and can score
+videos below their stored frame rate:
+
+```bash
+python -m lerobot.rewards.robometer.compute_rabc_weights \
+  --dataset-repo-id <dataset_repo_id> \
+  --reward-model-path lerobot/Robometer-4B \
+  --output-path outputs/robometer_progress.parquet \
+  --csv-output-path outputs/robometer_progress.csv \
+  --inference-mode frame_steps \
+  --inference-fps 3 \
+  --num-subsampled-frames 4 \
+  --batch-size 4
+```
+
+`frame_steps` matches the upstream evaluation server: each scored frame uses
+four integer-truncated linspace samples from the trajectory prefix.
+`full_trajectory` instead runs one uniformly sampled trajectory containing at
+most `--max-frames` frames (16 by default). In both modes, progress and success
+predictions are linearly interpolated back to every original dataset frame.
+The parquet contains `progress_sparse`, `progress`, `predicted_value`,
+`success_probability`, `is_inference_frame`, `mc_return`, `is_terminal`, and
+`intervention`. `predicted_value = progress - 1` maps Robometer's `[0,1]`
+progress onto the distributional VF support `[-1,0]`. The optional CSV contains
+the same dense rows and can be passed through the same N-step advantage and
+video-review workflow used for a trained VF. `is_inference_frame` distinguishes
+actual model outputs from interpolated frames.
 
 ## Usage
 

@@ -55,7 +55,7 @@ class RobometerConfig(RewardModelConfig):
     task_key: str = "task"
     default_task: str | None = None
 
-    max_frames: int | None = 8
+    max_frames: int | None = 16
     reward_output: str = "progress"  # "progress" or "success"
     success_threshold: float = 0.5
 
@@ -68,7 +68,7 @@ class RobometerConfig(RewardModelConfig):
     torch_dtype: str = "bfloat16"
     use_multi_image: bool = True
     use_per_frame_progress_token: bool = True
-    average_temporal_patches: bool = True
+    average_temporal_patches: bool = False
     frame_pooling: str = "mean"  # "mean" | "boundary" | "attention"
     frame_pooling_attn_temperature: float = 1.0
     progress_loss_type: str = "discrete"  # "l1" | "l2" | "discrete"

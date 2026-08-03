@@ -242,6 +242,13 @@ def test_encoder_step_registers_special_tokens_on_tokenizer(monkeypatch):
 
 
 @_skip_if_robometer_extras_missing
+def test_encoder_step_defaults_to_upstream_max_frames(monkeypatch):
+    step = _build_step(monkeypatch)
+
+    assert step.max_frames == 16
+
+
+@_skip_if_robometer_extras_missing
 def test_encoder_step_sets_pad_token_to_eos_when_missing(monkeypatch):
     """Qwen tokenizers ship without a pad token; the step must reuse EOS so
     batched processing doesn't crash on padding."""

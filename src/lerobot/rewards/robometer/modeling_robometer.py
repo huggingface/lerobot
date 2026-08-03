@@ -43,9 +43,10 @@ is recovered as the softmax-weighted mean of those centers — see
 
 This LeRobot port is **inference-only**: the preference head is preserved in
 the state dict for byte-equivalence with the published ``Robometer-4B``
-checkpoint but is not queried by :meth:`RobometerRewardModel.compute_reward`,
-which returns the last-frame progress (clamped to ``[0, 1]``) or sigmoid'd
-success probability depending on :attr:`RobometerConfig.reward_output`.
+checkpoint but is not queried by :meth:`RobometerRewardModel.compute_reward`.
+Use :meth:`RobometerRewardModel.compute_sequence` for complete per-frame
+progress and success probabilities; ``compute_reward`` retains LeRobot's
+last-frame scalar reward contract.
 """
 
 from __future__ import annotations
@@ -247,6 +248,19 @@ class RobometerRewardModel(PreTrainedRewardModel):
         self.frame_pool_attn.to(dtype=model_dtype)
 
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+        """Return the configured last-frame scalar for the reward-model API."""
+        sequence = self.compute_sequence(batch)
+        if self.config.reward_output == "success":
+            return (sequence["success_probability"][:, -1] > self.config.success_threshold).float()
+        return sequence["progress"][:, -1]
+
+    def compute_sequence(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Return per-frame progress and success probabilities.
+
+        This mirrors upstream Robometer inference, which exposes complete
+        progress and success sequences. Inputs in one batch must contain the
+        same number of progress tokens so the outputs can be stacked.
+        """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
             for key in ROBOMETER_INPUT_KEYS
@@ -266,23 +280,16 @@ class RobometerRewardModel(PreTrainedRewardModel):
         with torch.no_grad():
             progress_logits, success_logits = self._compute_rbm_logits(inputs)
 
-        decoded = decode_progress_outputs(
-            progress_logits,
-            success_logits,
-            is_discrete_mode=self.config.use_discrete_progress,
+        progress = (
+            convert_bins_to_continuous(progress_logits.float())
+            if self.config.use_discrete_progress
+            else progress_logits.float()
         )
-        values = (
-            decoded["success_probs"] if self.config.reward_output == "success" else decoded["progress_pred"]
-        )
-
-        rewards = torch.stack([torch.as_tensor(seq, dtype=torch.float32)[-1] for seq in values])
-        if self.config.reward_output == "success":
-            rewards = (rewards > self.config.success_threshold).float()
-        else:
-            # Match upstream Robometer's ``extract_rewards_from_output``: per-frame
-            # progress predictions are clamped to ``[0, 1]`` before being returned.
-            rewards = rewards.clamp(0.0, 1.0)
-        return rewards.to(self.config.device or "cpu")
+        success_probability = torch.sigmoid(success_logits.float())
+        return {
+            "progress": progress.clamp(0.0, 1.0).to(self.config.device or "cpu"),
+            "success_probability": success_probability.to(self.config.device or "cpu"),
+        }
 
     def _compute_rbm_logits(
         self,

@@ -131,7 +131,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     image_key: str = OBS_IMAGES + ".top"
     task_key: str = "task"
     default_task: str | None = None
-    max_frames: int | None = 8
+    max_frames: int | None = 16
     use_multi_image: bool = True
     use_per_frame_progress_token: bool = True
     max_length: int = 1024
