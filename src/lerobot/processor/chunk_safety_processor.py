@@ -142,23 +142,10 @@ class ChunkSafetyProcessorStep(PolicyActionProcessorStep):
     ever looks at one action right before it's sent, so a chunk that's
     individually in-bounds step-by-step but erratic as a sequence — a sudden
     jump, or a jerky run of steps that suggests the policy has gone off
-    distribution — goes through uncaught. This step looks at the chunk as a
-    whole and fixes just the bad values rather than discarding the chunk.
-
-    Three independent checks, each optional and off by default:
-
-    - **Absolute bounds** — keeps every action within a safe min/max range,
-      e.g. a robot's physical joint limits.
-    - **Discontinuity** — caps how far an action can jump from the one
-      before it.
-    - **Jerk** — caps how abruptly that jump itself can change, i.e. sudden
-      acceleration spikes.
-
-    Recommended starting point: enable absolute bounds and discontinuity —
-    both have an obvious source of truth (your robot's joint limits and
-    existing per-motor safety config). Leave jerk off unless you've measured
-    typical motion from your own robot's data; a sane jerk limit is much
-    harder to guess than a position or speed limit.
+    distribution — goes through uncaught. This step checks the chunk as a
+    whole and clamps only the values that violate a limit, leaving the rest
+    of the chunk untouched. Each of its three checks is independent and off
+    by default.
 
     Attributes:
         enabled: Whether to apply any of the checks below.
