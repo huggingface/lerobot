@@ -111,6 +111,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else None
         )
 
+        self._validate_annotation_columns()
+
         self.device = torch.device(
             self.config.device if self.config.device else "cuda" if torch.cuda.is_available() else "cpu"
         )
@@ -123,28 +125,33 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.verbs = ["move", "grasp", "rotate", "push", "pull", "slide", "lift", "place"]
         self.fake = Faker()
 
-        self._validate_annotation_columns()
+    @staticmethod
+    def _resolve_annotation_column(episodes_df: pd.DataFrame, annotation_type: str, suffix: str) -> str:
+        """Resolve a mode-specific annotation column, falling back to the legacy unprefixed name."""
+        prefixed = f"{annotation_type}_{suffix}"
+        return prefixed if prefixed in episodes_df.columns else suffix
+
+    @staticmethod
+    def _annotations_are_usable(names: Any, starts: Any, ends: Any) -> bool:
+        """Return whether an episode has non-empty, aligned annotation arrays."""
+        values = (names, starts, ends)
+        if not all(isinstance(value, (list, tuple, np.ndarray)) for value in values):
+            return False
+
+        lengths = {len(value) for value in values}
+        return len(lengths) == 1 and next(iter(lengths)) > 0
 
     def _validate_annotation_columns(self) -> None:
-        """Warn early if a multi-stage head is configured but the episodes metadata has no
-        usable subtask annotations.
+        """Validate annotation coverage before loading models or generating training targets.
 
-        Without this check, ``_load_episode_annotations`` returns ``None`` for such episodes
-        and ``find_stage_and_tau`` then yields stage 0 / tau 0 for every frame, so the target
-        silently becomes 0 everywhere (predict-all-zero). The head never learns and no error
-        is raised. This complements #2880, which restored loading of ``episodes_df``: here the
-        DataFrame is loaded but the ``*_subtask_names`` column is missing or NaN (e.g. the
-        annotations were never materialized into the episodes metadata).
+        A multi-stage head with no usable episode annotations would otherwise train entirely
+        against all-zero targets. Reject that configuration and warn when only part of the
+        dataset is usable.
         """
         if self.dataset_meta is None:
             return
-        try:
-            episodes_df = self.dataset_meta.episodes.to_pandas()
-        except Exception:
-            return
+        episodes_df = self.dataset_meta.episodes.to_pandas()
         num_episodes = len(episodes_df)
-        if num_episodes == 0:
-            return
 
         modes = []
         if self.dense_subtask_names and len(self.dense_subtask_names) > 1:
@@ -153,33 +160,41 @@ class SARMEncodingProcessorStep(ProcessorStep):
             modes.append(("sparse", self.sparse_subtask_names))
 
         for annotation_type, names in modes:
-            prefixed = f"{annotation_type}_subtask_names"
-            col = prefixed if prefixed in episodes_df.columns else "subtask_names"
-            num_missing = (
-                num_episodes if col not in episodes_df.columns else int(episodes_df[col].isna().sum())
-            )
-            if num_missing == num_episodes:
-                logger.warning(
-                    "SARM %s head is configured with %d stages, but NONE of the %d episodes have "
-                    "usable '%s' annotations in meta/episodes/*.parquet. Every %s target will be 0 "
-                    "(predict-all-zero) and the %s head will not learn. Make sure annotations are "
-                    "materialized into the episodes metadata (e.g. via subtask_annotation.py).",
-                    annotation_type,
-                    len(names),
-                    num_episodes,
-                    col,
-                    annotation_type,
-                    annotation_type,
+            columns = [
+                self._resolve_annotation_column(episodes_df, annotation_type, suffix)
+                for suffix in ("subtask_names", "subtask_start_frames", "subtask_end_frames")
+            ]
+            missing_columns = [column for column in columns if column not in episodes_df.columns]
+            if missing_columns:
+                num_usable = 0
+            else:
+                num_usable = sum(
+                    self._annotations_are_usable(*(episodes_df.loc[ep_idx, column] for column in columns))
+                    for ep_idx in episodes_df.index
                 )
-            elif num_missing:
+
+            if num_usable == 0:
+                missing_columns_message = (
+                    f" Missing required columns: {', '.join(missing_columns)}." if missing_columns else ""
+                )
+                raise ValueError(
+                    f"SARM {annotation_type} head is configured with {len(names)} stages, but none of "
+                    f"the {num_episodes} episodes have usable annotations in meta/episodes/*.parquet. "
+                    f"Required columns: {', '.join(columns)}.{missing_columns_message} "
+                    "Training would produce all-zero "
+                    "targets. Materialize the annotations into the episodes metadata before training."
+                )
+
+            num_unusable = num_episodes - num_usable
+            if num_unusable:
                 logger.warning(
-                    "SARM %s head: %d/%d episodes have no '%s' annotation; their targets will be 0 "
-                    "and only annotated episodes will train the %s head.",
+                    "SARM %s head: %d/%d episodes have unusable annotations in columns %s; "
+                    "their targets will be 0 and only the %d annotated episodes will train the head.",
                     annotation_type,
-                    num_missing,
+                    num_unusable,
                     num_episodes,
-                    col,
-                    annotation_type,
+                    ", ".join(columns),
+                    num_usable,
                 )
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
@@ -229,24 +244,18 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if episodes_df is None or len(global_names) == 1:
             return None, None, None
 
-        # Resolve column name with fallback
-        def col(suffix):
-            prefixed = f"{annotation_type}_{suffix}"
-            return prefixed if prefixed in episodes_df.columns else suffix
-
-        col_names = col("subtask_names")
-        if col_names not in episodes_df.columns or ep_idx >= len(episodes_df):
+        columns = [
+            self._resolve_annotation_column(episodes_df, annotation_type, suffix)
+            for suffix in ("subtask_names", "subtask_start_frames", "subtask_end_frames")
+        ]
+        if any(column not in episodes_df.columns for column in columns) or ep_idx >= len(episodes_df):
             return None, None, None
 
-        subtask_names = episodes_df.loc[ep_idx, col_names]
-        if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+        annotations = tuple(episodes_df.loc[ep_idx, column] for column in columns)
+        if not self._annotations_are_usable(*annotations):
             return None, None, None
 
-        return (
-            subtask_names,
-            episodes_df.loc[ep_idx, col("subtask_start_frames")],
-            episodes_df.loc[ep_idx, col("subtask_end_frames")],
-        )
+        return annotations
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
