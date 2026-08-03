@@ -537,9 +537,8 @@ class SmolVLMWithExpertModel(nn.Module):
     def sdpa_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
-        """Fused attention via F.scaled_dot_product_attention (transformers
-        convention: repeat_kv, bf16, additive mask). Not bit-identical to
-        eager_attention_forward."""
+        """Fused attention via F.scaled_dot_product_attention (sdpa convention:
+        repeat_kv, bf16, bool mask). Not bit-identical to eager_attention_forward."""
         num_att_heads = self.num_attention_heads
         num_key_value_groups = num_att_heads // self.num_key_value_heads
         output_dtype = value_states.dtype
@@ -560,17 +559,12 @@ class SmolVLMWithExpertModel(nn.Module):
         key = key.to(dtype=torch.bfloat16)
         value = value.to(dtype=torch.bfloat16)
 
-        # Additive finfo.min mask, matching eager: masked positions get ~0
-        # probability; fully-masked padding rows stay finite (uniform).
-        bias = torch.zeros_like(attention_mask, dtype=query.dtype)
-        bias = bias.masked_fill(~attention_mask, torch.finfo(query.dtype).min)
-        bias = bias[:, None, :, :]
-
+        # Bool mask is the sdpa convention; fully-masked padding rows return zeros, unlike eager.
         att_output = nn.functional.scaled_dot_product_attention(
             query,
             key,
             value,
-            attn_mask=bias,
+            attn_mask=attention_mask[:, None, :, :],
             dropout_p=0.0,
             scale=head_dim**-0.5,
             is_causal=False,
