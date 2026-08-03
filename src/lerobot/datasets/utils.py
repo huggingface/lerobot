@@ -26,7 +26,6 @@ import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -49,6 +48,17 @@ or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/c
 FUTURE_MESSAGE = """
 The dataset you requested ({repo_id}) is only available in {version} format.
 As we cannot ensure forward compatibility with it, please update your current version of lerobot.
+"""
+
+MISSING_VERSION_TAG_MESSAGE = """
+Your dataset must be tagged with a codebase version.
+Assuming _version_ is the codebase_version value in the info.json, you can run this:
+```python
+from huggingface_hub import HfApi
+
+hub_api = HfApi()
+hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
+```
 """
 
 
@@ -325,16 +335,19 @@ def check_version_compatibility(
         logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
-def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
+def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[packaging.version.Version]:
     """Return available valid versions (branches and tags) on a given Hub repo.
 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
+        token: Authentication token used for Hub requests. Pass a string token,
+            ``True`` to require the locally stored token, ``False`` to disable
+            authentication, or ``None`` to use the Hugging Face Hub default.
 
     Returns:
         list[packaging.version.Version]: A list of valid versions found.
     """
-    api = HfApi()
+    api = HfApi() if token is None else HfApi(token=token)
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
     repo_versions = []
@@ -345,7 +358,12 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     return repo_versions
 
 
-def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
+def get_safe_version(
+    repo_id: str,
+    version: str | packaging.version.Version,
+    *,
+    token: str | bool | None = None,
+) -> str:
     """Return the specified version if available on repo, or the latest compatible one.
 
     If the exact version is not found, it looks for the latest version with the
@@ -354,32 +372,23 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
         version (str | packaging.version.Version): The target version.
+        token: Authentication token forwarded to the Hub version lookup.
 
     Returns:
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
 
     Raises:
-        RevisionNotFoundError: If the repo has no version tags.
+        RuntimeError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
     """
     target_version = (
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
-    hub_versions = get_repo_versions(repo_id)
+    hub_versions = get_repo_versions(repo_id) if token is None else get_repo_versions(repo_id, token=token)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
-            f"""Your dataset must be tagged with a codebase version.
-            Assuming _version_ is the codebase_version value in the info.json, you can run this:
-            ```python
-            from huggingface_hub import HfApi
-
-            hub_api = HfApi()
-            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
-            ```
-            """
-        )
+        raise RuntimeError(MISSING_VERSION_TAG_MESSAGE.format(repo_id=repo_id))
 
     if target_version in hub_versions:
         return f"v{target_version}"
