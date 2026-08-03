@@ -1,0 +1,86 @@
+# RoArm-M3
+
+[RoArm-M3](https://www.waveshare.com/wiki/RoArm-M3) is a low-cost 5-DOF + gripper desktop robot arm from Waveshare, driven by serial-bus servos through an on-board ESP32. LeRobot controls it over the ESP32's JSON serial protocol (via the `roarm_sdk` package), not a Feetech/Dynamixel binary bus. It comes as a **follower** arm (`roarm_m3_follower`) and can be teleoperated by a second RoArm-M3 used as a passive **leader** (`roarm_m3_leader`).
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the RoArm support:
+
+```bash
+pip install -e ".[roarm]"
+```
+
+This pulls in `roarm_sdk` (the JSON-over-serial control library for the ESP32).
+
+## Registered device types
+
+| Type                | Kind                                           |
+| ------------------- | ---------------------------------------------- |
+| `roarm_m3_follower` | single-arm RoArm-M3 follower robot             |
+| `roarm_m3_leader`   | passive RoArm-M3 used as a leader teleoperator |
+
+## Firmware: baud-rate patch (required)
+
+Out of the box the ESP32 USB serial link is capped at 115200 baud while the servo bus already runs at 1 Mbps internally, which bottlenecks state reads and teleoperation. Reflash the ESP32 so the USB link also runs at 1 Mbps — a one-line change in the Waveshare firmware sketch:
+
+```cpp
+// RoArm-M3_example.ino
+Serial.begin(1000000);   // USB: was 115200 -> 1 Mbps (matches the internal servo bus)
+```
+
+Build with `arduino-cli` (ESP32 Arduino core) and flash the binaries with `esptool`:
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 RoArm-M3_example/
+python3 -m esptool --port /dev/ttyUSB0 --baud 921600 --chip esp32 write-flash \
+  0x1000  bootloader.bin \
+  0x8000  partitions.bin \
+  0x10000 firmware.bin
+```
+
+After patching, the leader/follower state-read rate rises from ~23 Hz to ~42 Hz and teleop is smooth at 30 fps. Then use `--robot.baudrate=1000000` (the default).
+
+<Tip warning={true}>
+  Confirm the exact board model and the real serial port (`arduino-cli board
+  list`) before flashing, and never pass `--no-verify` — a wrong firmware image
+  can brick the controller board.
+</Tip>
+
+## Gripper
+
+- **Stock gripper / Waveshare Gripper A**: nothing extra — position control works out of the box once the baud patch is applied. This is the default (`force_control_gripper=false`).
+- **Waveshare Gripper B (CF-3512 force control)**: optional. Its constant-current clamping force needs firmware that writes the gripper's torque register, and on the driver side set `--robot.force_control_gripper=true`. The bundled "move all joints" command zeroes that register for every servo, so with the flag on the driver issues a second, gripper-only write each step to re-apply the force (otherwise the jaw won't hold).
+
+## Find the USB ports
+
+```bash
+lerobot-find-port
+```
+
+Prefer the stable `/dev/serial/by-id/...` path for each arm; the `ttyUSB*` numbers can swap on reboot. The leader and follower must be on different ports.
+
+## Calibration
+
+The RoArm-M3 reports joint angles in degrees directly and keeps no per-robot offset calibration file here, so `lerobot-calibrate` is a no-op for these devices and can be skipped.
+
+## Teleoperation
+
+Drive the follower with a second RoArm-M3 held torque-off and moved by hand:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=roarm_m3_follower \
+    --robot.port=/dev/ttyUSB0 \
+    --robot.id=follower \
+    --teleop.type=roarm_m3_leader \
+    --teleop.port=/dev/ttyUSB1 \
+    --teleop.id=leader
+```
+
+The leader reads its joint angles, smooths them with an EMA (`--teleop.ema_alpha`, default `0.5`) to damp gearbox jitter, and sends them to the follower in the same joint space. When both arms use the same gripper it passes through directly; if they differ (for example a Gripper B follower), enable `--teleop.gripper_remap=true` to map the leader's gripper range onto the follower's.
+
+## Recording datasets
+
+Swap `lerobot-teleoperate` for `lerobot-record` (same `--robot.*` / `--teleop.*` arguments, plus `--dataset.*`) to record demonstrations for training. See [Imitation Learning for Robots](./il_robots) for the full workflow.
+
+For firmware and hardware assembly details, see the [Waveshare RoArm-M3 wiki](https://www.waveshare.com/wiki/RoArm-M3).
