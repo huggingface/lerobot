@@ -454,6 +454,8 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    "gir",
+    "trak",
 ]
 
 # TODO: Uncomment when ready to use
