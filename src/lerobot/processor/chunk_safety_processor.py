@@ -145,7 +145,13 @@ class ChunkSafetyProcessorStep(PolicyActionProcessorStep):
             max_action=self.max_action,
         )
         if was_clamped:
-            logger.warning("ChunkSafetyProcessorStep clamped an out-of-bounds predicted action chunk.")
+            diff = (clamped - action).abs()
+            max_diff = diff.max().item()
+            per_dim_max = diff.amax(dim=tuple(range(diff.ndim - 1))).tolist()
+            logger.warning(
+                "ChunkSafetyProcessorStep clamped an out-of-bounds predicted action chunk "
+                f"(max abs diff={max_diff:.4g}, per-dim max diff={per_dim_max})."
+            )
         return clamped
 
     def get_config(self) -> dict[str, Any]:
