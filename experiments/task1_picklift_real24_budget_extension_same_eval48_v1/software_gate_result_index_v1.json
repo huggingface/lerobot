@@ -1,0 +1,13 @@
+{
+  "schema": "task1_picklift_real24_same_eval48_software_gate_result_index_v1",
+  "evaluation_id": "task1_picklift_real24_budget_extension_same_eval48_v1",
+  "status": "software_gate_passed_hardware_not_authorized",
+  "plan_sha256": "ada1a17eecc972a999fe8e8540015b42ebc3115577bd34a73985a9f97eb29abf",
+  "software_evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_budget_extension_same_eval48_v1/software_gate_v1",
+  "manifest_sha256": "53dd8fca2505555258a909c9e61d906aeda586e2ae10ad5af1c00ff1f90c769f",
+  "hashes_sha256": "20ed5c7183d918bce0b7c287c595343e7a908db2582f306b9756cfa20985941e",
+  "dry_run_sha256": "7fdd6e354045e52d4a377c71896d19eae8dbdeffd090e384eeb42d6cc894ba93",
+  "offline_inference_sha256": "fdaeef81def98ee1e964e655a6af97f3893500e591bce43109f49491e7ab3657",
+  "tests": "4 passed",
+  "hardware_authorized": false
+}
