@@ -389,6 +389,40 @@ def _draw_text_outlined(
     cv2.putText(frame, text, position, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
+def _decode_h264_proxy(
+    video_path: Path,
+    output_path: Path,
+    from_timestamp: float,
+    to_timestamp: float,
+) -> Path:
+    """Transcode an episode segment when OpenCV cannot decode the source codec."""
+    proxy_path = output_path.with_name(f"{output_path.stem}_decode_proxy.mp4")
+    result = subprocess.run(  # nosec B607
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(from_timestamp),
+            "-i",
+            str(video_path),
+            "-t",
+            str(to_timestamp - from_timestamp),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            proxy_path.as_posix(),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg proxy transcode failed:\n{result.stderr[-1000:]}")
+    return proxy_path
+
+
 def composite_progress_video(
     video_path: Path,
     from_timestamp: float,
@@ -415,13 +449,27 @@ def composite_progress_video(
     Returns:
         Path to the written output file (MP4).
     """
+    duration_seconds = to_timestamp - from_timestamp
     capture = cv2.VideoCapture(str(video_path))
+    proxy_path: Path | None = None
     try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, from_timestamp * 1000)
+        readable, _ = capture.read()
+        if not readable:
+            capture.release()
+            logging.info("   OpenCV could not decode source; creating an H.264 proxy with FFmpeg")
+            proxy_path = _decode_h264_proxy(
+                video_path,
+                output_path,
+                from_timestamp,
+                to_timestamp,
+            )
+            capture = cv2.VideoCapture(str(proxy_path))
+            from_timestamp = 0.0
         capture.set(cv2.CAP_PROP_POS_MSEC, from_timestamp * 1000)
 
         frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        duration_seconds = to_timestamp - from_timestamp
         num_frames = int(round(duration_seconds * fps))
 
         logging.info(
@@ -455,6 +503,7 @@ def composite_progress_video(
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
 
+        written = 0
         for frame_idx in range(num_frames):
             ret, frame = capture.read()
             if not ret:
@@ -526,12 +575,19 @@ def composite_progress_video(
                 _draw_text_outlined(frame, task_name, (task_x, 22), TASK_FONT_SCALE)
 
             writer.write(frame)
+            written += 1
             if frame_idx % 100 == 0:
                 logging.info("   Frame %d/%d ...", frame_idx, num_frames)
 
         writer.release()
+        if written == 0:
+            raise RuntimeError("Video decoder produced zero frames")
+        if written != num_frames:
+            logging.warning("Decoded %d/%d expected frames", written, num_frames)
     finally:
         capture.release()
+        if proxy_path is not None:
+            proxy_path.unlink(missing_ok=True)
 
     logging.info("   MP4 written: %s", output_path)
     return output_path
