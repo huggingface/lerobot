@@ -193,11 +193,11 @@ class LeKiwi(Robot):
         self.bus.configure_motors()
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
-            # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-            self.bus.write("P_Coefficient", name, 16)
-            # Set I_Coefficient and D_Coefficient to default value 0 and 32
-            self.bus.write("I_Coefficient", name, 0)
-            self.bus.write("D_Coefficient", name, 32)
+            # Tracking gains from the config; defaults match the
+            # previously hard-coded 16/0/32, so unset behaviour is unchanged.
+            self.bus.write("P_Coefficient", name, self.config.arm_p_coefficient)
+            self.bus.write("I_Coefficient", name, self.config.arm_i_coefficient)
+            self.bus.write("D_Coefficient", name, self.config.arm_d_coefficient)
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)

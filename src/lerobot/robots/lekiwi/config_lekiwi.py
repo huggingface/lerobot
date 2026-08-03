@@ -48,6 +48,15 @@ class LeKiwiConfig(RobotConfig):
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = True
 
+    # Arm servo tracking gains, written by `configure()` on every connect.
+    # Defaults are the values previously hard-coded there, so behaviour is unchanged
+    # unless a user sets them. Exposed because the right gains depend on the arm's load:
+    # a higher P is needed for a shoulder that must climb against gravity, while a lower
+    # one avoids shakiness on a lightly loaded arm.
+    arm_p_coefficient: int = 16
+    arm_i_coefficient: int = 0
+    arm_d_coefficient: int = 32
+
 
 @dataclass
 class LeKiwiHostConfig:
