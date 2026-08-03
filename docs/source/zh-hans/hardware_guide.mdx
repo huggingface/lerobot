@@ -1,0 +1,99 @@
+# LeRobot 训练计算硬件指南
+
+训练 LeRobot 策略的粗略 sizing：每个策略需要多少 VRAM，训练时间看起来如何，以及当本地硬件不足时在哪里运行。
+
+下面的数字是**指示性的**——用于选择硬件的数量级数字，而不是精确预测。吞吐量严重依赖于数据集 I/O、图像分辨率、批量大小和 GPU 数量。
+
+## 按策略组划分的内存
+
+策略按骨干网络大小聚类；下面的分组为每个组给出单个 VRAM 包络，而不是为每个策略重复数字。内存大致与批量大小成线性比例；AdamW（LeRobot 默认）携带优化器状态，在前向 + 反向传播之外增加约 30-100%。
+
+| 组别       | 策略                                        | 峰值 VRAM（BS 8，AdamW） | 合适的入门 GPU              |
+| ---------- | ------------------------------------------- | -----------------------: | --------------------------- |
+| Light BC   | `act`、`vqbet`、`tdmpc`                     |                   ~2–6GB | 笔记本 GPU（RTX 3060）、L4、A10G   |
+| Diffusion  | `diffusion`、`multi_task_dit`               |                  ~8–14GB | RTX 4070+ / L4 / A10G             |
+| Small VLA  | `smolvla`                                   |                 ~10–16GB | RTX 4080+ / L4 / A10G             |
+| Large VLA  | `pi0`、`pi0_fast`、`pi05`、`xvla`、`wall_x` |                 ~24–40GB | A100 40 GB+（24 GB 在 BS 1 时紧张） |
+| Multimodal | `groot`、`eo1`                              |                 ~24–40GB | A100 40 GB+                       |
+| RL         | `sac`                                       |              配置相关    | 参见 [HIL-SERL 指南](./hilserl)   |
+
+内存受限？降低批量大小（~线性），使用梯度累积来恢复有效批量，或者对于 SmolVLA 保留 `freeze_vision_encoder=True`。
+
+## 训练时间
+
+机器人模仿学习通常在**数据集上的 5-10 个 epoch** 内收敛，而不是数十万原始步骤。一旦你知道 epoch 数量，挂钟时间基本上是：
+
+```text
+total_frames    = 所有 episode 的帧数总和      # 50 ep × 30 fps × 30 s ≈ 45,000
+steps_per_epoch = ceil(total_frames / (num_gpus × batch_size))
+total_steps     = epochs × steps_per_epoch
+wall_clock      ≈ total_steps × per_step_time
+```
+
+每步时间取决于策略和 GPU。下表中的数字是锚点——选择最接近你设置的行，并根据 `total_steps` 线性缩放，如果你训练更长或更短。
+
+### 常见场景
+
+**5 个 epoch 在 ~50-episode 数据集上（30 fps × 30 s 约 45k 帧）**，默认优化器（AdamW），640×480 图像的指示性挂钟时间：
+
+| 设置                                 | 策略           | 批量  | 挂钟时间     |
+| ------------------------------------ | -------------- | ----- | -----------: |
+| 单个 RTX 4090 / RTX 3090（24 GB）    | `act`          | 8     |    ~30–60 分钟 |
+| 单个 RTX 4090 / RTX 3090（24 GB）    | `diffusion`    | 8     |        ~2–4 小时 |
+| 单个 L4 / A10G（24 GB）              | `act`          | 8     |        ~1–2 小时 |
+| 单个 L4 / A10G（24 GB）              | `smolvla`      | 4     |        ~3–6 小时 |
+| 单个 A100 40 GB                      | `smolvla`      | 16    |        ~1–2 小时 |
+| 单个 A100 40 GB                      | `pi0` / `pi05` | 4     |        ~4–8 小时 |
+| 4× H100 80 GB 集群（`accelerate`）   | `diffusion`    | 32    |    ~30–60 分钟 |
+| 4× H100 80 GB 集群（`accelerate`）   | `smolvla`      | 32    |        ~1–2 小时 |
+| Apple Silicon M1/M2/M3 Max（MPS）    | `act`          | 4     |       ~6–14 小时 |
+
+这些是数量级数字。实际运行偏差 ±50%，取决于图像分辨率、数据集 I/O、数据加载器线程和确切的 GPU SKU。它们作为"这个运行需要一小时还是一天？"的直觉很有用，而不是作为 SLA。
+
+### 多 GPU 非常重要
+
+`accelerate launch --num_processes=N` 是减少训练时间的最简单方法。每个优化器步骤在大约与单个 GPU 步骤相同的挂钟时间内处理 `N × batch_size` 样本，因此 4 个 GPU ≈ 计算受限运行的 4 倍加速。请参阅 [多 GPU 训练](./multi_gpu_training) 指南获取完整设置。
+
+4×H100 80 GB 集群上的参考数据点（`accelerate launch --num_processes=4`），5000 步，批量 32，AdamW，数据集 [`imstevenpmwork/super_poulain_draft`](https://huggingface.co/datasets/imstevenpmwork/super_poulain_draft)（~50 个 episode，~640×480 图像）：
+
+| 策略        | 挂钟时间   | `update_s` | `dataloading_s` | GPU 利用率 | 值得注意的标志                                                                                                                  |
+| ----------- | ---------- | ---------: | --------------: | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `diffusion` | 16 分 17 秒  |      0.167 |           0.015 | ~90%     | 默认值（从头训练）                                                                                               |
+| `smolvla`   | 27 分 49 秒  |      0.312 |           0.011 | ~80%     | `--policy.path=lerobot/smolvla_base`、`freeze_vision_encoder=false`、`train_expert_only=false`                                 |
+| `pi05`      | 3 小时 41 分 |      2.548 |           0.014 | ~95%     | `--policy.pretrained_path=lerobot/pi05_base`、`gradient_checkpointing=true`、`dtype=bfloat16`、训练视觉编码器 + 专家 |
+
+`dataloading_s` 与 `update_s` 的比率是重要的诊断：当 `dataloading_s` 接近 `update_s` 时，更多 GPU 停止帮助——你的数据加载器是瓶颈，你应该在添加计算之前查看 `--num_workers`、图像分辨率和磁盘速度。
+
+### 计划和检查点
+
+如果你缩短训练（例如在小数据集上 5k-10k 步），也使用 `--policy.scheduler_decay_steps≈--steps` 缩短 LR 计划。否则 LR 保持接近峰值，永远不会衰减。`--save_freq` 也是如此。
+
+## 在哪里运行
+
+VRAM 是第一个过滤器。在层级内，根据预算和可用性选择——`$`–`$$$$` 列是相对的；在你实际使用的提供商处检查当前定价。
+
+| 类别                       | VRAM  | 层级   | 舒适适用于                                             |
+| -------------------------- | ----- | ------ | ------------------------------------------------------ |
+| RTX 3090 / 4090（消费级）  | 24 GB | `$`    | Light BC、Diffusion、SmolVLA。批量 1 时 VLA 紧张。     |
+| L4 / A10G（云）            | 24 GB | `$–$$` | 相同的包络；常见于 Google Cloud、RunPod、AWS `g5/g6`。 |
+| A100 40 GB                 | 40 GB | `$$$`  | 任何策略在合理的批量大小下。                           |
+| A100 80 GB / H100 80 GB    | 80 GB | `$$$$` | 多 GPU 集群；VLA 的大批量。                            |
+| **仅 CPU**                 | —     | —      | 不要训练。使用 Colab 或租用 GPU。                      |
+
+### Hugging Face Jobs
+
+[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 让你可以在托管的 HF 基础设施上运行训练，按秒计费，无需拥有 GPU。`lerobot-train` 为你提交和流式传输作业——只需在正常训练命令中添加 `--job.target=<flavor>`：
+
+```bash
+lerobot-train \
+  --policy.type=act --dataset.repo_id=<USER>/<DATASET> \
+  --policy.repo_id=<USER>/act_<task> \
+  --job.target=a10g-large
+```
+
+注意：
+
+- 在提交之前运行一次 `hf auth login`，作业在你的 token 下运行。
+- `--job.target` 映射到上表：`t4-small`/`t4-medium`（T4，仅 ACT）、`l4x1`/`l4x4`（L4 24 GB）、`a10g-small/large/largex2/largex4`（A10G 24 GB 扩展）、`a100-large`（A100）。通过 `hf jobs hardware` 列出当前目录和定价，或参见 [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs)。
+- 作业默认为 `2d`（48 小时）超时。使用 `--job.timeout=4h`（或任何其他有效的持续时间的字符串）覆盖它以缩短或延长超时。作业在命令完成时自动停止。
+- 有关完整演练——数据集上传、检查点流式传输、在作业上恢复运行——请参阅 [imitation-learning 训练指南](./il_robots#train-using-hugging-face-jobs)。
