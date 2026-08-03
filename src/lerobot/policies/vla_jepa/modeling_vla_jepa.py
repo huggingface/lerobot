@@ -17,17 +17,17 @@ from __future__ import annotations
 import logging
 from collections import deque
 from contextlib import nullcontext
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.utils import populate_queues
+from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import is_amp_available
+from lerobot.utils.device_utils import is_amp_available, resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -50,6 +50,11 @@ def _get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16)
     float16.
     """
     if not is_amp_available(device_type):
+        return nullcontext()
+    if device_type == "cpu" and dtype not in (torch.bfloat16, torch.float16):
+        # CPU autocast does not implement float32 (used here to force the action head back to
+        # full precision). `torch.autocast` accepts it, then warns and disables itself on *every*
+        # call, so short-circuit to keep the same behavior without the per-forward log spam.
         return nullcontext()
     if device_type == "cuda" and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
         dtype = torch.float16
@@ -107,7 +112,7 @@ class VLAJEPAModel(nn.Module):
                 torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
-            num_views = config.jepa_tubelet_size
+            num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
             if image_size is None:
@@ -125,6 +130,7 @@ class VLAJEPAModel(nn.Module):
                 num_heads=config.predictor_num_heads,
                 mlp_ratio=config.predictor_mlp_ratio,
                 num_action_tokens_per_step=config.num_action_tokens_per_timestep,
+                dropout=config.predictor_dropout,
             )
         else:
             self.video_encoder = None
@@ -159,6 +165,13 @@ class VLAJEPAModel(nn.Module):
         `output_hidden_states=True` is post-norm (tied to `last_hidden_state` via
         `@capture_outputs`). A forward hook on `language_model.layers[-1]` recovers
         the correct pre-RMSNorm state, matching the training-time representation.
+
+        Calls the inner `Qwen3VLModel` rather than the `Qwen3VLForConditionalGeneration`
+        wrapper: only the hooked hidden state is used, and the wrapper's forward ends in
+        `lm_head(hidden_states[:, slice(None), :])` because `logits_to_keep` defaults to 0,
+        so it would build full-sequence logits over the 151936-token vocab and discard them
+        (~3.4 GB in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head`
+        keeps its checkpoint key; only this forward path skips it.
         """
         captured: list[torch.Tensor] = []
 
@@ -169,12 +182,7 @@ class VLAJEPAModel(nn.Module):
         last_layer = self.qwen.model.model.language_model.layers[-1]
         handle = last_layer.register_forward_hook(_hook)
         try:
-            self.qwen.model(
-                **qwen_inputs,
-                output_hidden_states=False,
-                output_attentions=False,
-                return_dict=True,
-            )
+            self.qwen.model.model(**qwen_inputs)
         finally:
             handle.remove()
 
@@ -184,7 +192,7 @@ class VLAJEPAModel(nn.Module):
 
     def _encode_qwen(
         self, images: list[list[Tensor]], instructions: list[str], *, need_action_tokens: bool
-    ) -> tuple[Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor | None]:
         """Run Qwen and gather the embodied-action (and optionally action) token hidden states."""
         qwen_inputs = self.qwen.build_inputs(
             images=images,
@@ -218,7 +226,7 @@ class VLAJEPAModel(nn.Module):
         "mean" returns the scalar loss.
         """
         # Match the world model's expected view count: pad with the first view, or trim extras.
-        num_views = self.config.jepa_tubelet_size
+        num_views = self.config.num_world_model_views
         if videos.shape[1] < num_views:
             missing = num_views - videos.shape[1]
             videos = torch.cat([videos, videos[:, :1].repeat(1, missing, 1, 1, 1, 1)], dim=1)
@@ -237,8 +245,17 @@ class VLAJEPAModel(nn.Module):
 
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
-            # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
-            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
+            # Merge views: [B*V, N, H] -> [B, N, V*H].
+            # `flat` above flattens (B, V) row-major, so rows run view-fastest:
+            # (s0v0, s0v1, ..., s1v0, ...). A `chunk(chunks=v, dim=0)` + `cat(dim=2)` would
+            # instead assume view-slowest ordering and concatenate features belonging to
+            # *different samples* — shape-valid, so it fails silently. Regroup on (B, V).
+            n_tokens, hidden = video_embeddings.shape[1], video_embeddings.shape[2]
+            video_embeddings = (
+                video_embeddings.view(b, v, n_tokens, hidden)
+                .permute(0, 2, 1, 3)
+                .reshape(b, n_tokens, v * hidden)
+            )
 
         tubelet_size = self.video_encoder.config.tubelet_size
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
@@ -514,22 +531,15 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return self._queues[ACTION].popleft()
 
     @classmethod
-    def from_pretrained(
-        cls: type[T],
-        pretrained_name_or_path: str | Path,
-        **kwargs,
-    ):
-        return super().from_pretrained(pretrained_name_or_path, **kwargs)
-
-    @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
         reinit_prefixes = model.config.reinit_modules
         if not reinit_prefixes:
             return super()._load_as_safetensor(model, model_file, map_location, strict)
 
-        from safetensors.torch import load_file
-
-        state_dict = load_file(model_file, device=map_location)
+        # `resolve_safetensors_device` is what keeps every rank from materializing the whole
+        # checkpoint on GPU 0: safetensors maps the bare string "cuda" to cuda:0 regardless of
+        # torch.cuda.current_device(), and `config.device` is exactly that bare string.
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
         current = model.state_dict()
 
         reinitialized: list[str] = []
@@ -553,8 +563,17 @@ class VLAJEPAPolicy(PreTrainedPolicy):
                 f"(randomly re-initialised):\n  " + "\n  ".join(reinitialized)
             )
 
-        from lerobot.policies.utils import log_model_loading_keys
-
+        # Deliberately non-strict: the reinitialized tensors above are *expected* to be missing.
+        # `strict` still has to mean something, so enforce it on everything else.
         missing_keys, unexpected_keys = model.load_state_dict(filtered, strict=False)
+        if strict:
+            reinit_keys = {entry.split(":", 1)[0] for entry in reinitialized}
+            unaccounted = [k for k in missing_keys if k not in reinit_keys]
+            if unaccounted or unexpected_keys:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {type(model).__name__} with strict=True: "
+                    f"missing keys not covered by `reinit_modules` {unaccounted}, "
+                    f"unexpected keys {list(unexpected_keys)}."
+                )
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model

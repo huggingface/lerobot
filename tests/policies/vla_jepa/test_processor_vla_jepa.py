@@ -26,6 +26,7 @@ equivalence of the two paths on the Qwen image path.
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 
 import pytest
@@ -43,14 +44,19 @@ from conftest import (  # noqa: E402
     make_train_batch,
 )
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature  # noqa: E402
+from lerobot.configs.types import (  # noqa: E402
+    FeatureType,
+    NormalizationMode,
+    PipelineFeatureType,
+    PolicyFeature,
+)
 from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy  # noqa: E402
 from lerobot.policies.vla_jepa.processor_vla_jepa import (  # noqa: E402
     ImagePrepProcessorStep,
     make_vla_jepa_pre_post_processors,
 )
-from lerobot.processor import ProcessorStepRegistry  # noqa: E402
-from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStepRegistry  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE  # noqa: E402
 
 RESIZE = (IMAGE_SIZE // 2, IMAGE_SIZE // 2)  # (4, 4)
 IMG_KEY = f"{OBS_IMAGES}.laptop"
@@ -180,3 +186,131 @@ def test_image_prep_matches_model_qwen_path(patch_vla_jepa_external_models: None
     for views_a, views_b in zip(imgs_a, imgs_b, strict=True):
         for a, b in zip(views_a, views_b, strict=True):
             assert torch.equal(a, b)
+
+
+# ---------------------------------------------------------------------------
+# Gripper post-step serialization and the normalization-mode coupling
+# ---------------------------------------------------------------------------
+
+
+def _stats_for(cfg, gripper_min: float = 0.0, gripper_max: float = 1.0):
+    """Dataset stats matching `cfg`'s features, with a settable gripper range."""
+    action_min = torch.zeros(cfg.action_dim)
+    action_max = torch.ones(cfg.action_dim)
+    gripper = cfg.resolved_gripper_dim
+    if gripper < cfg.action_dim:
+        action_min[gripper] = gripper_min
+        action_max[gripper] = gripper_max
+    stats = {
+        ACTION: {
+            "min": action_min,
+            "max": action_max,
+            "mean": torch.zeros(cfg.action_dim),
+            "std": torch.ones(cfg.action_dim),
+        }
+    }
+    for key, feat in cfg.input_features.items():
+        stats[key] = {
+            "min": torch.zeros(feat.shape),
+            "max": torch.ones(feat.shape),
+            "mean": torch.zeros(feat.shape),
+            "std": torch.ones(feat.shape),
+        }
+    return stats
+
+
+def _find(pipeline, class_name: str):
+    return next((s for s in pipeline.steps if type(s).__name__ == class_name), None)
+
+
+def test_gripper_steps_survive_a_save_load_round_trip(tmp_path):
+    """gripper_dim/gripper_threshold must not silently revert to the class defaults.
+
+    Both steps used to inherit `get_config() -> {}`, so a reloaded pipeline came back at
+    `gripper_dim=6, threshold=0.5` no matter what the training config said.
+    """
+    cfg = make_config(action_dim=7)
+    cfg.gripper_dim = 5
+    cfg.gripper_threshold = 0.25
+    cfg.pre_snap_gripper_action = True
+    cfg.binarize_gripper_action = True
+
+    _, post = make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg))
+    post.save_pretrained(str(tmp_path))
+
+    reloaded = PolicyProcessorPipeline.from_pretrained(
+        str(tmp_path), config_filename="policy_postprocessor.json", overrides={}
+    )
+    for class_name in ("PreSnapGripperProcessorStep", "BinarizeGripperProcessorStep"):
+        step = _find(reloaded, class_name)
+        assert step is not None, class_name
+        assert (step.gripper_dim, step.threshold) == (5, 0.25), class_name
+
+
+def test_gripper_steps_default_off():
+    """The LIBERO-specific gripper steps are opt-in, since they assume LIBERO's units."""
+    cfg = make_config(action_dim=7)
+    assert not cfg.pre_snap_gripper_action
+    assert not cfg.binarize_gripper_action
+    _, post = make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg))
+    assert _find(post, "PreSnapGripperProcessorStep") is None
+    assert _find(post, "BinarizeGripperProcessorStep") is None
+
+
+def test_gripper_dim_out_of_range_raises():
+    """An out-of-range gripper index used to make both steps no-op silently."""
+    cfg = make_config(action_dim=7)
+    cfg.gripper_dim = 7
+    cfg.pre_snap_gripper_action = True
+    with pytest.raises(ValueError, match="out of range"):
+        cfg.validate_features()
+
+
+def test_gripper_dim_resolved_from_action_names():
+    cfg = make_config(action_dim=4)
+    cfg.gripper_dim = 6
+    cfg.action_feature_names = ["shoulder.pos", "elbow.pos", "gripper.pos", "wrist.pos"]
+    assert cfg.resolved_gripper_dim == 2
+
+
+def test_physical_range_mismatch_warns(caplog):
+    """A gripper in degrees would be pinned to a constant by the 0.5 threshold."""
+    cfg = make_config(action_dim=7)
+    cfg.gripper_dim = 6
+    cfg.pre_snap_gripper_action = True
+    cfg.binarize_gripper_action = True
+    with caplog.at_level(logging.WARNING):
+        make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg, gripper_min=0.0, gripper_max=90.0))
+    assert "looks misconfigured" in caplog.text
+
+
+def test_libero_style_gripper_range_does_not_warn(caplog):
+    cfg = make_config(action_dim=7)
+    cfg.gripper_dim = 6
+    cfg.pre_snap_gripper_action = True
+    cfg.binarize_gripper_action = True
+    with caplog.at_level(logging.WARNING):
+        make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg, gripper_min=-1.0, gripper_max=1.0))
+    assert "looks misconfigured" not in caplog.text
+
+
+def test_action_clipping_is_skipped_unless_min_max(caplog):
+    """Clipping to [-1, 1] is a range bound under MIN_MAX but a 1-sigma truncation under MEAN_STD."""
+    cfg = make_config(action_dim=7)
+    assert cfg.clip_normalized_actions
+    _, post = make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg))
+    assert _find(post, "ClipActionsProcessorStep") is not None
+
+    cfg.normalization_mapping = {**cfg.normalization_mapping, "ACTION": NormalizationMode.MEAN_STD}
+    with caplog.at_level(logging.WARNING):
+        _, post = make_vla_jepa_pre_post_processors(cfg, _stats_for(cfg))
+    assert _find(post, "ClipActionsProcessorStep") is None
+    assert "clip_normalized_actions" in caplog.text
+
+
+def test_observation_delta_indices_collapse_without_world_model():
+    """Only the world model reads frames past index 0; asking for more decodes video for nothing."""
+    assert make_config(num_video_frames=8).observation_delta_indices == list(range(8))
+    cfg = make_config(num_video_frames=8)
+    cfg.enable_world_model = False
+    assert cfg.observation_delta_indices == [0]
