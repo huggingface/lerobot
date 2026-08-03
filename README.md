@@ -144,7 +144,7 @@ lerobot-record \
   --dataset.repo_id=${HF_USER}/my-dataset
 ```
 
-Browse the full list in the [Third-Party Robots & Teleoperators](https://huggingface.co/docs/lerobot/third_party_robots) and [Third-Party Cameras & Sensors](https://huggingface.co/docs/lerobot/third_party_sensors) documentation.
+Browse the full list in the [Third-Party Robots & Teleoperators](https://huggingface.co/docs/lerobot/main/third_party_robots) and [Third-Party Cameras & Sensors](https://huggingface.co/docs/lerobot/main/third_party_sensors) documentation.
 
 ## Resources
 
