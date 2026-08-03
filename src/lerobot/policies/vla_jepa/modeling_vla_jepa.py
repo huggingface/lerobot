@@ -243,8 +243,17 @@ class VLAJEPAModel(nn.Module):
         tubelet_size = self.video_encoder.config.tubelet_size
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
-            # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
-            video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
+            # Merge views: [B*V, N, H] -> [B, N, V*H].
+            # `flat` above flattens (B, V) row-major, so rows run view-fastest:
+            # (s0v0, s0v1, ..., s1v0, ...). A `chunk(chunks=v, dim=0)` + `cat(dim=2)` would
+            # instead assume view-slowest ordering and concatenate features belonging to
+            # *different samples* — shape-valid, so it fails silently. Regroup on (B, V).
+            n_tokens, hidden = video_embeddings.shape[1], video_embeddings.shape[2]
+            video_embeddings = (
+                video_embeddings.view(b, v, n_tokens, hidden)
+                .permute(0, 2, 1, 3)
+                .reshape(b, n_tokens, v * hidden)
+            )
 
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
