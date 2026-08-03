@@ -219,6 +219,33 @@ class TestEncoding:
                 tmp_path / "o.mp4", fps=10, width=FRAME_W, height=FRAME_H, vcodec="libsvtav1"
             )
 
+    def test_output_can_be_concatenated_repeatedly(self, tmp_path, codec, frames):
+        """A dataset grows by remuxing: each episode is concatenated onto the
+        accumulated file, so this writer's output becomes an input to the next
+        concatenation. Two generations is the case that matters — the first
+        append can succeed while the second fails, if the muxer and the remux
+        disagree on the track timescale."""
+        av = pytest.importorskip("av")
+        from lerobot.datasets.gstreamer_utils import GStreamerVideoWriter
+        from lerobot.datasets.video_utils import concatenate_video_files
+
+        def clip(path):
+            with GStreamerVideoWriter(path, fps=10, width=FRAME_W, height=FRAME_H,
+                                      vcodec=codec, crf=30) as w:
+                for frame in frames:
+                    w.write(frame)
+            return path
+
+        acc = clip(tmp_path / "e1.mp4")
+        for episode in range(2, 4):
+            out = tmp_path / f"acc{episode}.mp4"
+            concatenate_video_files([acc, clip(tmp_path / f"e{episode}.mp4")],
+                                    out, compatibility_check=False)
+            acc = out
+
+        with av.open(str(acc)) as container:
+            assert sum(1 for _ in container.decode(video=0)) == 3 * len(frames)
+
     def test_auto_selects_an_available_encoder(self):
         cfg = RGBEncoderConfig(vcodec="auto", video_backend="gstreamer")
         assert cfg.vcodec in _available_gst_encoders()
