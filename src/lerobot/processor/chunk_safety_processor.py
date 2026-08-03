@@ -104,15 +104,11 @@ def clamp_action_chunk(
 class ChunkSafetyProcessorStep(PolicyActionProcessorStep):
     """Catches an unsafe predicted action chunk before it reaches the robot.
 
-    A policy predicts a whole sequence of upcoming actions at once (a
-    "chunk"), not just the next one. The existing runtime safety check only
-    ever looks at one action right before it's sent, so a chunk that's
-    individually in-bounds step-by-step but erratic as a sequence — a sudden
-    jump, or a jerky run of steps that suggests the policy has gone off
-    distribution — goes through uncaught. This step checks the chunk as a
-    whole and clamps only the values that violate a limit, leaving the rest
-    of the chunk untouched. Each of its three checks is independent and off
-    by default.
+    The existing runtime safety check only looks at one action right before
+    it's sent, so a chunk that's fine step-by-step but erratic as a sequence
+    goes through uncaught. This step checks the whole chunk and clamps only
+    the values that violate a limit. Each of its three checks is independent
+    and off by default.
 
     Attributes:
         enabled: Whether to apply any of the checks below.
