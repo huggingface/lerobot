@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvTransition, RobotObservation, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     ACTION_CODE_TOKEN_MASK,
     ACTION_TOKEN_MASK,

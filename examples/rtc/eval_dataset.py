@@ -417,7 +417,7 @@ class RTCEvaluator:
     def run_evaluation(self):
         """Run evaluation on two random dataset samples using three separate policies.
 
-        Note: Policies are deinitalized after each step to free memory. Large models
+        Note: Policies are deinitialized after each step to free memory. Large models
         (e.g., VLA models with billions of parameters) cannot fit three instances in
         memory simultaneously. By deleting and garbage collecting after each step,
         we ensure only one policy is loaded at a time.
