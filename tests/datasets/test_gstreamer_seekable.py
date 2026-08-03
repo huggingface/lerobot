@@ -11,14 +11,15 @@ play".
 
 from __future__ import annotations
 
-import sys
 import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
-sys.path.insert(0, "/home/tk/lerobot/src")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.gstreamer_utils import (  # noqa: E402
     GST_HEADER_INSERTION_PROPERTY,
     GStreamerVideoWriter,
@@ -130,7 +131,7 @@ def main() -> None:
     diff_neighbour = float((a - b).abs().mean())
     diff_vs_seq = float((a - seq).abs().mean()) if seq is not None else 999.0
     check(
-        "seeked frame matches the same frame read sequentially",
+        "frame fetched by seeking matches the same frame read sequentially",
         diff_vs_seq < 2.0,
         f"mean abs diff {diff_vs_seq:.3f}",
     )

@@ -165,7 +165,7 @@ def gst_codec_options(
 
     The codec's parameter-set repetition (``insert-sps-pps`` / ``insert-seq-hdr``)
     is enabled for every element in :data:`GST_HEADER_INSERTION_PROPERTY`. It is
-    not optional: without it the file plays but cannot be seeked, so a dataset
+    not optional: without it the file plays but seeking fails, so a dataset
     recorded through this backend cannot be trained on.
 
     ``crf`` maps to a fixed ``qp-range`` with ``control-rate=0`` on elements
@@ -187,7 +187,7 @@ def gst_codec_options(
 
     # Repeat the parameter set at every IDR so the sync samples the muxer
     # advertises are genuinely decodable. Without this the output plays but
-    # cannot be seeked, and therefore cannot be trained on.
+    # does not support seeking, and therefore cannot be trained on.
     header_property = GST_HEADER_INSERTION_PROPERTY.get(vcodec)
     if header_property is not None:
         opts[header_property] = 1
