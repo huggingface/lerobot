@@ -246,6 +246,19 @@ class TestEncoding:
         with av.open(str(acc)) as container:
             assert sum(1 for _ in container.decode(video=0)) == 3 * len(frames)
 
+    def test_path_containing_spaces(self, tmp_path, codec, frames):
+        """The pipeline is built as a text description, so an unquoted path
+        with a space ends the property and the remainder parses as another
+        element — failing with something misleading like `no element "my"`."""
+        from lerobot.datasets.gstreamer_utils import GStreamerVideoWriter
+
+        out = tmp_path / "a directory" / "a file.mp4"
+        with GStreamerVideoWriter(out, fps=10, width=FRAME_W, height=FRAME_H,
+                                  vcodec=codec, crf=30) as writer:
+            for frame in frames:
+                writer.write(frame)
+        assert out.stat().st_size > 0
+
     def test_auto_selects_an_available_encoder(self):
         cfg = RGBEncoderConfig(vcodec="auto", video_backend="gstreamer")
         assert cfg.vcodec in _available_gst_encoders()
