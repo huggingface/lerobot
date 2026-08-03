@@ -16,6 +16,10 @@
 
 """Tests for the GStreamer encoding backend."""
 
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 
@@ -201,6 +205,30 @@ class TestEncoding:
         writer.write(frames[0])
         writer.close()
         writer.close()
+
+    def test_dropping_a_writer_without_closing_does_not_abort(self, tmp_path, codec):
+        """Runs out of process: the failure this guards against is a SIGSEGV."""
+        script = textwrap.dedent(f"""
+            import gc
+            import numpy as np
+            from lerobot.datasets.gstreamer_utils import GStreamerVideoWriter
+
+            frame = np.zeros(({FRAME_H}, {FRAME_W}, 3), dtype=np.uint8)
+            for i in range(3):
+                path = r"{tmp_path}" + "/drop_%d.mp4" % i
+                w = GStreamerVideoWriter(
+                    path, fps=10, width={FRAME_W}, height={FRAME_H},
+                    vcodec="{codec}", crf=30)
+                w.write(frame)
+                del w
+                gc.collect()
+            print("survived")
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+        )
+        assert result.returncode == 0, f"exit {result.returncode}: {result.stderr[-2000:]}"
+        assert "survived" in result.stdout
 
     def test_write_after_close_raises(self, tmp_path, codec, frames):
         from lerobot.datasets.gstreamer_utils import GStreamerVideoWriter

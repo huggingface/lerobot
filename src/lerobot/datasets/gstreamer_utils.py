@@ -325,6 +325,25 @@ class GStreamerVideoWriter:
             err, debug = msg.parse_error()
             raise RuntimeError(f"GStreamer encode failed: {err.message} [{debug}]")
 
+    def __del__(self) -> None:
+        """Return the pipeline to NULL if it is dropped without close().
+
+        GStreamer requires elements to reach the NULL state before the final
+        reference goes away. Dropping a PLAYING pipeline aborts the process, so
+        a caller that raises between construction and close() would take the
+        interpreter down with it rather than surface the error.
+        """
+        if getattr(self, "_closed", True):
+            return
+        pipeline = getattr(self, "pipeline", None)
+        gst = getattr(self, "_gst", None)
+        if pipeline is None or gst is None:
+            return
+        try:
+            pipeline.set_state(gst.State.NULL)
+        except Exception:
+            pass
+
     def __enter__(self) -> GStreamerVideoWriter:
         return self
 
