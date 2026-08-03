@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs.types import NormalizationMode
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -35,6 +37,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.utils.constants import ACTION
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_image_prep")
@@ -139,6 +142,11 @@ class PreSnapGripperProcessorStep(ProcessorStep):
             transition[TransitionKey.ACTION] = a
         return transition
 
+    def get_config(self) -> dict[str, Any]:
+        # Without this the base class serializes `{}` and a reloaded pipeline silently reverts
+        # to the class defaults, discarding whatever the training config set.
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
+
     def transform_features(self, features):
         return features
 
@@ -149,6 +157,13 @@ class BinarizeGripperProcessorStep(ProcessorStep):
 
     Maps continuous value to {-1, 1}: > threshold → -1, <= threshold → 1 (matches starVLA convention).
     Only applied when action has more dimensions than gripper_dim.
+
+    WARNING: this step runs *below* the unnormalizer, so `threshold` is compared against the
+    gripper's **physical** value while its default of 0.5 comes from the model's [0, 1]/±1
+    convention. It is only meaningful when the gripper's physical range is roughly [0, 1].
+    For a gripper in degrees, mm or [0, 100], every unnormalized value exceeds 0.5 and the
+    output collapses to the constant -1. `make_vla_jepa_pre_post_processors` warns when the
+    dataset stats say that is the case.
     """
 
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
@@ -164,8 +179,55 @@ class BinarizeGripperProcessorStep(ProcessorStep):
             transition[TransitionKey.ACTION] = a
         return transition
 
+    def get_config(self) -> dict[str, Any]:
+        # See PreSnapGripperProcessorStep.get_config: `{}` would reload as the class defaults.
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
+
     def transform_features(self, features):
         return features
+
+
+def _warn_if_gripper_steps_are_misconfigured(
+    config: VLAJEPAConfig,
+    gripper_dim: int,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None,
+) -> None:
+    """Warn when the gripper post-steps would pin the gripper to a constant.
+
+    `BinarizeGripperProcessorStep` thresholds the *unnormalized* gripper at
+    `gripper_threshold` (default 0.5, a number from the model's [0, 1] convention). When the
+    dataset says the gripper's physical range sits well above that, every unnormalized value
+    lands on the same side of the threshold and the commanded gripper never moves. The stats
+    needed to detect that are already here, so say so rather than letting it look like it worked.
+    """
+    if not (config.pre_snap_gripper_action or config.binarize_gripper_action):
+        return
+    action_stats = (dataset_stats or {}).get(ACTION)
+    if not action_stats or "min" not in action_stats or "max" not in action_stats:
+        return
+    try:
+        low = float(action_stats["min"][gripper_dim])
+        high = float(action_stats["max"][gripper_dim])
+    except (IndexError, TypeError, ValueError):
+        return
+    threshold = config.gripper_threshold
+    # `pre_snap` writes {0, 1} in normalized space, which unnormalizes to the midpoint and the
+    # max. Both landing on the same side of the threshold means a constant output.
+    midpoint = (low + high) / 2.0
+    if (midpoint > threshold) == (high > threshold):
+        name = (
+            config.action_feature_names[gripper_dim]
+            if config.action_feature_names and gripper_dim < len(config.action_feature_names)
+            else f"dim {gripper_dim}"
+        )
+        logging.warning(
+            f"vla_jepa gripper post-processing looks misconfigured: action {name} has a physical "
+            f"range of [{low:.3g}, {high:.3g}], and `gripper_threshold={threshold}` is compared "
+            f"against that unnormalized value. Both {midpoint:.3g} and {high:.3g} fall on the same "
+            f"side of it, so the commanded gripper will be constant. Set `gripper_threshold` in "
+            f"the gripper's own units, or set `pre_snap_gripper_action=false` and "
+            f"`binarize_gripper_action=false` (the defaults) unless you are running LIBERO."
+        )
 
 
 def make_vla_jepa_pre_post_processors(
@@ -197,12 +259,27 @@ def make_vla_jepa_pre_post_processors(
         relative_step,
         steps.normalize,
     ]
+    gripper_dim = config.resolved_gripper_dim
+    _warn_if_gripper_steps_are_misconfigured(config, gripper_dim, dataset_stats)
+
     output_steps: list[ProcessorStep] = []
     if config.clip_normalized_actions:
-        output_steps.append(ClipActionsProcessorStep())
+        # Clipping to [-1, 1] is a range assertion under MIN_MAX, but under MEAN_STD the same
+        # clamp truncates every action beyond 1 sigma. That shows up as a hesitant, low-amplitude
+        # policy with no error anywhere, so refuse to add the step instead of honoring the flag.
+        action_norm_mode = config.normalization_mapping.get("ACTION")
+        if action_norm_mode == NormalizationMode.MIN_MAX:
+            output_steps.append(ClipActionsProcessorStep())
+        else:
+            logging.warning(
+                f"`clip_normalized_actions=True` is ignored: it clips normalized actions to "
+                f"[-1, 1], which is only a no-op bound under MIN_MAX, but ACTION uses "
+                f"{getattr(action_norm_mode, 'value', action_norm_mode)}. Under MEAN_STD this "
+                f"would clamp every action to 1 sigma."
+            )
     if config.pre_snap_gripper_action:
         output_steps.append(
-            PreSnapGripperProcessorStep(gripper_dim=config.gripper_dim, threshold=config.gripper_threshold)
+            PreSnapGripperProcessorStep(gripper_dim=gripper_dim, threshold=config.gripper_threshold)
         )
     # NOTE: unlike the default policy unnormalizer (output features only), VLA-JEPA
     # unnormalizes over BOTH input and output features.
@@ -220,7 +297,7 @@ def make_vla_jepa_pre_post_processors(
     )
     if config.binarize_gripper_action:
         output_steps.append(
-            BinarizeGripperProcessorStep(gripper_dim=config.gripper_dim, threshold=config.gripper_threshold)
+            BinarizeGripperProcessorStep(gripper_dim=gripper_dim, threshold=config.gripper_threshold)
         )
     output_steps.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

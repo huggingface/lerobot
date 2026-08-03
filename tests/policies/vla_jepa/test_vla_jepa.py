@@ -1,5 +1,19 @@
 #!/usr/bin/env python
 
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import os
@@ -9,7 +23,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 pytest.importorskip("transformers")
 pytest.importorskip("diffusers")
@@ -34,7 +48,7 @@ from conftest import (  # noqa: E402
     set_seed_all,
 )
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig  # noqa: E402
-from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy  # noqa: E402
+from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAModel, VLAJEPAPolicy  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
 PRETRAINED_REPO_ID = "ginwind/VLA-JEPA"
@@ -735,3 +749,58 @@ def test_world_model_loss_feeds_causal_context_to_predictor(
     perturbed_past[video_key][:, 0] = torch.rand_like(perturbed_past[video_key][:, 0])
     policy.forward(perturbed_past)
     assert not torch.allclose(captured[0], captured[2])
+
+
+# ---------------------------------------------------------------------------
+# Multi-view merge alignment
+# ---------------------------------------------------------------------------
+
+
+def test_world_model_view_merge_keeps_each_sample_with_its_own_views(
+    patch_vla_jepa_external_models: None,
+) -> None:
+    """The [B*V, N, H] -> [B, N, V*H] merge must not mix features across samples.
+
+    `videos.reshape(b * v, ...)` flattens (B, V) row-major, i.e. view-fastest, so a
+    `torch.cat(torch.chunk(x, chunks=v, dim=0), dim=2)` merge (which assumes view-slowest)
+    pairs one sample's camera with a different sample's camera. Both orderings are
+    shape-valid, and both are correct when B == 1 or V == 1, so only values expose it.
+
+    Asserts on what `_world_model_loss` actually hands the predictor, by spying on it.
+    """
+    config = make_config(num_video_frames=2)
+    config.jepa_tubelet_size = 1
+    config.world_model_num_views = 3
+    config.enable_world_model = True
+    model = VLAJEPAModel(config)
+
+    b, v = 2, 3
+    hidden = model.video_encoder.config.hidden_size
+
+    # The fake encoder derives features from each clip's pixel mean, so a constant-valued
+    # clip per (sample, view) tags its own features: value == sample * 10 + view.
+    videos = torch.zeros(b, v, config.num_video_frames, 3, 16, 16)
+    for sample in range(b):
+        for view in range(v):
+            videos[sample, view] = sample * 10 + view
+
+    seen: dict[str, torch.Tensor] = {}
+
+    class _SpyPredictor(nn.Module):
+        def forward(self, frame_tokens: torch.Tensor, action_tokens: torch.Tensor) -> torch.Tensor:
+            seen["frame_tokens"] = frame_tokens.detach().clone()
+            return torch.zeros_like(frame_tokens)
+
+    model.video_predictor = _SpyPredictor()
+
+    action_tokens = torch.zeros(b, config.num_action_tokens_per_timestep, 8)
+    model._world_model_loss(videos, action_tokens)
+
+    frame_tokens = seen["frame_tokens"]
+    assert frame_tokens.shape[0] == b
+    assert frame_tokens.shape[-1] == v * hidden
+    for sample in range(b):
+        blocks = [frame_tokens[sample, 0, view * hidden].item() for view in range(v)]
+        assert blocks == [sample * 10 + view for view in range(v)], (
+            f"sample {sample} received views from other samples: {blocks}"
+        )
