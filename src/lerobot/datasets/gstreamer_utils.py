@@ -56,6 +56,29 @@ GST_HW_CODEC_PREFERENCE: list[str] = ["nvv4l2av1enc", "nvv4l2h265enc", "nvv4l2h2
 
 GST_BITRATE_ONLY_CODECS: frozenset[str] = frozenset({"nvv4l2av1enc"})
 
+# The nvv4l2 encoders write the codec's parameter set ONCE, at the start of the
+# stream: insert-sps-pps (H.264/H.265) and insert-seq-hdr (AV1) both default to
+# false. The muxer still lists every intra frame in the container's stss table as
+# a sync sample, so the file advertises random access it cannot honour -- a
+# decoder that jumps to one of those frames has never seen the parameter set and
+# fails with "Invalid data found when processing input".
+#
+# Playback is unaffected, because playing starts at frame 0 and picks the header
+# up there. Only seeking breaks. That makes the failure invisible at record time
+# and invisible in a dataset viewer, and it surfaces only when something trains
+# on the data -- which is random access by definition.
+GST_HEADER_INSERTION_PROPERTY: dict[str, str] = {
+    "nvv4l2h264enc": "insert-sps-pps",
+    "nvv4l2h265enc": "insert-sps-pps",
+    "nvv4l2av1enc": "insert-seq-hdr",
+}
+
+# idrinterval defaults to 256 on these elements while iframeinterval defaults to
+# 30. Repeating the parameter set only helps at IDR frames, so leaving the two
+# mismatched means a seek still decodes up to 255 frames to reach its target.
+# Matching them makes each intra frame a real random-access point.
+GST_DEFAULT_GOP: int = 30
+
 _EOS_TIMEOUT_NS = 30 * 1_000_000_000
 
 _BPP_AT_CRF30 = 0.89
@@ -136,7 +159,14 @@ def gst_codec_options(
 ) -> dict[str, Any]:
     """Translate encoder settings into GStreamer element properties.
 
-    ``g`` maps to ``iframeinterval`` and ``idrinterval``.
+    ``g`` maps to ``iframeinterval`` and ``idrinterval``, which are set together
+    even when ``g`` is ``None`` so the element's mismatched defaults (30 and 256)
+    do not make seeking needlessly slow.
+
+    The codec's parameter-set repetition (``insert-sps-pps`` / ``insert-seq-hdr``)
+    is enabled for every element in :data:`GST_HEADER_INSERTION_PROPERTY`. It is
+    not optional: without it the file plays but cannot be seeked, so a dataset
+    recorded through this backend cannot be trained on.
 
     ``crf`` maps to a fixed ``qp-range`` with ``control-rate=0`` on elements
     that expose a quantizer. Elements in :data:`GST_BITRATE_ONLY_CODECS` expose
@@ -149,9 +179,18 @@ def gst_codec_options(
     """
     opts: dict[str, Any] = {}
 
-    if g is not None:
-        opts["iframeinterval"] = int(g)
-        opts["idrinterval"] = int(g)
+    # Always set both, even when the caller passed no ``g``: the element defaults
+    # (iframeinterval 30, idrinterval 256) disagree, and the gap costs seek time.
+    gop = GST_DEFAULT_GOP if g is None else int(g)
+    opts["iframeinterval"] = gop
+    opts["idrinterval"] = gop
+
+    # Repeat the parameter set at every IDR so the sync samples the muxer
+    # advertises are genuinely decodable. Without this the output plays but
+    # cannot be seeked, and therefore cannot be trained on.
+    header_property = GST_HEADER_INSERTION_PROPERTY.get(vcodec)
+    if header_property is not None:
+        opts[header_property] = 1
 
     if vcodec not in GST_BITRATE_ONLY_CODECS and crf is not None:
         qp = max(0, min(51, int(crf)))
