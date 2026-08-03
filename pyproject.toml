@@ -499,6 +499,8 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    "gir",
+    "trak",
 ]
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently

@@ -37,6 +37,7 @@ Requires the GStreamer Python bindings (``python3-gi``,
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -339,10 +340,8 @@ class GStreamerVideoWriter:
         gst = getattr(self, "_gst", None)
         if pipeline is None or gst is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             pipeline.set_state(gst.State.NULL)
-        except Exception:
-            pass
 
     def __enter__(self) -> GStreamerVideoWriter:
         return self
