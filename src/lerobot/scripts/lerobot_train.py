@@ -59,6 +59,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
+from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -76,6 +77,20 @@ else:
     PeftModel = None
 
 from .lerobot_eval import eval_policy_all
+
+EMA_STATE_FILENAME = "ema_state.pt"
+
+
+@contextmanager
+def _ema_weights(ema: Any, policy: PreTrainedPolicy) -> Iterator[None]:
+    """Temporarily swap the EMA shadow weights into `policy`, restoring the live ones on exit."""
+    params = list(policy.parameters())
+    ema.store(params)
+    ema.copy_to(params)
+    try:
+        yield
+    finally:
+        ema.restore(params)
 
 
 @contextmanager
@@ -556,6 +571,52 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     policy.train()
 
+    # EMA shadow of the policy weights (Chi et al. 2023, Diffusion Policy, section V.D). The shadow
+    # lives on the main process only, which is safe under DDP where every rank holds identical
+    # weights after each gradient sync. diffusers is imported lazily so the base training path does
+    # not depend on it.
+    ema = None
+    if cfg.ema.enable:
+        if accelerator.distributed_type == DistributedType.FSDP:
+            raise NotImplementedError(
+                "--ema.enable=true is not supported with FSDP: the parameters are sharded across ranks."
+            )
+        if cfg.peft is not None:
+            raise NotImplementedError("--ema.enable=true is not supported together with PEFT adapters.")
+        require_package("diffusers", extra="diffusion")
+        if is_main_process:
+            from diffusers.training_utils import EMAModel  # noqa: PLC0415
+
+            ema = EMAModel(
+                accelerator.unwrap_model(policy).parameters(),
+                decay=cfg.ema.max_decay,
+                min_decay=cfg.ema.min_decay,
+                update_after_step=cfg.ema.update_after_step,
+                use_ema_warmup=True,
+                inv_gamma=cfg.ema.inv_gamma,
+                power=cfg.ema.power,
+            )
+            ema.to(device)
+            logging.info(
+                "EMA enabled: max_decay=%g, inv_gamma=%g, power=%g, update_after_step=%d, use_for_eval=%s",
+                cfg.ema.max_decay,
+                cfg.ema.inv_gamma,
+                cfg.ema.power,
+                cfg.ema.update_after_step,
+                cfg.ema.use_for_eval,
+            )
+            if cfg.checkpoint_path is not None:
+                ema_path = cfg.checkpoint_path / TRAINING_STATE_DIR / EMA_STATE_FILENAME
+                if ema_path.exists():
+                    ema.load_state_dict(torch.load(ema_path, map_location=device, weights_only=True))
+                    logging.info("Resumed EMA shadow from %s", ema_path)
+                else:
+                    logging.warning(
+                        "Resuming with --ema.enable=true but %s is missing; "
+                        "restarting the shadow from the current weights.",
+                        ema_path,
+                    )
+
     train_metrics = {
         # Per-rank loss reflects only one shard of the global batch; mean recovers the loss DDP
         # is actually optimizing. grad_norm and lr are already identical on every rank (post
@@ -618,6 +679,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             sample_weighter=sample_weighter,
         )
 
+        # Pull one optimizer step of the live weights into the EMA shadow (main process only).
+        if ema is not None:
+            ema.step(accelerator.unwrap_model(policy).parameters())
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
@@ -648,6 +713,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     if sample_weighter is not None:
                         weighter_stats = sample_weighter.get_stats()
                         wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
+                    if ema is not None and ema.cur_decay_value is not None:
+                        wandb_log_dict["ema/decay"] = ema.cur_decay_value
+                        wandb_log_dict["ema/step"] = ema.optimization_step
                     wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -700,6 +768,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     model_state_dict=model_state_dict,
                     optim_state_dict=optim_state_dict,
                 )
+                if ema is not None:
+                    # Save the shadow for exact resume, plus a directly loadable copy of the EMA
+                    # weights (lerobot-eval --policy.path=<checkpoint>/pretrained_model_ema).
+                    torch.save(ema.state_dict(), checkpoint_dir / TRAINING_STATE_DIR / EMA_STATE_FILENAME)
+                    unwrapped_policy = accelerator.unwrap_model(policy)
+                    ema_dir = checkpoint_dir / f"{PRETRAINED_MODEL_DIR}_ema"
+                    with _ema_weights(ema, unwrapped_policy):
+                        unwrapped_policy.save_pretrained(ema_dir)
+                        cfg.save_pretrained(ema_dir)
+                        preprocessor.save_pretrained(ema_dir)
+                        postprocessor.save_pretrained(ema_dir)
                 update_last_checkpoint(checkpoint_dir)
                 if cfg.save_checkpoint_to_hub:
                     push_checkpoint_to_hub(
@@ -716,10 +795,18 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
+                eval_policy_model = accelerator.unwrap_model(policy)
+                # Evaluate the EMA weights when enabled: the swap happens only on the main
+                # process (the other ranks wait at the barrier below) and is exactly undone
+                # afterwards, so the live weights stay in sync across ranks.
+                use_ema_for_eval = ema is not None and cfg.ema.use_for_eval
+                if use_ema_for_eval:
+                    logging.info("Evaluating the EMA weights")
+                weights_cm = _ema_weights(ema, eval_policy_model) if use_ema_for_eval else nullcontext()
+                with weights_cm, _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
-                        policy=accelerator.unwrap_model(policy),
+                        policy=eval_policy_model,
                         env_preprocessor=env_preprocessor,
                         env_postprocessor=env_postprocessor,
                         preprocessor=preprocessor,
@@ -778,6 +865,24 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 unwrapped_model.push_model_to_hub(cfg, state_dict=model_state_dict, dataset_meta=dataset.meta)
             preprocessor.push_to_hub(active_cfg.repo_id)
             postprocessor.push_to_hub(active_cfg.repo_id)
+
+            # The push above ships the live weights; when EMA is on, the weights that were
+            # evaluated are the shadow, so push those too under a sibling `<repo_id>-ema` repo.
+            # Non-fatal: the live model is already up if this fails.
+            if ema is not None:
+                ema_repo_id = f"{active_cfg.repo_id}-ema"
+                orig_repo_id = unwrapped_model.config.repo_id
+                try:
+                    unwrapped_model.config.repo_id = ema_repo_id
+                    with _ema_weights(ema, unwrapped_model):
+                        unwrapped_model.push_model_to_hub(cfg, dataset_meta=dataset.meta)
+                    preprocessor.push_to_hub(ema_repo_id)
+                    postprocessor.push_to_hub(ema_repo_id)
+                    logging.info("Pushed EMA weights to %s", ema_repo_id)
+                except Exception as exc:  # noqa: BLE001
+                    logging.warning("Failed to push EMA weights to %s: %s", ema_repo_id, exc)
+                finally:
+                    unwrapped_model.config.repo_id = orig_repo_id
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()
