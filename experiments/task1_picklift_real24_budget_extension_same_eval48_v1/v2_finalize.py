@@ -9,8 +9,9 @@ rows=[]
 for t,b in zip(json.loads(P.read_text())['trials'],blind):
  stem=t['artifact_stem']; scored=stem+'__replacement1' if stem in ('t017_p17_real24','t022_p22_real24') else stem
  d=json.loads((T/f'{scored}.json').read_text()); video=T/f'{scored}.mp4'; steps=T/f'{scored}.steps.jsonl'; assert d['torque_disable_verified'] and d['automatic_return']['result']['status']=='ready_pose_observed'
- if 'observations' in b: ev=b['evidence_intervals_seconds']; obs=b['observations']
- elif 'visible_observations' in b: ev=b['evidence_intervals_seconds']; obs=b['visible_observations']
+ n=int(b['trial_id'][1:4])
+ if n<=16: ev=b['evidence_intervals_seconds']; obs=b['observations']
+ elif n<=32: ev=b['evidence_intervals_seconds']; obs=b['visible_observations']
  else: ev=b['evidence_intervals']; obs=b['visible_grasp_lift_hold_observations']
  side={'trial_id':stem,'base_trial_id':stem,'scored_stem':scored,'blind_success':b['success'],'blind_failure_category':b.get('failure_category'),'evidence_intervals':ev,'visible_observations':obs,'confidence':b['confidence'],'raw_blind_record':b,'video_sha256':h(video)}; (O/'sidecars'/f'{stem}.json').write_text(json.dumps(side,indent=2)+'\n'); rows.append({**{k:t[k] for k in ('trial_id','pose_order','eval_pose_id','model_key','coverage_tier','cell','nominal_yaw_degrees_modulo_90')},'base_trial_id':stem,'scored_stem':scored,'blind_success':b['success'],'blind_failure_category':b.get('failure_category'),'evidence_intervals':ev,'video_sha256':h(video),'steps_sha256':h(steps)})
 (O/'blind_trials.jsonl').write_text(''.join(json.dumps(x,sort_keys=True)+'\n' for x in rows)); blind_hash=h(O/'blind_trials.jsonl')
