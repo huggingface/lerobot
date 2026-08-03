@@ -1,8 +1,23 @@
 # reBot B601-RS
 
-[reBot B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) is the RobStride-motor variant of Seeed Studio's open-source, low-cost robot arm for embodied-AI and imitation learning. It is the same 6-DOF + gripper chassis as the [B601-DM](./rebot_b601), but driven by **RobStride RS CAN motors** (the `rs-06` base joints and `rs-00` wrists/gripper) instead of Damiao motors. It is a **follower** arm, teleoperated by the `StarArm102` / `reBot Arm 102` leader (FashionStar UART smart servos).
+[reBot B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) is the RobStride-motor variant of Seeed Studio's open-source, low-cost robot arm for embodied-AI and imitation learning. It is the same 6-DOF + gripper chassis as the [B601-DM](./rebot_b601), but driven by **RobStride RS CAN motors** (the `rs-06` base joints and `rs-00` wrists/gripper) instead of Damiao motors. It is a **follower** arm, teleoperated by the `StarArm102` / `reBot Arm 102` leader (FashionStar UART smart servos).
 
 This page covers **calibration** and **teleoperation** for both single-arm and bimanual (dual-arm) setups.
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/rebot_arm/rs_0pos.jpg"
+    alt="reBot B601-RS follower arm at its zero position"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="reBot Arm 102 leader arm at its zero position"
+    width="48%"
+  />
+</div>
+
+_Left: the B601-RS follower at its zero position. Right: the reBot Arm 102 leader at its zero position. Images courtesy of [Seeed Studio](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/)._
 
 ## Install LeRobot 🤗
 
@@ -181,8 +196,48 @@ lerobot-teleoperate \
     --robot.mit_kd='[3,10,10,5,4,4,0.05]'
 ```
 
+### Limiting gripper torque
+
+The RS gripper is driven by an MIT impedance torque rather than a position target, so its grip force is bounded by two torque-limit parameters:
+
+- **`gripper_mit_torque_limit`** (default: `3.5` N·m) — max feedforward torque while the gripper is **moving**.
+- **`gripper_mit_hold_torque_limit`** (default: `1.0` N·m) — max feedforward torque at **near-zero speed** (grasping / holding). This gentler limit prevents the gripper from crushing objects or overcurrenting when it has reached its target.
+
+Lower either value to soften the grip — e.g. for fragile objects:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader \
+    --robot.gripper_mit_torque_limit=2.0 \
+    --robot.gripper_mit_hold_torque_limit=0.5
+```
+
+### Limiting per-step motion (safety)
+
+`max_relative_target` is a LeRobot-wide safety parameter that caps the maximum change in joint position (in **degrees**) allowed per control step. If the commanded goal differs from the current position by more than this limit, the target is clipped to the cap. This prevents dangerous jumps when the leader is moved abruptly or when a policy outputs an outlier action.
+
+By default it is `None` (no limit). For safety during teleoperation, it is recommended to set a limit such as `5.0` degrees. If you need to fully utilize the arm's range of motion without per-step constraints, you can disable this feature by leaving it as `None`.
+
+Set it to a float to cap all joints uniformly, or pass a `dict` to set per-joint limits:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader \
+    --robot.max_relative_target=5.0
+```
+
 ## Recording datasets
 
 Swap `lerobot-teleoperate` for `lerobot-record` (with the same `--robot.*` / `--teleop.*` arguments, plus `--dataset.*`) to record demonstrations for training. See [Imitation Learning for Robots](./il_robots) for the full workflow.
 
-For hardware assembly and wiring, see the [Seeed Studio reBot wiki](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/).
+For hardware assembly and wiring, see the [Seeed Studio reBot wiki](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/).
