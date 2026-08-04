@@ -30,6 +30,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
+from lerobot.envs.adapters.libero_adapter import LiberoGeometryAdapter
 from lerobot.types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
@@ -127,8 +128,16 @@ class LiberoEnv(gym.Env):
         num_steps_wait: int = 10,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
+        expose_geometry_labels: bool = False,
     ):
         super().__init__()
+        # Additive, opt-in only: when False (the default), `_format_raw_obs`'s output is
+        # byte-for-byte identical to before this flag existed. CIG-VLA (or any other
+        # geometry-supervised policy) turns this on to also get `geometry.*` training
+        # labels (see `lerobot.envs.adapters.libero_adapter`) -- never required for
+        # standard eval/rollout.
+        self.expose_geometry_labels = expose_geometry_labels
+        self._geometry_adapter = LiberoGeometryAdapter() if expose_geometry_labels else None
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -242,6 +251,25 @@ class LiberoEnv(gym.Env):
                     ),
                 }
             )
+            if self.expose_geometry_labels:
+                # Vectorized envs (gym.vector.{Sync,Async}VectorEnv) batch observations by
+                # walking `observation_space`'s declared structure -- any key returned by
+                # `_format_raw_obs` that ISN'T declared here gets silently dropped during
+                # vectorization, so these flat `geometry.*` keys must be declared explicitly
+                # (they intentionally live at the top level, not nested under "robot_state",
+                # matching how `_format_raw_obs` emits them).
+                for key, shape in (
+                    ("geometry.source_point", (3,)),
+                    ("geometry.source_valid", (1,)),
+                    ("geometry.destination_point", (3,)),
+                    ("geometry.destination_valid", (1,)),
+                    ("geometry.approach_direction", (3,)),
+                    ("geometry.approach_valid", (1,)),
+                    ("geometry.confidence_target", (1,)),
+                ):
+                    self.observation_space[key] = spaces.Box(
+                        low=-np.inf, high=np.inf, shape=shape, dtype=np.float32
+                    )
 
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
@@ -317,6 +345,13 @@ class LiberoEnv(gym.Env):
                     f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
                     f"gripper_qpos={gripper_qpos is not None}"
                 )
+            if self.expose_geometry_labels:
+                geometry = self._geometry_adapter.extract_geometry(
+                    raw_observation=raw_obs, task_metadata={"task_name": self.task}
+                )
+                geometry = self._geometry_adapter.to_canonical_frame(geometry, raw_observation=raw_obs)
+                for key, value in geometry.items():
+                    obs[f"geometry.{key}"] = value
             return obs
 
         raise NotImplementedError(
@@ -379,7 +414,14 @@ class LiberoEnv(gym.Env):
 
     def close(self):
         if self._env is not None:
-            self._env.close()
+            try:
+                self._env.close()
+            finally:
+                # Evaluation reuses the vector-env collection at every
+                # checkpoint. Mark the lazily-created LIBERO env as absent so a
+                # later reset creates a fresh OffScreenRenderEnv instead of
+                # calling a wrapper whose `.env` was deleted by close().
+                self._env = None
 
 
 def _make_env_fns(

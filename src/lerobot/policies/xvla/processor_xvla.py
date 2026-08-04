@@ -47,7 +47,7 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_xvla import XVLAConfig
-from .utils import rotate6d_to_axis_angle
+from .utils import axis_angle_to_rotation_matrix, matrix_to_rotate6d, rotate6d_to_axis_angle
 
 
 def make_xvla_pre_post_processors(
@@ -74,11 +74,17 @@ def make_xvla_pre_post_processors(
         XVLAImageToFloatProcessorStep(),
         XVLAImageNetNormalizeProcessorStep(),
         XVLAAddDomainIdProcessorStep(),
-        DeviceProcessorStep(device=config.device),
-        NormalizerProcessorStep(
-            features=features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
     ]
+    if config.action_mode.lower() == "ee6d":
+        input_steps.append(XVLALiberoActionToEE6DProcessorStep())
+    input_steps.extend(
+        [
+            DeviceProcessorStep(device=config.device),
+            NormalizerProcessorStep(
+                features=features, norm_map=config.normalization_mapping, stats=dataset_stats
+            ),
+        ]
+    )
     output_steps = [
         UnnormalizerProcessorStep(
             features=config.output_features,
@@ -102,7 +108,128 @@ def make_xvla_pre_post_processors(
     )
 
 
+def reconcile_xvla_processors(config, preprocessor, postprocessor):
+    """Inject the LIBERO action adapter into a preprocessor loaded from a pretrained
+    XVLA checkpoint whose saved config predates `XVLALiberoActionToEE6DProcessorStep`.
+    """
+    if config.action_mode.lower() != "ee6d":
+        return preprocessor, postprocessor
+    if any(isinstance(step, XVLALiberoActionToEE6DProcessorStep) for step in preprocessor.steps):
+        return preprocessor, postprocessor
+    insert_at = next(
+        (
+            index
+            for index, step in enumerate(preprocessor.steps)
+            if isinstance(step, (DeviceProcessorStep, NormalizerProcessorStep))
+        ),
+        len(preprocessor.steps),
+    )
+    preprocessor.steps.insert(insert_at, XVLALiberoActionToEE6DProcessorStep())
+    return preprocessor, postprocessor
+
+
 # Custom XVLA processor steps
+@dataclass
+@ProcessorStepRegistry.register(name="xvla_libero_action_to_ee6d")
+class XVLALiberoActionToEE6DProcessorStep(ProcessorStep):
+    """Convert a chunk of 7-D LIBERO per-step delta actions into the pretrained
+    XVLA policy's 20-D EE6D *absolute*-pose action layout.
+
+    LIBERO/robosuite records demonstrations as `OSC_POSE` deltas in `Box(-1, 1)^7`
+    (see docs/source/libero_plus.mdx): `[dx, dy, dz, dRx, dRy, dRz, gripper]`, each
+    relative to the pose *at that step*. The controller turns a raw delta into an
+    absolute goal pose via (robosuite `osc.py`/`control_utils.py`, using the stock
+    `OSC_POSE` config `output_max=[0.05]*3+[0.5]*3`, `input_max=1`):
+        goal_pos = current_pos + delta_pos * 0.05
+        goal_ori = R(delta_ori * 0.5) @ current_ori
+    `lerobot/xvla-libero` is evaluated with `--env.control_mode=absolute`
+    (docs/source/xvla.mdx), i.e. its EE6D position/rotation channels are *absolute*
+    target poses for each step of the action chunk, not deltas. So the training
+    target must compose every raw per-step delta onto the measured pose at the
+    same step (`observation.state`: `[eef_pos(3), eef_axis_angle(3),
+    gripper_qpos(2)]`). OSC does not reach each goal in one dataset frame, so
+    accumulating deltas from the first pose produces increasingly wrong targets.
+
+    Gripper is commanded directly per step (not a delta), so it only needs sign
+    binarization: LIBERO's no-op action gripper=-1 is "open" (see `get_libero_dummy_action`).
+    """
+
+    model_action_dim: int = 20
+    position_scale: float = 0.05
+    rotation_scale: float = 0.5
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None or not isinstance(action, torch.Tensor):
+            return transition
+        if action.shape[-1] == self.model_action_dim:
+            return transition
+        if action.shape[-1] != 7:
+            raise ValueError(f"Expected 7-D LIBERO action, got {tuple(action.shape)}")
+
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        state = observation.get(OBS_STATE)
+        if state is None or not isinstance(state, torch.Tensor) or state.shape[-1] < 6:
+            raise ValueError(
+                "XVLALiberoActionToEE6DProcessorStep needs `observation.state` "
+                "(current eef position + axis-angle orientation) to compose delta "
+                f"actions into absolute targets, got: {state if state is None else state.shape}"
+            )
+        squeeze_chunk_dim = action.ndim == 2
+        if squeeze_chunk_dim:
+            action = action.unsqueeze(1)
+
+        if state.ndim == 2:
+            if action.shape[-2] != 1:
+                raise ValueError(
+                    "Absolute LIBERO action chunks require action-aligned observation.state values; "
+                    f"got state {tuple(state.shape)} for action {tuple(action.shape)}"
+                )
+            state = state.unsqueeze(-2)
+        elif state.ndim != 3 or state.shape[-2] != action.shape[-2]:
+            raise ValueError(
+                "Expected one observation.state per LIBERO action step, got "
+                f"state {tuple(state.shape)} and action {tuple(action.shape)}"
+            )
+
+        current_pos = state[..., :3].float()
+        current_rot = axis_angle_to_rotation_matrix(state[..., 3:6].float())
+
+        delta_pos = action[..., :3].float() * self.position_scale
+        delta_rot = axis_angle_to_rotation_matrix(action[..., 3:6].float() * self.rotation_scale)
+
+        target_pos = current_pos + delta_pos
+        target_rot = delta_rot @ current_rot
+
+        converted = action.new_zeros(*action.shape[:-1], self.model_action_dim)
+        converted[..., :3] = target_pos.to(action.dtype)
+        converted[..., 3:9] = matrix_to_rotate6d(target_rot).to(action.dtype)
+        converted[..., 9] = (action[..., 6] > 0).to(action.dtype)
+
+        if squeeze_chunk_dim:
+            converted = converted.squeeze(1)
+
+        output = transition.copy()
+        output[TransitionKey.ACTION] = converted
+        # Future states are training-only target context. Keep policy inputs
+        # causal and identical to inference by retaining only the current state.
+        if state.shape[-2] > 1:
+            output_observations = observation.copy()
+            output_observations[OBS_STATE] = state[:, 0, :]
+            output[TransitionKey.OBSERVATION] = output_observations
+        return output
+
+    def transform_features(self, features):
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "model_action_dim": self.model_action_dim,
+            "position_scale": self.position_scale,
+            "rotation_scale": self.rotation_scale,
+        }
+
+
 @dataclass
 class LiberoProcessorStep(ObservationProcessorStep):
     """
@@ -499,7 +626,11 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         # Convert to numpy for processing
         device = action.device
         dtype = action.dtype
-        action_np = action.cpu().numpy()
+        # NumPy does not support torch.bfloat16. LIBERO ultimately consumes a NumPy
+        # action, so promote bfloat16 policy outputs to float32 for both conversion
+        # steps while preserving every already-NumPy-compatible floating dtype.
+        output_dtype = torch.float32 if dtype == torch.bfloat16 else dtype
+        action_np = action.detach().to(device="cpu", dtype=output_dtype).numpy()
 
         # Extract components
         # action shape: (B, D) where D >= 10
@@ -517,7 +648,7 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
         action_np[:, -1] = np.where(action_np[:, -1] > 0.5, 1.0, -1.0)
 
         # Convert back to tensor
-        action = torch.from_numpy(action_np).to(device=device, dtype=dtype)
+        action = torch.from_numpy(action_np).to(device=device, dtype=output_dtype)
 
         new_transition[TransitionKey.ACTION] = action
         return new_transition

@@ -53,6 +53,15 @@ def resolve_delta_timestamps(
     """
     delta_timestamps = {}
     for key in ds_meta.features:
+        # Some policies need feature-specific temporal context (for example, an
+        # action-aligned proprioceptive trajectory without loading an image
+        # trajectory). Prefer that contract when the config provides it.
+        feature_delta_indices = getattr(cfg, "delta_indices_for_feature", None)
+        if callable(feature_delta_indices):
+            indices = feature_delta_indices(key)
+            if indices is not None:
+                delta_timestamps[key] = [i / ds_meta.fps for i in indices]
+                continue
         if key == REWARD and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
         if key == ACTION and cfg.action_delta_indices is not None:

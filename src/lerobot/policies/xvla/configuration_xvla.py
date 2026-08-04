@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig, XVLAAdamWConfig
-from lerobot.utils.constants import OBS_IMAGES
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, REWARD
 
 # Conditional import for type checking and lazy loading
 from lerobot.utils.import_utils import _transformers_available
@@ -84,6 +84,13 @@ class XVLAConfig(PreTrainedConfig):
     max_state_dim: int = 32
     max_action_dim: int = 20  # Maximum action dimension for padding (used by "auto" action mode)
     domain_feature_key: str | None = None
+    # `EE6DActionSpace`'s 20-D layout reserves two 10-D arm slots for bimanual
+    # embodiments. Single-arm setups (e.g. LIBERO) only ever populate the first
+    # slot, so supervising the second (always-zero) slot halves the useful
+    # gripper signal and wastes position/rotation loss on channels that can
+    # never be executed. Default False since most `xvla` fine-tunes use both
+    # arm slots (bimanual embodiments); set True for single-arm training.
+    single_arm_ee6d_loss: bool = False
 
     # Vision preprocessing
     resize_imgs_with_padding: tuple[int, int] | None = None
@@ -199,3 +206,13 @@ class XVLAConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> list[int] | None:
         return None
+
+    def delta_indices_for_feature(self, key: str) -> list[int] | None:
+        """Load action-aligned proprio for EE6D targets, but not future images."""
+        if key == ACTION:
+            return self.action_delta_indices
+        if key == OBS_STATE and self.action_mode.lower() == "ee6d":
+            return self.action_delta_indices
+        if key == REWARD:
+            return self.reward_delta_indices
+        return self.observation_delta_indices
