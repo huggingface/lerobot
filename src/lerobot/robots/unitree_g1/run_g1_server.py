@@ -61,6 +61,31 @@ ACTION_PORT = 6004
 STATE_PORT = 6005
 
 
+def cameras_from_args(args: argparse.Namespace) -> dict:
+    """Build the ImageServer camera map from the CLI camera flags.
+
+    ``--camera-device`` takes an index (``4``) or a V4L2 path (``/dev/video0``). Some
+    devices only open by path, so the path form is not just a convenience.
+    """
+    device = args.camera_device
+    return {
+        "head_camera": {
+            "device_id": int(device) if str(device).isdigit() else device,
+            "shape": [args.camera_height, args.camera_width],
+        }
+    }
+
+
+def start_camera_server(cameras: dict, *, fps: int, port: int) -> threading.Thread:
+    """Launch the ZMQ ImageServer in a background daemon thread (independent of DDS)."""
+    server = ImageServer({"fps": fps, "cameras": cameras}, port=port)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    summary = ", ".join(f"{name}(dev {c['device_id']})" for name, c in cameras.items())
+    print(f"Camera server started on :{port}: {summary}")
+    return thread
+
+
 def serve_onboard_controller(
     *,
     controller: str,
@@ -92,10 +117,7 @@ def serve_onboard_controller(
 
     # Optional camera server (background daemon thread; independent of DDS).
     if cameras:
-        camera_server = ImageServer({"fps": camera_fps, "cameras": cameras}, port=camera_port)
-        threading.Thread(target=camera_server.run, daemon=True).start()
-        cam_summary = ", ".join(f"{name}(dev {c['device_id']})" for name, c in cameras.items())
-        print(f"Camera server started on :{camera_port}: {cam_summary}")
+        start_camera_server(cameras, fps=camera_fps, port=camera_port)
 
     cfg = UnitreeG1Config(is_simulation=False, onboard=True, controller=controller, cameras={})
     robot = UnitreeG1(cfg)
@@ -263,7 +285,11 @@ def main() -> None:
     """Main entry point for the robot server."""
     parser = argparse.ArgumentParser(description="DDS-to-ZMQ server for Unitree G1")
     parser.add_argument("--camera", action="store_true", help="Also launch camera server")
-    parser.add_argument("--camera-device", type=int, default=4, help="Camera device ID (default: 4)")
+    parser.add_argument(
+        "--camera-device",
+        default="4",
+        help="Camera index or V4L2 path, e.g. 4 or /dev/video0 (default: 4)",
+    )
     parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
     parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
     parser.add_argument("--camera-height", type=int, default=480, help="Camera height (default: 480)")
@@ -286,14 +312,7 @@ def main() -> None:
     if args.onboard:
         if not args.controller:
             parser.error("--onboard requires --controller (e.g. --controller SonicWholeBodyController)")
-        cameras = None
-        if args.camera:
-            cameras = {
-                "head_camera": {
-                    "device_id": args.camera_device,
-                    "shape": [args.camera_height, args.camera_width],
-                }
-            }
+        cameras = cameras_from_args(args) if args.camera else None
         serve_onboard_controller(
             controller=args.controller,
             cameras=cameras,
@@ -306,19 +325,9 @@ def main() -> None:
     # Optionally start camera server in background thread
     camera_thread = None
     if args.camera:
-        camera_config = {
-            "fps": args.camera_fps,
-            "cameras": {
-                "head_camera": {
-                    "device_id": args.camera_device,
-                    "shape": [args.camera_height, args.camera_width],
-                }
-            },
-        }
-        camera_server = ImageServer(camera_config, port=args.camera_port)
-        camera_thread = threading.Thread(target=camera_server.run, daemon=True)
-        camera_thread.start()
-        print(f"Camera server started on port {args.camera_port} (device {args.camera_device})")
+        camera_thread = start_camera_server(
+            cameras_from_args(args), fps=args.camera_fps, port=args.camera_port
+        )
 
     # initialize DDS
     ChannelFactoryInitialize(0)
