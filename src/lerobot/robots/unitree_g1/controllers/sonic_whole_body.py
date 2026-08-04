@@ -43,6 +43,7 @@ from ..g1_utils import (
     MUJOCO_TO_ISAACLAB,
     G1_29_JointIndex,
     get_gravity_orientation,
+    make_ort_session_options,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,12 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
     decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    decoder = ort.InferenceSession(decoder_path)
+    # Cap the thread pool: onboard, this decoder steps at 50 Hz in the same process as the
+    # ZMQ camera server (capture + JPEG encode). Default session options let ORT grab every
+    # core on the NX, which starves the camera thread (stale frames) and jitters the control
+    # loop (limping gait). It is a small MLP, so 1 thread is enough and lowest-latency.
+    session_options = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
+    decoder = ort.InferenceSession(decoder_path, sess_options=session_options)
     logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
 
     # Extract deploy constants from ONNX metadata
