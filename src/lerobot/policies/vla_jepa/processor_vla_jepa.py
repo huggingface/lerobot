@@ -20,12 +20,11 @@ import torch
 
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
-    EnvTransition,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    TransitionKey,
     UnnormalizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -33,22 +32,20 @@ from lerobot.processor import (
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_clip_actions")
-class ClipActionsProcessorStep(ProcessorStep):
+class ClipActionsProcessorStep(PolicyActionProcessorStep):
     """Clips action tensor to [-1, 1] before unnormalization."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None:
-            transition = dict(transition)
-            transition[TransitionKey.ACTION] = action.clamp(-1.0, 1.0)
-        return transition
+    skip_if_missing = True
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        return action.clamp(-1.0, 1.0)
 
     def transform_features(self, features):
         return features
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_pre_snap_gripper")
-class PreSnapGripperProcessorStep(ProcessorStep):
+class PreSnapGripperProcessorStep(PolicyActionProcessorStep):
     """Snaps a gripper dimension to {0, 1} BEFORE unnormalization.
 
     Mirrors the original starVLA LIBERO eval:
@@ -58,43 +55,49 @@ class PreSnapGripperProcessorStep(ProcessorStep):
     space where 0=open and 1=close.
     """
 
+    skip_if_missing = True
+
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
         self.gripper_dim = gripper_dim
         self.threshold = threshold
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None and action.shape[-1] > self.gripper_dim:
-            transition = dict(transition)
-            a = action.clone()
-            a[..., self.gripper_dim] = (a[..., self.gripper_dim] >= self.threshold).float()
-            transition[TransitionKey.ACTION] = a
-        return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        if action.shape[-1] <= self.gripper_dim:
+            return action
+        a = action.clone()
+        a[..., self.gripper_dim] = (a[..., self.gripper_dim] >= self.threshold).float()
+        return a
+
+    def get_config(self) -> dict[str, Any]:
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
     def transform_features(self, features):
         return features
 
 
 @ProcessorStepRegistry.register(name="vla_jepa_binarize_gripper")
-class BinarizeGripperProcessorStep(ProcessorStep):
+class BinarizeGripperProcessorStep(PolicyActionProcessorStep):
     """Binarizes a gripper dimension after unnormalization.
 
     Maps continuous value to {-1, 1}: > threshold → -1, <= threshold → 1 (matches starVLA convention).
     Only applied when action has more dimensions than gripper_dim.
     """
 
+    skip_if_missing = True
+
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
         self.gripper_dim = gripper_dim
         self.threshold = threshold
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if action is not None and action.shape[-1] > self.gripper_dim:
-            transition = dict(transition)
-            a = action.clone()
-            a[..., self.gripper_dim] = 1.0 - 2.0 * (a[..., self.gripper_dim] > self.threshold).float()
-            transition[TransitionKey.ACTION] = a
-        return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
+        if action.shape[-1] <= self.gripper_dim:
+            return action
+        a = action.clone()
+        a[..., self.gripper_dim] = 1.0 - 2.0 * (a[..., self.gripper_dim] > self.threshold).float()
+        return a
+
+    def get_config(self) -> dict[str, Any]:
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
     def transform_features(self, features):
         return features
