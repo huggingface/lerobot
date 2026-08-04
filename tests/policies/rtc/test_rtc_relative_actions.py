@@ -505,6 +505,44 @@ class TestRTCReanchoringWithStateNormalizer:
         assert not torch.allclose(cached, post_normalize_state, atol=1e-3)
 
 
+def test_reanchor_se3_6d_prefix_uses_current_camera_frame_and_model_width():
+    """A leftover absolute EE chunk is recomposed relative to the latest camera-frame EE pose."""
+    names = ["pos_x", "pos_y", "pos_z", "rot_x", "rot_y", "rot_z", "gripper"]
+    relative_step = RelativeActionsProcessorStep(
+        enabled=True,
+        exclude_joints=["gripper"],
+        action_names=names,
+        pose_representation="se3_6d",
+        se3_pose_groups=[list(range(6))],
+    )
+    current_state = torch.tensor([[0.20, -0.10, 0.40, 0.31, -0.22, 0.17, 0.03]])
+    previous_absolute = torch.tensor(
+        [
+            [0.28, -0.03, 0.46, -0.18, 0.27, 0.41, 0.02],
+            [0.31, 0.02, 0.50, -0.11, 0.35, 0.52, 0.01],
+        ]
+    )
+
+    result = reanchor_relative_rtc_prefix(
+        prev_actions_absolute=previous_absolute,
+        current_state=current_state,
+        relative_step=relative_step,
+        normalizer_step=None,
+        policy_device="cpu",
+    )
+
+    expected = to_relative_actions(
+        previous_absolute,
+        current_state,
+        relative_step._build_mask(previous_absolute.shape[-1]),
+        pose_representation="se3_6d",
+        se3_pose_groups=[list(range(6))],
+    )
+    assert result.shape == (2, 10)
+    torch.testing.assert_close(result, expected, atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(result[:, -1], previous_absolute[:, -1])
+
+
 def _detect_relative_actions(preprocessor) -> bool:
     """Mirror of the helper in lerobot-rollout for testing without importing it."""
     return any(isinstance(step, RelativeActionsProcessorStep) and step.enabled for step in preprocessor.steps)

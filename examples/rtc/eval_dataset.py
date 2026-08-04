@@ -306,6 +306,7 @@ class RTCEvaluator:
         # Configure RTC
         rtc_config = RTCConfig(
             enabled=rtc_enabled,
+            mode=self.cfg.rtc.mode,
             execution_horizon=self.cfg.rtc.execution_horizon,
             max_guidance_weight=self.cfg.rtc.max_guidance_weight,
             prefix_attention_schedule=self.cfg.rtc.prefix_attention_schedule,

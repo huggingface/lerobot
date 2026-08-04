@@ -57,6 +57,18 @@ _RTC_MAX_CONSECUTIVE_ERRORS: int = 10
 _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
+class _FatalRTCInferenceError(RuntimeError):
+    """Base class for RTC errors that cannot become valid after a retry."""
+
+
+class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
+    """Raised when measured latency exceeds a trained RTC checkpoint's support."""
+
+
+class _TrainedRTCPrefixUnavailableError(_FatalRTCInferenceError):
+    """Raised when the queue cannot provide the prefix used for conditioning."""
+
+
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
@@ -74,6 +86,50 @@ def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int
     padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
     padded[:steps] = prev_actions
     return padded
+
+
+def _trained_rtc_chunk_can_merge(
+    *,
+    conditioned_delay: int,
+    measured_delay: int,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> bool:
+    """Check that a trained RTC chunk covers the overlap observed during inference."""
+    if not has_previous_actions:
+        return True
+    if measured_delay > training_max_delay:
+        raise _TrainedRTCDelayExceededError(
+            f"Measured RTC inference delay ({measured_delay}) exceeds the checkpoint's "
+            f"rtc_training_max_delay ({training_max_delay})."
+        )
+    return measured_delay <= conditioned_delay
+
+
+def _estimate_rtc_delay(
+    *,
+    latency: float,
+    time_per_step: float,
+    mode: str,
+    training_max_delay: int,
+    has_previous_actions: bool,
+) -> int:
+    """Estimate overlap, using the trained capacity to bootstrap the first transition."""
+    if latency:
+        return math.ceil(latency / time_per_step)
+    if mode == "trained" and has_previous_actions:
+        return training_max_delay
+    return 0
+
+
+def _validate_trained_rtc_prefix_available(*, conditioned_delay: int, available_steps: int) -> None:
+    """Reject hard-prefix inference when the real queue is shorter than its delay."""
+    if conditioned_delay > available_steps:
+        raise _TrainedRTCPrefixUnavailableError(
+            f"Trained RTC needs {conditioned_delay} committed prefix actions, but the queue has "
+            f"only {available_steps}. Increase --inference.queue_threshold and "
+            "--inference.rtc.execution_horizon."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -272,9 +328,23 @@ class RTCInferenceEngine(InferenceEngine):
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()
                         prev_actions = queue.get_left_over()
+                        has_previous_actions = prev_actions is not None and prev_actions.numel() > 0
 
+                        training_max_delay = int(getattr(self._policy.config, "rtc_training_max_delay", 0))
                         latency = latency_tracker.max()
-                        delay = math.ceil(latency / time_per_chunk) if latency else 0
+                        delay = _estimate_rtc_delay(
+                            latency=latency,
+                            time_per_step=time_per_chunk,
+                            mode=self._rtc_config.mode,
+                            training_max_delay=training_max_delay,
+                            has_previous_actions=has_previous_actions,
+                        )
+                        if self._rtc_config.mode == "trained" and delay > 0:
+                            available_steps = 0 if prev_actions is None else prev_actions.shape[0]
+                            _validate_trained_rtc_prefix_available(
+                                conditioned_delay=delay,
+                                available_steps=available_steps,
+                            )
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
@@ -316,10 +386,31 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        is_initial_trained_chunk = (
+                            self._rtc_config.mode == "trained" and not has_previous_actions
+                        )
+                        if is_warmup or is_initial_trained_chunk:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)
+
+                        if (
+                            not is_warmup
+                            and self._rtc_config.mode == "trained"
+                            and not _trained_rtc_chunk_can_merge(
+                                conditioned_delay=delay,
+                                measured_delay=new_delay,
+                                training_max_delay=training_max_delay,
+                                has_previous_actions=has_previous_actions,
+                            )
+                        ):
+                            logger.warning(
+                                "Discarding trained RTC chunk: measured delay %d exceeded "
+                                "conditioned delay %d; retrying with updated latency",
+                                new_delay,
+                                delay,
+                            )
+                            continue
 
                         queue.merge(original, processed, new_delay, idx_before)
 
@@ -333,6 +424,8 @@ class RTCInferenceEngine(InferenceEngine):
 
                         logger.debug("RTC inference latency=%.2fs, queue=%d", new_latency, queue.qsize())
 
+                    except _FatalRTCInferenceError:
+                        raise
                     except Exception as e:
                         consecutive_errors += 1
                         logger.error(

@@ -46,6 +46,7 @@ from lerobot.processor import (
 from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 
 from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
@@ -58,6 +59,35 @@ from .inference import (
 from .robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInferenceConfig) -> None:
+    """Fail fast when rollout cannot retain every trained RTC prefix."""
+    rtc = inference_config.rtc
+    if not rtc.enabled or rtc.mode != "trained":
+        return
+    if policy_config.type not in {"pi05", "pi052"}:
+        raise ValueError(
+            "--inference.rtc.mode=trained currently requires a PI05-compatible checkpoint; "
+            f"got policy type {policy_config.type!r}."
+        )
+
+    training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
+    if training_max_delay <= 0:
+        raise ValueError(
+            "--inference.rtc.mode=trained requires a checkpoint trained with "
+            "--policy.rtc_training_max_delay > 0."
+        )
+    if rtc.execution_horizon < training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_config.queue_threshold < training_max_delay:
+        raise ValueError(
+            f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
 
 
 def _resolve_action_key_order(
@@ -78,6 +108,26 @@ def _resolve_action_key_order(
         logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
         return dataset_action_names
     return policy_action_names
+
+
+def _align_relative_state_feature_order(
+    hw_features: dict[str, dict], policy_action_names: list[str] | None
+) -> dict[str, dict]:
+    """Align policy-facing state with named relative-action dimensions."""
+    if not policy_action_names or OBS_STATE not in hw_features:
+        return hw_features
+
+    state_feature = hw_features[OBS_STATE]
+    state_names = state_feature.get("names")
+    if not state_names or len(state_names) != len(policy_action_names):
+        return hw_features
+    if set(state_names) != set(policy_action_names) or state_names == policy_action_names:
+        return hw_features
+
+    aligned = dict(hw_features)
+    aligned[OBS_STATE] = {**state_feature, "names": list(policy_action_names)}
+    logger.info("Aligned relative-action state order with checkpoint action names")
+    return aligned
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +227,9 @@ def build_rollout_context(
     logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
     policy_class = get_policy_class(policy_config.type)
+
+    if is_rtc:
+        _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
@@ -399,10 +452,22 @@ def build_rollout_context(
         },
     )
 
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
-        isinstance(step, RelativeActionsProcessorStep) and step.enabled
-        for step in getattr(preprocessor, "steps", ())
-    ):
+    relative_action_step = next(
+        (
+            step
+            for step in getattr(preprocessor, "steps", ())
+            if isinstance(step, RelativeActionsProcessorStep) and step.enabled
+        ),
+        None,
+    )
+    if relative_action_step is not None:
+        relative_action_names = relative_action_step.action_names or policy_action_names
+        hw_features = _align_relative_state_feature_order(
+            hw_features,
+            list(relative_action_names) if relative_action_names else None,
+        )
+
+    if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."
             "Use --inference.type=rtc or remove relative action processor steps from the policy pipeline."
