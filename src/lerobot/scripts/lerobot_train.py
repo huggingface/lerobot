@@ -53,6 +53,7 @@ from lerobot.common.train_utils import (
     resume_after_prepare,
     resume_before_prepare,
     save_checkpoint,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
@@ -646,7 +647,7 @@ def train(cfg: TrainPipelineConfig):
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
+        is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 
