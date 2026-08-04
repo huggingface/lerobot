@@ -39,7 +39,6 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from .utils import resolve_episode_indices
 from .video_utils import decode_video_frames
 
 
@@ -69,8 +68,9 @@ class DatasetReader:
         Args:
             meta: Dataset metadata instance.
             root: Local dataset root directory.
-            episodes: Optional list of episode indices to select. ``None``
-                means all episodes.
+            episodes: Optional list of episode indices to select, assumed
+                already validated by the caller. ``None`` means
+                all episodes.
             tolerance_s: Timestamp synchronization tolerance in seconds.
             video_backend: Video decoding backend identifier.
             delta_timestamps: Optional dict mapping feature keys to lists of
@@ -84,7 +84,7 @@ class DatasetReader:
         """
         self._meta = meta
         self.root = root
-        self.episodes = resolve_episode_indices(episodes, meta.total_episodes)
+        self.episodes = episodes
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
         if image_transforms is not None and not callable(image_transforms):
@@ -152,9 +152,9 @@ class DatasetReader:
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        if self.episodes is not None and self.hf_dataset is not None:
-            return len(self.hf_dataset)
-        return self._meta.total_frames
+        if self.episodes is None:
+            return self._meta.total_frames
+        return sum(self._meta.episodes[ep]["length"] for ep in self.episodes)
 
     @property
     def num_episodes(self) -> int:

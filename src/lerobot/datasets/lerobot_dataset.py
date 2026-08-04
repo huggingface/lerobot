@@ -34,6 +34,7 @@ from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
     is_valid_version,
+    resolve_episode_indices,
 )
 from .video_utils import (
     StreamingVideoEncoder,
@@ -237,13 +238,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
 
-        if episodes is not None and any(
-            episode >= self.meta.total_episodes or episode < 0 for episode in episodes
-        ):
-            logger.warning(
-                f"Some episodes in the provided episodes list are out of range for this dataset ({self.meta.total_episodes})."
+        # Selection policy (allowlist resolution + predicate filter) is owned here;
+        # the reader just consumes the finalized episode index set.
+        episodes = resolve_episode_indices(episodes, self.meta.total_episodes)
+        if episodes is not None and not episodes:
+            raise ValueError(
+                "No valid episodes: the requested episode selection is empty after resolving "
+                f"against the dataset range [0, {self.meta.total_episodes})."
             )
-
         if episode_filter is not None:
             resolved = self.meta.filter_episodes(episode_filter, candidates=episodes)
             if not resolved:
