@@ -218,8 +218,8 @@ def _render_vqa_if_present(
     if recipe.blend is None:
         return None
     renderable: list[tuple[float, RenderedMessages]] = []
-    for name, component in recipe.blend.items():
-        if not name.startswith("ask_vqa"):
+    for component in recipe.blend.values():
+        if component.route != "vqa":
             continue
         bindings = _resolve_bindings(
             component,
@@ -232,20 +232,22 @@ def _render_vqa_if_present(
         )
         rendered = _render_message_recipe(component, bindings)
         if rendered is not None:
-            renderable.append((float(component.weight or 0.0), rendered))
+            if component.weight is None:
+                raise ValueError("Routed VQA blend components must define a weight.")
+            renderable.append((component.weight, rendered))
 
     if not renderable:
         return None
     if len(renderable) == 1:
         return renderable[0][1]
 
-    # Choose among matching cameras by relative weight, or uniformly when all weights are zero.
-    total = sum(w for w, _ in renderable) or float(len(renderable))
+    # Choose among matching cameras by their validated positive relative weights.
+    total = sum(weight for weight, _ in renderable)
     digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total
     cumulative = 0.0
-    for w, rendered in renderable:
-        cumulative += w or (total / len(renderable))
+    for weight, rendered in renderable:
+        cumulative += weight
         if draw < cumulative:
             return rendered
     return renderable[-1][1]

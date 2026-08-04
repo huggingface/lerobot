@@ -972,6 +972,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         **For each step in loaded_config["steps"]**:
 
+        0. **Artifact Resolution** (via _resolve_artifact_paths):
+           - Resolve declared relative artifact paths against a local checkpoint
+           - Download declared artifacts when loading the pipeline from the Hub
+           - Reject absolute paths and path traversal before step construction
+
         1. **Class Resolution** (via _resolve_step_class):
            - **If "registry_name" exists**: Look up in ProcessorStepRegistry
              Example: {"registry_name": "normalize_step"} -> Get registered class

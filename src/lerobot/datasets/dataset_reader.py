@@ -179,6 +179,7 @@ class DatasetReader:
 
         from pyarrow import parquet as _pq  # noqa: PLC0415
 
+        # LeRobot shards are schema-uniform, so one schema represents the dataset.
         schema_names = set(_pq.read_schema(sample).names)
         from .language import LANGUAGE_COLUMNS  # noqa: PLC0415
 

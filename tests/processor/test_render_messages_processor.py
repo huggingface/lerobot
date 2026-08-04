@@ -12,6 +12,7 @@ from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.processor.render_messages_processor import (  # noqa: E402
     RenderMessagesStep,
+    _fallback_low_level_render,
     _select_batch_indices,
 )
 
@@ -179,7 +180,7 @@ def test_select_batch_indices_slices_numpy_action():
     action = np.arange(6).reshape(3, 2)
     transition = create_transition(action=action)
 
-    selected = _select_batch_indices(transition, [2, 0])
+    selected = _select_batch_indices(transition, [2, 0], batch_size=3)
 
     np.testing.assert_array_equal(selected[TransitionKey.ACTION], action[[2, 0]])
 
@@ -192,7 +193,19 @@ def test_select_batch_indices_slices_robot_action_dict():
         }
     )
 
-    selected = _select_batch_indices(transition, [2, 0])
+    selected = _select_batch_indices(transition, [2, 0], batch_size=3)
 
     np.testing.assert_array_equal(selected[TransitionKey.ACTION]["joints"], np.array([[4, 5], [0, 1]]))
     assert torch.equal(selected[TransitionKey.ACTION]["gripper"], torch.tensor([[2.0], [0.0]]))
+
+
+def test_select_batch_indices_rejects_misaligned_list():
+    transition = create_transition(complementary_data={"task": ["one", "two"]})
+
+    with pytest.raises(ValueError, match="expected 3 values, got 2"):
+        _select_batch_indices(transition, [2, 0], batch_size=3)
+
+
+def test_fallback_low_level_render_rejects_partially_missing_task_batch():
+    with pytest.raises(ValueError, match=r"missing task at indices \[1\]"):
+        _fallback_low_level_render(["pick cube", None, "place cube"])

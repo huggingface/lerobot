@@ -155,7 +155,7 @@ class RenderMessagesStep(ProcessorStep):
             return None
 
         new_transition = (
-            _select_batch_indices(transition, keep_indices)
+            _select_batch_indices(transition, keep_indices, batch_size)
             if len(keep_indices) != batch_size
             else transition.copy()
         )
@@ -189,22 +189,29 @@ def _batch_value(value: Any, index: int) -> Any:
     return unwrap_scalar(value)
 
 
-def _select_batch_indices(transition: EnvTransition, indices: list[int]) -> EnvTransition:
+def _select_batch_indices(transition: EnvTransition, indices: list[int], batch_size: int) -> EnvTransition:
     selected = transition.copy()
     for key in (TransitionKey.OBSERVATION, TransitionKey.COMPLEMENTARY_DATA):
         data = selected.get(key)
         if isinstance(data, dict):
-            selected[key] = {k: _select_value(v, indices) for k, v in data.items()}
+            selected[key] = {
+                name: _select_value(value, indices, batch_size, f"{key}.{name}")
+                for name, value in data.items()
+            }
     action = selected.get(TransitionKey.ACTION)
     if action is not None:
-        selected[TransitionKey.ACTION] = _select_value(action, indices)
+        selected[TransitionKey.ACTION] = _select_value(action, indices, batch_size, str(TransitionKey.ACTION))
     return selected
 
 
-def _select_value(value: Any, indices: list[int]) -> Any:
+def _select_value(value: Any, indices: list[int], batch_size: int, path: str) -> Any:
     if isinstance(value, dict):
-        return {key: _select_value(item, indices) for key, item in value.items()}
-    if isinstance(value, list) and (not indices or max(indices) < len(value)):
+        return {key: _select_value(item, indices, batch_size, f"{path}.{key}") for key, item in value.items()}
+    if isinstance(value, list):
+        if len(value) != batch_size:
+            raise ValueError(
+                f"Cannot filter batched field {path!r}: expected {batch_size} values, got {len(value)}."
+            )
         return [value[i] for i in indices]
     if isinstance(value, np.ndarray) and value.ndim > 0:
         return value[indices]
@@ -218,16 +225,27 @@ def _fallback_low_level_render(task: Any) -> dict[str, Any] | None:
     if hasattr(task, "item"):
         task = task.item()
     if isinstance(task, list):
+        if not task:
+            return None
         messages = []
         message_streams = []
         target_message_indices = []
-        for t in task:
+        missing_indices = []
+        for index, t in enumerate(task):
             rendered = _fallback_low_level_render(t)
             if rendered is None:
-                return None
+                missing_indices.append(index)
+                continue
             messages.append(rendered["messages"])
             message_streams.append(rendered["message_streams"])
             target_message_indices.append(rendered["target_message_indices"])
+        if missing_indices:
+            if len(missing_indices) == len(task):
+                return None
+            raise ValueError(
+                "Batched low-level fallback requires a non-empty task for every sample; "
+                f"missing task at indices {missing_indices}."
+            )
         return {
             "messages": messages,
             "message_streams": message_streams,

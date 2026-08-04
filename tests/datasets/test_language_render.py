@@ -376,7 +376,7 @@ def test_flow_only_low_level_recipe_renders_without_target():
 
 
 def test_vqa_frame_is_consumed_over_the_weighted_blend():
-    """A frame carrying a VQA annotation renders the ``ask_vqa*`` sub-recipe
+    """A frame carrying a VQA annotation renders the routed VQA sub-recipe
     even when its blend weight is tiny — VQA annotations are sparse and must
     never be wasted on a subtask/action draw."""
     recipe = TrainingRecipe(
@@ -388,8 +388,9 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
                     MessageTurn(role="assistant", content="a subtask", stream="high_level", target=True),
                 ],
             ),
-            "ask_vqa_top": TrainingRecipe(
+            "descriptive_top_camera_name": TrainingRecipe(
                 weight=0.01,
+                route="vqa",
                 bindings={
                     "vqa_query": "emitted_at(t, style=vqa, role=user, camera=observation.images.top)",
                     "vqa": "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)",
@@ -410,7 +411,7 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
         }
     )
     # A frame WITH a vqa event renders VQA on every sample_idx, despite the
-    # ask_vqa weight being only 0.01.
+    # routed VQA weight being only 0.01.
     for sample_idx in range(20):
         rendered = render_sample(
             recipe=recipe, persistent=PERSISTENT, events=EVENTS_AT_1, t=1.0, sample_idx=sample_idx, task="x"

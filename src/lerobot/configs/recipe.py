@@ -23,6 +23,7 @@ from typing import Any, Literal, get_args
 
 MessageRole = Literal["user", "assistant", "system", "tool"]
 MessageStream = Literal["high_level", "low_level"]
+RecipeRoute = Literal["vqa"]
 
 DEFAULT_BINDINGS = {
     "subtask": "active_at(t, style=subtask)",
@@ -40,6 +41,7 @@ discovery (here) and rendered-message substitution (in ``language_render``)."""
 
 _VALID_ROLES = frozenset(get_args(MessageRole))
 _VALID_STREAMS = frozenset(get_args(MessageStream))
+_VALID_ROUTES = frozenset(get_args(RecipeRoute))
 
 
 @dataclass
@@ -99,13 +101,16 @@ class TrainingRecipe:
 
     A recipe is either a *message recipe* (``messages`` plus optional
     ``bindings``) or a *blend recipe* (``blend`` mapping names to weighted
-    sub-recipes). ``weight`` is only meaningful inside a blend.
+    sub-recipes). ``weight`` and ``route`` are only meaningful inside a blend;
+    ``route: vqa`` gives sparse VQA annotations priority over normal weighted
+    selection.
     """
 
     messages: list[MessageTurn] | None = None
     bindings: dict[str, str] | None = None
     blend: dict[str, TrainingRecipe] | None = None
     weight: float | None = None
+    route: RecipeRoute | None = None
 
     def __post_init__(self) -> None:
         """Validate that exactly one of ``messages`` or ``blend`` is set."""
@@ -113,6 +118,10 @@ class TrainingRecipe:
             raise ValueError("TrainingRecipe must set only one of messages or blend.")
         if self.messages is None and self.blend is None:
             raise ValueError("TrainingRecipe must set one of messages or blend.")
+        if self.route is not None and self.route not in _VALID_ROUTES:
+            raise ValueError(f"Unsupported recipe route: {self.route!r}")
+        if self.blend is not None and self.route is not None:
+            raise ValueError("TrainingRecipe.route may only be set on a message recipe inside a blend.")
 
         if self.messages is not None:
             self._validate_message_recipe()

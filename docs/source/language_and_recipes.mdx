@@ -108,6 +108,7 @@ own binding plus a matching image block, e.g.
 
 ```yaml
 ask_vqa_top:
+  route: vqa
   bindings:
     vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
     vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
@@ -127,7 +128,9 @@ ask_vqa_top:
       }
 ```
 
-Add one such sub-recipe per camera the dataset records.
+Add one such sub-recipe per camera the dataset records. The explicit
+`route: vqa` marker makes a matching sparse VQA annotation take precedence
+over normal weighted blend selection; component names are purely descriptive.
 
 ## Layer 3 — training format
 
