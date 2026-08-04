@@ -18,13 +18,15 @@ import logging
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import packaging.version
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, sync_bucket
+from huggingface_hub.utils import WeakFileLock
 
 from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
@@ -73,6 +75,9 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        *,
+        repo_type: Literal["dataset", "bucket"] = "dataset",
+        token: str | bool | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -94,29 +99,53 @@ class LeRobotDatasetMetadata:
                 even when local files exist.
             metadata_buffer_size: Number of episode metadata records to buffer
                 in memory before flushing to parquet.
+            repo_type: Repository type: "dataset" (default) or "bucket" for an
+                HF Storage Bucket streamed over hf://buckets/.
+            token: Authentication token used for Hub requests. Pass a string
+                token, ``True`` to require the locally stored token, ``False``
+                to disable authentication, or ``None`` to use the Hugging Face
+                Hub default.
         """
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+
         self.repo_id = repo_id
+        self.repo_type = repo_type
         self.revision = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
-        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
+        if self._requested_root is not None:
+            self.root = self._requested_root
+        elif self.repo_type == "bucket":
+            self.root = HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--"))
+        else:
+            self.root = HF_LEROBOT_HOME / repo_id
         self._pq_writer = None
         self.latest_episode = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
         self._finalized = False
 
-        try:
-            if force_cache_sync or (
-                self._requested_root is None and has_legacy_hub_download_metadata(self.root)
-            ):
-                raise FileNotFoundError
-            self._load_metadata()
-        except (FileNotFoundError, NotADirectoryError):
-            if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
+        metadata_lock = contextlib.nullcontext()
+        if self.repo_type == "bucket":
+            self.root.parent.mkdir(parents=True, exist_ok=True)
+            metadata_lock = WeakFileLock(self.root.parent / f".{self.root.name}.lock")
 
-            self._pull_from_repo(allow_patterns="meta/")
-            self._load_metadata()
+        with metadata_lock:
+            try:
+                if force_cache_sync or (
+                    self._requested_root is None and has_legacy_hub_download_metadata(self.root)
+                ):
+                    raise FileNotFoundError
+                self._load_metadata()
+            except (FileNotFoundError, NotADirectoryError):
+                if self.repo_type != "bucket" and is_valid_version(self.revision):
+                    if token is None:
+                        self.revision = get_safe_version(self.repo_id, self.revision)
+                    else:
+                        self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+
+                self._pull_from_repo(allow_patterns="meta/", token=token)
+                self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
@@ -145,6 +174,12 @@ class LeRobotDatasetMetadata:
             self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
+        else:
+            # Column order in `combined_dict` follows the source episode dict's insertion
+            # order, which can differ between batches (e.g. episodes originally stored in
+            # different parquet shards with different column orders). Realign to the
+            # writer's established schema so `write_table` doesn't reject a reordered match.
+            table = table.select(self._pq_writer.schema.names)
 
         self._pq_writer.write_table(table)
 
@@ -179,8 +214,8 @@ class LeRobotDatasetMetadata:
     def _load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root)
-        self.episodes = load_episodes(self.root)
+        self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
+        self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
 
     def ensure_readable(self) -> None:
@@ -220,7 +255,20 @@ class LeRobotDatasetMetadata:
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
+        *,
+        token: str | bool | None = None,
     ) -> None:
+        if self.repo_type == "bucket":
+            self.root.mkdir(parents=True, exist_ok=True)
+            sync_bucket(
+                f"hf://buckets/{self.repo_id}/meta",
+                str(self.root / "meta"),
+                delete=True,
+                quiet=True,
+                token=token,
+            )
+            return
+        token_kwargs = {} if token is None else {"token": token}
         if self._requested_root is None:
             self.root = Path(
                 snapshot_download(
@@ -230,6 +278,7 @@ class LeRobotDatasetMetadata:
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=allow_patterns,
                     ignore_patterns=ignore_patterns,
+                    **token_kwargs,
                 )
             )
             return
@@ -242,12 +291,15 @@ class LeRobotDatasetMetadata:
             local_dir=self._requested_root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            **token_kwargs,
         )
         self.root = self._requested_root
 
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
+        if self.repo_type == "bucket":
+            return f"hf://buckets/{self.repo_id}"
         return f"hf://datasets/{self.repo_id}"
 
     @property

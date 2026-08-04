@@ -44,8 +44,15 @@ import torch
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
@@ -713,6 +720,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ProcessorMigrationError: If the model requires migration to processor format.
         """
         model_id = str(pretrained_model_name_or_path)
+        model_path = Path(model_id)
+        is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {
             "force_download": force_download,
             "resume_download": resume_download,
@@ -731,7 +740,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
+            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs, is_local_source
         )
 
         # 4. Validate that all overrides were used
@@ -864,6 +873,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     return json.load(f), Path(config_path).parent
 
             except Exception as e:
+                if cls._hub_model_requires_migration(model_id, hub_download_kwargs):
+                    revision = hub_download_kwargs.get("revision")
+                    cls._suggest_processor_migration(
+                        model_id,
+                        f"Config file '{config_filename}' not found on the Hugging Face Hub",
+                        revision=revision if isinstance(revision, str) else None,
+                    )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
@@ -921,6 +937,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         model_id: str,
         base_path: Path | None,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build all processor steps with overrides and state loading.
 
@@ -944,7 +961,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         3. **State Loading** (via _load_step_state):
            - **If step has "state_file"**: Load tensor state from .safetensors
            - **Local first**: Check base_path/state_file.safetensors
-           - **Hub fallback**: Download state file if not found locally
+           - **Hub fallback**: Download state file if the pipeline was loaded from the Hub
            - **Optional**: Only load if step has load_state_dict method
 
         4. **Override Tracking**:
@@ -962,6 +979,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             model_id: The model identifier (needed for Hub state file downloads)
             base_path: Local directory path for finding state files
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Returns:
             Tuple of (instantiated_steps_list, unused_override_keys)
@@ -975,7 +993,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
 
         for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):
-            cls._load_step_state(step_instance, step_entry, model_id, base_path, hub_download_kwargs)
+            cls._load_step_state(
+                step_instance, step_entry, model_id, base_path, hub_download_kwargs, is_local_source
+            )
 
         return steps, remaining_override_keys
 
@@ -1139,6 +1159,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         model_id: str,
         base_path: Path | None,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> None:
         """Load state dictionary for a processor step if available.
 
@@ -1157,7 +1178,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
            - **Use case**: Loading from local saved model directory
 
         2. **Hub download fallback**: Download state file from repository
-           - **When triggered**: Local file not found or base_path is None
+           - **When triggered**: Local file not found and the pipeline source is a Hub repo
            - **Process**: Use hf_hub_download with same parameters as config
            - **Example**: Download "normalize_step_0.safetensors" from "user/repo"
            - **Result**: Downloaded to local cache, path returned
@@ -1178,6 +1199,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             model_id: The model identifier (used for Hub downloads if needed)
             base_path: Local directory path for finding state files (None for Hub-only)
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Note:
             This method modifies step_instance in-place and returns None.
@@ -1191,6 +1213,12 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         # Try local file first
         if base_path and (base_path / state_filename).exists():
             state_path = str(base_path / state_filename)
+        elif is_local_source:
+            state_path = base_path / state_filename if base_path else Path(state_filename)
+            raise FileNotFoundError(
+                f"State file '{state_filename}' was not found for local processor pipeline "
+                f"'{model_id}' at '{state_path}'."
+            )
         else:
             # Download from Hub
             state_path = hf_hub_download(
@@ -1317,6 +1345,62 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
+    def _hub_model_requires_migration(cls, model_id: str, hub_download_kwargs: dict[str, Any]) -> bool:
+        """Check whether a Hub repository contains a legacy LeRobot policy config.
+
+        A missing processor file is not sufficient evidence by itself: the repository
+        may be private, unavailable, or unrelated to LeRobot. This method therefore
+        fetches the policy's ``config.json`` and checks for the feature declarations
+        that identify a LeRobot policy checkpoint. Any lookup or parsing failure is
+        ignored so the original processor-file error remains visible.
+
+        Args:
+            model_id: Hugging Face Hub model repository ID.
+            hub_download_kwargs: Authentication, cache, and revision arguments used
+                for the original processor lookup.
+
+        Returns:
+            True when the repository has a legacy LeRobot policy configuration.
+        """
+        try:
+            config_path = hf_hub_download(
+                repo_id=model_id,
+                filename="config.json",
+                repo_type="model",
+                **hub_download_kwargs,
+            )
+            with open(config_path) as f:
+                config = json.load(f)
+        except Exception:
+            # This is a best-effort diagnostic called while handling the original
+            # processor lookup failure, which must remain the visible error.
+            return False
+
+        feature_types = {feature_type.value for feature_type in FeatureType}
+
+        def is_policy_feature_mapping(features: Any) -> bool:
+            return (
+                isinstance(features, dict)
+                and bool(features)
+                and all(
+                    isinstance(name, str)
+                    and isinstance(feature, dict)
+                    and feature.get("type") in feature_types
+                    and isinstance(feature.get("shape"), list)
+                    and all(isinstance(dimension, int) for dimension in feature["shape"])
+                    for name, feature in features.items()
+                )
+            )
+
+        return (
+            isinstance(config, dict)
+            and isinstance(config.get("type"), str)
+            and bool(config["type"])
+            and is_policy_feature_mapping(config.get("input_features"))
+            and is_policy_feature_mapping(config.get("output_features"))
+        )
+
+    @classmethod
     def _is_processor_config(cls, config: Any) -> bool:
         """Check if config follows DataProcessorPipeline format.
 
@@ -1389,7 +1473,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
-    def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
+    def _suggest_processor_migration(
+        cls,
+        model_path: str | Path,
+        original_error: str,
+        *,
+        revision: str | None = None,
+    ) -> None:
         """Raise migration error when we detect JSON files but no processor configs.
 
         This method is called when migration detection determines that a model
@@ -1424,6 +1514,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             model_path: Path to the model directory needing migration
             original_error: The error that triggered migration detection (for context)
+            revision: Optional Hub revision containing the legacy checkpoint.
 
         Raises:
             ProcessorMigrationError: Always raised (this method never returns normally)
@@ -1431,6 +1522,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         migration_command = (
             f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
         )
+        if revision is not None:
+            migration_command += f" --revision {revision}"
 
         raise ProcessorMigrationError(model_path, migration_command, original_error)
 

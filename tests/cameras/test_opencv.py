@@ -20,13 +20,13 @@
 # ```
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
 import pytest
 
-from lerobot.cameras.configs import Cv2Rotation
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -123,6 +123,73 @@ def test_invalid_width_connect():
         camera.connect(warmup=False)
 
 
+def test_connect_cleans_up_after_settings_failure_and_allows_retry():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+    camera = OpenCVCamera(config)
+    opened_captures = []
+
+    def fail_settings():
+        opened_captures.append(camera.videocapture)
+        raise RuntimeError("settings failed")
+
+    with (
+        patch.object(camera, "_configure_capture_settings", side_effect=fail_settings),
+        pytest.raises(RuntimeError, match="settings failed"),
+    ):
+        camera.connect(warmup=False)
+
+    assert camera.videocapture is None
+    assert camera.thread is None
+    assert not camera.is_connected
+    assert opened_captures[0] is not None
+    assert not opened_captures[0].isOpened()
+
+    camera.connect(warmup=False)
+    assert camera.is_connected
+    camera.disconnect()
+
+
+def test_connect_cleans_up_after_warmup_failure_and_allows_retry():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=1)
+    camera = OpenCVCamera(config)
+    read_threads = []
+
+    def fail_warmup(*_args, **_kwargs):
+        read_threads.append(camera.thread)
+        raise TimeoutError("no frame")
+
+    with (
+        patch.object(camera, "async_read", side_effect=fail_warmup),
+        pytest.raises(TimeoutError, match="no frame"),
+    ):
+        camera.connect()
+
+    assert camera.videocapture is None
+    assert camera.thread is None
+    assert not camera.is_connected
+    assert read_threads[0] is not None
+    assert not read_threads[0].is_alive()
+
+    camera.connect(warmup=False)
+    assert camera.is_connected
+    camera.disconnect()
+
+
+def test_find_cameras_releases_unopened_handles():
+    module_path = OpenCVCamera.__module__
+    unopened_capture = MagicMock()
+    unopened_capture.isOpened.return_value = False
+
+    with (
+        patch(f"{module_path}.platform.system", return_value="Darwin"),
+        patch(f"{module_path}.MAX_OPENCV_INDEX", 1),
+        patch(f"{module_path}.cv2.VideoCapture", return_value=unopened_capture),
+    ):
+        assert OpenCVCamera.find_cameras() == []
+
+    unopened_capture.release.assert_called_once_with()
+
+
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path, warmup_s=0)
@@ -130,6 +197,28 @@ def test_read(index_or_path):
     with OpenCVCamera(config) as camera:
         img = camera.read()
         assert isinstance(img, np.ndarray)
+
+
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
+def test_color_mode_conversion(index_or_path):
+    """RGB and BGR reads of the same frame must differ only by a channel-axis reversal."""
+    rgb_config = OpenCVCameraConfig(index_or_path=index_or_path, color_mode=ColorMode.RGB, warmup_s=0)
+    bgr_config = OpenCVCameraConfig(index_or_path=index_or_path, color_mode=ColorMode.BGR, warmup_s=0)
+    with OpenCVCamera(rgb_config) as rgb_cam:
+        rgb = rgb_cam.read()
+    with OpenCVCamera(bgr_config) as bgr_cam:
+        bgr = bgr_cam.read()
+
+    assert rgb.shape == bgr.shape
+    np.testing.assert_array_equal(rgb, bgr[..., ::-1])
+
+
+def test_postprocess_invalid_color_mode():
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
+    camera = OpenCVCamera(config)
+    camera.color_mode = "invalid"
+    with pytest.raises(ValueError):
+        camera._postprocess_image(np.zeros((120, 160, 3), dtype=np.uint8))
 
 
 def test_read_before_connect():

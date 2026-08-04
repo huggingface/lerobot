@@ -204,6 +204,74 @@ def test_clear_resets_buffer(tmp_path):
     assert dataset.writer.episode_buffer["size"] == 0
 
 
+def test_clear_removes_video_frame_staging_dir(tmp_path):
+    """clear_episode_buffer() removes PNG staging dirs for video features."""
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+    )
+
+    dataset.add_frame(_make_frame(features))
+    video_staging_dir = (
+        dataset.root
+        / Path(DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)).parent
+    )
+    assert video_staging_dir.is_dir()
+
+    dataset.clear_episode_buffer()
+
+    assert dataset.writer.episode_buffer["size"] == 0
+    assert not video_staging_dir.exists()
+
+
+def test_batched_encoding_staging_survives_save(tmp_path):
+    """The post-save clear must NOT delete video staging frames.
+
+    With ``batch_encoding_size > 1`` the frames of already-saved episodes stay
+    on disk until the batch encode runs; the encoder deletes them afterwards.
+    A blanket switch of the post-save cleanup to ``camera_keys`` (as done in the
+    discard path) would silently break batched encoding.
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        batch_encoding_size=2,
+    )
+    for _ in range(3):
+        dataset.add_frame(_make_frame(features))
+
+    staging_dir = dataset.writer._get_image_file_dir(0, video_key)
+    assert staging_dir.is_dir()
+
+    dataset.save_episode()  # first of a batch of 2: no encoding yet
+
+    assert staging_dir.is_dir() and any(staging_dir.iterdir())
+
+
 def test_finalize_is_idempotent(tmp_path):
     """Calling finalize() twice does not raise."""
     dataset = LeRobotDataset.create(
