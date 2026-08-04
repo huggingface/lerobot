@@ -32,7 +32,8 @@ import dataclasses
 import logging
 import sys
 import time
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +94,20 @@ else:
     PeftModel = None
 
 from .lerobot_eval import eval_policy_all
+
+
+@contextmanager
+def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+    """Create evaluation environments for one run and always dispose of them."""
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+    )
+    try:
+        yield envs
+    finally:
+        close_envs(envs)
 
 
 def update_policy(
@@ -399,15 +414,6 @@ def train(cfg: TrainPipelineConfig):
     accelerator.wait_for_everyone()
     if not is_main_process():
         dataset, eval_dataset = make_train_eval_datasets(cfg)
-
-    # Create environment used for evaluating checkpoints during training on simulation data.
-    # On real-world data, no need to create an environment as evaluations are done outside train.py,
-    # using the eval.py instead, with gym_dora environment and dora-rs.
-    # (Sharded runs fail fast on env_eval_freq > 0 at validate() time.)
-    eval_env = None
-    if cfg.env_eval_freq > 0 and cfg.env is not None and is_main_process():
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     # --- policy (weight source decided by the resume rule) -------------------------------------
     # On resume, cfg was parsed FROM the checkpoint's train_config.json, so cfg.checkpoint_format
@@ -734,7 +740,7 @@ def train(cfg: TrainPipelineConfig):
             if is_main_process():
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with torch.no_grad(), accelerator.autocast():
+                with _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
@@ -782,9 +788,6 @@ def train(cfg: TrainPipelineConfig):
     if is_main_process():
         progbar.close()
         logging.info("End of training")
-
-    if eval_env:
-        close_envs(eval_env)
 
     # --- publish (collective-safe: all ranks; the model commit gathers sharded weights) ---------
     if getattr(active_cfg, "push_to_hub", False):
