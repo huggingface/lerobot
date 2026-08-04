@@ -1,0 +1,91 @@
+{
+  "schema_version": 2,
+  "evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm",
+  "status": "software_preparation_passed_waiting_for_onsite_hardware_confirmation",
+  "prepared_at_utc": "2026-07-30T08:05:00Z",
+  "owning_repo_base_commit": "febba8204e21877d74b7cb1d2a8e15d7639bd670",
+  "revision": {
+    "predecessor_evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v1",
+    "predecessor_plan_sha256": "2d5f634bcf3f96d15711cbf43e6c10d123e26d91bbc74bd23e03338f19514e65",
+    "predecessor_hardware_trials_started": false,
+    "only_intended_pose_change": "absolute per-axis offset from cell center changed from 0.0125 m to 0.015 m",
+    "order_quadrants_yaw_unchanged": true,
+    "result_labels_used_for_revision": false
+  },
+  "research_contract": {
+    "research_repo_commit": "9d220248f5cff7c9eb78837f2636bf979185f01d",
+    "protocol_sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+    "pose_manifest_sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+    "validation_manifest_sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+    "alignment_manifest_sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+    "read_only_identity_verification_sha256": "39491b33ab46e7b8ca957b2ed8bbf68e74182898b070829f68418e697056b24c"
+  },
+  "frozen_plan": {
+    "path": "experiments/task1_picklift_real24_offcenter_yaw_eval_v2_pilot_v2/evaluation_plan.json",
+    "sha256": "48a159bf74ea61b9c444903f048f4c6315de0417248b37b500e9a1cb04b27cb5",
+    "scored_trials": 12,
+    "nominal_center_offset_from_cell_center_m": 0.015,
+    "nominal_center_lattice_m": 0.01,
+    "quadrant_counts": {
+      "x_minus_y_minus": 3,
+      "x_minus_y_plus": 3,
+      "x_plus_y_minus": 3,
+      "x_plus_y_plus": 3
+    },
+    "yaw_counts": {
+      "0": 6,
+      "45": 6
+    },
+    "first_trial_id": "evalv2_pilot_v2_r3c3",
+    "first_nominal_pose": {
+      "x_forward_m": 0.31,
+      "y_lateral_m": 0.04,
+      "yaw_degrees_modulo_90": 0
+    }
+  },
+  "implementation": {
+    "runner_sha256": "ea7dd1ec3c6be4e6ead9e9e5e1d269bf94e1528861ce30595e3e4cef014f9205",
+    "tests_sha256": "37dc0757e42a39fa0c00a99531558f178e59b9e67bb431ed7b1679ce06cec010",
+    "annotator_sha256": "09181b56b2cdacb5892680752ac2bec493c0b9c52c2a835cd36206cdce91f8bd",
+    "independent_validator_sha256": "fe3fd641c1fd42514eed92d6fc6668eb681f7f38209dfcfa4c0faa4125b574be",
+    "official_send_engine_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96",
+    "evaluation_profile_sha256": "60025f6478a63bcf9b301a75cd27124b19f1cf4f6b142f8576e6b10abf4f95a5"
+  },
+  "fixed_model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "use_imagenet_stats": true,
+    "chunk_size": 67,
+    "n_action_steps": 67
+  },
+  "tests": {
+    "pytest": "14 passed in 0.80s",
+    "fake_trials_exercised": 12,
+    "all_poses_on_10mm_lattice": true,
+    "all_offsets_15mm": true,
+    "hash_tamper_fail_closed": true,
+    "checkpoint_hash_fail_closed": true,
+    "slow_tick_no_catch_up": true,
+    "pre_action_before_inference_and_send": true,
+    "evidence_schema_validated": true,
+    "independent_evidence_validation": "passed"
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm/software_preparation_v1",
+    "dry_run_sha256": "48bd001a479e515d99281691f9f06ce06aeec725a414347878c40550e0d2f4e5",
+    "manifest_sha256": "a417bfbb806f38e7beb5896e60c21bc50c3caf34a4e55e45c6542c4306fc96ae",
+    "hashes_sha256": "b10edaee7856d521ed27cac0b914c59ac1d3b9642ec538389377ae04087e472e"
+  },
+  "hardware_access": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "policy_rollout": false,
+    "trial_evidence_directory_created": false
+  },
+  "next_gate": {
+    "status": "stopped_before_hardware",
+    "single_required_user_action": "Place the red cube center at task-grid x=31 cm, y=+4 cm with yaw 0 degrees and explicitly confirm the first v2 pose."
+  }
+}

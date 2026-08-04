@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "verified_at_utc": "2026-07-31T03:00:00Z",
+  "repository": "G:/PhysicalAI/IAmRobotTrainerResearch",
+  "head_commit": "126bf299662aa8d0bc195a0ce3bd2d8b77e9ac94",
+  "working_tree_status": "clean",
+  "verification_scope": "Read-only verification for the fresh off-center/yaw paired real-evaluation minimal replication software plan.",
+  "files": {
+    "training_run_manifest": {
+      "path": "manifests/task1-picklift-real24-questsim48-v7-act100k-run-v1.json",
+      "sha256": "5a897eac537ee6f438074ea162ac5846d516926b2eacf4e339a4643359a3a6ba",
+      "match": true
+    },
+    "training_decision": {
+      "path": "decision-log/2026-07-31-task1-picklift-real24-questsim48-v7-act-v1.md",
+      "sha256": "3159029b7044f0f9641a28b4f9fa8276ff2d94cc56e754f6a2a73443efbce058",
+      "match": true
+    },
+    "first_run_result_manifest": {
+      "path": "manifests/task1-picklift-real24-vs-questsim48-v7-offcenter-yaw-paired-eval24-v1.json",
+      "sha256": "9244f34c2e2e141d65b0c1ad19aee51fe7176dad1703068129f347a05d84425f",
+      "match": true
+    },
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v2.json",
+      "sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v2.json",
+      "sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+      "match": true
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v2.json",
+      "sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+      "match": true
+    },
+    "alignment_manifest": {
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "match": true
+    },
+    "return_amendment": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-return3s-amendment-v1.json",
+      "sha256": "c32c8f7e8040309b06b6bbb717299945f6bd06f8eb1f72b5b0860edc758e3fae",
+      "match": true
+    }
+  },
+  "hardware_access": {
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "rollout": false
+  }
+}

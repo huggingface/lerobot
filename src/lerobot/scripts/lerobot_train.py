@@ -19,6 +19,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 """
 
 import dataclasses
+import json
 import logging
 import sys
 import time
@@ -51,7 +52,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
+from lerobot.datasets import DomainBalancedSampler, EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
 from lerobot.envs import close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
@@ -454,15 +455,37 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # same permutation. accelerate then shards it disjointly across ranks via BatchSamplerShard
         # without needing a `generator` attribute to synchronize an RNG, and resume is sample-exact.
         shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-            shuffle=True,
-            seed=cfg.seed if cfg.seed is not None else 0,
-            absolute_to_relative_idx=dataset.absolute_to_relative_idx,
-        )
+        if cfg.dataset.domain_balanced_episode_groups is not None:
+            sampler = DomainBalancedSampler(
+                dataset.meta.episodes["dataset_from_index"],
+                dataset.meta.episodes["dataset_to_index"],
+                dataset.meta.episodes["episode_index"],
+                cfg.dataset.domain_balanced_episode_groups,
+                cfg.batch_size,
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                seed=cfg.seed if cfg.seed is not None else 0,
+                absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+            )
+            if is_main_process:
+                logging.info(
+                    "Using deterministic domain-balanced sampling: domains=%s, "
+                    "samples_per_domain_per_batch=%d, source_frames=%s, samples_per_epoch=%d",
+                    sampler.domain_names,
+                    sampler.samples_per_domain_per_batch,
+                    sampler.domain_frame_counts,
+                    len(sampler),
+                )
+        else:
+            sampler = EpisodeAwareSampler(
+                dataset.meta.episodes["dataset_from_index"],
+                dataset.meta.episodes["dataset_to_index"],
+                episode_indices_to_use=dataset.episodes,
+                drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
+                shuffle=True,
+                seed=cfg.seed if cfg.seed is not None else 0,
+                absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+            )
         if cfg.resume and step > 0:
             # The resume offset depends on the (num_processes, batch_size) that produced `step`, so
             # use the values recorded in the checkpoint (falling back to the current ones for older
@@ -584,6 +607,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         initial_step=step,
         accelerator=accelerator,
     )
+    domain_sample_counts = None
+    episode_to_domain = None
+    if cfg.dataset.domain_balanced_episode_groups is not None:
+        domain_sample_counts = dict.fromkeys(cfg.dataset.domain_balanced_episode_groups, 0)
+        episode_to_domain = {
+            int(episode): domain
+            for domain, episodes in cfg.dataset.domain_balanced_episode_groups.items()
+            for episode in episodes
+        }
 
     if is_main_process:
         progbar = tqdm(
@@ -601,6 +633,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+        if domain_sample_counts is not None and episode_to_domain is not None:
+            for episode in batch["episode_index"].detach().cpu().reshape(-1).tolist():
+                domain_sample_counts[episode_to_domain[int(episode)]] += 1
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
@@ -763,6 +798,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if is_main_process:
         progbar.close()
+        if domain_sample_counts is not None:
+            sampling_evidence = {
+                "schema": "lerobot_domain_balanced_sampling_counts_v1",
+                "seed": cfg.seed,
+                "optimizer_steps": step,
+                "batch_size_per_process": cfg.batch_size,
+                "num_processes": accelerator.num_processes,
+                "domain_episode_groups": cfg.dataset.domain_balanced_episode_groups,
+                "actual_samples_seen_by_main_process": domain_sample_counts,
+                "note": (
+                    "Counts are taken from batches actually consumed by optimizer "
+                    "steps, excluding DataLoader-prefetched but unused samples."
+                ),
+            }
+            evidence_path = cfg.output_dir / "domain_sampling_counts.json"
+            evidence_path.write_text(json.dumps(sampling_evidence, indent=2, sort_keys=True) + "\n")
+            logging.info("Wrote domain sampling counts to %s", evidence_path)
 
     is_fsdp = accelerator.distributed_type == DistributedType.FSDP
     model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None

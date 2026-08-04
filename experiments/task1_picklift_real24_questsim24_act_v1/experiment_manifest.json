@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "experiment_id": "task1_picklift_real24_questsim24_act_v1",
+  "research_plan_commit": "63874ee",
+  "research_plan": "experiment-design/task1-picklift-real24-questsim24-act-v1.json",
+  "paper_result": false,
+  "dataset": {
+    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v2",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v1/combined48_v2",
+    "episodes": 48,
+    "frames": 7966,
+    "real_episodes": 24,
+    "simulation_episodes": 24,
+    "sampling": "standard frame sampling without domain weighting or duplication"
+  },
+  "training": {
+    "initialize_from_checkpoint": null,
+    "seed": 1000,
+    "smoke_steps": 500,
+    "full_steps": 100000,
+    "batch_size": 8,
+    "device": "cuda",
+    "input_features": [
+      "observation.state",
+      "observation.images.front"
+    ],
+    "output_feature": "action",
+    "chunk_size": 67,
+    "n_action_steps": 67,
+    "save_frequency_steps": 20000,
+    "selected_checkpoint_step": 100000,
+    "image_transforms": false,
+    "normalization": "MEAN_STD from combined48 only",
+    "pretrained_policy_checkpoint": null
+  },
+  "prohibited": [
+    "hardware",
+    "serial",
+    "camera_hardware",
+    "robot",
+    "torque",
+    "12V",
+    "real_evaluation",
+    "simulation_rollout",
+    "checkpoint_selection",
+    "hyperparameter_search",
+    "push"
+  ]
+}

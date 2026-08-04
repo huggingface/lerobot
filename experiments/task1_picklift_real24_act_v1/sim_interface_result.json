@@ -1,0 +1,49 @@
+{
+    "experiment_id": "task1_picklift_real24_act_v1_real_to_remote_sim_v1",
+    "status": "act_interface_complete_waiting_for_remote_adapter_contract",
+    "base_commit": "b652ebd695cbb81dc7a3d1bf8c4077a116592593",
+    "checkpoint": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+        "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+        "alternate_checkpoint_loaded": false,
+        "training_or_finetuning_performed": false
+    },
+    "interface": {
+        "control_hz_contract": 20,
+        "input_state_shape": [6],
+        "input_front_rgb_shape": [480, 640, 3],
+        "input_front_rgb_dtype": "uint8",
+        "output_action_shape": [6],
+        "output_action_dtype": "float32",
+        "processor_source": "checkpoint_pretrained_model",
+        "calibration_clamp": "frozen_per_joint_fail_closed",
+        "max_relative_target": 5.0,
+        "action_evidence_stages": [
+            "raw_action",
+            "calibration_clipped_action",
+            "sent_action"
+        ]
+    },
+    "validation": {
+        "unit_tests": "16 passed",
+        "fake_smoke_steps": 4,
+        "fake_smoke_status": "pass",
+        "fake_smoke_environment_created": false,
+        "fake_smoke_hardware_accessed": false,
+        "fake_smoke_evidence": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/fake_sim_policy_smoke.json",
+        "fake_smoke_evidence_sha256": "0a00f641ed2244b33f5ddb42d1bba782fd7ab720981f8ed8a9da4d31a5e846fe"
+    },
+    "rollout_status": {
+        "gate12_started": false,
+        "frozen120_started": false,
+        "blocker": "Await the existing Remote adapter and contract through research control; do not let both tasks operate the Ubuntu environment concurrently."
+    },
+    "hardware_boundary": {
+        "serial_accessed": false,
+        "camera_hardware_accessed": false,
+        "torque_accessed": false,
+        "twelve_volt_requested": false,
+        "real_robot_gate_entered": false
+    },
+    "interpretation": "Interface and fake-smoke evidence only; no Remote success-rate, real-robot, sim-to-real, or paper-effect conclusion."
+}

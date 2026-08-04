@@ -1,0 +1,74 @@
+{
+  "schema_version": 3,
+  "verified_at_utc": "2026-07-30T08:15:00Z",
+  "verification_mode": "read_only_windows_research_checkout_after_return3s_amendment",
+  "research_repo": "G:\\PhysicalAI\\IAmRobotTrainerResearch",
+  "head_commit": "e7b628192c9b4d0d1f9ef7f8e9fa9e6417a01874",
+  "working_tree_status": "clean",
+  "files": {
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v2.json",
+      "sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v2.json",
+      "sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+      "match": true
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v2.json",
+      "sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+      "match": true
+    },
+    "alignment_manifest": {
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "match": true
+    },
+    "return_amendment": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-return3s-amendment-v1.json",
+      "sha256": "c32c8f7e8040309b06b6bbb717299945f6bd06f8eb1f72b5b0860edc758e3fae",
+      "match": true
+    }
+  },
+  "continuation_boundary": {
+    "predecessor_evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm",
+    "predecessor_owning_plan_sha256": "48a159bf74ea61b9c444903f048f4c6315de0417248b37b500e9a1cb04b27cb5",
+    "immutable_completed_orders": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "continuation_orders": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "existing_evidence_rewrite_allowed": false
+  },
+  "ready_return_revision": {
+    "profile_id": "task1_real24_ready_pose_interpolated3s_official_send_tolerance3_v1",
+    "duration_seconds": 3.0,
+    "control_fps": 20,
+    "interpolation_steps": 60,
+    "same_ready_target": true,
+    "same_arrival_tolerance_degrees": 3.0,
+    "same_official_send_path": true,
+    "current_relative_step_limit_added": false,
+    "scored_policy_window_changed": false
+  },
+  "hardware_access": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "policy_rollout": false
+  }
+}

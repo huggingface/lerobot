@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v3_return3s",
+  "status": "placement_invalid_linked_replacement_support_passed",
+  "trigger": {
+    "trial_id": "evalv2_pilot_v2_r1c4",
+    "artifact_stem": "t08_evalv2_pilot_v2_r1c4_real24_only",
+    "expected_nominal_pose": {
+      "x_forward_m": 0.24,
+      "y_lateral_m": 0.09,
+      "yaw_degrees_modulo_90": 45
+    },
+    "operator_reported_pose": {
+      "x_forward_m": 0.24,
+      "y_lateral_m": -0.09,
+      "yaw_degrees_modulo_90": 45
+    },
+    "policy_result_scored": false,
+    "original_evidence_rewrite_allowed": false
+  },
+  "contract": {
+    "plan_sha256": "31c2aeea619729018876aa2886713a40b4a43be650de234adea29fc0d6a4eed6",
+    "existing_infrastructure_invalid_replacement_limit": 1,
+    "marker_reason": "operator_placement_mismatch",
+    "marker_binds_original_evidence_sha256": true,
+    "replacement_requires_same_frozen_pose_model_and_order": true,
+    "operator_success_failure_label_must_not_exist": true
+  },
+  "implementation": {
+    "runner_sha256": "9ff5495e4eed1f29dbcb56b9931e2212027fbdc83bd359e569a81deeb1731b19",
+    "tests_sha256": "04579d08f633fa0f34ddf80daf8a0e6f7e2ad48b0658064ee885c0e4d5a782bf",
+    "marker_tool_sha256": "33e3eb67588bdf878879e3ab292e003776d46ed1701f406facfddfbba009f977"
+  },
+  "tests": {
+    "pytest": "17 passed in 0.81s",
+    "valid_marker_allows_exactly_one_linked_replacement": true,
+    "marker_with_wrong_original_sha_fails_closed": true,
+    "engine_infrastructure_invalid_replacement_unchanged": true,
+    "return3s_contract_unchanged": true,
+    "independent_software_evidence_validation": "passed"
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm/software_preparation_return3s_replacement_support_v1",
+    "dry_run_sha256": "6aec765772fd1378c2e77f8942adbef4e8ba8a256b04dfe9842148cbc73f8840",
+    "manifest_sha256": "eb4b418173d542ac6891c49b04684530091a012125e97c8b4d07bf714aa7d2c8",
+    "hashes_sha256": "5b8a8dd5d592cea76f83292def9edcf23fef463dbcdc0c9da8c02765bfd996da"
+  },
+  "hardware_access_during_patch": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "policy_rollout": false
+  }
+}

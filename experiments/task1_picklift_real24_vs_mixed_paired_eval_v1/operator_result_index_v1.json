@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+  "result_scope": "operator labels complete; canonical-video review pending",
+  "paper_conclusion": false,
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+  "protocol_commit": "eba56ac",
+  "plan": {
+    "path": "experiments/task1_picklift_real24_vs_mixed_paired_eval_v1/evaluation_plan_ready_tolerance3_v2.json",
+    "sha256": "1eb82cc573a661f85d7c21ced5651a9cc64c8809873a3299d13e86d59fd19ada"
+  },
+  "profile": {
+    "path": "experiments/task1_picklift_real24_act_v1/real_evaluation_profile_ready_pose_official_send_ready_tolerance3_v2.json",
+    "sha256": "60025f6478a63bcf9b301a75cd27124b19f1cf4f6b142f8576e6b10abf4f95a5",
+    "ready_pose_arrival_tolerance_degrees": 3.0
+  },
+  "models": {
+    "real24_only": {
+      "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+      "operator_successes": 11,
+      "trials": 12,
+      "operator_success_rate": 0.9166666666666666
+    },
+    "real24_questsim24": {
+      "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+      "operator_successes": 8,
+      "trials": 12,
+      "operator_success_rate": 0.6666666666666666
+    }
+  },
+  "paired_outcomes": {
+    "both_success": 8,
+    "both_failure": 1,
+    "real24_only_only": 3,
+    "mixed_only": 0
+  },
+  "evidence": {
+    "operator_manifest_v1_sha256": "79f134d2e90004e645de2574206c685903ed7b9ef78bd72d387369112d59bc48",
+    "operator_summary_v1_sha256": "cbd243d94d3dc11d6f74eee1216a2647d483b0363b03475990f48e092acd1e94",
+    "operator_evidence_hashes_v1_sha256": "ea6211fb4cd5a73c381b5b665fafbda1115451de95e61a60bea831b810c9b89a",
+    "hashed_artifact_count": 174,
+    "sha256sum_verified": true,
+    "canonical_videos_verified": 24,
+    "canonical_video_contract": "640x480, 20 FPS, frame count equals policy tick count",
+    "total_policy_ticks": 14233,
+    "upstream_action_modified_events": 0,
+    "all_returned_to_ready_pose": true,
+    "all_torque_disable_verified": true
+  },
+  "preserved_infrastructure_invalid_original": {
+    "trial_id": "t01",
+    "artifact_stem": "t01_r1c1_real24_only",
+    "scored_replacement": "t01_r1c1_real24_only__replacement1"
+  },
+  "interpretation_boundary": "Descriptive operator result only. Canonical-video review labels must be frozen before this result is used as a reviewed paper comparison."
+}

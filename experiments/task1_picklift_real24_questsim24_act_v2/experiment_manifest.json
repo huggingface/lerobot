@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "experiment_id": "task1_picklift_real24_questsim24_act_v2",
+  "experiment_label": "Task1 controlled Mixed v2 bundled engineering correction",
+  "source_control_thread_id": "019fa271-0268-7763-a05c-523c3b221f2e",
+  "paper_result": false,
+  "dataset": {
+    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v3",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v2/combined48_v3",
+    "episodes": 48,
+    "frames": 7966,
+    "real_episodes": 24,
+    "simulation_episodes": 24,
+    "construction": "each accepted episode exactly once",
+    "gripper_canonicalization": "task1_gripper_shared_range_0_100_identity_v1"
+  },
+  "controlled_corrections": {
+    "visual_preprocessing": "use_imagenet_stats=true, matching Real24-only",
+    "gripper_semantics": "audited shared 0=closed,100=open contract; identity transform",
+    "training_sampling": "deterministic 1:1 domains, exactly 4 Real + 4 Sim in every batch"
+  },
+  "training": {
+    "initialize_from_checkpoint": null,
+    "seed": 1000,
+    "smoke_steps": 500,
+    "full_steps": 100000,
+    "batch_size": 8,
+    "device": "cuda",
+    "input_features": [
+      "observation.state",
+      "observation.images.front"
+    ],
+    "output_feature": "action",
+    "chunk_size": 67,
+    "n_action_steps": 67,
+    "save_frequency_steps": 20000,
+    "selected_checkpoint_step": 100000,
+    "image_transforms": false,
+    "normalization": "MEAN_STD with ImageNet visual stats",
+    "pretrained_policy_checkpoint": null
+  },
+  "controls": {
+    "real24_only_model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "mixed_v1_model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5"
+  },
+  "prohibited": [
+    "hardware",
+    "serial",
+    "camera_hardware",
+    "robot",
+    "torque",
+    "12V",
+    "real_evaluation",
+    "simulation_rollout",
+    "checkpoint_selection",
+    "hyperparameter_search",
+    "push"
+  ]
+}

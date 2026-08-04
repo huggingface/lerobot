@@ -1,0 +1,60 @@
+{
+  "schema": "task1_picklift_real48_vs_real96_eval48_software_gate_result_v1",
+  "evaluation_id": "task1_picklift_real48_vs_real96_eval48_v1",
+  "status": "software_gate_passed_stopped_before_hardware",
+  "research_commit": "73908355df1add52cd04753216c13f8b1c0b400a",
+  "plan": {
+    "path": "experiments/task1_picklift_real48_vs_real96_eval48_v1/evaluation_plan.json",
+    "sha256": "7de77eed859898a6397265244ab2f4c189d91dbb565202b99a0a5bdd208214f1",
+    "poses": 48,
+    "scored_trials": 96,
+    "coverage_tiers": {
+      "seen_by_real48": 24,
+      "added_by_real96": 18,
+      "unseen_by_both": 6
+    }
+  },
+  "runner": {
+    "path": "experiments/task1_picklift_real48_vs_real96_eval48_v1/paired_evaluator.py",
+    "sha256": "861c93ae753f359c2f2d72144bf2417695f9ca5f4041b7a836979ecf0141acf9"
+  },
+  "models": {
+    "real48": {
+      "model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+      "processor_stats_sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906",
+      "offline_inference_sha256": "cb2b8b63a365c8aa2ba203177f4c69ba4a459a49e886a3c7343dd120ec498a49",
+      "offline_output_shape": [1, 6],
+      "offline_output_finite": true
+    },
+    "real96": {
+      "model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+      "processor_stats_sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a",
+      "offline_inference_sha256": "1766823ccd26ab876e55ecb2dadaa19fd0b547f452ca03a088925dcbc9bac9f8",
+      "offline_output_shape": [1, 6],
+      "offline_output_finite": true
+    }
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/software_preparation_v1",
+    "manifest_sha256": "4c5708c2aaff4dc058a2d7d69f9afde94603566e22b54cdb6c26307b9b8161f5",
+    "hashes_sha256": "be70903fa4447c68ffc574bd6356224bde8927733ce2b2f1095871a0ca83cc35",
+    "dry_run_sha256": "d04a5b86db2ea7c1459d23a9cbc8edbae5cf5640657095482cda16475b70061f",
+    "independent_validation_sha256": "10d479c414b1de36453fdb235f41be4f75223fbd8e46ec10d6a251c230cf36b0",
+    "tests": "15 passed"
+  },
+  "first_trial": {
+    "trial_id": "t001_p01_real48",
+    "pose_order": 1,
+    "model": "ACT_Real48_seed1000_step100000",
+    "placement_instruction_zh": "r3c2（第3行第2列）：红块中心放在任务网格 X=34 cm、Y=-1 cm 的交点；方块绕中心旋转45°（边与任务网格线成45°）。"
+  },
+  "hardware_access": {
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "12v": false,
+    "rollout": false
+  },
+  "next_gate": "Wait for a separate explicit research-control hardware GO before any preflight that touches devices or any real trial."
+}

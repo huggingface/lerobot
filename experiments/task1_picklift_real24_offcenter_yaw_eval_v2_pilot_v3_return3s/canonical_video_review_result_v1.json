@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "review_id": "task1_picklift_real24_offcenter_yaw_eval_v2_pilot_canonical_review_v1",
+  "evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v3_return3s",
+  "evaluation_plan_sha256": "31c2aeea619729018876aa2886713a40b4a43be650de234adea29fc0d6a4eed6",
+  "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm",
+  "canonical_review_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm/canonical_video_review_v1",
+  "validation": {
+    "status": "pass",
+    "scored_trials": 12,
+    "canonical_videos_640x480_at_20fps": 12,
+    "video_frames_equal_policy_ticks": 12,
+    "total_policy_ticks_and_video_frames": 7117,
+    "operator_review_agreements": 12,
+    "operator_review_disagreements": 0,
+    "preserved_placement_invalid_original_t08": true,
+    "linked_scored_replacement_t08": true
+  },
+  "results": {
+    "operator_successes": 1,
+    "reviewed_successes": 1,
+    "trials": 12,
+    "reviewed_success_rate": 0.08333333333333333,
+    "reviewed_failure_types": {
+      "missed_grasp": 11
+    },
+    "yaw_0": {
+      "successes": 1,
+      "trials": 6
+    },
+    "yaw_45": {
+      "successes": 0,
+      "trials": 6
+    }
+  },
+  "artifact_hashes": {
+    "review_manifest_json": "6566ecb51de485634b2705bf674a3289f67b408d389af01851b9eb22190ec7ff",
+    "trials_jsonl": "218062238c4c8dd218567cd316b33e742244edcf5025a94201b198d1c4baaf92",
+    "summary_json": "11e832367c34f84c98c2f51a2d7ce3a7462dce3b38183ed50501fcc34f634096",
+    "hashes_sha256": "6871127a765f628e14a797d4da8c81dfcfcdeae1f1bdc908d6d4f69971009810",
+    "independent_verification_json": "9e087c8b5b91def23fbbc95000ac2bce4fc1a9a39ed1c153b8558cfd72262ae9"
+  },
+  "interpretation": {
+    "confirmed_fact": "The reviewed result for this fixed off-center/yaw pilot is 1/12; only r2c2 at yaw 0 passed the success definition.",
+    "failure_pattern": "All 11 reviewed failures are missed_grasp, with visible spatial offset or reach error and no qualifying lift.",
+    "boundary": "Single-model, single-session engineering pilot; not a paper effect estimate and not a causal diagnosis.",
+    "protocol_caveat": "Orders 1-4 used direct ready/return and orders 5-12 used the versioned three-second interpolated ready/return. Both movements were outside the scored policy window."
+  }
+}

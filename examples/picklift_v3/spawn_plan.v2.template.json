@@ -1,0 +1,27 @@
+{
+  "protocol_version": "picklift_spawn_v2",
+  "task_frame_id": "picklift_task_grid_v1",
+  "coordinate_frame": {
+    "origin_description": "arm/base center projected onto the task plane at the mat bottom 30 cm mark",
+    "x": "+X forward along the grid from the robot into the workspace, 10..25 cm; rows increase near to far",
+    "y": "+Y lateral along the perpendicular grid axis with MuJoCo-matched sign, -10..+10 cm; columns increase -Y to +Y and Y=0 is the centerline",
+    "yaw_deg": "object yaw in degrees, 0..90"
+  },
+  "known_reference": {
+    "description": "red cube center in frozen camera-alignment evidence",
+    "x_forward_m": 0.15,
+    "y_lateral_m": 0.0
+  },
+  "advance_rule": "Keep spawn_id and pose for failure/discard retries; advance only after a saved success.",
+  "spawns": [
+    {"spawn_id": "pl_v2_s001", "spawn_region": "r1c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s002", "spawn_region": "r1c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s003", "spawn_region": "r1c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s004", "spawn_region": "r2c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s005", "spawn_region": "r2c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s006", "spawn_region": "r2c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s007", "spawn_region": "r3c1", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s008", "spawn_region": "r3c2", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"},
+    {"spawn_id": "pl_v2_s009", "spawn_region": "r3c3", "actual_x_cm": null, "actual_y_cm": null, "actual_yaw_deg": null, "result": "pending"}
+  ]
+}

@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "result_manifest_id": "task1-picklift-real48-vs-real96-eval48-result-v1",
+  "evaluation_id": "task1_picklift_real48_vs_real96_eval48_v1",
+  "status": "hardware_complete_canonical_review_frozen",
+  "freeze_date": "2026-08-03",
+  "paper_result": false,
+  "purpose": "Freeze the canonical-video-reviewed single-session paired real-robot engineering result for the fixed Task1 Real48 and Real96 ACT checkpoints on the predeclared 48-pose Eval48 bank.",
+  "research_inputs": {
+    "research_contract_commit": "73908355df1add52cd04753216c13f8b1c0b400a",
+    "task_contract": {
+      "path": "../tasks/task1-picklift-final-v2.taskspec.json",
+      "sha256": "cb69c85aba06e90c2c7297ad13c1c09a2cfec69bc9489b7023bc3a1d17b8d06a"
+    },
+    "evaluation_contract": {
+      "path": "../experiment-design/task1-picklift-real48-vs-real96-eval48-v1.json",
+      "sha256": "46b2ec8335d9b4415967efdd70dbe854d113d2966307a0eaaf38278744650af1"
+    },
+    "pose_manifest": {
+      "path": "task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+      "sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7"
+    },
+    "subset_contract": {
+      "path": "task1-picklift-real48-real96-subsets-v1.json",
+      "sha256": "bdf7ad387cd4d8f619ead947d40c7642682859a3986d6e30df591f767b24ac5b"
+    }
+  },
+  "models": {
+    "real48": {
+      "model_id": "ACT_Real48_seed1000_step100000",
+      "dataset_episodes": 48,
+      "training_seed": 1000,
+      "checkpoint_step": 100000,
+      "model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+      "processor_stats_sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906"
+    },
+    "real96": {
+      "model_id": "ACT_Real96_seed1000_step100000",
+      "dataset_episodes": 96,
+      "training_seed": 1000,
+      "checkpoint_step": 100000,
+      "model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+      "processor_stats_sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a"
+    }
+  },
+  "execution_integrity": {
+    "owning_repository": "/home/ubuntu24/Teleop/lerobot",
+    "owning_evaluation_plan": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_real48_vs_real96_eval48_v1/evaluation_plan.json",
+    "owning_evaluation_plan_sha256": "7de77eed859898a6397265244ab2f4c189d91dbb565202b99a0a5bdd208214f1",
+    "planned_poses": 48,
+    "models_per_pose": 2,
+    "scored_trials": 96,
+    "trial_range": "t001..t096",
+    "unique_trial_ids": 96,
+    "complete_pairs": 48,
+    "missing_trials": 0,
+    "duplicate_trials": 0,
+    "replacement_trials": 0,
+    "policy_window_seconds": 30,
+    "success_early_stop": false,
+    "canonical_videos": 96,
+    "canonical_resolution": [
+      640,
+      480
+    ],
+    "canonical_fps": 20,
+    "video_frames_equal_steps_rows": true,
+    "each_policy_window_last_tick_elapsed_at_least_seconds": 29.9,
+    "ready_return_and_torque_contract_passed_trials": 96,
+    "upstream_action_modified_events": 0,
+    "run_errors": 0,
+    "operator_labels": 96,
+    "canonical_reviews": 96,
+    "operator_review_agreements": 96,
+    "operator_review_disagreements": 0,
+    "adjudications": 0,
+    "hardware_execution_complete": true,
+    "hardware_access_after_completion": false
+  },
+  "reviewed_results": {
+    "overall": {
+      "real48": {
+        "successes": 36,
+        "trials": 48,
+        "success_rate": 0.75
+      },
+      "real96": {
+        "successes": 33,
+        "trials": 48,
+        "success_rate": 0.6875
+      },
+      "real96_minus_real48_successes": -3,
+      "real96_minus_real48_success_rate": -0.0625
+    },
+    "paired_outcomes": {
+      "both_success": 28,
+      "both_failure": 7,
+      "real48_only": 8,
+      "real96_only": 5,
+      "total_pairs": 48
+    },
+    "coverage_tiers": {
+      "seen_by_real48": {
+        "trials_per_model": 24,
+        "real48_successes": 21,
+        "real48_success_rate": 0.875,
+        "real96_successes": 15,
+        "real96_success_rate": 0.625,
+        "real96_minus_real48_success_rate": -0.25
+      },
+      "added_by_real96": {
+        "trials_per_model": 18,
+        "real48_successes": 11,
+        "real48_success_rate": 0.6111111111111112,
+        "real96_successes": 13,
+        "real96_success_rate": 0.7222222222222222,
+        "real96_minus_real48_success_rate": 0.1111111111111111
+      },
+      "unseen_by_both": {
+        "trials_per_model": 6,
+        "real48_successes": 4,
+        "real48_success_rate": 0.6666666666666666,
+        "real96_successes": 5,
+        "real96_success_rate": 0.8333333333333334,
+        "real96_minus_real48_success_rate": 0.1666666666666667
+      }
+    },
+    "by_yaw": {
+      "0": {
+        "trials_per_model": 24,
+        "real48_successes": 19,
+        "real48_success_rate": 0.7916666666666666,
+        "real96_successes": 19,
+        "real96_success_rate": 0.7916666666666666,
+        "real96_minus_real48_success_rate": 0.0
+      },
+      "45": {
+        "trials_per_model": 24,
+        "real48_successes": 17,
+        "real48_success_rate": 0.7083333333333334,
+        "real96_successes": 14,
+        "real96_success_rate": 0.5833333333333334,
+        "real96_minus_real48_success_rate": -0.125
+      }
+    },
+    "by_cell": {
+      "r1c1": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 3 },
+      "r1c2": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 3 },
+      "r1c3": { "trials_per_model": 4, "real48_successes": 4, "real96_successes": 4 },
+      "r1c4": { "trials_per_model": 4, "real48_successes": 4, "real96_successes": 2 },
+      "r2c1": { "trials_per_model": 4, "real48_successes": 2, "real96_successes": 3 },
+      "r2c2": { "trials_per_model": 4, "real48_successes": 2, "real96_successes": 3 },
+      "r2c3": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 2 },
+      "r2c4": { "trials_per_model": 4, "real48_successes": 2, "real96_successes": 0 },
+      "r3c1": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 2 },
+      "r3c2": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 4 },
+      "r3c3": { "trials_per_model": 4, "real48_successes": 3, "real96_successes": 3 },
+      "r3c4": { "trials_per_model": 4, "real48_successes": 4, "real96_successes": 4 }
+    },
+    "failure_categories": {
+      "real48": {
+        "missed_grasp": 8,
+        "spatial_offset": 4,
+        "total_failures": 12
+      },
+      "real96": {
+        "missed_grasp": 4,
+        "spatial_offset": 11,
+        "total_failures": 15
+      }
+    },
+    "descriptive_summary": "Real48 was higher overall by 3 of 48 paired poses. Real96 was lower on seen_by_real48 poses, but higher on added_by_real96 and unseen_by_both poses. The tier directions are heterogeneous rather than a single monotonic data-budget effect."
+  },
+  "evidence": {
+    "canonical_review_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1",
+    "review_manifest_sha256": "d04e81d40888a03deafa391995a11819634bb65f31e738fd4117e01fa0999ca1",
+    "review_summary_sha256": "46d43b817244e4ca497cd5989103ed8f18b8d458e28ba9fddea4cf6834ae7788",
+    "review_trials_sha256": "6abbb950f3de0b50aeed457bf50c3b98b1c7bec0e425c0d83c317c8f628bdb76",
+    "review_hashes_sha256": "174107ecb032883223693ace7aa6b1c237f34cdfec837ce400d5a6aedf7b96c0",
+    "independent_validation_sha256": "c55cc7a6600e569c3a6cd8b519c08cffe0a156547955bfcbd566e5e46de831eb",
+    "independent_validation_status": "pass"
+  },
+  "owning_execution": {
+    "repository": "/home/ubuntu24/Teleop/lerobot",
+    "result_commit": "93bcfbaff1ec34c0aa9b63554750f3178556a555",
+    "pushed": false,
+    "original_trial_operator_and_plan_evidence_rewritten": false
+  },
+  "research_classification": {
+    "confirmed_engineering_facts": [
+      "The frozen 96-trial execution and independent canonical-video review are complete, with 48 paired poses and no missing, duplicate, replacement, or disputed result.",
+      "Real48 achieved 36/48 and Real96 achieved 33/48 in this exact single-session, single-training-seed engineering evaluation.",
+      "Real96 was higher on added_by_real96 and unseen_by_both tiers, while Real48 was higher on seen_by_real48; the observed tier directions are heterogeneous.",
+      "Yaw-zero performance tied, while Real48 was higher on yaw-45 in this run.",
+      "Real96 failures were more often reviewed as spatial_offset, while Real48 failures were more often reviewed as missed_grasp."
+    ],
+    "research_hypotheses": [
+      "The added Real96 demonstrations may improve coverage away from the Real48-supported pose set while reducing repeated exposure to or consistency around the Real48-supported behaviors under a fixed 100000-step training budget.",
+      "The non-monotonic overall result may reflect training-seed variance, evaluation-session variance, trajectory heterogeneity, or a true saturation or interference region in the Task1 Real-data budget curve."
+    ],
+    "unresolved_choices": [
+      "Whether the tier-specific directions persist across training seeds or evaluation sessions.",
+      "Whether fixed optimizer steps, Dataset composition, trajectory quality, or another factor explains the seen_by_real48 drop for Real96.",
+      "Whether a lower Real-only budget point exposes a monotonic rising part of the curve before the Real48-to-Real96 region."
+    ],
+    "pilot_evidence_required": [
+      "Run the already trained deterministic Real24 ACT condition on the same frozen 48 poses before deciding whether a Real36 interpolation point is necessary.",
+      "Use additional training seeds or repeated real evaluation only if this engineering gate is promoted into a paper-scale data-budget estimate."
+    ]
+  },
+  "claim_boundary": {
+    "single_session": true,
+    "single_training_seed_per_model": true,
+    "descriptive_engineering_result": true,
+    "paper_result": false,
+    "real96_causally_worse_established": false,
+    "real96_causally_better_established": false,
+    "monotonic_data_budget_curve_established": false,
+    "tier_specific_generalization_effect_established": false,
+    "result_generalizes_to_other_tasks_models_operators_or_sessions": false
+  },
+  "next_gate": {
+    "gate_id": "task1_picklift_real24_same_eval48_v1",
+    "purpose": "Add the preselected Real24 point to the same frozen 48-pose bank so the Real24, Real48, and Real96 engineering budget curve can be compared without rerunning Real48 or Real96.",
+    "pose_bank_reselected": false,
+    "real48_or_real96_rerun_required": false,
+    "real24_hardware_evaluation_authorized": false,
+    "training_or_checkpoint_change_authorized": false,
+    "automatic_real36_authorized": false,
+    "automatic_replication_authorized": false
+  },
+  "execution_boundary": {
+    "additional_hardware_action": false,
+    "additional_rollout": false,
+    "additional_training": false,
+    "push": false
+  }
+}

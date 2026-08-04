@@ -1,0 +1,61 @@
+{
+  "schema": "task1_picklift_real24_questsim48_v7_act_experiment_v1",
+  "experiment_id": "task1_picklift_real24_questsim48_v7_act_v1",
+  "status": "prepared_for_offline_dataset_build_and_training",
+  "research_freeze": {
+    "windows_source": "G:\\PhysicalAI\\IAmRobotTrainerResearch\\manifests\\task1-picklift-quest-remote-mujoco-sim48-v7-freeze-v1.json",
+    "synced_copy": "research_freeze_manifest.json",
+    "sha256": "e67c630affc8c50ed564e24283d055b246be1bf3d5347bfce43230bfd72c1034"
+  },
+  "derived_dataset": {
+    "dataset_id": "task1_picklift_real24_questsim48_v7_combined72_v1",
+    "repo_id": "local/task1_picklift_real24_questsim48_v7_combined72_v1",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim48_v7_act_v1/combined72_v1",
+    "episodes": 72,
+    "frames": 10147,
+    "source_episode_policy": "each accepted Real24 and Sim48-v7 episode exactly once",
+    "source_domain_episode_counts": {
+      "real": 24,
+      "simulation": 48
+    },
+    "source_domain_frame_counts": {
+      "real": 3790,
+      "simulation": 6357
+    },
+    "raw_sources_modified": false,
+    "high_resolution_sidecars_copied": false
+  },
+  "training": {
+    "seed": 1000,
+    "batch_size": 8,
+    "domain_balancing": "deterministic 4 Real + 4 Sim per batch",
+    "use_imagenet_stats": true,
+    "smoke_steps": 500,
+    "full_steps": 100000,
+    "save_frequency_steps": 20000,
+    "selected_checkpoint_step": 100000,
+    "initialize_from_checkpoint": null,
+    "front_only": true,
+    "fps": 20,
+    "action_chunk_steps": 67
+  },
+  "excluded_inputs": [
+    "Quest-Sim24",
+    "Sim48 v6 quarantine",
+    "all prior mixed checkpoints",
+    "wrist camera"
+  ],
+  "boundaries": {
+    "offline_only": true,
+    "hardware": false,
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "12v": false,
+    "remote_or_quest_service": false,
+    "mujoco_rollout": false,
+    "paper_effect_conclusion": false,
+    "push": false
+  }
+}

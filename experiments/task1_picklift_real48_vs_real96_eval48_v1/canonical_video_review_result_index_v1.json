@@ -1,0 +1,25 @@
+{
+  "schema": "task1_picklift_real48_vs_real96_eval48_canonical_review_result_index_v1",
+  "evaluation_id": "task1_picklift_real48_vs_real96_eval48_v1",
+  "review_id": "task1_picklift_real48_vs_real96_eval48_canonical_video_review_v1",
+  "status": "review_complete",
+  "frozen_plan_sha256": "7de77eed859898a6397265244ab2f4c189d91dbb565202b99a0a5bdd208214f1",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1",
+  "artifacts": {
+    "manifest": {"path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1/manifest.json", "sha256": "d04e81d40888a03deafa391995a11819634bb65f31e738fd4117e01fa0999ca1"},
+    "summary": {"path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1/summary.json", "sha256": "46d43b817244e4ca497cd5989103ed8f18b8d458e28ba9fddea4cf6834ae7788"},
+    "trials_jsonl": {"path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1/trials.jsonl", "sha256": "6abbb950f3de0b50aeed457bf50c3b98b1c7bec0e425c0d83c317c8f628bdb76"},
+    "hashes": {"path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1/hashes.sha256", "sha256": "174107ecb032883223693ace7aa6b1c237f34cdfec837ce400d5a6aedf7b96c0"},
+    "independent_validation": {"path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real48_vs_real96_eval48_v1/canonical_video_review_v1/independent_validation.json", "sha256": "c55cc7a6600e569c3a6cd8b519c08cffe0a156547955bfcbd566e5e46de831eb"}
+  },
+  "reviewed_results": {
+    "real48": {"successes": 36, "trials": 48, "success_rate": 0.75},
+    "real96": {"successes": 33, "trials": 48, "success_rate": 0.6875},
+    "real96_minus_real48_successes": -3,
+    "real96_minus_real48_success_rate": -0.0625,
+    "operator_review_agreements": 96,
+    "operator_review_disagreements": 0,
+    "adjudications": 0
+  },
+  "interpretation_boundary": "Descriptive single-session engineering result; not a causal paper conclusion."
+}

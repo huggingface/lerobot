@@ -1,0 +1,473 @@
+{
+  "artifact_summary": {
+    "bytes": 27578,
+    "path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim48_v7_act_v1/training_result_v1/run_summary.json",
+    "sha256": "beb7ef306db03ef3ef1555b73c17b1dd8288d6b5f81c4d4860af54d6a25fabc7"
+  },
+  "boundaries": {
+    "camera_hardware_accessed": false,
+    "hardware_accessed": false,
+    "push_performed": false,
+    "real_evaluation_started": false,
+    "robot_actions_sent": false,
+    "serial_accessed": false,
+    "simulation_rollout_started": false,
+    "trained_or_finetuned_from_old_checkpoint": false
+  },
+  "control_models": {
+    "mixed_v1_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+    "mixed_v2_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68",
+    "real24_only_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+  },
+  "controlled_contract": {
+    "domain_balancing": {
+      "batch_size": 8,
+      "episode_partition": {
+        "real": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "simulation": [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71
+        ]
+      },
+      "per_batch_real": 4,
+      "per_batch_simulation": 4
+    },
+    "gripper_canonicalization": "identity, verified by dataset audit",
+    "use_imagenet_stats": true
+  },
+  "dataset": {
+    "domain_episode_counts": {
+      "quest_remote_mujoco_sim48_v7": 48,
+      "real": 24
+    },
+    "domain_frame_counts": {
+      "quest_remote_mujoco_sim48_v7": 6357,
+      "real": 3790
+    },
+    "episodes": 72,
+    "frames": 10147,
+    "repo_id": "local/task1_picklift_real24_questsim48_v7_combined72_v1",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim48_v7_act_v1/combined72_v1",
+    "tree_sha256": "957ef4a8dc7ec3c75d8b4febbebbdd839de47b9def3647eb716a28401929bedd"
+  },
+  "experiment_id": "task1_picklift_real24_questsim48_v7_act_v1",
+  "full_training": {
+    "checkpoint_hash_field": "SHA-256 of pretrained_model/model.safetensors",
+    "checkpoints": {
+      "020000": "9a861280ccb6de18dbcb0993352b401aec140161a494be196eafcd40d874bd5a",
+      "040000": "b0928c01bc8a6c58508e218b4cced80bab28ff634041705cf51f8af082a0c31b",
+      "060000": "6129c1ad16b597d7809b2ef527f93b2d727f60c60e551ec1f600d998a65e88df",
+      "080000": "179da4f6813a2b6d95ec475ad885b506bc525039d3e9eb5f0b95aa266e6472fc",
+      "100000": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03"
+    },
+    "domain_sampling": {
+      "actual_samples_seen_by_main_process": {
+        "real": 400000,
+        "simulation": 400000
+      },
+      "batch_size_per_process": 8,
+      "domain_episode_groups": {
+        "real": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "simulation": [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71
+        ]
+      },
+      "note": "Counts are taken from batches actually consumed by optimizer steps, excluding DataLoader-prefetched but unused samples.",
+      "num_processes": 1,
+      "optimizer_steps": 100000,
+      "schema": "lerobot_domain_balanced_sampling_counts_v1",
+      "seed": 1000
+    },
+    "domain_sampling_sha256": "fc7c9ced42fe3361b56734ceab747bed8922b92b6dcb747b0109b0448ed46920",
+    "duration_seconds": 5004,
+    "ended_at_local": "2026-07-31T00:38:01",
+    "final_metrics": {
+      "data_seconds": 0.001,
+      "episodes_sampled": "6K",
+      "epochs": 78.84,
+      "gpu_memory_gb": 2.02,
+      "gradient_norm": 3.593,
+      "kld_loss": 0.0,
+      "l1_loss": 0.047,
+      "learning_rate": 1e-05,
+      "loss": 0.047,
+      "reported_step": "100K",
+      "samples": "800K",
+      "samples_per_second": 161.0,
+      "update_seconds": 0.049
+    },
+    "initialized_from_policy_checkpoint": null,
+    "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k.log",
+    "log_sha256": "696337288f3a042efdb1d157cd41e5972f8594159201ff1492711ad06638fa56",
+    "saved_train_config_sha256": "d8ecc5ad671ec92675834b4dc2fe2287f1d478165b09a9cdc583f1f551f96a7c",
+    "selected_checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "selected_checkpoint_step": 100000,
+    "started_at_local": "2026-07-30T23:14:37",
+    "status": "pass",
+    "steps": 100000
+  },
+  "interpretation": "Offline engineering baseline only. Sim48-v7 replaces prior simulation data under the fixed Real24-only ACT recipe and the controlled Mixed-v2 sampler contract. No simulation or real-robot performance conclusion is made by this run.",
+  "offline_validation": {
+    "all_outputs_shape_1x6_and_finite": true,
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "domains_validated": [
+      "real",
+      "simulation"
+    ],
+    "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/offline_validation_100k.json",
+    "evidence_sha256": "8a67af18be4f83ab0a1c7dfedc776d1f81fc03229eb66a46c31da513b642da61",
+    "hardware_accessed": false,
+    "model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03",
+    "samples": [
+      {
+        "episode_index": 0,
+        "input_shapes": {
+          "observation.images.front": [
+            1,
+            3,
+            480,
+            640
+          ],
+          "observation.state": [
+            1,
+            6
+          ]
+        },
+        "output_finite": true,
+        "output_shape": [
+          1,
+          6
+        ],
+        "raw_action": [
+          -3.7158870697021484,
+          -86.36627197265625,
+          42.17726135253906,
+          92.90924835205078,
+          -3.074477195739746,
+          21.028095245361328
+        ],
+        "sample_index": 0,
+        "source_domain": "real"
+      },
+      {
+        "episode_index": 24,
+        "input_shapes": {
+          "observation.images.front": [
+            1,
+            3,
+            480,
+            640
+          ],
+          "observation.state": [
+            1,
+            6
+          ]
+        },
+        "output_finite": true,
+        "output_shape": [
+          1,
+          6
+        ],
+        "raw_action": [
+          6.995777130126953,
+          -100.42071533203125,
+          46.03992462158203,
+          92.96614074707031,
+          2.115170478820801,
+          20.424692153930664
+        ],
+        "sample_index": 3790,
+        "source_domain": "simulation"
+      }
+    ],
+    "saved_visual_processor": {
+      "mean": [
+        0.48500001430511475,
+        0.4560000002384186,
+        0.4059999883174896
+      ],
+      "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+      "sha256": "0a9ff52f6b4e46bfdbad8e38d60427f3f521aaff048119acb0c2b6370f38a8af",
+      "status": "pass_imagenet_stats",
+      "std": [
+        0.2290000021457672,
+        0.2240000069141388,
+        0.22499999403953552
+      ]
+    },
+    "simulation_rollout_started": false,
+    "status": "pass"
+  },
+  "result_evidence": {
+    "hashes_path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim48_v7_act_v1/training_result_v1/hashes.json",
+    "hashes_sha256": "ef1e8c2639ec8ed86557bd566705a4a7dcb4fe8ef3f921793d4723c923f76afc",
+    "manifest_path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim48_v7_act_v1/training_result_v1/manifest.json",
+    "manifest_sha256": "ea1ba830d01536f1a38e2c5b5bcb8de4151dac4c528e38f0bb250e2cd146bb8a",
+    "root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim48_v7_act_v1/training_result_v1"
+  },
+  "schema": "task1_picklift_real24_questsim48_v7_run_result_index_v1",
+  "smoke": {
+    "checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/smoke_500/checkpoints/000500/pretrained_model",
+    "domain_sampling": {
+      "actual_samples_seen_by_main_process": {
+        "real": 2000,
+        "simulation": 2000
+      },
+      "batch_size_per_process": 8,
+      "domain_episode_groups": {
+        "real": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "simulation": [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71
+        ]
+      },
+      "note": "Counts are taken from batches actually consumed by optimizer steps, excluding DataLoader-prefetched but unused samples.",
+      "num_processes": 1,
+      "optimizer_steps": 500,
+      "schema": "lerobot_domain_balanced_sampling_counts_v1",
+      "seed": 1000
+    },
+    "domain_sampling_sha256": "6cfffcce56ca2ae27172a01fad9ede8f60bdf1556fd23d97e2027098e548fa8d",
+    "duration_seconds": 30,
+    "ended_at_local": "2026-07-30T23:13:56",
+    "final_metrics": {
+      "data_seconds": 0.001,
+      "episodes_sampled": "28",
+      "epochs": 0.39,
+      "gpu_memory_gb": 2.02,
+      "gradient_norm": 79.907,
+      "kld_loss": 0.221,
+      "l1_loss": 0.454,
+      "learning_rate": 1e-05,
+      "loss": 2.667,
+      "reported_step": "500",
+      "samples": "4K",
+      "samples_per_second": 163.0,
+      "update_seconds": 0.048
+    },
+    "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/smoke_500.log",
+    "log_sha256": "cd38c2ba17c0f6199159e60c325c838d3c3924268bbb94f21645fe101a5800e8",
+    "model_sha256": "41be5d6c1e4a7c6d7ad04e1ab7cf09a1675067521e88a4b84059d8ca56996628",
+    "offline_validation_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim48_v7_act_v1/smoke_500/offline_validation.json",
+    "offline_validation_sha256": "d73492e8555301c7de867ab4d2ae094442b778f620d03668aef0937e1586c6dd",
+    "started_at_local": "2026-07-30T23:13:26",
+    "status": "pass",
+    "steps": 500
+  },
+  "status": "offline_training_and_validation_complete_no_rollout_started",
+  "training_config_commit": "e7d5db0417b4d2b79e797330454ef3c76012970b"
+}

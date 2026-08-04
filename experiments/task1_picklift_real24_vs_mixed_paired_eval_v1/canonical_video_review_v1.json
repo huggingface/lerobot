@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "review_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_canonical_video_review_v1",
+  "evaluation_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+  "operator_result_source_commit": "bdb5b3b921649aadb01c93609207139b97512e73",
+  "operator_manifest_sha256": "79f134d2e90004e645de2574206c685903ed7b9ef78bd72d387369112d59bc48",
+  "operator_summary_sha256": "cbd243d94d3dc11d6f74eee1216a2647d483b0363b03475990f48e092acd1e94",
+  "operator_evidence_hashes_sha256": "ea6211fb4cd5a73c381b5b665fafbda1115451de95e61a60bea831b810c9b89a",
+  "reviewer_id": "codex_canonical_video_reviewer_v1",
+  "classification_independent_of_operator_label": true,
+  "success_definition": "Within the 30-second policy window, both fingers hold the cube unsupported at approximately >=5 cm above the table continuously for >=0.5 seconds; success need not persist to the final frame.",
+  "review_method": {
+    "primary": "Full-duration timestamped 2 FPS frame grid from each canonical 20 FPS MP4.",
+    "success_confirmation": "At least two consecutive 0.5-second samples visibly show bilateral unsupported lift with an air gap of approximately one cube height or more.",
+    "failure_confirmation": "Every operator-independent review failure was additionally inspected across the full duration at 4 FPS (0.25-second spacing) to rule out a qualifying >=0.5-second lift.",
+    "derived_contact_sheets_are_temporary": true
+  },
+  "decisions": [
+    {
+      "trial_id": "t01",
+      "artifact_stem": "t01_r1c1_real24_only__replacement1",
+      "video_sha256": "26b676277f1b16383c06adb31e063bf956bff076ae17ada43a155e83f8bbea31",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 6.0,
+      "confirmation_time_seconds": 6.5,
+      "visible_evidence": "At 6.0 s and 6.5 s the cube is visibly between both fingers and unsupported with a table gap greater than roughly one cube height; it remains held afterward."
+    },
+    {
+      "trial_id": "t02",
+      "artifact_stem": "t02_r1c1_real24_questsim24",
+      "video_sha256": "a4b0e9739cb6ebaeb844907970dec1a0e61bf70acaa52c6710c8ee506a8dbe66",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 26.0,
+      "confirmation_time_seconds": 26.5,
+      "visible_evidence": "After repeated earlier top contacts, the cube is visibly held between both fingers and unsupported above one cube height at 26.0 s and 26.5 s, then remains held."
+    },
+    {
+      "trial_id": "t03",
+      "artifact_stem": "t03_r1c2_real24_questsim24",
+      "video_sha256": "16187076c97bf01b9f24efd26f30a9602c311fa5ebe0d3a166c3611ed28b2faf",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.0,
+      "confirmation_time_seconds": 5.5,
+      "visible_evidence": "The first grasp captures the cube; at 5.0 s and 5.5 s it is bilaterally held, unsupported, and visibly more than one cube height above the table."
+    },
+    {
+      "trial_id": "t04",
+      "artifact_stem": "t04_r1c2_real24_only",
+      "video_sha256": "730da9b7e89cbe415f6ae815db64a97d8209e0108667e7c102dfe37eb25ae1a3",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.0,
+      "confirmation_time_seconds": 5.5,
+      "visible_evidence": "At 5.0 s and 5.5 s the cube is visibly held between the fingers without table support and with a gap exceeding roughly one cube height."
+    },
+    {
+      "trial_id": "t05",
+      "artifact_stem": "t05_r1c3_real24_only",
+      "video_sha256": "b22c653ee9764cfd8a668652a9d87989c8709015fc7536de7f5378157843a814",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 4.5,
+      "confirmation_time_seconds": 5.0,
+      "visible_evidence": "At 4.5 s and 5.0 s the cube is visibly bilaterally held and unsupported above roughly one cube height; it stays in the gripper."
+    },
+    {
+      "trial_id": "t06",
+      "artifact_stem": "t06_r1c3_real24_questsim24",
+      "video_sha256": "393a00d15543234912762a416bf9050eb80e1364d8277208026e054923635991",
+      "review_success": false,
+      "failure_type": "missed_grasp",
+      "first_visible_qualifying_time_seconds": null,
+      "confirmation_time_seconds": null,
+      "visible_evidence": "Across the full window the gripper repeatedly passes above or beside the cube; the cube remains table-supported and no bilateral unsupported lift occurs."
+    },
+    {
+      "trial_id": "t07",
+      "artifact_stem": "t07_r1c4_real24_questsim24",
+      "video_sha256": "cdf1814ae2a98ac15133b29a4e6d81e8fdb9262f773e0f37f7a79e4101eca346",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 4.5,
+      "confirmation_time_seconds": 5.0,
+      "visible_evidence": "At 4.5 s and 5.0 s the cube is visibly captured between both fingers and unsupported more than one cube height above the table."
+    },
+    {
+      "trial_id": "t08",
+      "artifact_stem": "t08_r1c4_real24_only",
+      "video_sha256": "9ccba0ce8ffa1b0909503a22aad0e039337a8d7a3337586c0c5c7b5e9371dd92",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.0,
+      "confirmation_time_seconds": 5.5,
+      "visible_evidence": "At 5.0 s and 5.5 s the cube is visibly held by both fingers with a clear unsupported gap exceeding roughly one cube height."
+    },
+    {
+      "trial_id": "t09",
+      "artifact_stem": "t09_r2c1_real24_only",
+      "video_sha256": "1c63036f830f4f0b61be69c2ba75798bb7049cfe137e95e33b33877f28cb9212",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly between both fingers, unsupported, and lifted by more than its own height; it remains held."
+    },
+    {
+      "trial_id": "t10",
+      "artifact_stem": "t10_r2c1_real24_questsim24",
+      "video_sha256": "15c492e27a972d81354321d2cf7ddc6c38edb443f402312e9d293e9d688873d6",
+      "review_success": false,
+      "failure_type": "missed_grasp",
+      "first_visible_qualifying_time_seconds": null,
+      "confirmation_time_seconds": null,
+      "visible_evidence": "Repeated approaches contact or pass beside the cube, but the cube remains on the table throughout and is never bilaterally lifted unsupported."
+    },
+    {
+      "trial_id": "t11",
+      "artifact_stem": "t11_r2c2_real24_questsim24",
+      "video_sha256": "355858ce9283e2f8dee217b8fe241812ab1643c8f78ea1efcc3f32243855a110",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly held between both fingers and unsupported with a gap above one cube height."
+    },
+    {
+      "trial_id": "t12",
+      "artifact_stem": "t12_r2c2_real24_only",
+      "video_sha256": "db81db986f7404379122573c6d272d1449b2d80cca0df6333d9fb29c4c3285a1",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly bilaterally held, unsupported, and more than roughly one cube height above the table."
+    },
+    {
+      "trial_id": "t13",
+      "artifact_stem": "t13_r2c3_real24_only",
+      "video_sha256": "9677de24125cbaed588e96b7030dc6ddb8bdac0af3ff2518c7701df61a8e3d83",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is clearly between the fingers without table support and visibly higher than one cube height."
+    },
+    {
+      "trial_id": "t14",
+      "artifact_stem": "t14_r2c3_real24_questsim24",
+      "video_sha256": "adb9060753229338b34d66ccad18cb5ebb64992b618dedafa9023542396d54d3",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly held by both fingers, unsupported, with a table gap exceeding roughly one cube height."
+    },
+    {
+      "trial_id": "t15",
+      "artifact_stem": "t15_r2c4_real24_questsim24",
+      "video_sha256": "1b8e03d70ce8ad4edf787617cc3fbb5ff61c432e01fb77e726a6ffedde674326",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 4.5,
+      "confirmation_time_seconds": 5.0,
+      "visible_evidence": "At 4.5 s and 5.0 s the cube is visibly captured between the fingers, unsupported, and above one cube height."
+    },
+    {
+      "trial_id": "t16",
+      "artifact_stem": "t16_r2c4_real24_only",
+      "video_sha256": "300ef9cb1a0d5f20c4af3ffb47f747c9d451fe6735e458984fa30a1b9295eb6a",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 4.5,
+      "confirmation_time_seconds": 5.0,
+      "visible_evidence": "At 4.5 s and 5.0 s the cube is visibly held by both fingers and lifted unsupported above roughly one cube height."
+    },
+    {
+      "trial_id": "t17",
+      "artifact_stem": "t17_r3c1_real24_only",
+      "video_sha256": "49dd2b467f3c625873a36799c341c54ce4e5669fa0a7b43fbf0aa4afec026662",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly between both fingers, unsupported, and above one cube height; the hold continues."
+    },
+    {
+      "trial_id": "t18",
+      "artifact_stem": "t18_r3c1_real24_questsim24",
+      "video_sha256": "27fa176c94dec0eb73c9bb81d0899c36c3a012ac88f569186bcf33d0b9a91c52",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is clearly held between the fingers without table support and above roughly one cube height."
+    },
+    {
+      "trial_id": "t19",
+      "artifact_stem": "t19_r3c2_real24_questsim24",
+      "video_sha256": "7081335f9c25f9bb341bd9eec69fd0f27f3fae2cdc5a21526b41d142adaff17c",
+      "review_success": false,
+      "failure_type": "missed_grasp",
+      "first_visible_qualifying_time_seconds": null,
+      "confirmation_time_seconds": null,
+      "visible_evidence": "The gripper repeatedly closes beside or over the cube; the cube stays table-supported through the full window and no qualifying unsupported lift appears."
+    },
+    {
+      "trial_id": "t20",
+      "artifact_stem": "t20_r3c2_real24_only",
+      "video_sha256": "84d46e50bbba05d958c1cdcabec264bfc3db55124bb65486515692204ea8aca1",
+      "review_success": false,
+      "failure_type": "missed_grasp",
+      "first_visible_qualifying_time_seconds": null,
+      "confirmation_time_seconds": null,
+      "visible_evidence": "Repeated offset approaches fail to secure the cube; it remains supported by the table for the entire policy window."
+    },
+    {
+      "trial_id": "t21",
+      "artifact_stem": "t21_r3c3_real24_only",
+      "video_sha256": "5b043bf3e70229595ccb66cc96df2274318fc53001e29e300fe47a752047cab1",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.5,
+      "confirmation_time_seconds": 6.0,
+      "visible_evidence": "At 5.5 s and 6.0 s the cube is visibly held between both fingers and unsupported above roughly one cube height; it remains held."
+    },
+    {
+      "trial_id": "t22",
+      "artifact_stem": "t22_r3c3_real24_questsim24",
+      "video_sha256": "df04bb20eddc00bfd4351284f25a75ff85e0d0bf85d6eaaef8139fb88b410493",
+      "review_success": false,
+      "failure_type": "missed_grasp",
+      "first_visible_qualifying_time_seconds": null,
+      "confirmation_time_seconds": null,
+      "visible_evidence": "The gripper repeatedly approaches above or laterally offset from the cube; the cube remains on the table and no bilateral unsupported lift occurs."
+    },
+    {
+      "trial_id": "t23",
+      "artifact_stem": "t23_r3c4_real24_questsim24",
+      "video_sha256": "e48875da7cbb0c10ed192067d6d89627431dd479c3cca0f92dc8023eec249bb3",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.0,
+      "confirmation_time_seconds": 5.5,
+      "visible_evidence": "At 5.0 s and 5.5 s the cube is visibly secured between both fingers, unsupported, and more than one cube height above the table."
+    },
+    {
+      "trial_id": "t24",
+      "artifact_stem": "t24_r3c4_real24_only",
+      "video_sha256": "ff5c36b9b301be2451b95341eb27bbd6689287b3bc6a210f79e56a8e181521b5",
+      "review_success": true,
+      "failure_type": null,
+      "first_visible_qualifying_time_seconds": 5.0,
+      "confirmation_time_seconds": 5.5,
+      "visible_evidence": "At 5.0 s and 5.5 s the cube is visibly bilaterally held and unsupported above roughly one cube height; the hold continues."
+    }
+  ]
+}

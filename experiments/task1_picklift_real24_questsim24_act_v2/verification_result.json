@@ -1,0 +1,13 @@
+{
+  "schema": "task1_picklift_mixed_v2_training_result_verification_index_v1",
+  "status": "pass",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim24_act_v2/training_result_v1",
+  "verification_path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_questsim24_act_v2/training_result_v1/verification.json",
+  "verification_sha256": "6b8e706c2b58ed21248c3102f0880430b56afeec0565740c00f32d315a540117",
+  "manifest_sha256": "332213a2c444aedfabf1e3f44dad5328b83b40447207d6f1c6b91f4e1b78105d",
+  "hashes_sha256": "ef7ec3bd9c306f69b1f83af634bb0ef90153c4f8974c799ba6afc59894960aea",
+  "run_summary_sha256": "868e9c595242dd6552d7b9db6291685b3d5fd1fd5f690393c04a13c0fd3bcfe3",
+  "verified_hash_entries": 22,
+  "selected_model_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68",
+  "offline_only_boundaries_all_false": true
+}

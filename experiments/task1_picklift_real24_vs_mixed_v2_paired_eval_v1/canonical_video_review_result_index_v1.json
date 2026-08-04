@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "review_id": "task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_canonical_video_review_v1",
+  "evaluation_id": "task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1",
+  "result_scope": "independent canonical-video review complete",
+  "paper_conclusion": false,
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/canonical_video_review_v1",
+  "operator_result_source": {
+    "commit": "f0832638f6087f7fdc16b8184793754eb3070c97",
+    "manifest_sha256": "9ffffd0f376e2f33dadece6fa9738309611654a0008c30081939d013f3a4edfe",
+    "summary_sha256": "74392a3ebb007405fd6697580c210a7aa84b606b2c9a7abd2199b021ff226b68",
+    "evidence_hashes_sha256": "68ca70102ccb1e33c98a038a8bc2244ac16aabd66a7a94dc66d2ab4cc2f19de6",
+    "operator_labels_preserved": true
+  },
+  "review_source": {
+    "decisions_path": "experiments/task1_picklift_real24_vs_mixed_v2_paired_eval_v1/canonical_video_review_v1.json",
+    "decisions_sha256": "32b40968c6d0475779da4d5a4096e793124c99a09cc84d47030620b76e6aff52",
+    "freeze_script_path": "experiments/task1_picklift_real24_vs_mixed_v2_paired_eval_v1/freeze_canonical_video_review.py",
+    "freeze_script_sha256": "6830b17df95dade5a2355c8605d22e8e1957a9efdca46bded9a64f40cc52f068"
+  },
+  "frozen_outputs": {
+    "review_manifest_v1_sha256": "2fae034c9dc1029485545e871707cc6417b4d14f58e3f4d4f61c5db2ac6b36bb",
+    "review_trials_v1_sha256": "32de2581d7c20a79425fc8417222e8481da595a408daa733af73a368990c23a3",
+    "reviewed_summary_v1_sha256": "d03aee9c9f5434fb3d3dbf8bc707c40236fd93dcc2dff28b6141a68b3474fff3",
+    "validation_v1_sha256": "e98122d271beaf99f12f79666040af1b0ea7b2f90042d372d18f60aa46901400",
+    "review_hashes_v1_sha256": "c74169659f6f6c94466e9739d1731395226995b0d1d3890dfa94d427e62dbdac",
+    "review_label_files": 24,
+    "hashed_artifacts": 202
+  },
+  "video_and_tick_validation": {
+    "videos": 24,
+    "canonical_contract": "640x480 at 20 FPS",
+    "total_policy_ticks": 14232,
+    "total_video_frames": 14232,
+    "all_frame_counts_equal_policy_tick_counts": true,
+    "minimum_last_tick_elapsed_seconds": 29.952774417004548,
+    "maximum_last_tick_elapsed_seconds": 29.98050093499478,
+    "all_cover_full_30_second_wall_clock_policy_window": true,
+    "independently_verified_hashed_artifacts": 202
+  },
+  "reviewed_result": {
+    "real24_only": {
+      "reviewed_successes": 10,
+      "trials": 12,
+      "reviewed_success_rate": 0.8333333333333334,
+      "reviewed_failures": 2
+    },
+    "mixed_v2": {
+      "reviewed_successes": 9,
+      "trials": 12,
+      "reviewed_success_rate": 0.75,
+      "reviewed_failures": 3
+    },
+    "absolute_success_difference_mixed_v2_minus_real24_only": -1,
+    "percentage_point_difference_mixed_v2_minus_real24_only": -8.333333333333337,
+    "paired_outcomes": {
+      "both_success": 8,
+      "both_failure": 1,
+      "real24_only_only": 2,
+      "mixed_only": 1
+    },
+    "operator_review_agreements": 24,
+    "operator_review_disagreements": 0,
+    "adjudications_required": 0,
+    "review_failure_types": {
+      "missed_grasp": 5
+    },
+    "review_failure_trials": [
+      "t03",
+      "t11",
+      "t13",
+      "t19",
+      "t20"
+    ]
+  },
+  "paired_cell_table": [
+    {"cell_id": "r1c1", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r1c2", "real24_only": true, "mixed_v2": false, "outcome": "real24_only_only"},
+    {"cell_id": "r1c3", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r1c4", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r2c1", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r2c2", "real24_only": true, "mixed_v2": false, "outcome": "real24_only_only"},
+    {"cell_id": "r2c3", "real24_only": false, "mixed_v2": true, "outcome": "mixed_only"},
+    {"cell_id": "r2c4", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r3c1", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r3c2", "real24_only": false, "mixed_v2": false, "outcome": "both_failure"},
+    {"cell_id": "r3c3", "real24_only": true, "mixed_v2": true, "outcome": "both_success"},
+    {"cell_id": "r3c4", "real24_only": true, "mixed_v2": true, "outcome": "both_success"}
+  ],
+  "interpretation_boundary": "Descriptive reviewed result for one frozen paired real evaluation session. It does not by itself establish a causal training-data effect or a paper-level performance conclusion."
+}

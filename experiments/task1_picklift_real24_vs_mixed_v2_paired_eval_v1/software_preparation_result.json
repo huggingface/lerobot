@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1",
+  "status": "software_preparation_passed_waiting_for_onsite_confirmation",
+  "created_at_utc": "2026-07-30T01:43:08.128447+00:00",
+  "source_commit": "16c947c6e1968516df88e34994f84e1f81a85d86",
+  "plan": {
+    "path": "experiments/task1_picklift_real24_vs_mixed_v2_paired_eval_v1/evaluation_plan.json",
+    "sha256": "d59d07a5abcc1644ba89c8d8234e00b113a676b226c10503054a341cae2d9dc5",
+    "trials": 24,
+    "real24_only_trials": 12,
+    "mixed_v2_trials": 12
+  },
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q experiments/task1_picklift_real24_vs_mixed_v2_paired_eval_v1/test_paired_evaluator.py experiments/task1_picklift_real24_act_v1/test_real_evaluation_return.py",
+    "result": "20 passed in 0.96s"
+  },
+  "software_dry_run": {
+    "status": "software_dry_run_passed_hardware_not_accessed",
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/software_preparation_v1/dry_run.json",
+    "sha256": "7037e9574840f8c65a67142d388729426fd31f7aead7b71a5791c5301cf8aa7e",
+    "manifest_sha256": "190ac3f97dcc855c5cb5a512c5cea6209e0be6083fed5e932d31023e965a274e",
+    "hashes_sha256": "0ca7d1f00e44472cca08589b2f1b015528f516c586b452c83b337c064b5b861f"
+  },
+  "device_identity": {
+    "status": "identity_snapshot_passed_devices_not_opened",
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_v2_paired_real24_eval24_v1/software_preparation_v1/device_identity.json",
+    "sha256": "c1a0b34edcf05742d9de27dbe34596b8baa359eb04bcdb044547a92bcfd34bf5",
+    "hashes_sha256": "f2fcaf94c805409274a230b54857bad24cc332689a385106a3ea437b5fed6fb6",
+    "follower_by_id": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C82110904-if00",
+    "follower_resolved_device": "/dev/ttyACM0",
+    "camera_by_id": "/dev/v4l/by-id/usb-icSpring_icspring_camera_202404160005-video-index0",
+    "camera_resolved_device": "/dev/video0",
+    "busy_process_ids": [],
+    "serial_opened": false,
+    "camera_opened": false,
+    "robot_connected": false,
+    "torque_commanded": false,
+    "action_sent": false
+  },
+  "frozen_setup": {
+    "calibration_sha256": "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0",
+    "camera_profile_sha256": "5180daefa67806bcf3bc14c7e61d55b24ad3f08a454223e96e83036224aeec29",
+    "official_send_engine_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96",
+    "profile_sha256": "60025f6478a63bcf9b301a75cd27124b19f1cf4f6b142f8576e6b10abf4f95a5",
+    "ready_observation_tolerance_degrees": 3.0
+  },
+  "models": {
+    "real24_only_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "mixed_v2_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68",
+    "both_saved_use_imagenet_stats": true
+  },
+  "next_gate": "Require onsite confirmation before the first serial, camera, robot, torque, or action access."
+}

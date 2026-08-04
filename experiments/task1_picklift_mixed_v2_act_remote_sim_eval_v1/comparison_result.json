@@ -1,0 +1,132 @@
+{
+  "by_cell": {
+    "r1c1": {
+      "mixed_v1_success_rate": 0.8,
+      "mixed_v1_successes": 8,
+      "mixed_v2_success_rate": 0.4,
+      "mixed_v2_successes": 4,
+      "success_difference_v2_minus_v1": -4,
+      "success_rate_difference_v2_minus_v1": -0.4
+    },
+    "r1c2": {
+      "mixed_v1_success_rate": 0.5,
+      "mixed_v1_successes": 5,
+      "mixed_v2_success_rate": 0.7,
+      "mixed_v2_successes": 7,
+      "success_difference_v2_minus_v1": 2,
+      "success_rate_difference_v2_minus_v1": 0.19999999999999996
+    },
+    "r1c3": {
+      "mixed_v1_success_rate": 0.1,
+      "mixed_v1_successes": 1,
+      "mixed_v2_success_rate": 0.1,
+      "mixed_v2_successes": 1,
+      "success_difference_v2_minus_v1": 0,
+      "success_rate_difference_v2_minus_v1": 0.0
+    },
+    "r1c4": {
+      "mixed_v1_success_rate": 0.1,
+      "mixed_v1_successes": 1,
+      "mixed_v2_success_rate": 0.2,
+      "mixed_v2_successes": 2,
+      "success_difference_v2_minus_v1": 1,
+      "success_rate_difference_v2_minus_v1": 0.1
+    },
+    "r2c1": {
+      "mixed_v1_success_rate": 0.7,
+      "mixed_v1_successes": 7,
+      "mixed_v2_success_rate": 0.8,
+      "mixed_v2_successes": 8,
+      "success_difference_v2_minus_v1": 1,
+      "success_rate_difference_v2_minus_v1": 0.10000000000000009
+    },
+    "r2c2": {
+      "mixed_v1_success_rate": 0.8,
+      "mixed_v1_successes": 8,
+      "mixed_v2_success_rate": 0.5,
+      "mixed_v2_successes": 5,
+      "success_difference_v2_minus_v1": -3,
+      "success_rate_difference_v2_minus_v1": -0.30000000000000004
+    },
+    "r2c3": {
+      "mixed_v1_success_rate": 0.2,
+      "mixed_v1_successes": 2,
+      "mixed_v2_success_rate": 0.3,
+      "mixed_v2_successes": 3,
+      "success_difference_v2_minus_v1": 1,
+      "success_rate_difference_v2_minus_v1": 0.09999999999999998
+    },
+    "r2c4": {
+      "mixed_v1_success_rate": 0.4,
+      "mixed_v1_successes": 4,
+      "mixed_v2_success_rate": 0.3,
+      "mixed_v2_successes": 3,
+      "success_difference_v2_minus_v1": -1,
+      "success_rate_difference_v2_minus_v1": -0.10000000000000003
+    },
+    "r3c1": {
+      "mixed_v1_success_rate": 0.7,
+      "mixed_v1_successes": 7,
+      "mixed_v2_success_rate": 0.6,
+      "mixed_v2_successes": 6,
+      "success_difference_v2_minus_v1": -1,
+      "success_rate_difference_v2_minus_v1": -0.09999999999999998
+    },
+    "r3c2": {
+      "mixed_v1_success_rate": 0.4,
+      "mixed_v1_successes": 4,
+      "mixed_v2_success_rate": 0.4,
+      "mixed_v2_successes": 4,
+      "success_difference_v2_minus_v1": 0,
+      "success_rate_difference_v2_minus_v1": 0.0
+    },
+    "r3c3": {
+      "mixed_v1_success_rate": 0.2,
+      "mixed_v1_successes": 2,
+      "mixed_v2_success_rate": 0.1,
+      "mixed_v2_successes": 1,
+      "success_difference_v2_minus_v1": -1,
+      "success_rate_difference_v2_minus_v1": -0.1
+    },
+    "r3c4": {
+      "mixed_v1_success_rate": 0.3,
+      "mixed_v1_successes": 3,
+      "mixed_v2_success_rate": 0.1,
+      "mixed_v2_successes": 1,
+      "success_difference_v2_minus_v1": -2,
+      "success_rate_difference_v2_minus_v1": -0.19999999999999998
+    }
+  },
+  "comparison_boundary": "Mixed v2 versus Mixed v1 is a same-Remote-contract, single-seed, small-sample descriptive diagnostic. It does not isolate the bundled engineering changes, establish a causal effect, or constitute a real-robot or paper performance conclusion.",
+  "contract_relationship": "same Remote runner, plan, reset, ready, spawn, camera, clock, success, observation, action-processing, and frozen120 trial contract; model checkpoint and checkpoint-owned processor differ",
+  "mixed_v1": {
+    "environment_clipped_action_count": 22465,
+    "episodes": 120,
+    "failure_types": {
+      "policy_task_failure": 68
+    },
+    "frozen_summary_sha256": "de94cd50a02dd768b6636b521fc68b9437fdf62ea37569af86b66479f9853ee9",
+    "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+    "official_success_rate": 0.43333333333333335,
+    "official_successes": 52,
+    "result_index_path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_mixed_act_remote_sim_eval_v1/result_index.json",
+    "result_index_sha256": "711e59df28ab2982652587eb56cba2df49c285e1a492f4077b33991f018e8221"
+  },
+  "mixed_v2": {
+    "environment_clipped_action_count": 30624,
+    "episodes": 120,
+    "failure_types": {
+      "policy_task_failure": 75
+    },
+    "model_sha256": "b7faae880393bdbf5e44ebeaab1f399f732d6ee325be698f999c90eb865cee68",
+    "official_success_rate": 0.375,
+    "official_successes": 45
+  },
+  "overall_difference_v2_minus_v1": {
+    "percentage_points": -5.833333333333335,
+    "success_rate": -0.05833333333333335,
+    "successes": -7
+  },
+  "schema_version": 1,
+  "status": "same_remote_contract_descriptive_diagnostic_only"
+}

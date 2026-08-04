@@ -1,0 +1,119 @@
+{
+  "schema": "task1_picklift_real24_questsim24_act_run_result_index_v1",
+  "experiment_id": "task1_picklift_real24_questsim24_act_v1",
+  "status": "offline_training_and_validation_complete_no_rollout_started",
+  "research_plan_commit": "63874ee",
+  "training_config_commit": "656dfbb04e54d2fddfb4bcaf6fecf71232aa12e3",
+  "dataset": {
+    "repo_id": "local/task1_picklift_real24_questsim24_combined48_v2",
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_questsim24_act_v1/combined48_v2",
+    "freeze_id": "task1_picklift_real24_questsim24_combined48_v2_freeze_v1",
+    "tree_sha256": "cf70d2195325779187a8433992754f739ff8c99541182e5b32da90cd68ac2086",
+    "episodes": 48,
+    "frames": 7966,
+    "real_episodes_frames": [
+      24,
+      3790
+    ],
+    "simulation_episodes_frames": [
+      24,
+      4176
+    ]
+  },
+  "runtime": {
+    "python": "3.12.3",
+    "lerobot": "0.6.1",
+    "torch": "2.11.0+cu128",
+    "cuda_available": true,
+    "gpu": "NVIDIA GeForce RTX 4080"
+  },
+  "smoke": {
+    "steps": 500,
+    "status": "pass",
+    "final_metrics": {
+      "loss": 2.675,
+      "l1_loss": 0.463,
+      "kld_loss": 0.221,
+      "gradient_norm": 80.243,
+      "gpu_memory_gb": 2.02
+    },
+    "checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/smoke_500/checkpoints/000500/pretrained_model",
+    "model_sha256": "c2358f9174f834aa1e802edbd8122ffef726ab352eddb24480fc1762e78af24c",
+    "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/smoke_500.log",
+    "log_sha256": "702259d30f6e3f914964127f21e6aac32a3f966b898de97c0f76832b634765be",
+    "checkpoint_reload_and_finite_inference": "pass",
+    "attempt0": {
+      "status": "failed_before_training",
+      "training_steps_completed": 0,
+      "reason": "non-numeric evidence fields in superseded v1 visual stats",
+      "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/smoke_500_attempt0_invalid_visual_stats.log",
+      "log_sha256": "ca17b21c4b893af7e311d947d4f39f61d100571afa977d2388aa374d818f3886"
+    }
+  },
+  "full_training": {
+    "steps": 100000,
+    "status": "pass",
+    "started_at_local": "2026-07-29T18:19:12",
+    "ended_at_local": "2026-07-29T19:42:57",
+    "duration_seconds": 5025,
+    "final_metrics": {
+      "loss": 0.051,
+      "l1_loss": 0.05,
+      "kld_loss": 0.0,
+      "gradient_norm": 3.741,
+      "learning_rate": 0.00001,
+      "gpu_memory_gb": 2.02,
+      "samples_per_second": 161.0
+    },
+    "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/full_100k.log",
+    "log_sha256": "52f6b39ace8cd8fccb2943322b2665b9fc2b66391b24b6a66fae3573b0acdaed",
+    "checkpoints": {
+      "020000": "0597fea34cea1691e42593c8efbdcc2368b78c82d18fc34bf0a00044e8f591d5",
+      "040000": "f974124fea3160a803d7327b9bdc8c5094f3a44f6b06980284a21c71faf6d555",
+      "060000": "a3bc0f72194310eb345d6bddd6538d0c49355d46327176cf9d18124b4d099314",
+      "080000": "9c9b8ff1e095254fb0ea5b6ec068c0bf16dc2f992eada8436a45a398d39997c2",
+      "100000": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5"
+    },
+    "checkpoint_hash_field": "SHA-256 of pretrained_model/model.safetensors",
+    "selected_checkpoint_step": 100000,
+    "selected_checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "saved_train_config_sha256": "5de409ec293d86ed8e461f12eb352903ac05b20dc7068de7379582ae1f782c5c",
+    "initialized_from_policy_checkpoint": null
+  },
+  "offline_validation": {
+    "status": "pass",
+    "sample_index": 0,
+    "input_state_shape": [
+      1,
+      6
+    ],
+    "input_front_shape": [
+      1,
+      3,
+      480,
+      640
+    ],
+    "output_shape": [
+      1,
+      6
+    ],
+    "output_finite": true,
+    "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/offline_validation_100k.json",
+    "evidence_sha256": "7e4a189028dd1dc711ba8af5532426544bd4ac35f7ca4329f3fc1de2d29eb42d"
+  },
+  "artifact_summary": {
+    "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/run_summary.json",
+    "sha256": "882f7b4f4a27767c0c7fb48e7c4f2e64b5a726fd01785585af6051c842e2e49d"
+  },
+  "boundaries": {
+    "hardware_accessed": false,
+    "serial_accessed": false,
+    "camera_hardware_accessed": false,
+    "robot_actions_sent": false,
+    "simulation_rollout_started": false,
+    "real_evaluation_started": false,
+    "trained_or_finetuned_from_old_checkpoint": false,
+    "push_performed": false
+  },
+  "interpretation": "Offline engineering baseline only; no simulation or real-robot performance conclusion."
+}

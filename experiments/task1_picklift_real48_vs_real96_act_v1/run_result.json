@@ -1,0 +1,746 @@
+{
+  "comparison_boundary": {
+    "checkpoint_selection_by_loss_or_result": false,
+    "fixed_step": 100000,
+    "paper_effect_conclusion": false,
+    "real_or_sim_rollout_executed": false,
+    "single_seed": 1000,
+    "training_loss_is_not_policy_effect": true
+  },
+  "conditions": {
+    "real48": {
+      "full_training": {
+        "checkpoints": {
+          "020000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/020000/pretrained_model",
+            "model_sha256": "7de799ac2faf0917742b2983540161b00b526f1b2fa640e632689881e13a6f27",
+            "saved_train_config_sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          },
+          "040000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/040000/pretrained_model",
+            "model_sha256": "5378469a639266fedbbdfc55f9c2c054983ef1fd396de5fb66ed9146eb104015",
+            "saved_train_config_sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          },
+          "060000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/060000/pretrained_model",
+            "model_sha256": "7791d7ddded392c313019ff39c2668bc930fd8a7f4d85a2be361e361e61ebb50",
+            "saved_train_config_sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          },
+          "080000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/080000/pretrained_model",
+            "model_sha256": "eb34e0dce11bbb4946606912d164cfac3e635ef7777124b0b36a5c0068dc9b25",
+            "saved_train_config_sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          },
+          "100000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model",
+            "model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+            "saved_train_config_sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          }
+        },
+        "duration_seconds": 5025,
+        "ended_at_local": "2026-08-02T19:43:50",
+        "final_metrics": {
+          "data_seconds": 0.001,
+          "episodes_sampled": "4K",
+          "epochs": 89.34,
+          "gpu_memory_gb": 2.02,
+          "gradient_norm": 2.84,
+          "kld_loss": 0.0,
+          "l1_loss": 0.036,
+          "learning_rate": 1e-05,
+          "loss": 0.036,
+          "reported_step": "100K",
+          "samples": "800K",
+          "samples_per_second": 160.0,
+          "update_seconds": 0.049
+        },
+        "initialized_from_checkpoint": null,
+        "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k.log",
+        "log_sha256": "ebef6ce215e39bfef2a0998477eee52eca59fad5f61c806aa689feb80757f54a",
+        "processor_sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a",
+        "processor_stats_sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906",
+        "selected_checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model",
+        "selected_checkpoint_step": 100000,
+        "selected_model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+        "started_at_local": "2026-08-02T18:20:05",
+        "status": "pass",
+        "steps": 100000
+      },
+      "offline_validation": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model",
+        "condition": "real48",
+        "condition_local_state_action_stats_match": true,
+        "dataset_repo_id": "local/task1_picklift_real96_accepted_v1_accepted",
+        "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/offline_validation_100k.json",
+        "evidence_sha256": "cb2b8b63a365c8aa2ba203177f4c69ba4a459a49e886a3c7343dd120ec498a49",
+        "files": {
+          "model": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/model.safetensors",
+            "sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c"
+          },
+          "policy_config": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/config.json",
+            "sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4"
+          },
+          "policy_postprocessor": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor.json",
+            "sha256": "648b415125a183dfd6cbc47c1dc04ab3f2d912654ef22a12ca5e8b93d7d85cdd"
+          },
+          "policy_postprocessor_stats": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+            "sha256": "2771f609d933fd5f16246a7675ba3606d86c9878586612af2b7c96d7c0de4f67"
+          },
+          "policy_preprocessor": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor.json",
+            "sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a"
+          },
+          "policy_preprocessor_stats": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+            "sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906"
+          },
+          "saved_train_config": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/train_config.json",
+            "sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+          }
+        },
+        "hardware_accessed": false,
+        "imagenet_mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "imagenet_std": [
+          0.229,
+          0.224,
+          0.225
+        ],
+        "input_shapes": {
+          "observation.images.front": [
+            1,
+            3,
+            480,
+            640
+          ],
+          "observation.state": [
+            1,
+            6
+          ]
+        },
+        "model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+        "normalizer_tensor_keys": [
+          "action.count",
+          "action.max",
+          "action.mean",
+          "action.min",
+          "action.q01",
+          "action.q10",
+          "action.q50",
+          "action.q90",
+          "action.q99",
+          "action.std",
+          "episode_index.count",
+          "episode_index.max",
+          "episode_index.mean",
+          "episode_index.min",
+          "episode_index.q01",
+          "episode_index.q10",
+          "episode_index.q50",
+          "episode_index.q90",
+          "episode_index.q99",
+          "episode_index.std",
+          "frame_index.count",
+          "frame_index.max",
+          "frame_index.mean",
+          "frame_index.min",
+          "frame_index.q01",
+          "frame_index.q10",
+          "frame_index.q50",
+          "frame_index.q90",
+          "frame_index.q99",
+          "frame_index.std",
+          "index.count",
+          "index.max",
+          "index.mean",
+          "index.min",
+          "index.q01",
+          "index.q10",
+          "index.q50",
+          "index.q90",
+          "index.q99",
+          "index.std",
+          "observation.images.front.count",
+          "observation.images.front.max",
+          "observation.images.front.mean",
+          "observation.images.front.min",
+          "observation.images.front.q01",
+          "observation.images.front.q10",
+          "observation.images.front.q50",
+          "observation.images.front.q90",
+          "observation.images.front.q99",
+          "observation.images.front.std",
+          "observation.state.count",
+          "observation.state.max",
+          "observation.state.mean",
+          "observation.state.min",
+          "observation.state.q01",
+          "observation.state.q10",
+          "observation.state.q50",
+          "observation.state.q90",
+          "observation.state.q99",
+          "observation.state.std",
+          "task_index.count",
+          "task_index.max",
+          "task_index.mean",
+          "task_index.min",
+          "task_index.q01",
+          "task_index.q10",
+          "task_index.q50",
+          "task_index.q90",
+          "task_index.q99",
+          "task_index.std",
+          "timestamp.count",
+          "timestamp.max",
+          "timestamp.mean",
+          "timestamp.min",
+          "timestamp.q01",
+          "timestamp.q10",
+          "timestamp.q50",
+          "timestamp.q90",
+          "timestamp.q99",
+          "timestamp.std"
+        ],
+        "output_finite": true,
+        "output_shape": [
+          1,
+          6
+        ],
+        "processor_stats_sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906",
+        "raw_action": [
+          -0.7906255722045898,
+          -109.16403198242188,
+          102.97013854980469,
+          67.5574722290039,
+          0.10078716278076172,
+          92.08840942382812
+        ],
+        "sample_index": 0,
+        "schema": "task1_picklift_real48_real96_act_offline_checkpoint_validation_v1",
+        "status": "pass",
+        "use_imagenet_stats": true
+      },
+      "smoke": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/smoke_500/checkpoints/000500/pretrained_model",
+        "duration_seconds": 30,
+        "ended_at_local": "2026-08-02T18:18:49",
+        "final_metrics": {
+          "data_seconds": 0.001,
+          "episodes_sampled": "21",
+          "epochs": 0.45,
+          "gpu_memory_gb": 2.02,
+          "gradient_norm": 79.895,
+          "kld_loss": 0.215,
+          "l1_loss": 0.394,
+          "learning_rate": 1e-05,
+          "loss": 2.542,
+          "reported_step": "500",
+          "samples": "4K",
+          "samples_per_second": 163.0,
+          "update_seconds": 0.048
+        },
+        "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/smoke_500.log",
+        "log_sha256": "a1ba5e91888471d94f0821b316ce838b68e474455d7283c0f89333d6544c04fa",
+        "model_sha256": "f5fd5e830a6d649a8693ce00f17ee70416b1cf3a92570291e1cd5cc063addb8f",
+        "offline_validation_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/smoke_500/offline_validation.json",
+        "offline_validation_sha256": "7ba1fb475aae73e9535df710046034651e49b996f48ba8836584ee143abc5056",
+        "started_at_local": "2026-08-02T18:18:19",
+        "status": "pass",
+        "steps": 500
+      }
+    },
+    "real96": {
+      "full_training": {
+        "checkpoints": {
+          "020000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/020000/pretrained_model",
+            "model_sha256": "40d2a0f8921da7aceb6d864a54ec7aa3ceda1a934ee702f99ed9d1b81fefc0e1",
+            "saved_train_config_sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          },
+          "040000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/040000/pretrained_model",
+            "model_sha256": "3d87d33ef2252fcdf7d1c5404c72e31533b04afbf4a8bfc672c7fd0a667c1caf",
+            "saved_train_config_sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          },
+          "060000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/060000/pretrained_model",
+            "model_sha256": "0c62b793524c8e391952cc4b05556f07aa33bcd24fd740463e1998520475e5d3",
+            "saved_train_config_sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          },
+          "080000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/080000/pretrained_model",
+            "model_sha256": "539f9010f519a7d8c080d61626353cad2f23e168467e61028ce7dec341017f71",
+            "saved_train_config_sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          },
+          "100000": {
+            "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model",
+            "model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+            "saved_train_config_sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          }
+        },
+        "duration_seconds": 5050,
+        "ended_at_local": "2026-08-02T21:08:28",
+        "final_metrics": {
+          "data_seconds": 0.001,
+          "episodes_sampled": "4K",
+          "epochs": 45.87,
+          "gpu_memory_gb": 2.02,
+          "gradient_norm": 3.156,
+          "kld_loss": 0.0,
+          "l1_loss": 0.042,
+          "learning_rate": 1e-05,
+          "loss": 0.043,
+          "reported_step": "100K",
+          "samples": "800K",
+          "samples_per_second": 159.0,
+          "update_seconds": 0.049
+        },
+        "initialized_from_checkpoint": null,
+        "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k.log",
+        "log_sha256": "1f024b48fc80312b00c745a09eb4267fd7c1dd126afe64e78f4ef31bd217891e",
+        "processor_sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a",
+        "processor_stats_sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a",
+        "selected_checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model",
+        "selected_checkpoint_step": 100000,
+        "selected_model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+        "started_at_local": "2026-08-02T19:44:18",
+        "status": "pass",
+        "steps": 100000
+      },
+      "offline_validation": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model",
+        "condition": "real96",
+        "condition_local_state_action_stats_match": true,
+        "dataset_repo_id": "local/task1_picklift_real96_accepted_v1",
+        "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/offline_validation_100k.json",
+        "evidence_sha256": "1766823ccd26ab876e55ecb2dadaa19fd0b547f452ca03a088925dcbc9bac9f8",
+        "files": {
+          "model": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/model.safetensors",
+            "sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44"
+          },
+          "policy_config": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/config.json",
+            "sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4"
+          },
+          "policy_postprocessor": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor.json",
+            "sha256": "648b415125a183dfd6cbc47c1dc04ab3f2d912654ef22a12ca5e8b93d7d85cdd"
+          },
+          "policy_postprocessor_stats": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+            "sha256": "995e691a68927331971d9d49a32cc0550a624a1c61325539208134d665bca38b"
+          },
+          "policy_preprocessor": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor.json",
+            "sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a"
+          },
+          "policy_preprocessor_stats": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+            "sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a"
+          },
+          "saved_train_config": {
+            "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/train_config.json",
+            "sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+          }
+        },
+        "hardware_accessed": false,
+        "imagenet_mean": [
+          0.485,
+          0.456,
+          0.406
+        ],
+        "imagenet_std": [
+          0.229,
+          0.224,
+          0.225
+        ],
+        "input_shapes": {
+          "observation.images.front": [
+            1,
+            3,
+            480,
+            640
+          ],
+          "observation.state": [
+            1,
+            6
+          ]
+        },
+        "model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+        "normalizer_tensor_keys": [
+          "action.count",
+          "action.max",
+          "action.mean",
+          "action.min",
+          "action.q01",
+          "action.q10",
+          "action.q50",
+          "action.q90",
+          "action.q99",
+          "action.std",
+          "episode_index.count",
+          "episode_index.max",
+          "episode_index.mean",
+          "episode_index.min",
+          "episode_index.q01",
+          "episode_index.q10",
+          "episode_index.q50",
+          "episode_index.q90",
+          "episode_index.q99",
+          "episode_index.std",
+          "frame_index.count",
+          "frame_index.max",
+          "frame_index.mean",
+          "frame_index.min",
+          "frame_index.q01",
+          "frame_index.q10",
+          "frame_index.q50",
+          "frame_index.q90",
+          "frame_index.q99",
+          "frame_index.std",
+          "index.count",
+          "index.max",
+          "index.mean",
+          "index.min",
+          "index.q01",
+          "index.q10",
+          "index.q50",
+          "index.q90",
+          "index.q99",
+          "index.std",
+          "observation.images.front.count",
+          "observation.images.front.max",
+          "observation.images.front.mean",
+          "observation.images.front.min",
+          "observation.images.front.q01",
+          "observation.images.front.q10",
+          "observation.images.front.q50",
+          "observation.images.front.q90",
+          "observation.images.front.q99",
+          "observation.images.front.std",
+          "observation.state.count",
+          "observation.state.max",
+          "observation.state.mean",
+          "observation.state.min",
+          "observation.state.q01",
+          "observation.state.q10",
+          "observation.state.q50",
+          "observation.state.q90",
+          "observation.state.q99",
+          "observation.state.std",
+          "task_index.count",
+          "task_index.max",
+          "task_index.mean",
+          "task_index.min",
+          "task_index.q01",
+          "task_index.q10",
+          "task_index.q50",
+          "task_index.q90",
+          "task_index.q99",
+          "task_index.std",
+          "timestamp.count",
+          "timestamp.max",
+          "timestamp.mean",
+          "timestamp.min",
+          "timestamp.q01",
+          "timestamp.q10",
+          "timestamp.q50",
+          "timestamp.q90",
+          "timestamp.q99",
+          "timestamp.std"
+        ],
+        "output_finite": true,
+        "output_shape": [
+          1,
+          6
+        ],
+        "processor_stats_sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a",
+        "raw_action": [
+          -0.5620603561401367,
+          -109.07054138183594,
+          103.93534088134766,
+          68.22940826416016,
+          -0.17413330078125,
+          96.48648834228516
+        ],
+        "sample_index": 0,
+        "schema": "task1_picklift_real48_real96_act_offline_checkpoint_validation_v1",
+        "status": "pass",
+        "use_imagenet_stats": true
+      },
+      "smoke": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/smoke_500/checkpoints/000500/pretrained_model",
+        "duration_seconds": 30,
+        "ended_at_local": "2026-08-02T18:19:40",
+        "final_metrics": {
+          "data_seconds": 0.001,
+          "episodes_sampled": "22",
+          "epochs": 0.23,
+          "gpu_memory_gb": 2.02,
+          "gradient_norm": 77.814,
+          "kld_loss": 0.216,
+          "l1_loss": 0.429,
+          "learning_rate": 1e-05,
+          "loss": 2.592,
+          "reported_step": "500",
+          "samples": "4K",
+          "samples_per_second": 162.0,
+          "update_seconds": 0.048
+        },
+        "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/smoke_500.log",
+        "log_sha256": "b25ddd7408d48dddd77204399e2fe0e550268f04f0a7196e304dd7a9a4255e69",
+        "model_sha256": "1d88a788d0df8ef705e82f2e487b7cbef304d6cca5f1f86a03f9e282e274e0ed",
+        "offline_validation_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/smoke_500/offline_validation.json",
+        "offline_validation_sha256": "0af2d54887cc88a8b29f875ec4076b5512094172339338aec4ad286c842af9e9",
+        "started_at_local": "2026-08-02T18:19:10",
+        "status": "pass",
+        "steps": 500
+      }
+    }
+  },
+  "datasets": {
+    "datasets": {
+      "real48": {
+        "episodes": 48,
+        "frames": 8955,
+        "repo_id": "local/task1_picklift_real96_accepted_v1_accepted",
+        "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real48_accepted_v1/accepted",
+        "stats_sha256": "e67439a3d93de6d8942b7c848614e74ec250c94ec4e6c010f7ebea604aeb49b7",
+        "tree": {
+          "bytes": 291460330,
+          "files": 10,
+          "tree_sha256": "c4534befc536c10217638da91f5cbbaff59b0795ec91f0633e53e8a6d99507b9"
+        }
+      },
+      "real96": {
+        "episodes": 96,
+        "frames": 17439,
+        "repo_id": "local/task1_picklift_real96_accepted_v1",
+        "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real96_accepted_v1",
+        "stats_sha256": "b942ca52e51eeb1a6ddbb895e0a07f1ee722f2ac6bfc5c333e4124d3ba9dc82b",
+        "tree": {
+          "bytes": 574870325,
+          "files": 10,
+          "tree_sha256": "58a5f8fa907c6b4433750c816f0eb80743ee861b06a1dd1356811fbc6800b1a1"
+        }
+      }
+    },
+    "discard_boundary": {
+      "attempts": 98,
+      "evidence_hashes": {
+        "cross_session_qa_summary.json": "77843c913a120176f0758e3f440e9c9a432412ed7899610a30bb5d0ba350346b",
+        "global_attempt_ledger.csv": "7cbc3776b457c2304c644c5dda01185a30339148af904b3104bb1174aee0c5b7",
+        "independent_verification.json": "6209b2b4072b56d6cc89dc8053b14b548553c9e6ec8fffcd678d8edb2a5e271f"
+      },
+      "frames": {
+        "accepted_real96": 17439,
+        "discard_excluded": 242,
+        "raw_attempts": 17681
+      },
+      "outcomes": {
+        "discard": 2,
+        "success": 96
+      },
+      "status": "pass"
+    },
+    "path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real48_vs_real96_act_v1/data_and_contract_v1/dataset_audit.json",
+    "sha256": "c9981dd537d18314146ccc91ac4ed75e617ddbdd6aa54cd3d63c1855cdce2281"
+  },
+  "experiment_id": "task1_picklift_real48_vs_real96_act_v1",
+  "research_contract_commit": "73908355df1add52cd04753216c13f8b1c0b400a",
+  "result_evidence": {
+    "hashes_sha256": "a910630ed9b0bed5d927dc49702757630c93a98ad85a44d94855ea590bc4fa3f",
+    "manifest_sha256": "4303de094519df859273ae4c71d01714accafd1b4b490c5f45bac9b4d8a3dd96",
+    "root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real48_vs_real96_act_v1/training_result_v1",
+    "run_summary_sha256": "de10f947c1a7ab55e07dc11c157ca580628c8671be26d99931493ccdb24941bf"
+  },
+  "schema": "task1_picklift_real48_vs_real96_act_run_result_index_v1",
+  "status": "offline_training_and_validation_complete_no_rollout_started",
+  "training_contract": {
+    "full_config_differences": [
+      {
+        "field": "dataset.episodes",
+        "left": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47
+        ],
+        "right": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95
+        ]
+      },
+      {
+        "field": "dataset.repo_id",
+        "left": "local/task1_picklift_real96_accepted_v1_accepted",
+        "right": "local/task1_picklift_real96_accepted_v1"
+      },
+      {
+        "field": "dataset.root",
+        "left": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real48_accepted_v1/accepted",
+        "right": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real96_accepted_v1"
+      },
+      {
+        "field": "job_name",
+        "left": "task1_picklift_act_real48_seed1000_step100000",
+        "right": "task1_picklift_act_real96_seed1000_step100000"
+      },
+      {
+        "field": "output_dir",
+        "left": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k",
+        "right": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k"
+      }
+    ],
+    "matching_verified": true,
+    "path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real48_vs_real96_act_v1/data_and_contract_v1/training_contract_verification.json",
+    "sha256": "ad681e3de15586fb4658b4f5a0bbe8947850f15a801d1a6ce5f9912120ab1c56"
+  }
+}

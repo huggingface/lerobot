@@ -49,6 +49,11 @@ class DatasetConfig:
     streaming: bool = False
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
+    # Optional deterministic domain-balanced sampling. Keys name domains and
+    # values list the dataset episode indices belonging to each domain. When
+    # configured, every training batch contains an equal quota from each
+    # domain; no domain is oversampled within an epoch.
+    domain_balanced_episode_groups: dict[str, list[int]] | None = None
 
     def __post_init__(self) -> None:
         if self.repo_type not in ("dataset", "bucket"):
@@ -75,6 +80,21 @@ class DatasetConfig:
             if len(self.episodes) != len(set(self.episodes)):
                 duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
                 raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+        if self.domain_balanced_episode_groups is not None:
+            groups = self.domain_balanced_episode_groups
+            if len(groups) < 2:
+                raise ValueError("domain_balanced_episode_groups must define at least two domains")
+            flattened = []
+            for domain, episodes in groups.items():
+                if not domain or not episodes:
+                    raise ValueError("Every balanced domain must have a non-empty name and episode list")
+                if any(ep < 0 for ep in episodes):
+                    raise ValueError(f"Domain {domain!r} contains a negative episode index")
+                if len(episodes) != len(set(episodes)):
+                    raise ValueError(f"Domain {domain!r} contains duplicate episode indices")
+                flattened.extend(episodes)
+            if len(flattened) != len(set(flattened)):
+                raise ValueError("An episode may belong to only one balanced domain")
 
 
 @dataclass

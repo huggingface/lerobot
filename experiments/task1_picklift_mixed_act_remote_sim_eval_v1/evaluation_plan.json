@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "plan_id": "task1_picklift_mixed_act100k_remote_sim_eval_v1",
+  "status": "frozen_authorized_hardware_free_diagnostic",
+  "research_status": "diagnostic_only_not_real_robot_evaluation_not_a_paper_result",
+  "model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_questsim24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+    "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+    "selection": "fixed_step_100000_no_checkpoint_switching",
+    "inputs": [
+      "observation.state float32[6] dataset units",
+      "observation.images.front uint8[480,640,3] RGB"
+    ],
+    "output": "requested action float32[6] dataset units"
+  },
+  "remote": {
+    "root": "/home/ubuntu24/SO101QuestRemote",
+    "adapter": "/home/ubuntu24/SO101QuestRemote/robot-host/nexus_picklift_policy_adapter.py",
+    "adapter_sha256": "8cd784ee8f36c3b5b36204ce4fe1b2c017af715dab120514113d33b00d7366ff",
+    "deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
+    "nexus_version": "0.4.13",
+    "remote_plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+    "camera_profile_id": "picklift_manual_viewer_center_crop_18pct_camera_v5",
+    "production_spawn_profile_version": 5,
+    "reset_profile_id": "picklift_real24_aligned_reset_v2",
+    "ready_pose_profile_id": "task1_real24_ready_pose_reset_v1",
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "ready_pose_tolerance_dataset_units": 0.00001,
+    "success_source": "official MuJoCoPickLift-v1 info.success only",
+    "success_hold_env_steps": 25
+  },
+  "policy_environment_contract": {
+    "joint_order": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "dataset_units": {
+      "body_joints_0_to_4": "degrees",
+      "gripper_joint_5": "RANGE_0_100 percent"
+    },
+    "state_validation": [
+      "shape [6]",
+      "float32",
+      "finite",
+      "frozen joint order",
+      "dataset units"
+    ],
+    "follower_calibration_state_gate": false,
+    "sim_state_projection": false,
+    "runner_action_flow": [
+      "ACT postprocessor raw action",
+      "unchanged requested dataset-unit action",
+      "Nexus adapter.apply_action",
+      "formal Nexus sink environment action"
+    ],
+    "max_relative_target": null,
+    "custom_absolute_calibration_clamp": false,
+    "custom_relative_clamp": false,
+    "additional_action_limit": false,
+    "nexus_environment_action_contract": "The formal sink may clip only after dataset-unit to simulator conversion against its public environment action space; preserve requested/environment actions and the returned environment clip mask."
+  },
+  "clock": {
+    "policy_hz": 20,
+    "environment_hz": 50,
+    "maximum_episode_seconds": 30,
+    "policy_ticks": 600,
+    "environment_steps": 1500,
+    "continue_after_confirmed_success": true,
+    "adaptive_stopping": false,
+    "zero_order_hold": "2,3 alternating"
+  },
+  "phases": {
+    "gate12": {
+      "run_id": "gate12_mixed_act100k_remote_1dfac5_20260729_v1",
+      "output_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_act_remote_sim_eval_v1/gate12_mixed_act100k_remote_1dfac5_20260729_v1",
+      "episode_count": 12,
+      "cells": "r1c1 through r3c4 row-major",
+      "seeds": [
+        9000,
+        9001,
+        9002,
+        9003,
+        9004,
+        9005,
+        9006,
+        9007,
+        9008,
+        9009,
+        9010,
+        9011
+      ],
+      "gate": "12/12 reset, ready, RGB, state, action, full clock, and legal termination evidence valid; task success is not required"
+    },
+    "frozen120": {
+      "run_id": "frozen120_mixed_act100k_remote_1dfac5_20260729_v1",
+      "output_dir": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_act_remote_sim_eval_v1/frozen120_mixed_act100k_remote_1dfac5_20260729_v1",
+      "episode_count": 120,
+      "order": "seed-major then row-major cell",
+      "cells": "12 fixed 5x5cm cells",
+      "seeds_per_cell": [
+        1000,
+        1001,
+        1002,
+        1003,
+        1004,
+        1005,
+        1006,
+        1007,
+        1008,
+        1009
+      ],
+      "retry_policy": "no retries, result selection, or checkpoint switching"
+    }
+  },
+  "evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_mixed_act_remote_sim_eval_v1",
+    "per_tick": [
+      "observation state and canonical RGB SHA",
+      "raw action",
+      "unchanged requested action",
+      "Nexus adapter legacy sent_action field",
+      "Nexus environment_action",
+      "Nexus environment_clipped_mask",
+      "official success and task state"
+    ],
+    "per_episode": [
+      "cell, seed, initial pose",
+      "success, first and confirmed success step",
+      "max lift, final is_grasped",
+      "terminated, truncated, timeout and failure type",
+      "raw/requested/environment clip counts",
+      "ready and spawn validation"
+    ],
+    "immutable_files": [
+      "episodes.jsonl",
+      "ticks.jsonl",
+      "run_manifest.json",
+      "summary.json",
+      "hashes.sha256",
+      "verification.json",
+      "verification.sha256"
+    ]
+  },
+  "comparison_boundary": "Historical Real-only 1/120 used a different runner action-processing version. Report side by side only as non-attributable diagnostic context; do not directly attribute differences to the mixed dataset or model."
+}

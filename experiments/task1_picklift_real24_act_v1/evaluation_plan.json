@@ -1,0 +1,51 @@
+{
+    "evaluation_id": "task1_picklift_real24_act_v1_eval12",
+    "status": "frozen_before_hardware_evaluation",
+    "purpose": "Engineering-baseline real-robot evaluation; not a paper result",
+    "policy_checkpoint": {
+        "selection_rule": "fixed_step_100000",
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+        "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+    },
+    "setup": {
+        "real_world_setup_version": "picklift_real_setup_spawn_v4_5cm_grid_camera_aligned_task_grid_v2_reference_v2",
+        "task_frame_id": "picklift_task_grid_v2",
+        "camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1",
+        "camera_intrinsics_version": "uncalibrated_front_v1",
+        "camera_extrinsics_version": "uncalibrated_front_mount_v1",
+        "robot_id": "so101_follower_main",
+        "follower_calibration_sha256": "c78e4f7e1383571c6aa496f62996f518b3e4122f78244d2bbc094658bc0cb8a0",
+        "control_fps": 20,
+        "maximum_trial_seconds": 30
+    },
+    "trials": [
+        {"order": 1, "spawn_region": "r1c1", "spawn_x_cm": 22.5, "spawn_y_cm": -7.5},
+        {"order": 2, "spawn_region": "r1c2", "spawn_x_cm": 22.5, "spawn_y_cm": -2.5},
+        {"order": 3, "spawn_region": "r1c3", "spawn_x_cm": 22.5, "spawn_y_cm": 2.5},
+        {"order": 4, "spawn_region": "r1c4", "spawn_x_cm": 22.5, "spawn_y_cm": 7.5},
+        {"order": 5, "spawn_region": "r2c1", "spawn_x_cm": 27.5, "spawn_y_cm": -7.5},
+        {"order": 6, "spawn_region": "r2c2", "spawn_x_cm": 27.5, "spawn_y_cm": -2.5},
+        {"order": 7, "spawn_region": "r2c3", "spawn_x_cm": 27.5, "spawn_y_cm": 2.5},
+        {"order": 8, "spawn_region": "r2c4", "spawn_x_cm": 27.5, "spawn_y_cm": 7.5},
+        {"order": 9, "spawn_region": "r3c1", "spawn_x_cm": 32.5, "spawn_y_cm": -7.5},
+        {"order": 10, "spawn_region": "r3c2", "spawn_x_cm": 32.5, "spawn_y_cm": -2.5},
+        {"order": 11, "spawn_region": "r3c3", "spawn_x_cm": 32.5, "spawn_y_cm": 2.5},
+        {"order": 12, "spawn_region": "r3c4", "spawn_x_cm": 32.5, "spawn_y_cm": 7.5}
+    ],
+    "outcome_contract": {
+        "success": "Visible bilateral grasp, at least 5 cm lift, stable hold for at least 0.5 s, and no drop before trial end.",
+        "failure_categories": [
+            "perception_failure",
+            "missed_grasp",
+            "unstable_grasp",
+            "wrong_trajectory",
+            "collision",
+            "premature_release",
+            "timeout",
+            "out_of_workspace",
+            "unknown"
+        ],
+        "adaptive_stopping": false,
+        "checkpoint_switching": false
+    }
+}

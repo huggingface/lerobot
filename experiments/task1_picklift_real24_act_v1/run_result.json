@@ -1,0 +1,81 @@
+{
+    "experiment_id": "task1_picklift_real24_act_v1",
+    "status": "offline_training_and_validation_complete_hardware_evaluation_not_started",
+    "training_config_commit": "89f733cf6b2221a6ea7cc437473114900a54ca67",
+    "dataset": {
+        "freeze_id": "task1_picklift_formal24_s03_freeze_v1",
+        "raw_tree_sha256_reverified": "251cbdc079b304425ccdfbd7a08f15d34858ea0dd8c19345544b8da9f3adb9f2",
+        "subset_id": "task1_picklift_formal24_s03_accepted_v1",
+        "subset_sha256": "a0449033d3f2b447cf6b0774ac5d363c8073ab10667799bf3920b61805373e1d",
+        "episodes": 24,
+        "frames": 3790,
+        "fps": 20
+    },
+    "runtime": {
+        "lerobot": "0.6.1",
+        "python": "3.12.3",
+        "torch": "2.11.0+cu128",
+        "gpu": "NVIDIA GeForce RTX 4080",
+        "training_dependency_added_from_uv_lock": {
+            "accelerate": "1.14.0",
+            "transitive_psutil": "7.2.2"
+        }
+    },
+    "smoke": {
+        "steps": 500,
+        "status": "pass",
+        "final_loss": 2.495,
+        "final_l1_loss": 0.368,
+        "final_kld_loss": 0.213,
+        "checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/smoke_500/checkpoints/000500",
+        "log_sha256": "91fa80b670488e76d8a7a67661a002d08ac64d905fa0943bddb52ea5c83b9a21",
+        "initial_failed_attempt": "Stopped before dataset/model creation because accelerate was absent; preserved as smoke_500_attempt0_missing_accelerate.log."
+    },
+    "full_training": {
+        "steps": 100000,
+        "status": "pass",
+        "started_at_log_time": "2026-07-28T23:16:22+08:00",
+        "ended_at_log_time": "2026-07-29T00:41:01+08:00",
+        "reported_training_duration": "01:24:37",
+        "final_metrics": {
+            "loss": 0.029,
+            "l1_loss": 0.029,
+            "kld_loss": 0.0,
+            "gradient_norm": 2.882,
+            "learning_rate": 0.00001,
+            "gpu_memory_gb": 2.02
+        },
+        "log_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k.log",
+        "log_sha256": "07bcbcef64dfdb3452000787d4e4a4899c399c21cf831a1affc864472cf5a93e",
+        "checkpoints": {
+            "020000": "fd3dd74c44fd03f35e81060d294c1e84a82c2bdf1cd925b763872c8f4680d856",
+            "040000": "63dc6cde298627e67f38a2140c30636829b589d8ffc92ba313f46da8ccec5e8b",
+            "060000": "b61f9f6b628fc262d11ce84056227cc1e7fd673e73ab40e9be58b16a04c5a8ce",
+            "080000": "b9dd7b19d2627ad5818baaabe4fbd1f250cf54eba31308aebc0a343af7a82fe3",
+            "100000": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+        },
+        "checkpoint_hash_field": "SHA-256 of pretrained_model/model.safetensors",
+        "selected_checkpoint_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/full_100k/checkpoints/100000/pretrained_model",
+        "saved_train_config_sha256": "c71d41ad7a8279ee835a675a3614dd6158f3c03bf0c73dd3c58da89f38c891dd"
+    },
+    "offline_validation": {
+        "status": "pass",
+        "sample_index": 0,
+        "input_state_shape": [1, 6],
+        "input_front_shape": [1, 3, 480, 640],
+        "output_shape": [1, 6],
+        "output_finite": true,
+        "sample_required_calibration_clip": false,
+        "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_act_v1/offline_validation_100k.json",
+        "evidence_sha256": "92a9054fd5a76432ea2aff0d1ef03ded85e5d00c99b9c32644e3917d1ec3d405",
+        "deployment_safety_tests": "8 passed"
+    },
+    "hardware_boundary": {
+        "serial_accessed": false,
+        "follower_enabled": false,
+        "robot_actions_sent": false,
+        "twelve_volt_requested": false,
+        "next_required_action": "User explicitly authorizes evaluation and turns on the Follower 12 V supply before any --execute-hardware command."
+    },
+    "research_interpretation": "No model-performance or paper-effect conclusion is made before the frozen 12-trial real-robot evaluation."
+}

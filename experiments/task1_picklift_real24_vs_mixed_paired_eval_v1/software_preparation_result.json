@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+  "status": "software_preparation_complete_hardware_not_authorized",
+  "research_contract": {
+    "commit": "b837da037d5d",
+    "sha256": "c62fd6505368fe7417048530d8538799026aaa05f85236d5c957d02135305ce0"
+  },
+  "plan": {
+    "path": "experiments/task1_picklift_real24_vs_mixed_paired_eval_v1/evaluation_plan.json",
+    "sha256": "fba25f6599f000b5f8173357868f6af9fc941be60e93840e9733add27ef3b660",
+    "trials": 24,
+    "per_model": 12,
+    "cells": 12
+  },
+  "models": {
+    "real24_only": {
+      "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+      "verified": true
+    },
+    "real24_questsim24": {
+      "model_sha256": "e054e682057f09a4653af00a4580da173d3d1658ef5c34244bdbf3ca1a125de5",
+      "verified": true
+    }
+  },
+  "protocol": {
+    "official_send_engine_commit": "34cc7ac5e43d029a81f5089d76a811e5a59014b1",
+    "official_send_engine_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96",
+    "profile_sha256": "01e50c86adc1a03f2bb1675469502e6969e2cc6a4a51dc8db0b75e6049b5d4c5",
+    "ready_pose_state_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "max_relative_target": null,
+    "custom_absolute_action_clamp": false,
+    "custom_relative_step_limit_degrees": null,
+    "catch_up_action_bursts": false,
+    "success_must_be_held_at_end": false
+  },
+  "tests": {
+    "paired_tests": "9 passed",
+    "paired_plus_existing_official_send_tests": "19 passed",
+    "python_compile": "passed",
+    "git_diff_check": "passed",
+    "fake_trials": 24,
+    "fake_policy_reset_calls": {
+      "real24_only": 12,
+      "real24_questsim24": 12
+    }
+  },
+  "evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_paired_real24_eval24_v1",
+    "software_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_mixed_paired_real24_eval24_v1/software_preparation_v1",
+    "dry_run_sha256": "e5b0755f3adef8a6c73e600b3586401742ddbb33a4629742ec47aa522b233b7d",
+    "manifest_sha256": "a1e624a44b9dc2cb26783754f5dfe8ec5f67e96b8ea2e5ef9462641d71de3436",
+    "hashes_sha256": "c2dbfc02f0d13dc23a891cea6293a4a3bc3f9caaae13a06fad6b5242c8793ae7",
+    "real_trial_directory_created": false
+  },
+  "hardware_access": {
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "follower_12v": false,
+    "rollout": false
+  },
+  "next_gate": "Stop before the user turns on Follower 12 V and wait for explicit authorization."
+}

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1",
+  "status": "software_preparation_passed_waiting_for_explicit_hardware_go",
+  "plan_sha256": "f3f6e797ce001752b46f5f278dcb94df712a29d3e1e29708228810a82074406e",
+  "runner_sha256": "60fa478823a57195e96b38cee4a46f3681de32f4bd5b23f99749cc9ef8a56756",
+  "test_sha256": "5f3616049c5f0761e4f397138801cf45051fff6cbeacce06225d3c45c67f4645",
+  "validator_sha256": "c44ff9e30d15042d1673850b76ee612f447f6b4e38ed921ee88c9d79a1a4d374",
+  "profile_sha256": "243ef491eda81c38ceba85f7bc01c63c7dc7c14e39e5b4261a109f8a00736525",
+  "research_identity_verification_sha256": "01dcbe1c6fa5491ff33806922f51fe460d5961d0d5598c13835dae0b499088ce",
+  "models": {
+    "real24_only": {
+      "trial_count": 12,
+      "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb"
+    },
+    "questsim48_v7": {
+      "trial_count": 12,
+      "model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03"
+    }
+  },
+  "checkpoint_contract": {
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67,
+    "inputs": {
+      "observation.state": [6],
+      "observation.images.front": [3, 480, 640]
+    },
+    "output": {
+      "action": [6]
+    },
+    "checkpoint_processor_imagenet_stats_verified": true
+  },
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q experiments/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval_v1/test_paired_evaluator.py",
+    "passed": 11,
+    "failed": 0,
+    "duration_seconds": 1.15
+  },
+  "dry_run": {
+    "status": "software_dry_run_passed_hardware_not_accessed",
+    "trials_exercised": 24,
+    "ready_before_and_after_all_trials": true,
+    "policy_reset_calls": {
+      "real24_only": 12,
+      "questsim48_v7": 12
+    },
+    "canonical_rgb_640x480_all_trials": true,
+    "official_sent_equals_requested_in_fake_path": true,
+    "slow_tick_no_catch_up_test_passed": true,
+    "full_window_success_contract_test_passed": true,
+    "serial_accessed": false,
+    "camera_accessed": false,
+    "robot_accessed": false,
+    "torque_accessed": false,
+    "rollout_executed": false
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1/software_preparation_v1",
+    "dry_run_sha256": "b20b365a6999ee4fde58c06072d7a9fe6f416f4480dae38313d5f91b408dc745",
+    "manifest_sha256": "a7105e67de2cfc0a781096f800edb3cf47a7781c4d5d23fe5329871e861394ff",
+    "hashes_sha256": "ac77cffec2f7d666389a249f4db167b54a78c1b912cb4ab8273d6d43e61d9098",
+    "independent_validation_sha256": "f878a80060c25a3d16d538e11a89fe7ea997655964a3f7ac540a9cdeb8ba2035",
+    "independent_validation_status": "passed"
+  },
+  "hardware_gate": {
+    "authorized": false,
+    "next_user_instruction_zh": "确认原 Real 相机和网格 setup 不变，打开 Follower 12V；然后在 r3c3 将红色方块中心放在 X=31 cm、Y=+4 cm 的网格交点，方块边与网格线平行（0°）。"
+  }
+}

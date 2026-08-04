@@ -1,0 +1,328 @@
+{
+  "hardware_accessed": false,
+  "real48": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model",
+    "condition": "real48",
+    "condition_local_state_action_stats_match": true,
+    "dataset_repo_id": "local/task1_picklift_real96_accepted_v1_accepted",
+    "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/offline_validation_100k.json",
+    "evidence_sha256": "cb2b8b63a365c8aa2ba203177f4c69ba4a459a49e886a3c7343dd120ec498a49",
+    "files": {
+      "model": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/model.safetensors",
+        "sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c"
+      },
+      "policy_config": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/config.json",
+        "sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4"
+      },
+      "policy_postprocessor": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor.json",
+        "sha256": "648b415125a183dfd6cbc47c1dc04ab3f2d912654ef22a12ca5e8b93d7d85cdd"
+      },
+      "policy_postprocessor_stats": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+        "sha256": "2771f609d933fd5f16246a7675ba3606d86c9878586612af2b7c96d7c0de4f67"
+      },
+      "policy_preprocessor": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor.json",
+        "sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a"
+      },
+      "policy_preprocessor_stats": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+        "sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906"
+      },
+      "saved_train_config": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real48/full_100k/checkpoints/100000/pretrained_model/train_config.json",
+        "sha256": "c91e79a19ef9ce4bd2153352d56fad359f6a9f44e60465bc0412a946b73383c7"
+      }
+    },
+    "hardware_accessed": false,
+    "imagenet_mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "imagenet_std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "input_shapes": {
+      "observation.images.front": [
+        1,
+        3,
+        480,
+        640
+      ],
+      "observation.state": [
+        1,
+        6
+      ]
+    },
+    "model_sha256": "73f61996c0ebba444c1bce070ec36735425f3307e420eab47cf29a3ab7ffa14c",
+    "normalizer_tensor_keys": [
+      "action.count",
+      "action.max",
+      "action.mean",
+      "action.min",
+      "action.q01",
+      "action.q10",
+      "action.q50",
+      "action.q90",
+      "action.q99",
+      "action.std",
+      "episode_index.count",
+      "episode_index.max",
+      "episode_index.mean",
+      "episode_index.min",
+      "episode_index.q01",
+      "episode_index.q10",
+      "episode_index.q50",
+      "episode_index.q90",
+      "episode_index.q99",
+      "episode_index.std",
+      "frame_index.count",
+      "frame_index.max",
+      "frame_index.mean",
+      "frame_index.min",
+      "frame_index.q01",
+      "frame_index.q10",
+      "frame_index.q50",
+      "frame_index.q90",
+      "frame_index.q99",
+      "frame_index.std",
+      "index.count",
+      "index.max",
+      "index.mean",
+      "index.min",
+      "index.q01",
+      "index.q10",
+      "index.q50",
+      "index.q90",
+      "index.q99",
+      "index.std",
+      "observation.images.front.count",
+      "observation.images.front.max",
+      "observation.images.front.mean",
+      "observation.images.front.min",
+      "observation.images.front.q01",
+      "observation.images.front.q10",
+      "observation.images.front.q50",
+      "observation.images.front.q90",
+      "observation.images.front.q99",
+      "observation.images.front.std",
+      "observation.state.count",
+      "observation.state.max",
+      "observation.state.mean",
+      "observation.state.min",
+      "observation.state.q01",
+      "observation.state.q10",
+      "observation.state.q50",
+      "observation.state.q90",
+      "observation.state.q99",
+      "observation.state.std",
+      "task_index.count",
+      "task_index.max",
+      "task_index.mean",
+      "task_index.min",
+      "task_index.q01",
+      "task_index.q10",
+      "task_index.q50",
+      "task_index.q90",
+      "task_index.q99",
+      "task_index.std",
+      "timestamp.count",
+      "timestamp.max",
+      "timestamp.mean",
+      "timestamp.min",
+      "timestamp.q01",
+      "timestamp.q10",
+      "timestamp.q50",
+      "timestamp.q90",
+      "timestamp.q99",
+      "timestamp.std"
+    ],
+    "output_finite": true,
+    "output_shape": [
+      1,
+      6
+    ],
+    "processor_stats_sha256": "062d15518fd1e1c898179c024c9043d19d07da7a7ccf95ddb55e4e572674a906",
+    "raw_action": [
+      -0.7906255722045898,
+      -109.16403198242188,
+      102.97013854980469,
+      67.5574722290039,
+      0.10078716278076172,
+      92.08840942382812
+    ],
+    "sample_index": 0,
+    "schema": "task1_picklift_real48_real96_act_offline_checkpoint_validation_v1",
+    "status": "pass",
+    "use_imagenet_stats": true
+  },
+  "real96": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model",
+    "condition": "real96",
+    "condition_local_state_action_stats_match": true,
+    "dataset_repo_id": "local/task1_picklift_real96_accepted_v1",
+    "evidence_path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/offline_validation_100k.json",
+    "evidence_sha256": "1766823ccd26ab876e55ecb2dadaa19fd0b547f452ca03a088925dcbc9bac9f8",
+    "files": {
+      "model": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/model.safetensors",
+        "sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44"
+      },
+      "policy_config": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/config.json",
+        "sha256": "d2b1f0c4eb93dbb567150ebe7a4fc9636c40b368bdff8366e3079dc48277fef4"
+      },
+      "policy_postprocessor": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor.json",
+        "sha256": "648b415125a183dfd6cbc47c1dc04ab3f2d912654ef22a12ca5e8b93d7d85cdd"
+      },
+      "policy_postprocessor_stats": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+        "sha256": "995e691a68927331971d9d49a32cc0550a624a1c61325539208134d665bca38b"
+      },
+      "policy_preprocessor": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor.json",
+        "sha256": "adc8a12dd079a93b4e6fd4e7f15e93126c9927463593a4de3174643e59fca28a"
+      },
+      "policy_preprocessor_stats": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/policy_preprocessor_step_3_normalizer_processor.safetensors",
+        "sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a"
+      },
+      "saved_train_config": {
+        "path": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real48_vs_real96_act_v1/real96/full_100k/checkpoints/100000/pretrained_model/train_config.json",
+        "sha256": "547ce0e3d6e29f8f8343714914fa35870ac3069ea0340bcd23a4678f4fef23e8"
+      }
+    },
+    "hardware_accessed": false,
+    "imagenet_mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "imagenet_std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "input_shapes": {
+      "observation.images.front": [
+        1,
+        3,
+        480,
+        640
+      ],
+      "observation.state": [
+        1,
+        6
+      ]
+    },
+    "model_sha256": "2d80bbddff5c3e5862a6e9f0b639619628fb637b9beea4826a6469e95f851e44",
+    "normalizer_tensor_keys": [
+      "action.count",
+      "action.max",
+      "action.mean",
+      "action.min",
+      "action.q01",
+      "action.q10",
+      "action.q50",
+      "action.q90",
+      "action.q99",
+      "action.std",
+      "episode_index.count",
+      "episode_index.max",
+      "episode_index.mean",
+      "episode_index.min",
+      "episode_index.q01",
+      "episode_index.q10",
+      "episode_index.q50",
+      "episode_index.q90",
+      "episode_index.q99",
+      "episode_index.std",
+      "frame_index.count",
+      "frame_index.max",
+      "frame_index.mean",
+      "frame_index.min",
+      "frame_index.q01",
+      "frame_index.q10",
+      "frame_index.q50",
+      "frame_index.q90",
+      "frame_index.q99",
+      "frame_index.std",
+      "index.count",
+      "index.max",
+      "index.mean",
+      "index.min",
+      "index.q01",
+      "index.q10",
+      "index.q50",
+      "index.q90",
+      "index.q99",
+      "index.std",
+      "observation.images.front.count",
+      "observation.images.front.max",
+      "observation.images.front.mean",
+      "observation.images.front.min",
+      "observation.images.front.q01",
+      "observation.images.front.q10",
+      "observation.images.front.q50",
+      "observation.images.front.q90",
+      "observation.images.front.q99",
+      "observation.images.front.std",
+      "observation.state.count",
+      "observation.state.max",
+      "observation.state.mean",
+      "observation.state.min",
+      "observation.state.q01",
+      "observation.state.q10",
+      "observation.state.q50",
+      "observation.state.q90",
+      "observation.state.q99",
+      "observation.state.std",
+      "task_index.count",
+      "task_index.max",
+      "task_index.mean",
+      "task_index.min",
+      "task_index.q01",
+      "task_index.q10",
+      "task_index.q50",
+      "task_index.q90",
+      "task_index.q99",
+      "task_index.std",
+      "timestamp.count",
+      "timestamp.max",
+      "timestamp.mean",
+      "timestamp.min",
+      "timestamp.q01",
+      "timestamp.q10",
+      "timestamp.q50",
+      "timestamp.q90",
+      "timestamp.q99",
+      "timestamp.std"
+    ],
+    "output_finite": true,
+    "output_shape": [
+      1,
+      6
+    ],
+    "processor_stats_sha256": "7006945a9ba1961e592398d09359e201fbd2cdf13ef863baad1d82ef1eac690a",
+    "raw_action": [
+      -0.5620603561401367,
+      -109.07054138183594,
+      103.93534088134766,
+      68.22940826416016,
+      -0.17413330078125,
+      96.48648834228516
+    ],
+    "sample_index": 0,
+    "schema": "task1_picklift_real48_real96_act_offline_checkpoint_validation_v1",
+    "status": "pass",
+    "use_imagenet_stats": true
+  },
+  "schema": "task1_picklift_real48_vs_real96_act_offline_validation_index_v1"
+}

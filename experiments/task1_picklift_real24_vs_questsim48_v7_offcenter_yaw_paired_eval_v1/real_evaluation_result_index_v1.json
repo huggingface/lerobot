@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evaluation_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1",
+  "status": "fresh_paired_real_evaluation_complete_canonical_video_reviewed",
+  "plan_sha256": "f3f6e797ce001752b46f5f278dcb94df712a29d3e1e29708228810a82074406e",
+  "models": {
+    "real24_only": {
+      "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+      "reviewed_successes": 0,
+      "trials": 12,
+      "reviewed_success_rate": 0.0,
+      "missed_grasp_failures": 12
+    },
+    "questsim48_v7": {
+      "model_sha256": "900fee855150b0809c063bb305d91b98f83c1920152f1d8f30a8d284bef3fe03",
+      "reviewed_successes": 3,
+      "trials": 12,
+      "reviewed_success_rate": 0.25,
+      "missed_grasp_failures": 9,
+      "successful_trial_ids": ["t10", "t19", "t22"]
+    }
+  },
+  "paired_outcomes": {
+    "both_failure": 9,
+    "questsim48_v7_only": 3,
+    "real24_only_only": 0,
+    "both_success": 0
+  },
+  "operator_review": {
+    "operator_review_agreement_count": 24,
+    "operator_review_disagreement_count": 0,
+    "reviewed_videos": 24,
+    "canonical_width": 640,
+    "canonical_height": 480,
+    "encoded_fps": 20,
+    "all_frame_counts_match_steps": true,
+    "all_policy_windows_reach_at_least_29p9_seconds": true
+  },
+  "infrastructure_invalid": {
+    "count": 1,
+    "trial_id": "t09",
+    "reason": "operator_placement_mismatch",
+    "original_preserved_and_unscored": true,
+    "linked_replacement_scored": true
+  },
+  "evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1",
+    "operator_manifest_sha256": "e11f387fd54b31c12d17897a36fb988ecc19cb42dc82ae5f6fe161ca043024f4",
+    "operator_summary_sha256": "46f59adf40d42cba5fef0894f5ebdad20618c83b3fe464e5e78d57e114f50650",
+    "operator_hashes_sha256": "5bb74a79facf5e99a66b95538cc9f13b5cc0752e880e2e3704ddeda88c3e33f4",
+    "review_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1/canonical_video_review_v1",
+    "review_manifest_sha256": "aa45a9c42d7afaf5bc25989bf3632d39129ba7bb6a1d8d729aa31903a7fc0a3e",
+    "review_summary_sha256": "75a935c274b23a34b705c149d6e073f50de1615f3d6bb02464b17045a5af8739",
+    "review_trials_sha256": "24c68255823dab85116368ffd9efcadd6602314952b783fd5ddd49593776ecf1",
+    "review_hashes_sha256": "01de0036973ef836c085755b4b797a6287a5f98aa67b23a0fe3be9eaa196dc81",
+    "final_validation_sha256": "d549718188334593c06cd568fc2da9f76a53e0c1813d767087c2ae419574cd21"
+  },
+  "final_validation_status": "independent_final_validation_passed",
+  "interpretation_boundary": "Fresh single-session paired engineering evidence on one frozen 12-pose set. Do not treat this single run as a paper-scale causal or generalization estimate."
+}

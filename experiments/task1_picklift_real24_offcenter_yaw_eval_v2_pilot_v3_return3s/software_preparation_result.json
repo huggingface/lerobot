@@ -1,0 +1,94 @@
+{
+  "schema_version": 3,
+  "evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v3_return3s",
+  "status": "return3s_software_preparation_passed_waiting_for_trial5_confirmation",
+  "prepared_at_utc": "2026-07-30T08:15:00Z",
+  "owning_repo_base_commit": "421073f7a93addb06626f42a475582929bfa51b2",
+  "research_contract": {
+    "research_repo_commit": "e7b628192c9b4d0d1f9ef7f8e9fa9e6417a01874",
+    "protocol_sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+    "pose_manifest_sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+    "validation_manifest_sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+    "alignment_manifest_sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+    "return_amendment_sha256": "c32c8f7e8040309b06b6bbb717299945f6bd06f8eb1f72b5b0860edc758e3fae",
+    "read_only_identity_verification_sha256": "1bc2ac7740d814d57c48c548115b6b4a9def084f1d8395a0700fff8190653e7d"
+  },
+  "continuation": {
+    "predecessor_evaluation_id": "task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm",
+    "predecessor_plan_sha256": "48a159bf74ea61b9c444903f048f4c6315de0417248b37b500e9a1cb04b27cb5",
+    "immutable_completed_orders": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "continuation_orders": [
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "existing_evidence_rewritten": false,
+    "same_evidence_root": true
+  },
+  "frozen_plan": {
+    "path": "experiments/task1_picklift_real24_offcenter_yaw_eval_v2_pilot_v3_return3s/evaluation_plan.json",
+    "sha256": "31c2aeea619729018876aa2886713a40b4a43be650de234adea29fc0d6a4eed6",
+    "scored_window_changed": false,
+    "ready_target_changed": false,
+    "first_continuation_trial_id": "evalv2_pilot_v2_r2c2"
+  },
+  "return_revision": {
+    "profile_id": "task1_real24_ready_pose_interpolated3s_official_send_tolerance3_v1",
+    "profile_sha256": "243ef491eda81c38ceba85f7bc01c63c7dc7c14e39e5b4261a109f8a00736525",
+    "trajectory": "time_parameterized_linear_interpolation",
+    "duration_seconds": 3.0,
+    "control_fps": 20,
+    "interpolation_steps": 60,
+    "arrival_tolerance_degrees": 3.0,
+    "post_interpolation_hold_until_tolerance": true,
+    "official_send_path": true,
+    "current_relative_step_limit": null,
+    "policy_action_path_changed": false
+  },
+  "implementation": {
+    "runner_sha256": "b09b301b57fc1a272915a4a9063c3f3f6ff9445ea579613a4ca1e3412985fe72",
+    "tests_sha256": "979603c3458ff0d31d51d0efba1a772d74680e53cc5a3e308e646f82c80ca904",
+    "annotator_sha256": "09181b56b2cdacb5892680752ac2bec493c0b9c52c2a835cd36206cdce91f8bd",
+    "independent_validator_sha256": "63d6984f0fb8643add181097ed136488605f8f0a3128c30107a6dbab4589312a",
+    "official_send_engine_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96"
+  },
+  "tests": {
+    "pytest": "16 passed in 0.81s",
+    "fake_interpolation_commands": 60,
+    "fake_interpolation_trajectory_rows": 60,
+    "fake_interpolation_elapsed_seconds": 2.9999999999999973,
+    "fake_maximum_requested_step_degrees": 1.5,
+    "fake_official_sent_equals_requested": true,
+    "slow_tick_no_catch_up": true,
+    "continuation_starts_after_four_preserved_trials": true,
+    "plan_and_checkpoint_hash_fail_closed": true,
+    "independent_evidence_validation": "passed"
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_offcenter_yaw_eval_v2_difficulty_pilot_v2_grid15mm/software_preparation_return3s_v1",
+    "dry_run_sha256": "d45d423e6d3549f8eca2549b46f1e794dc2c4e45e46623aa3bde603d7f16a748",
+    "manifest_sha256": "20ed56d846e2336aaf340cc6153b65dd320e49531d90a1e2eee61dcbcdf35390",
+    "hashes_sha256": "8050efc89955e15b3aaf59561e7c2af086a314320ff01e9d5e78968f4e4c2782"
+  },
+  "hardware_access_during_revision": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "policy_rollout": false
+  },
+  "next_gate": {
+    "status": "stopped_before_trial5",
+    "single_required_user_action": "Place the red cube center at task-grid x=29 cm, y=-1 cm with yaw 0 degrees and confirm v2 r2c2."
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "review_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_canonical_video_review_v1",
+  "evaluation_id": "task1_picklift_real24_vs_questsim48_v7_offcenter_yaw_paired_eval24_v1",
+  "reviewer": "ACT owning task canonical-video review",
+  "classification_source": "canonical_video_visual_review",
+  "operator_context_was_available": true,
+  "review_labels_are_separate_from_operator_labels": true,
+  "review_method": {
+    "video_source": "canonical_rgb_act_input",
+    "full_video_timeline_sampled_at_hz": 2,
+    "candidate_event_context_frames": "candidate frame plus/minus 0.5 seconds",
+    "success_contract": "Visible bilateral grasp, no table support, approximately >=5 cm lift, continuously >=0.5 seconds.",
+    "failure_rule": "If no qualifying unsupported lift is visible, classify failure; missed approaches, top contacts, pushes, and closures away from the cube are missed_grasp."
+  },
+  "decisions": [
+    {"trial_id": "t01", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Cube remains table-supported while the gripper closes away from it; no qualifying lift is visible."},
+    {"trial_id": "t02", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Repeated approaches miss the cube and it remains on the table throughout the reviewed timeline."},
+    {"trial_id": "t03", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper approaches beside the cube; the cube remains visibly table-supported with no lift."},
+    {"trial_id": "t04", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes offset from the cube; no unsupported cube motion or lift is visible."},
+    {"trial_id": "t05", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Approaches and closures do not secure the cube; it remains on the task surface."},
+    {"trial_id": "t06", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper reaches near the cube but never establishes a bilateral grasp or unsupported lift."},
+    {"trial_id": "t07", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Contact displaces the cube on the table; no bilateral grasp or lift follows."},
+    {"trial_id": "t08", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Contact occurs without a secure grasp and the cube remains table-supported."},
+    {"trial_id": "t09", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Linked replacement video shows closures offset from the cube and no qualifying lift."},
+    {"trial_id": "t10", "review_success": true, "review_failure_type": null, "review_interval_seconds": [28.0, 29.5], "visible_evidence": "Cube is visibly held between both fingers, unsupported and well above the table for more than 0.5 seconds."},
+    {"trial_id": "t11", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes away from the cube; the cube remains on the table throughout the reviewed timeline."},
+    {"trial_id": "t12", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Approaches remain offset and no unsupported lift is visible."},
+    {"trial_id": "t13", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper passes beside the cube and closes without securing it; the cube remains supported."},
+    {"trial_id": "t14", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "A top/side contact pushes the cube, but no bilateral grasp or lift occurs."},
+    {"trial_id": "t15", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes offset from the cube; no qualifying unsupported lift is visible."},
+    {"trial_id": "t16", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Repeated approaches fail to secure the cube and it remains on the task surface."},
+    {"trial_id": "t17", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper operates far from the cube; the cube remains table-supported."},
+    {"trial_id": "t18", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes with a large lateral offset and never lifts the cube."},
+    {"trial_id": "t19", "review_success": true, "review_failure_type": null, "review_interval_seconds": [11.5, 12.5], "visible_evidence": "Cube is visibly clamped between both fingers and elevated unsupported for at least 0.5 seconds."},
+    {"trial_id": "t20", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes beyond and beside the cube; no unsupported lift is visible."},
+    {"trial_id": "t21", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "Approaches do not establish a grasp; the cube remains table-supported throughout."},
+    {"trial_id": "t22", "review_success": true, "review_failure_type": null, "review_interval_seconds": [28.0, 29.5], "visible_evidence": "After an earlier top contact, a later attempt visibly clamps and lifts the cube unsupported for more than 0.5 seconds."},
+    {"trial_id": "t23", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper never secures the cube; no qualifying unsupported lift is visible."},
+    {"trial_id": "t24", "review_success": false, "review_failure_type": "missed_grasp", "review_interval_seconds": null, "visible_evidence": "The gripper closes offset from the cube and no unsupported lift occurs."}
+  ]
+}

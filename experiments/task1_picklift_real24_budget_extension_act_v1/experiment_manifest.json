@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "experiment_id": "task1_picklift_real24_budget_extension_act_v1",
+  "status": "offline_training_authorized_not_started",
+  "purpose": "Train the frozen new-Real48-derived Real24 pure-real ACT budget point using the matched Real48/Real96 recipe.",
+  "research_contract": {
+    "commit": "428bdcd",
+    "subset_contract_path": "manifests/task1-picklift-real24-budget-extension-v1.json",
+    "subset_contract_sha256": "3c2162aa8a9b559921d69bef0c2d2c12e9327c4963a92979458ccea305a54ab3",
+    "act_plan_path": "experiment-design/task1-picklift-real24-act-budget-extension-v1.json",
+    "act_plan_sha256": "29349a9631814219386ecd84406f1f1fbe35abba62a060be9d6069d8db483b3f",
+    "plan_id": "task1_picklift_real24_act_budget_extension_v1"
+  },
+  "dataset": {
+    "dataset_id": "task1_picklift_real24_budget_extension_v1_accepted",
+    "repo_id": "local/task1_picklift_real24_budget_extension_v1_accepted",
+    "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+    "episodes": 24,
+    "frames": 4263,
+    "files": 11,
+    "bytes": 137519477,
+    "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712",
+    "subset_manifest_sha256": "7cd5917bb03beafc347f9e1d6fd645e731eb0c26e6d1f0eaf98d7497e6d7d21f",
+    "materialization_summary_sha256": "e2bd53e7402e85a681364dc52fce60a96ea6f22ecbc1bbda47aff58435d6ce86",
+    "independent_verification_sha256": "13be2218bdf23d051c7bd930ab69663ce477d90384ab755467a0aa618c5bb5e9"
+  },
+  "model": {
+    "model_id": "ACT_Real24_budget_extension_v1_seed1000_step100000",
+    "recipe_id": "task1_act100k_front20hz_chunk67_v1",
+    "train_from_scratch": true,
+    "seed": 1000,
+    "steps": 100000,
+    "batch_size": 8,
+    "save_freq": 20000,
+    "selected_checkpoint_step": 100000,
+    "chunk_size": 67,
+    "n_action_steps": 67,
+    "use_imagenet_stats": true,
+    "state_action_stats_source": "frozen Real24 subset only"
+  },
+  "boundaries": {
+    "hardware": false,
+    "serial": false,
+    "camera": false,
+    "robot": false,
+    "torque": false,
+    "twelve_volt": false,
+    "quest": false,
+    "remote": false,
+    "mujoco": false,
+    "rollout": false,
+    "push": false,
+    "paper_effect_conclusion": false,
+    "paused_eval_next_cursor": "t050_p25_real96"
+  }
+}

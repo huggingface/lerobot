@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "experiment_id": "task1_picklift_real24_act_v1_real_to_remote_sim_v1",
+  "replay_id": "qualitative_failure_replay_v1",
+  "status": "complete_predeclared_failure_reproduced",
+  "research_status": "qualitative_hardware_free_replay_not_an_evaluation_result",
+  "source_commit": "bafd24123a7af77306183c06f251e59f3ac1633e",
+  "target": {
+    "phase_id": "frozen120",
+    "phase_episode_index": 101,
+    "cell": "r2c2",
+    "seed": 1008
+  },
+  "fixed_contract": {
+    "model_sha256": "ba233bd25aad5bb63a8a863a8fe1f8ebfdb804547a5add33520c8e1e93f890fb",
+    "plan_sha256": "c26bf3caa788708cf8ccb332e2f84771d271b05795634a9b1022ed97d06b8c86",
+    "remote_deployed_commit": "1dfac5c108e830a55b114b1a75bd00bdb5d877b7",
+    "reset_profile_id": "picklift_real24_aligned_reset_v2",
+    "ready_pose_profile_id": "task1_real24_ready_pose_reset_v1",
+    "sim_state_projection_tolerance_dataset_units": 0.05,
+    "policy_hz": 20,
+    "environment_hz": 50,
+    "policy_ticks": 600,
+    "environment_steps": 1500
+  },
+  "outcome": {
+    "success": false,
+    "is_grasped": false,
+    "max_lift_m": 0.00000962700462782927,
+    "failure_type": "policy_task_failure",
+    "termination_reason": "max_steps_reached"
+  },
+  "action_accounting": {
+    "raw_action_count": 600,
+    "calibration_clipped_action_count": 1,
+    "relative_clipped_action_count": 28,
+    "sent_action_count": 600,
+    "environment_clipped_action_count": 0,
+    "sim_state_projected_tick_count": 0
+  },
+  "qualitative_failure_mode": {
+    "confirmed": "Failure occurs before grasp acquisition; the arm repeatedly folds and extends without converging on an object-centered grasp, while the cube remains effectively stationary.",
+    "plausible_not_proven": "Front-view self-occlusion and repeated shoulder_lift reversals may contribute, but one replay cannot establish the cause of all frozen120 failures."
+  },
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_act_v1_real_to_remote_sim_v1/qualitative_failure_replay_v1",
+  "files": {
+    "r2c2_seed1008_canonical_act_input_20fps.mp4": "59defcd969273c94e599bc587f60b53caeea84f6ce5a918bb16262a89b1d6922",
+    "trajectory_ticks.jsonl": "fa688365b49d1b5a37efa1621bf85ea88d755de7e0a07e65983530e25dbd5eca",
+    "replay_manifest.json": "9b664c50fc8d2c610d5da03e744cdd22209585ce4a71415096602a53fa0824d0",
+    "replay_result.json": "4faac16572e5da0f800db3e669fad536b6add0b00d96f8be383c3e4fed1e455e",
+    "primary_hashes.json": "c655d16b445fe7a141f916adb4892787ab302f678f1ca6fcebf9c4c0db97d6b0",
+    "sidecar.json": "ab3331cda5673177ad28da891f3a6478c180707a137d1a844fa696c3f921c546",
+    "hashes.sha256": "05ebbe9a03862abf35265d7e1f65c963e2167512c06a566a1bbc56bf4859dd5b"
+  },
+  "interpretation_boundary": [
+    "This replay visualizes one predeclared frozen120 failure.",
+    "It is not an additional trial and does not change the frozen 1/120 diagnostic result.",
+    "It is not real-robot evidence or a paper-effect conclusion."
+  ],
+  "safety_scope": {
+    "hardware_accessed": false,
+    "serial_accessed": false,
+    "hardware_camera_accessed": false,
+    "gateway_or_quest_started": false,
+    "robot_or_torque_enabled": false,
+    "twelve_volt_enabled": false,
+    "lerobot_dataset_written": false,
+    "training_or_finetuning_performed": false,
+    "checkpoint_changed": false,
+    "frozen120_evidence_modified": false
+  }
+}

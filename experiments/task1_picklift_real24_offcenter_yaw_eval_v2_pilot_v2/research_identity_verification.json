@@ -1,0 +1,73 @@
+{
+  "schema_version": 2,
+  "verified_at_utc": "2026-07-30T08:05:00Z",
+  "verification_mode": "read_only_windows_research_checkout_after_versioned_pre_rollout_revision",
+  "research_repo": "G:\\PhysicalAI\\IAmRobotTrainerResearch",
+  "head_commit": "9d220248f5cff7c9eb78837f2636bf979185f01d",
+  "working_tree_status": "clean",
+  "files": {
+    "protocol": {
+      "path": "experiment-design/task1-picklift-offcenter-yaw-eval-v2-pilot-v2.json",
+      "sha256": "1a5605878778506502b9d7d06e2445ce9aa509aa82f6523d646bf4a0b195eb97",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-poses-v2.json",
+      "sha256": "9acfcb7c49e6ff03f9de7b03008c204342e7e846a741a7676c795c8f14043200",
+      "match": true
+    },
+    "validation_manifest": {
+      "path": "manifests/task1-picklift-offcenter-yaw-eval-v2-pilot-validation-v2.json",
+      "sha256": "609d6934c1afca811622821821265762a1d483224ab9ffa8dc1a988eb844b5c3",
+      "match": true
+    },
+    "alignment_manifest": {
+      "path": "manifests/task1-picklift-sim-real-geometry-alignment-v1.json",
+      "sha256": "14b01f42045865a477d764037f512559461d5c8e364d6ab75fe1d1509d0b92a1",
+      "match": true
+    }
+  },
+  "predecessor": {
+    "research_repo_commit": "ca62d043d55a70f06c91a9b4ffdfcac16a63d5cd",
+    "protocol_sha256": "4975d82942843cadba3301c97f82617af669953b056cf18bc81dcf5ec6a4a55c",
+    "pose_manifest_sha256": "4863646a12d5ae26b6d750f3db946d0a71aa479459710842f15722f60af4944b",
+    "owning_plan_sha256": "2d5f634bcf3f96d15711cbf43e6c10d123e26d91bbc74bd23e03338f19514e65",
+    "hardware_trials_started": false,
+    "immutable": true
+  },
+  "validated_contract": {
+    "pose_count": 12,
+    "unique_cells": 12,
+    "positions_equal_to_cell_center": 0,
+    "absolute_x_offset_from_cell_center_m": 0.015,
+    "absolute_y_offset_from_cell_center_m": 0.015,
+    "all_nominal_centers_on_10mm_lattice": true,
+    "order_matches_predecessor": true,
+    "quadrants_match_predecessor": true,
+    "yaw_matches_predecessor": true,
+    "quadrant_counts": {
+      "x_minus_y_minus": 3,
+      "x_minus_y_plus": 3,
+      "x_plus_y_minus": 3,
+      "x_plus_y_plus": 3
+    },
+    "yaw_counts": {
+      "0": 6,
+      "45": 6
+    },
+    "uses_prior_failure_or_success_labels": false,
+    "fixed_real24_model_hash_matches": true,
+    "alignment_status": "accepted_frozen",
+    "joint_geometry_profile_id": "picklift_real_to_mujoco_joint_geometry_v1",
+    "sim_camera_profile_id": "picklift_real_canonical_12cell_camera_v6",
+    "real_camera_profile_id": "icspring_front_crop_1280x960_to_640x480_v1"
+  },
+  "hardware_access": {
+    "serial": false,
+    "hardware_camera": false,
+    "robot": false,
+    "torque": false,
+    "follower_12v": false,
+    "policy_rollout": false
+  }
+}
