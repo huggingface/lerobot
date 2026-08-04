@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Hand Joint Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .controls {
+            padding: 15px;
+            background-color: #f5f5f5;
+            z-index: 100;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #canvas-container {
+            flex: 3;
+            position: relative;
+        }
+
+        #sidebar {
+            flex: 1;
+            padding: 15px;
+            background-color: #f8f9fa;
+            overflow-y: auto;
+            max-width: 300px;
+            border-left: 1px solid #ddd;
+        }
+
+        .joint-info {
+            margin-bottom: 10px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .joint-name {
+            font-weight: bold;
+        }
+
+        .joint-value {
+            font-family: monospace;
+        }
+
+        .bar-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            height: 10px;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .bar {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.2s ease-in-out;
+        }
+
+        .log-container {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            background-color: #f8f9fa;
+        }
+
+        .view-controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 10;
+        }
+
+        .view-button {
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            margin-right: 5px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button id="connectButton">Connect to Device</button>
+        <button id="disconnectButton" disabled>Disconnect</button>
+        <select id="baudRate">
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200" selected>115200</option>
+        </select>
+        <span id="statusIndicator" class="status disconnected">Status: Disconnected</span>
+    </div>
+
+    <div class="container">
+        <div id="canvas-container">
+            <!-- 3D canvas will be inserted here -->
+            <div class="view-controls">
+                <button class="view-button" id="frontView">Front</button>
+                <button class="view-button" id="sideView">Side</button>
+                <button class="view-button" id="topView">Top</button>
+                <button class="view-button" id="resetView">Reset</button>
+            </div>
+        </div>
+
+        <div id="sidebar">
+            <h3>Joint Values</h3>
+            <div id="jointsContainer">
+                <!-- Joint info will be added here -->
+            </div>
+
+            <div class="log-container" id="logContainer">
+                <!-- Log messages will be added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+
+    <script src="script.js"></script>
+</body>
+</html>
