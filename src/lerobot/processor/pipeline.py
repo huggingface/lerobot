@@ -161,6 +161,14 @@ class ProcessorStep(ABC):
     # Set by `ProcessorStepRegistry.register`; absent on unregistered steps, so read it with `getattr`.
     _registry_name: ClassVar[str]
 
+    # Consulted by the specialized single-field bases (ObservationProcessorStep, ActionProcessorStep,
+    # etc.): when True, the step is skipped (the transition is returned unchanged) if its target field
+    # is None, instead of raising a ValueError. Set it as a plain class attribute in subclasses
+    # (`skip_if_missing = True`) so that dataclass steps don't pick it up as a field. Use it for steps
+    # that must tolerate partial transitions, e.g. action steps in a preprocessor that also runs at
+    # inference time (where the action is None) or steps in RL pipelines that run on reset transitions.
+    skip_if_missing: ClassVar[bool] = False
+
     @property
     def transition(self) -> EnvTransition:
         """Provides access to the most recent transition being processed.
@@ -1872,7 +1880,12 @@ PolicyProcessorPipeline = DataProcessorPipeline[TInput, TOutput]
 
 
 class ObservationProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the observation in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the observation in a transition.
+
+    The `observation` hook may read other parts of the transition via `self.transition`, but only the
+    observation may be written. Set `skip_if_missing = True` on a subclass to skip the step (instead of
+    raising) when the transition carries no observation.
+    """
 
     @abstractmethod
     def observation(self, observation: RobotObservation) -> RobotObservation:
@@ -1892,6 +1905,8 @@ class ObservationProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         observation = new_transition.get(TransitionKey.OBSERVATION)
+        if observation is None and self.skip_if_missing:
+            return new_transition
         if observation is None or not isinstance(observation, dict):
             raise ValueError("ObservationProcessorStep requires an observation in the transition.")
 
@@ -1901,7 +1916,12 @@ class ObservationProcessorStep(ProcessorStep, ABC):
 
 
 class ActionProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the action in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the action in a transition.
+
+    The `action` hook may read other parts of the transition via `self.transition`, but only the action
+    may be written. Set `skip_if_missing = True` on a subclass to skip the step (instead of raising)
+    when the transition carries no action, e.g. for steps in pipelines that also run at inference time.
+    """
 
     @abstractmethod
     def action(
@@ -1924,6 +1944,8 @@ class ActionProcessorStep(ProcessorStep, ABC):
 
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
+            if self.skip_if_missing:
+                return new_transition
             raise ValueError("ActionProcessorStep requires an action in the transition.")
 
         processed_action = self.action(action)
@@ -1932,7 +1954,12 @@ class ActionProcessorStep(ProcessorStep, ABC):
 
 
 class RobotActionProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` for processing a `RobotAction` (a dictionary)."""
+    """An abstract `ProcessorStep` for processing a `RobotAction` (a dictionary).
+
+    The `action` hook may read other parts of the transition via `self.transition`, but only the action
+    may be written. Set `skip_if_missing = True` on a subclass to skip the step (instead of raising)
+    when the transition carries no action.
+    """
 
     @abstractmethod
     def action(self, action: RobotAction) -> RobotAction:
@@ -1952,6 +1979,8 @@ class RobotActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
+        if action is None and self.skip_if_missing:
+            return new_transition
         if action is None or not isinstance(action, dict):
             raise ValueError(f"Action should be a RobotAction type (dict), but got {type(action)}")
 
@@ -1961,7 +1990,12 @@ class RobotActionProcessorStep(ProcessorStep, ABC):
 
 
 class PolicyActionProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` for processing a `PolicyAction` (a tensor or dict of tensors)."""
+    """An abstract `ProcessorStep` for processing a `PolicyAction` (a tensor).
+
+    The `action` hook may read other parts of the transition via `self.transition`, but only the action
+    may be written. Set `skip_if_missing = True` on a subclass to skip the step (instead of raising)
+    when the transition carries no action, e.g. for steps in pipelines that also run at inference time.
+    """
 
     @abstractmethod
     def action(self, action: PolicyAction) -> PolicyAction:
@@ -1981,6 +2015,8 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
+        if action is None and self.skip_if_missing:
+            return new_transition
         if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type (tensor), but got {type(action)}")
 
@@ -1990,7 +2026,11 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
 
 
 class RewardProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the reward in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the reward in a transition.
+
+    Set `skip_if_missing = True` on a subclass to skip the step (instead of raising) when the
+    transition carries no reward.
+    """
 
     @abstractmethod
     def reward(self, reward) -> float | torch.Tensor:
@@ -2011,6 +2051,8 @@ class RewardProcessorStep(ProcessorStep, ABC):
 
         reward = new_transition.get(TransitionKey.REWARD)
         if reward is None:
+            if self.skip_if_missing:
+                return new_transition
             raise ValueError("RewardProcessorStep requires a reward in the transition.")
 
         processed_reward = self.reward(reward)
@@ -2019,7 +2061,11 @@ class RewardProcessorStep(ProcessorStep, ABC):
 
 
 class DoneProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the 'done' flag in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the 'done' flag in a transition.
+
+    Set `skip_if_missing = True` on a subclass to skip the step (instead of raising) when the
+    transition carries no 'done' flag.
+    """
 
     @abstractmethod
     def done(self, done) -> bool | torch.Tensor:
@@ -2040,6 +2086,8 @@ class DoneProcessorStep(ProcessorStep, ABC):
 
         done = new_transition.get(TransitionKey.DONE)
         if done is None:
+            if self.skip_if_missing:
+                return new_transition
             raise ValueError("DoneProcessorStep requires a done flag in the transition.")
 
         processed_done = self.done(done)
@@ -2048,7 +2096,11 @@ class DoneProcessorStep(ProcessorStep, ABC):
 
 
 class TruncatedProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the 'truncated' flag in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the 'truncated' flag in a transition.
+
+    Set `skip_if_missing = True` on a subclass to skip the step (instead of raising) when the
+    transition carries no 'truncated' flag.
+    """
 
     @abstractmethod
     def truncated(self, truncated) -> bool | torch.Tensor:
@@ -2069,6 +2121,8 @@ class TruncatedProcessorStep(ProcessorStep, ABC):
 
         truncated = new_transition.get(TransitionKey.TRUNCATED)
         if truncated is None:
+            if self.skip_if_missing:
+                return new_transition
             raise ValueError("TruncatedProcessorStep requires a truncated flag in the transition.")
 
         processed_truncated = self.truncated(truncated)
@@ -2077,7 +2131,11 @@ class TruncatedProcessorStep(ProcessorStep, ABC):
 
 
 class InfoProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that specifically targets the 'info' dictionary in a transition."""
+    """An abstract `ProcessorStep` that specifically targets the 'info' dictionary in a transition.
+
+    The `info` hook may read other parts of the transition via `self.transition`, but only the info
+    dictionary may be written.
+    """
 
     @abstractmethod
     def info(self, info) -> dict[str, Any]:
@@ -2097,6 +2155,8 @@ class InfoProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         info = new_transition.get(TransitionKey.INFO)
+        if info is None and self.skip_if_missing:
+            return new_transition
         if info is None or not isinstance(info, dict):
             raise ValueError("InfoProcessorStep requires an info dictionary in the transition.")
 
@@ -2106,7 +2166,11 @@ class InfoProcessorStep(ProcessorStep, ABC):
 
 
 class ComplementaryDataProcessorStep(ProcessorStep, ABC):
-    """An abstract `ProcessorStep` that targets the 'complementary_data' in a transition."""
+    """An abstract `ProcessorStep` that targets the 'complementary_data' in a transition.
+
+    The `complementary_data` hook may read other parts of the transition via `self.transition` (e.g. an
+    action or observation the step derives data from), but only the complementary data may be written.
+    """
 
     @abstractmethod
     def complementary_data(self, complementary_data) -> dict[str, Any]:
@@ -2126,6 +2190,8 @@ class ComplementaryDataProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None and self.skip_if_missing:
+            return new_transition
         if complementary_data is None or not isinstance(complementary_data, dict):
             raise ValueError("ComplementaryDataProcessorStep requires complementary data in the transition.")
 

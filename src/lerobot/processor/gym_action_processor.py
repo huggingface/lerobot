@@ -20,11 +20,11 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvAction, EnvTransition, PolicyAction, TransitionKey
+from lerobot.lerobot_types import EnvAction, PolicyAction
 
 from .converters import to_tensor
 from .hil_processor import TELEOP_ACTION_KEY
-from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
+from .pipeline import ActionProcessorStep, ComplementaryDataProcessorStep, ProcessorStepRegistry
 
 
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
@@ -73,34 +73,38 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
 
 @ProcessorStepRegistry.register("numpy2torch_action_processor")
 @dataclass
-class Numpy2TorchActionProcessorStep(ProcessorStep):
+class Numpy2TorchActionProcessorStep(ActionProcessorStep):
     """Converts a NumPy array action to a PyTorch tensor when action is present."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Converts numpy action to torch tensor if action exists, otherwise passes through."""
-        self._current_transition = transition.copy()
-        new_transition = self._current_transition
+    skip_if_missing = True
 
-        action = new_transition.get(TransitionKey.ACTION)
-        if action is not None:
-            if not isinstance(action, np.ndarray):
-                raise TypeError(
-                    f"Expected np.ndarray or None, got {type(action).__name__}. "
-                    "Use appropriate processor for non-tensor actions."
-                )
-            torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
-            new_transition[TransitionKey.ACTION] = torch_action
+    def action(self, action: EnvAction) -> PolicyAction:
+        if not isinstance(action, np.ndarray):
+            raise TypeError(
+                f"Expected np.ndarray or None, got {type(action).__name__}. "
+                "Use appropriate processor for non-tensor actions."
+            )
+        return to_tensor(action, dtype=None)  # Preserve original dtype
 
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if complementary_data is None:
-            complementary_data = {}
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register("numpy2torch_teleop_action_processor")
+@dataclass
+class Numpy2TorchTeleopActionProcessorStep(ComplementaryDataProcessorStep):
+    """Converts a NumPy teleop action in the complementary data to a PyTorch tensor."""
+
+    skip_if_missing = True
+
+    def complementary_data(self, complementary_data: dict) -> dict:
         if TELEOP_ACTION_KEY in complementary_data:
             teleop_action = complementary_data[TELEOP_ACTION_KEY]
             if isinstance(teleop_action, np.ndarray):
                 complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
-            new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
-
-        return new_transition
+        return complementary_data
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
