@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from huggingface_hub.errors import HFValidationError
+from huggingface_hub.utils import validate_repo_id
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
@@ -33,7 +36,7 @@ class LaWAMConfig(PreTrainedConfig):
 
     n_obs_steps: int = 1
     chunk_size: int = 50
-    n_action_steps: int = 50
+    n_action_steps: int | None = None
     num_video_frames: int = 2
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -45,9 +48,37 @@ class LaWAMConfig(PreTrainedConfig):
     )
 
     base_vlm: str = "Qwen/Qwen3-VL-2B-Instruct"
+    base_vlm_path: str | None = None
     lam_ckpt_path: str | None = None
-    lam_yaml_path: str | None = None
     hf_cache_dir: str | None = None
+
+    lam_dim: int = 1024
+    lam_num_heads: int = 16
+    lam_ffn_expansion_factor: int = 4
+    lam_enc_layers: int = 24
+    lam_codebook_size: int = 32
+    lam_code_dim: int = 32
+    lam_max_state_dim: int = 14
+    lam_num_queries: int = 1
+    lam_dec_layers: int = 12
+    lam_dropout: float = 0.0
+    lam_vq_type: str = "vae"
+    lam_vq_layer_norm: bool = True
+    lam_norm_latents: bool = True
+    lam_norm_latents_type: str = "ln"
+    lam_enc_add_state: bool = False
+    lam_enc_modal_mask: bool = True
+    lam_latent_layer_to_use: int = -2
+    lam_multi_input: bool = False
+    lam_num_embodiments: int = 32
+    lam_image_hw: tuple[int, int] = (256, 256)
+    lam_patch_size: int = 16
+    lam_decoder_last_ln: bool = True
+    dinov3_hidden_size: int = 768
+    dinov3_intermediate_size: int = 3072
+    dinov3_num_hidden_layers: int = 12
+    dinov3_num_attention_heads: int = 12
+    dinov3_num_register_tokens: int = 4
 
     lawam_checkpoint_path: str | None = None
     lawam_dataset_stats_path: str | None = None
@@ -56,7 +87,7 @@ class LaWAMConfig(PreTrainedConfig):
     primary_image_features: list[str] | None = None
     wrist_image_features: list[str] | None = None
     default_task: str = "Execute the robot action."
-    action_hz: float = 20.0
+    action_hz: float | None = None
     embodiment_id: int = 25
 
     enable_primary_video_aug: bool = False
@@ -99,11 +130,19 @@ class LaWAMConfig(PreTrainedConfig):
     flow_token_independent_noise: bool = False
     flow_use_action_positional_embeddings: bool = True
 
-    clip_normalized_actions: bool = True
-    pre_snap_gripper_action: bool = True
-    binarize_gripper_action: bool = True
+    clip_normalized_actions: bool = False
+    pre_snap_gripper_action: bool = False
+    binarize_gripper_action: bool = False
     gripper_dim: int = 6
     gripper_threshold: float = 0.5
+
+    freeze_vision_backbone: bool = False
+    freeze_llm_backbone: bool = False
+    freeze_embedding: bool = True
+    unfreeze_vision_merger: bool = True
+    unfreeze_lam_decoder: bool = True
+    keep_llm_first_n_layers: int | None = 16
+    unfreeze_llm_last_n_layers: int | None = -1
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -116,12 +155,65 @@ class LaWAMConfig(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.n_action_steps > self.chunk_size:
+        try:
+            validate_repo_id(self.base_vlm)
+        except HFValidationError as exc:
+            raise ValueError(
+                "`base_vlm` must be a portable Hugging Face model ID. "
+                "Use `base_vlm_path` for a local Qwen directory."
+            ) from exc
+        if self.n_action_steps is not None and self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
         if self.num_video_frames < 1:
             raise ValueError("`num_video_frames` must be >= 1.")
-        if self.action_hz <= 0:
+        if self.action_hz is not None and self.action_hz <= 0:
             raise ValueError("`action_hz` must be > 0.")
+        if self.flow_horizon_sec <= 0:
+            raise ValueError("`flow_horizon_sec` must be > 0.")
+
+    def resolve_dataset_metadata(self, dataset_meta) -> None:
+        if self.action_hz is None:
+            dataset_fps = getattr(dataset_meta, "fps", None)
+            if dataset_fps is None:
+                raise ValueError(
+                    "LaWAM requires `policy.action_hz` when dataset metadata is unavailable. "
+                    "Training resolves it automatically from the dataset FPS."
+                )
+            self.action_hz = float(dataset_fps)
+
+        effective_horizon = self.effective_action_horizon
+        if self.n_action_steps is None:
+            self.n_action_steps = effective_horizon
+        elif self.n_action_steps > effective_horizon:
+            raise ValueError(
+                "`n_action_steps` cannot exceed the flow horizon: "
+                f"got {self.n_action_steps}, but floor(flow_horizon_sec * action_hz) "
+                f"limits this policy to {effective_horizon} steps."
+            )
+
+    def resolve_runtime_config(self, dataset_meta=None) -> None:
+        if self.action_hz is None and dataset_meta is None:
+            raise ValueError(
+                "LaWAM requires `policy.action_hz` when dataset metadata is unavailable. "
+                "Training resolves it automatically from the dataset FPS."
+            )
+        self.resolve_dataset_metadata(dataset_meta)
+
+    @property
+    def base_vlm_source(self) -> str:
+        return self.base_vlm_path or self.base_vlm
+
+    @property
+    def effective_action_horizon(self) -> int:
+        if self.action_hz is None:
+            raise ValueError("`action_hz` must be resolved before computing the action horizon.")
+        horizon = min(self.chunk_size, int(self.flow_horizon_sec * self.action_hz))
+        if horizon < 1:
+            raise ValueError(
+                "`flow_horizon_sec * action_hz` must cover at least one action step, "
+                f"got {self.flow_horizon_sec} * {self.action_hz}."
+            )
+        return horizon
 
     def validate_features(self) -> None:
         if not self.image_features:
@@ -152,7 +244,8 @@ class LaWAMConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
+        horizon = self.chunk_size if self.action_hz is None else self.effective_action_horizon
+        return list(range(horizon))
 
     @property
     def reward_delta_indices(self) -> None:

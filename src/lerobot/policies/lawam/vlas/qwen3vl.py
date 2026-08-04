@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Qwen3-VL loading and freezing helpers for LaWAM."""
 
 from __future__ import annotations
@@ -20,7 +34,6 @@ def load_qwen3vl(
     config = AutoConfig.from_pretrained(
         model_id,
         cache_dir=cache_path,
-        trust_remote_code=True,
     )
     if config.model_type != "qwen3_vl":
         raise ValueError(
@@ -31,7 +44,6 @@ def load_qwen3vl(
     processor = AutoProcessor.from_pretrained(
         model_id,
         cache_dir=cache_path,
-        trust_remote_code=True,
     )
     if processor.chat_template is None and getattr(
         getattr(processor, "tokenizer", None), "chat_template", None
@@ -40,10 +52,7 @@ def load_qwen3vl(
 
     base_kwargs = {
         "cache_dir": cache_path,
-        "trust_remote_code": True,
         "torch_dtype": dtype,
-        "device_map": "cpu",
-        "low_cpu_mem_usage": True,
     }
     errors = []
     for attention_backend in ("flash_attention_2", "sdpa", None):

@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -36,8 +50,8 @@ class LatentWorldPolicyConfig:
 
     # Base checkpoints
     hf_cache_dir: str | None = None
-    lam_ckpt_path: str = ""
-    lam_yaml_path: str = ""
+    lam_ckpt_path: str | None = None
+    lam_config: dict[str, Any] = field(default_factory=dict)
 
     # VLM dtype
     vlm_dtype: torch.dtype = torch.bfloat16
@@ -253,7 +267,10 @@ class LatentWorldPolicyBackend(nn.Module):
         )
 
         # 2) Load LAM.
-        self.lam = load_latent_action_model(self.model_cfg.lam_ckpt_path, self.model_cfg.lam_yaml_path)
+        self.lam = load_latent_action_model(
+            self.model_cfg.lam_config,
+            checkpoint_path=self.model_cfg.lam_ckpt_path,
+        )
 
         # 3) Create trainable query and mapping head.
         self.num_action_queries = int(self.model_cfg.num_action_queries)

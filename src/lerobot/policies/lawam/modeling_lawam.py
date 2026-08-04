@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -29,18 +29,12 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _diffusers_available,
     _transformers_available,
-    is_package_available,
     require_package,
 )
 
 from .configuration_lawam import LaWAMConfig
 
-_lawam_deps_available = (
-    _transformers_available
-    and _diffusers_available
-    and is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
-    and is_package_available("PyYAML", import_name="yaml")
-)
+_lawam_deps_available = _transformers_available and _diffusers_available
 
 if TYPE_CHECKING or _lawam_deps_available:
     from lerobot.policies.lawam.latent_world.batch_builder import LatentWorldPolicyInferBatchBuilder
@@ -70,58 +64,68 @@ else:
 def _require_lawam_packages() -> None:
     require_package("transformers", extra="lawam")
     require_package("diffusers", extra="lawam")
-    require_package("qwen-vl-utils", extra="lawam", import_name="qwen_vl_utils")
-    require_package("PyYAML", extra="lawam", import_name="yaml")
 
 
 def _load_local_checkpoint(path: str) -> Any:
-    try:
-        return torch.load(path, map_location="cpu", weights_only=True)
-    except TypeError:
-        # Compatibility for older PyTorch versions that do not support `weights_only`.
-        return torch.load(path, map_location="cpu")  # nosec B614
+    return torch.load(path, map_location="cpu", weights_only=True, mmap=True)
 
 
 def _build_prompt_config() -> SimpleNamespace:
     return SimpleNamespace(datasets=SimpleNamespace(vla_data={}))
 
 
-def _resolve_lawam_checkpoint_config_path(config: LaWAMConfig) -> Path | None:
-    if config.lawam_checkpoint_path is None:
-        return None
+def _build_freeze_config(config: LaWAMConfig):
+    return parse_policy_freeze_config(
+        {
+            "freeze_vision_backbone": config.freeze_vision_backbone,
+            "freeze_llm_backbone": config.freeze_llm_backbone,
+            "freeze_embedding": config.freeze_embedding,
+            "unfreeze_vision_merger": config.unfreeze_vision_merger,
+            "unfreeze_lam_decoder": config.unfreeze_lam_decoder,
+            "keep_llm_first_n_layers": config.keep_llm_first_n_layers,
+            "unfreeze_llm_last_n_layers": config.unfreeze_llm_last_n_layers,
+        }
+    )
 
-    checkpoint_path = Path(config.lawam_checkpoint_path).expanduser()
-    if checkpoint_path.suffix != ".pt" or len(checkpoint_path.parents) < 2:
-        return None
 
-    config_path = checkpoint_path.parents[1] / "config.yaml"
-    return config_path if config_path.exists() else None
-
-
-def _load_lawam_checkpoint_freeze_config(config: LaWAMConfig):
-    config_path = _resolve_lawam_checkpoint_config_path(config)
-    if config_path is None:
-        return None
-
-    import yaml
-
-    with open(config_path) as f:
-        checkpoint_config = yaml.safe_load(f) or {}
-
-    freeze_config = checkpoint_config.get("trainer", {}).get("freeze")
-    if freeze_config is None:
-        return None
-    return parse_policy_freeze_config(freeze_config)
+def _build_lam_config(config: LaWAMConfig) -> dict[str, Any]:
+    return {
+        "dim": config.lam_dim,
+        "num_heads": config.lam_num_heads,
+        "ffn_expansion_factor": config.lam_ffn_expansion_factor,
+        "enc_layers": config.lam_enc_layers,
+        "codebook_size": config.lam_codebook_size,
+        "code_dim": config.lam_code_dim,
+        "max_state_dim": config.lam_max_state_dim,
+        "num_frames": config.num_video_frames,
+        "num_queries": config.lam_num_queries,
+        "vq_kwargs": {"layer_norm": config.lam_vq_layer_norm},
+        "dec_layers": config.lam_dec_layers,
+        "dropout": config.lam_dropout,
+        "vq_type": config.lam_vq_type,
+        "norm_latents": config.lam_norm_latents,
+        "norm_latents_type": config.lam_norm_latents_type,
+        "enc_add_state": config.lam_enc_add_state,
+        "enc_modal_mask": config.lam_enc_modal_mask,
+        "latent_layer_to_use": config.lam_latent_layer_to_use,
+        "multi_input": config.lam_multi_input,
+        "num_embodiments": config.lam_num_embodiments,
+        "image_hw": config.lam_image_hw,
+        "patch_size": config.lam_patch_size,
+        "decoder_last_ln": config.lam_decoder_last_ln,
+        "dinov3_config": {
+            "hidden_size": config.dinov3_hidden_size,
+            "intermediate_size": config.dinov3_intermediate_size,
+            "num_hidden_layers": config.dinov3_num_hidden_layers,
+            "num_attention_heads": config.dinov3_num_attention_heads,
+            "num_register_tokens": config.dinov3_num_register_tokens,
+            "patch_size": config.lam_patch_size,
+        },
+    }
 
 
 def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
     _require_lawam_packages()
-    if config.lam_ckpt_path is None or config.lam_yaml_path is None:
-        raise ValueError(
-            "LaWAM requires both `policy.lam_ckpt_path` and `policy.lam_yaml_path` to build the "
-            "latent action model."
-        )
-
     flow_cfg = ConditionalFlowMatchingConfig(
         action_dim=int(config.flow_action_dim),
         hidden_dim=int(config.flow_hidden_dim),
@@ -149,10 +153,10 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
         use_action_positional_embeddings=bool(config.flow_use_action_positional_embeddings),
     )
     policy_cfg = LatentWorldPolicyConfig(flow_cfg=flow_cfg)
-    policy_cfg.action_horizon = int(config.chunk_size)
+    policy_cfg.action_horizon = config.effective_action_horizon
     policy_cfg.hf_cache_dir = config.hf_cache_dir
-    policy_cfg.lam_ckpt_path = str(config.lam_ckpt_path)
-    policy_cfg.lam_yaml_path = str(config.lam_yaml_path)
+    policy_cfg.lam_ckpt_path = config.lam_ckpt_path
+    policy_cfg.lam_config = _build_lam_config(config)
     policy_cfg.latent_action_placeholder_token = str(config.latent_action_placeholder_token)
     policy_cfg.perceptual_weight = float(config.perceptual_weight)
     policy_cfg.enable_loss_distill = bool(config.enable_loss_distill)
@@ -202,10 +206,10 @@ class LaWAMModel(nn.Module):
         super().__init__()
         self.config = config
         self.policy_cfg = _build_native_policy_config(config)
-        self.policy_backend = LatentWorldPolicyBackend(self.policy_cfg, vlm_model_id=str(config.base_vlm))
-        freeze_policy = _load_lawam_checkpoint_freeze_config(config)
-        if freeze_policy is not None:
-            apply_policy_freeze(self.policy_backend, freeze_policy)
+        self.policy_backend = LatentWorldPolicyBackend(
+            self.policy_cfg, vlm_model_id=str(config.base_vlm_source)
+        )
+        apply_policy_freeze(self.policy_backend, _build_freeze_config(config))
         self.policy_vlm_adapter = LatentWorldPolicyVLMAdapter(
             model=self.policy_backend.vlm,
             processor=self.policy_backend.processor,
@@ -246,6 +250,7 @@ class LaWAMPolicy(PreTrainedPolicy):
     def __init__(self, config: LaWAMConfig, **kwargs) -> None:
         _require_lawam_packages()
         super().__init__(config)
+        config.resolve_runtime_config(kwargs.pop("dataset_meta", None))
         config.validate_features()
         self.config = config
 
@@ -275,13 +280,28 @@ class LaWAMPolicy(PreTrainedPolicy):
             _log_checkpoint_key_mismatch("Unexpected", unexpected)
         return model
 
+    def _save_pretrained(self, save_directory, state_dict=None) -> None:
+        runtime_config = self.config
+        self.config = replace(
+            runtime_config,
+            base_vlm_path=None,
+            lam_ckpt_path=None,
+            lawam_checkpoint_path=None,
+            lawam_dataset_stats_path=None,
+            hf_cache_dir=None,
+        )
+        try:
+            super()._save_pretrained(save_directory, state_dict=state_dict)
+        finally:
+            self.config = runtime_config
+
     def _build_train_collator(self):
         policy_cfg = getattr(self.model, "policy_cfg", None)
         if policy_cfg is None:
             raise ValueError("Loaded LaWAM model does not expose `policy_cfg`; cannot build train collator.")
 
         processor_spec = build_latent_world_processor_spec(
-            policy_cfg=policy_cfg, vlm_model_id=str(self.config.base_vlm)
+            policy_cfg=policy_cfg, vlm_model_id=str(self.config.base_vlm_source)
         )
         collator = LatentWorldTrainCollator(
             policy_cfg=policy_cfg,
@@ -328,7 +348,7 @@ class LaWAMPolicy(PreTrainedPolicy):
             tensor = tensor.unsqueeze(0)
         if tensor.ndim != 4:
             raise ValueError(f"Expected image tensor [C,H,W] or [T,C,H,W], got {tuple(tensor.shape)}.")
-        tensor = tensor.detach().float().cpu()
+        tensor = tensor.detach().float()
         if tensor.max() <= 1.0 and tensor.min() >= 0.0:
             tensor = tensor * 255.0
         return tensor.round().clamp(0, 255).to(dtype=torch.uint8).contiguous()
@@ -376,17 +396,24 @@ class LaWAMPolicy(PreTrainedPolicy):
                 torch.stack([self._to_uint8_frame(batch[key][idx]) for key in wrist_keys], dim=0)
                 if wrist_keys
                 else torch.empty(
-                    (0, 3, primary_videos.shape[-2], primary_videos.shape[-1]), dtype=torch.uint8
+                    (0, 3, primary_videos.shape[-2], primary_videos.shape[-1]),
+                    dtype=torch.uint8,
+                    device=primary_videos.device,
                 )
             )
-            action = action_tensor[idx].detach().float().cpu()
+            action = action_tensor[idx].detach().float()
             if action.ndim == 1:
                 action = action.unsqueeze(0)
+            action = action[: self.config.effective_action_horizon]
 
             if state_tensor is None:
-                state = torch.zeros((1, self._state_dim()), dtype=torch.float32)
+                state = torch.zeros(
+                    (1, self._state_dim()),
+                    dtype=torch.float32,
+                    device=action.device,
+                )
             else:
-                state = state_tensor[idx].detach().float().cpu()
+                state = state_tensor[idx].detach().float()
                 if state.ndim == 1:
                     state = state.unsqueeze(0)
 
@@ -398,7 +425,7 @@ class LaWAMPolicy(PreTrainedPolicy):
                     "state": state,
                     "action": action,
                     "embodiment_id": self.config.embodiment_id,
-                    "action_hz": self.config.action_hz,
+                    "action_hz": float(self.config.action_hz),
                 }
             )
         return samples
@@ -450,7 +477,7 @@ class LaWAMPolicy(PreTrainedPolicy):
                 "primary_image": primary_images,
                 "lang": tasks[idx],
                 "embodiment_id": self.config.embodiment_id,
-                "action_hz": self.config.action_hz,
+                "action_hz": float(self.config.action_hz),
             }
             if wrist_keys:
                 example["wrist_image"] = [
@@ -486,7 +513,7 @@ class LaWAMPolicy(PreTrainedPolicy):
                 f"LaWAM produced {actions_tensor.shape[-1]} action dims, but LeRobot expects {action_dim}."
             )
         actions_tensor = actions_tensor[..., :action_dim]
-        return actions_tensor
+        return actions_tensor[:, : self.config.effective_action_horizon]
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:

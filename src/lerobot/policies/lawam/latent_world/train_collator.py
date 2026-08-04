@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -11,6 +25,7 @@ from lerobot.policies.lawam.latent_world.batch_utils import (
     apply_shared_random_resized_crop_uint8,
     build_placeholder_masks,
     imagenet_normalize_video_,
+    prepare_video_spatial_uint8,
     sample_or_pad_sequence_with_mask,
 )
 from lerobot.policies.lawam.latent_world.processor_utils import (
@@ -63,6 +78,7 @@ class LatentWorldTrainCollator:
             else DEFAULT_LATENT_WORLD_POLICY_COT_PROMPT
         )
         self.training = True
+        self.train_image_hw = tuple(int(value) for value in policy_cfg.lam_config["image_hw"])
         self._processor: Any | None = None
         self._placeholder_token_id: int | None = None
 
@@ -79,8 +95,8 @@ class LatentWorldTrainCollator:
             processor, _, placeholder_token_id = load_latent_world_processor(self.processor_spec)
             self._processor = processor
             self._placeholder_token_id = placeholder_token_id
-        assert self._processor is not None
-        assert self._placeholder_token_id is not None
+        if self._processor is None or self._placeholder_token_id is None:
+            raise RuntimeError("Failed to initialize the LaWAM processor.")
         return self._processor, self._placeholder_token_id
 
     @staticmethod
@@ -88,7 +104,7 @@ class LatentWorldTrainCollator:
         # Match inference semantics: missing wrist views are represented as an empty view list.
         if int(wrist_images.shape[0]) == 0:
             return []
-        return [img.contiguous() for img in wrist_images]
+        return [img.contiguous().cpu() for img in wrist_images]
 
     @staticmethod
     def _to_primary_view_list(primary_videos: torch.Tensor) -> list[torch.Tensor]:
@@ -97,7 +113,7 @@ class LatentWorldTrainCollator:
                 "Expected primary_videos with shape [V, T, C, H, W] and T>=1, "
                 f"got {tuple(primary_videos.shape)}."
             )
-        return [video[0].contiguous() for video in primary_videos]
+        return [video[0].contiguous().cpu() for video in primary_videos]
 
     @staticmethod
     def _augment_primary_and_wrist_views(
@@ -168,6 +184,19 @@ class LatentWorldTrainCollator:
                     enable_color_jitter=self.enable_primary_video_aug,
                 )
 
+            processed_primary_videos = torch.stack(
+                [
+                    prepare_video_spatial_uint8(video, target_hw=self.train_image_hw)
+                    for video in processed_primary_videos
+                ],
+                dim=0,
+            )
+            if int(processed_wrist_images.shape[0]) > 0:
+                processed_wrist_images = prepare_video_spatial_uint8(
+                    processed_wrist_images,
+                    target_hw=self.train_image_hw,
+                )
+
             image_views_batch.append(self._to_primary_view_list(processed_primary_videos))
             wrist_image_views_batch.append(self._to_wrist_view_list(processed_wrist_images))
             primary_video_uint8_seqs.append(processed_primary_videos[0].contiguous())
@@ -221,7 +250,7 @@ class LatentWorldTrainCollator:
                 horizon_sec=float(self.policy_cfg.flow_cfg.horizon_sec),
                 action_hz=action_hz_list[idx],
             )
-            action_horizon_mask = torch.arange(window_size) < valid_steps
+            action_horizon_mask = torch.arange(window_size, device=action_time_mask.device) < valid_steps
             action_time_mask = action_time_mask & action_horizon_mask
             action_tensors.append(action_tensor)
             action_masks.append(action_time_mask.unsqueeze(1) & action_dim_mask.unsqueeze(0))

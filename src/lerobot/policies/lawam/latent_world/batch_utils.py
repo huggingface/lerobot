@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import numpy as np
@@ -182,6 +196,23 @@ def prepare_frame_spatial_uint8(
     if apply_center_crop_90:
         frame_chw_uint8 = apply_center_crop_90_uint8(frame_chw_uint8.unsqueeze(0))[0]
     return _apply_default_spatial_preprocess_chw_uint8(frame_chw_uint8, target_hw=target_hw)
+
+
+def prepare_video_spatial_uint8(
+    video: torch.Tensor,
+    target_hw: tuple[int, int],
+) -> torch.Tensor:
+    if video.ndim != 4 or int(video.shape[1]) != 3:
+        raise ValueError(f"Expected video with shape [T, 3, H, W], got {tuple(video.shape)}.")
+
+    frames = video.detach()
+    if frames.dtype != torch.uint8:
+        frames = frames.float()
+        if frames.numel() > 0 and frames.max() <= 1.0 and frames.min() >= 0.0:
+            frames = frames * 255.0
+        frames = frames.round().clamp(0, 255).to(dtype=torch.uint8)
+    frames = _cap_source_aspect_video_uint8(frames.contiguous())
+    return _apply_default_spatial_preprocess_chw_uint8(frames, target_hw=target_hw)
 
 
 def _frame_to_hwc_uint8(frame: np.ndarray) -> np.ndarray:

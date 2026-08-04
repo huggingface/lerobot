@@ -241,8 +241,6 @@ lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[ac
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
-    "lerobot[qwen-vl-utils-dep]",
-    "PyYAML>=6.0,<7.0",
 ]
 
 # Features

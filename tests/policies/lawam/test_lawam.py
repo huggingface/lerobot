@@ -25,18 +25,22 @@ from torch import nn
 
 pytest.importorskip("transformers", reason="lawam requires the `lawam` extra (transformers)")
 pytest.importorskip("diffusers", reason="lawam requires the `lawam` extra (diffusers)")
-pytest.importorskip("qwen_vl_utils", reason="lawam requires the `lawam` extra (qwen-vl-utils)")
-pytest.importorskip("yaml", reason="lawam requires the `lawam` extra (PyYAML)")
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
+from lerobot.policies.lawam.lam_core.core.lam_model import LatentLAMModel, load_latent_action_model
 from lerobot.policies.lawam.lam_core.core.utils.modules import build_modal_block_attention_mask
-from lerobot.policies.lawam.latent_world.train_collator import valid_action_horizon_steps
+from lerobot.policies.lawam.latent_world.processor_utils import LatentWorldProcessorSpec
+from lerobot.policies.lawam.latent_world.train_collator import (
+    LatentWorldTrainCollator,
+    valid_action_horizon_steps,
+)
 from lerobot.policies.lawam.modeling_lawam import (
     LaWAMPolicy,
+    _build_freeze_config,
     _build_native_policy_config,
-    _load_lawam_checkpoint_freeze_config,
     _normalize_lawam_checkpoint_state_dict,
 )
 from lerobot.policies.lawam.vlas.qwen3vl import (
@@ -61,7 +65,6 @@ def make_config() -> LaWAMConfig:
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
         lam_ckpt_path="lam.pt",
-        lam_yaml_path="lam.yaml",
         lawam_checkpoint_path="dummy.pt",
         base_vlm="dummy-qwen",
         action_hz=20.0,
@@ -188,6 +191,7 @@ def test_native_checkpoint_stats_are_used_for_eval_processors(tmp_path) -> None:
     )
     cfg = make_config()
     cfg.lawam_checkpoint_path = str(checkpoint_path)
+    cfg.lawam_dataset_stats_path = str(run_dir / "dataset_statistics.json")
 
     preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
     batch = {
@@ -211,28 +215,17 @@ def test_native_checkpoint_stats_are_used_for_eval_processors(tmp_path) -> None:
         processed_action[:, :2],
         torch.tensor([[11.0, 22.0], [12.0, 24.0]]),
     )
-    assert processed_action[:, -1].tolist() == [-1.0, 1.0]
+    assert processed_action[:, -1].tolist() == [0.5, 1.0]
 
 
 def test_native_checkpoint_freeze_config_is_loaded(tmp_path) -> None:
-    run_dir = tmp_path / "lawam_run"
-    final_model_dir = run_dir / "final_model"
-    final_model_dir.mkdir(parents=True)
-    checkpoint_path = final_model_dir / "pytorch_model.pt"
-    checkpoint_path.touch()
-    (run_dir / "config.yaml").write_text(
-        """
-trainer:
-  freeze:
-    freeze_embedding: true
-    keep_llm_first_n_layers: 16
-    unfreeze_lam_decoder: true
-"""
-    )
+    del tmp_path
     cfg = make_config()
-    cfg.lawam_checkpoint_path = str(checkpoint_path)
+    cfg.freeze_embedding = True
+    cfg.keep_llm_first_n_layers = 16
+    cfg.unfreeze_lam_decoder = True
 
-    freeze_config = _load_lawam_checkpoint_freeze_config(cfg)
+    freeze_config = _build_freeze_config(cfg)
 
     assert freeze_config is not None
     assert freeze_config.freeze_embedding is True
@@ -241,7 +234,11 @@ trainer:
 
 
 def test_lawam_postprocessor_matches_libero_gripper_convention() -> None:
-    _, postprocessor = make_pre_post_processors(make_config(), dataset_stats=None)
+    cfg = make_config()
+    cfg.clip_normalized_actions = True
+    cfg.pre_snap_gripper_action = True
+    cfg.binarize_gripper_action = True
+    _, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
     action = torch.zeros(2, 7)
     action[0, -1] = 0.0
     action[1, -1] = 1.0
@@ -251,6 +248,34 @@ def test_lawam_postprocessor_matches_libero_gripper_convention() -> None:
     assert processed[:, -1].tolist() == [-1.0, 1.0]
 
 
+def test_lawam_gripper_processing_is_opt_in() -> None:
+    cfg = make_config()
+    cfg.clip_normalized_actions = False
+    cfg.pre_snap_gripper_action = False
+    cfg.binarize_gripper_action = False
+    _, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    action = torch.tensor([[2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25]])
+
+    assert torch.equal(postprocessor(action), action)
+
+
+def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
+    cfg = make_config()
+    cfg.clip_normalized_actions = True
+    cfg.pre_snap_gripper_action = True
+    cfg.binarize_gripper_action = True
+    cfg.gripper_dim = 3
+    cfg.gripper_threshold = 0.25
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+
+    _, loaded_postprocessor = make_pre_post_processors(cfg, pretrained_path=str(tmp_path))
+    configs = [step.get_config() for step in loaded_postprocessor.steps]
+
+    assert {"gripper_dim": 3, "threshold": 0.25} in configs
+
+
 def test_native_config_uses_padded_lawam_action_space() -> None:
     cfg = make_config()
     policy_cfg = _build_native_policy_config(cfg)
@@ -258,6 +283,58 @@ def test_native_config_uses_padded_lawam_action_space() -> None:
     assert cfg.action_feature.shape == (7,)
     assert policy_cfg.flow_cfg.action_dim == 32
     assert policy_cfg.flow_cfg.state_dim == 32
+    assert policy_cfg.action_horizon == 4
+
+
+def test_lam_constructs_without_pretrained_dino_and_strictly_loads_legacy_checkpoint(tmp_path) -> None:
+    model_config = {
+        "dim": 32,
+        "num_heads": 4,
+        "ffn_expansion_factor": 2,
+        "enc_layers": 1,
+        "codebook_size": 8,
+        "code_dim": 8,
+        "max_state_dim": 7,
+        "num_frames": 2,
+        "num_queries": 1,
+        "vq_kwargs": {"layer_norm": True},
+        "dec_layers": 1,
+        "dropout": 0.0,
+        "vq_type": "vae",
+        "norm_latents": True,
+        "norm_latents_type": "ln",
+        "enc_add_state": False,
+        "enc_modal_mask": True,
+        "latent_layer_to_use": -2,
+        "multi_input": False,
+        "num_embodiments": 32,
+        "image_hw": (32, 32),
+        "patch_size": 16,
+        "decoder_last_ln": True,
+        "dinov3_config": {
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 4,
+            "num_register_tokens": 4,
+        },
+    }
+    source_model = LatentLAMModel(**model_config)
+    legacy_state = {}
+    for key, value in source_model.state_dict().items():
+        legacy_key = key.replace(
+            "vision_encoder.model.model.layer.",
+            "vision_encoder.model.layer.",
+            1,
+        )
+        legacy_state[f"lam.{legacy_key}"] = value
+    checkpoint_path = tmp_path / "lam.ckpt"
+    torch.save({"state_dict": legacy_state}, checkpoint_path)
+
+    loaded_model = load_latent_action_model(model_config, checkpoint_path=str(checkpoint_path))
+
+    assert set(loaded_model.state_dict()) == set(source_model.state_dict())
+    assert all(not parameter.requires_grad for parameter in loaded_model.parameters())
 
 
 def test_checkpoint_normalization_populates_shared_vlm_adapter_alias() -> None:
@@ -275,6 +352,92 @@ def test_checkpoint_normalization_populates_shared_vlm_adapter_alias() -> None:
 def test_train_collator_masks_only_flow_horizon_steps() -> None:
     assert valid_action_horizon_steps(window_size=50, horizon_sec=1.2, action_hz=20.0) == 24
     assert valid_action_horizon_steps(window_size=8, horizon_sec=0.4, action_hz=20.0) == 8
+
+
+def test_action_hz_is_derived_from_dataset_metadata() -> None:
+    cfg = make_config()
+    cfg.action_hz = None
+    cfg.n_action_steps = None
+
+    policy = LaWAMPolicy(
+        cfg,
+        dataset_meta=SimpleNamespace(fps=25),
+        native_model=_FakeNativeLaWAM(),
+        native_collator=_FakeCollator(),
+    )
+
+    assert policy.config.action_hz == 25.0
+    assert policy.config.n_action_steps == 4
+
+
+def test_dataset_sampling_uses_the_derived_action_horizon() -> None:
+    cfg = make_config()
+    cfg.action_hz = None
+    cfg.chunk_size = 50
+    cfg.n_action_steps = None
+    dataset_meta = SimpleNamespace(
+        fps=25,
+        features={ACTION: {}, "observation.images.front": {}},
+    )
+
+    delta_timestamps = resolve_delta_timestamps(cfg, dataset_meta)
+
+    assert cfg.action_hz == 25.0
+    assert cfg.n_action_steps == 10
+    assert delta_timestamps is not None
+    assert len(delta_timestamps[ACTION]) == 10
+    assert delta_timestamps[ACTION][-1] == pytest.approx(9 / 25)
+
+
+def test_train_collator_resizes_all_model_inputs() -> None:
+    class FakeProcessor:
+        def apply_chat_template(self, messages, **kwargs):
+            del messages, kwargs
+            return {
+                "input_ids": torch.full((1, 4), 99, dtype=torch.long),
+                "attention_mask": torch.ones((1, 4), dtype=torch.long),
+                "pixel_values": torch.zeros((1, 3, 256, 256)),
+            }
+
+    policy_cfg = SimpleNamespace(
+        action_horizon=4,
+        flow_cfg=SimpleNamespace(action_dim=7, state_dim=7, horizon_sec=0.4),
+        lam_config={"image_hw": (256, 256)},
+    )
+    collator = LatentWorldTrainCollator(
+        policy_cfg=policy_cfg,
+        processor_spec=LatentWorldProcessorSpec(model_id="unused", placeholder_token="<ACT_PH>"),
+        act_queries=2,
+        flow_queries=2,
+        enable_primary_video_aug=False,
+        enable_primary_random_resized_crop=False,
+    )
+    collator._processor = FakeProcessor()
+    collator._placeholder_token_id = 99
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    sample = {
+        "primary_videos": torch.rand(1, 2, 3, 480, 640, device=device),
+        "wrist_images": torch.rand(1, 3, 480, 640, device=device),
+        "lang": "pick",
+        "state": torch.rand(1, 7, device=device),
+        "action": torch.rand(4, 7, device=device),
+        "embodiment_id": 25,
+        "action_hz": 20.0,
+    }
+
+    batch = collator([sample])
+
+    assert batch["primary_video"].shape == (1, 2, 3, 256, 256)
+    assert batch["actions"].device.type == device.type
+
+
+def test_action_steps_cannot_exceed_flow_horizon() -> None:
+    cfg = make_config()
+    cfg.chunk_size = 50
+    cfg.n_action_steps = 9
+
+    with pytest.raises(ValueError, match="cannot exceed the flow horizon"):
+        make_policy(cfg)
 
 
 def test_lam_modal_mask_allows_query_and_same_modality_attention() -> None:
@@ -331,6 +494,46 @@ def test_training_forward_converts_batch_to_lawam_samples() -> None:
     assert first["lang"] == "task 0"
     assert first["embodiment_id"] == 25
     assert first["action_hz"] == 20.0
+
+
+def test_saved_policy_config_drops_local_initialization_paths(tmp_path) -> None:
+    cfg = make_config()
+    cfg.base_vlm_path = "/private/qwen3-vl"
+    cfg.lawam_dataset_stats_path = "/private/dataset_statistics.json"
+    cfg.hf_cache_dir = "/private/huggingface-cache"
+    policy, _, _ = make_policy(cfg)
+
+    policy.save_pretrained(tmp_path)
+    saved_config = json.loads((tmp_path / "config.json").read_text())
+
+    assert saved_config["base_vlm"] == "dummy-qwen"
+    assert saved_config["base_vlm_path"] is None
+    assert saved_config["lam_ckpt_path"] is None
+    assert saved_config["lawam_checkpoint_path"] is None
+    assert saved_config["lawam_dataset_stats_path"] is None
+    assert saved_config["hf_cache_dir"] is None
+
+    loaded_policy = LaWAMPolicy.from_pretrained(
+        tmp_path,
+        native_model=_FakeNativeLaWAM(),
+        native_collator=_FakeCollator(),
+    )
+    assert torch.equal(loaded_policy.model.weight, policy.model.weight)
+
+
+def test_base_vlm_path_overrides_portable_model_id_at_runtime() -> None:
+    cfg = make_config()
+
+    assert cfg.base_vlm_source == "dummy-qwen"
+
+    cfg.base_vlm_path = "/local/qwen3-vl"
+
+    assert cfg.base_vlm_source == "/local/qwen3-vl"
+
+
+def test_base_vlm_rejects_local_paths() -> None:
+    with pytest.raises(ValueError, match="Use `base_vlm_path` for a local Qwen directory"):
+        LaWAMConfig(base_vlm="/local/qwen3-vl")
 
 
 @pytest.mark.parametrize("primary_features", [None, ["observation.images.front", "observation.images.wrist"]])

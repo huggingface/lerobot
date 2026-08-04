@@ -58,6 +58,9 @@ class LaWAMClipActionsProcessorStep(ProcessorStep):
     def transform_features(self, features):
         return features
 
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
 
 @ProcessorStepRegistry.register(name="lawam_pre_snap_gripper")
 class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
@@ -77,6 +80,9 @@ class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
 
     def transform_features(self, features):
         return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
 
 @ProcessorStepRegistry.register(name="lawam_binarize_gripper")
@@ -99,6 +105,9 @@ class LaWAMBinarizeGripperProcessorStep(ProcessorStep):
 
     def transform_features(self, features):
         return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
 
 @ProcessorStepRegistry.register(name="lawam_libero_state")
@@ -131,26 +140,11 @@ class LaWAMLiberoStateProcessorStep(ProcessorStep):
 
 
 def _resolve_native_lawam_stats_path(config: LaWAMConfig) -> Path | None:
-    if config.lawam_dataset_stats_path is not None:
-        stats_path = Path(config.lawam_dataset_stats_path).expanduser()
-        if not stats_path.exists():
-            raise FileNotFoundError(f"`policy.lawam_dataset_stats_path` does not exist: {stats_path}")
-        return stats_path
-
-    if config.lawam_checkpoint_path is None:
+    if config.lawam_dataset_stats_path is None:
         return None
-
-    checkpoint_path = Path(config.lawam_checkpoint_path).expanduser()
-    if checkpoint_path.suffix != ".pt" or len(checkpoint_path.parents) < 2:
-        return None
-
-    stats_path = checkpoint_path.parents[1] / "dataset_statistics.json"
+    stats_path = Path(config.lawam_dataset_stats_path).expanduser()
     if not stats_path.exists():
-        raise FileNotFoundError(
-            "Original LaWAM checkpoints require dataset statistics for evaluation. "
-            f"Expected `{stats_path}` next to the checkpoint run directory, or pass "
-            "`policy.lawam_dataset_stats_path` explicitly."
-        )
+        raise FileNotFoundError(f"`policy.lawam_dataset_stats_path` does not exist: {stats_path}")
     return stats_path
 
 

@@ -1,8 +1,21 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from typing import Any
 
 import torch
 import torch.nn as nn
-import yaml
 
 from .utils.lam_decoder import LAMDecoderV2, StatePredictor
 from .utils.lam_encoder import LAMEncoder
@@ -34,7 +47,7 @@ class LatentLAMModel(nn.Module):
         disable_vq: bool = False,
         norm_latents: bool = False,
         norm_latents_type: str = "l2",
-        vision_model_id: str = "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        dinov3_config: dict[str, Any] | None = None,
         enc_add_state: bool = False,
         enc_modal_mask: bool = False,
         latent_layer_to_use: int = -2,
@@ -75,7 +88,7 @@ class LatentLAMModel(nn.Module):
         self.num_embodiments = int(num_embodiments)
 
         self.vision_encoder, self.input_dim = build_vision_encoder(
-            vision_model_id,
+            dinov3_config,
             norm_layer_type=norm_latents_type,
             enable_norm=norm_latents,
         )
@@ -148,24 +161,19 @@ class LatentLAMModel(nn.Module):
         return features
 
 
-def load_latent_action_model(ckpt_path, yaml_path):
-    with open(yaml_path, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    model_cfg = cfg.get("model", cfg) or {}
-
+def load_latent_action_model(model_cfg: dict[str, Any], checkpoint_path: str | None = None):
     if "image_hw" not in model_cfg:
-        raise ValueError("LAM config must provide `model.image_hw`.")
+        raise ValueError("LAM config must provide `image_hw`.")
     if "patch_size" not in model_cfg:
-        raise ValueError("LAM config must provide `model.patch_size`.")
+        raise ValueError("LAM config must provide `patch_size`.")
 
-    init_kwargs = dict(model_cfg)
-    init_kwargs.pop("ar_prediction", None)
-    latent_action_model = LatentLAMModel(**init_kwargs).to("cpu")
+    latent_action_model = LatentLAMModel(**model_cfg).to("cpu")
+    if checkpoint_path is None:
+        for parameter in latent_action_model.parameters():
+            parameter.requires_grad = False
+        return latent_action_model.eval()
 
-    try:
-        lam_payload = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-    except TypeError:
-        lam_payload = torch.load(ckpt_path, map_location="cpu")  # nosec B614
+    lam_payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True, mmap=True)
     lam_ckpt = lam_payload["state_dict"]
     model_state = latent_action_model.state_dict()
     new_ckpt = {}

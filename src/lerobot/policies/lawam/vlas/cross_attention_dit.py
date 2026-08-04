@@ -282,11 +282,7 @@ class DiT(ModelMixin, ConfigMixin):
         # Output blocks
         self.norm_out = nn.LayerNorm(self.inner_dim, elementwise_affine=False, eps=1e-6)
         self.proj_out_1 = nn.Linear(self.inner_dim, 2 * self.inner_dim)
-        self.proj_out_2 = nn.Linear(self.inner_dim, self.output_dim)
-        # print(
-        #     "Total number of DiT parameters: ",
-        #     sum(p.numel() for p in self.parameters() if p.requires_grad),
-        # )
+        self.proj_out_2 = nn.Linear(self.inner_dim, self.config.output_dim)
 
     def forward(
         self,
@@ -364,9 +360,8 @@ class AlternateVLDiT(DiT):
         vlm_mask: torch.Tensor | None = None,  # [B, S], True=VLM tokens
         hidden_positional_embeddings: torch.Tensor | None = None,
     ):
-        assert image_mask is not None and vlm_mask is not None, (
-            "AlternateVLDiT requires image_mask and vlm_mask"
-        )
+        if image_mask is None or vlm_mask is None:
+            raise ValueError("AlternateVLDiT requires image_mask and vlm_mask.")
 
         temb = self.timestep_encoder(timestep)
 
