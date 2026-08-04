@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.6.1"
+version = "0.6.2"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -67,8 +67,8 @@ dependencies = [
     "einops>=0.8.0,<0.9.0",
 
     # Config & Hub
-    "draccus==0.10.0", # TODO: Relax version constraint
-    "huggingface-hub>=1.0.0,<2.0.0",
+    "draccus>=0.11.6,<0.12.0",
+    "huggingface-hub>=1.6.0,<2.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments
@@ -87,7 +87,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<81.0.0",
+    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
 ]
 
 # Optional dependencies
@@ -95,7 +95,7 @@ dependencies = [
 
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
-    "datasets>=4.7.0,<5.0.0",
+    "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -265,7 +265,7 @@ annotations = [
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]
-test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
+test = ["pytest>=8.1.0,<10.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
@@ -499,6 +499,19 @@ ignore_errors = true
 module = "lerobot.envs.*"
 ignore_errors = false
 
+[[tool.mypy.overrides]]
+module = "lerobot.annotations.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.transforms.*"
+ignore_errors = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 
 # [[tool.mypy.overrides]]
 # module = "lerobot.utils.*"

@@ -18,9 +18,9 @@ import logging
 import time
 from typing import Any
 
+from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
-from lerobot.types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator

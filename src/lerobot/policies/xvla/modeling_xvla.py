@@ -150,7 +150,7 @@ class XVLAModel(nn.Module):
         # Freeze or unfreeze policy transformer
         if not self.config.train_policy_transformer:
             for name, param in self.transformer.named_parameters():
-                if "soft_prompts" not in name:
+                if "soft_prompt" not in name:
                     param.requires_grad = False
 
         # Freeze or unfreeze soft prompts

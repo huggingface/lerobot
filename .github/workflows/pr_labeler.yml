@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot' && !github.event.pull_request.draft
     steps:
-      - uses: actions/labeler@v6
+      - uses: actions/labeler@v7
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           sync-labels: true # Removes labels if files are removed from the PR
