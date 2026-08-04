@@ -352,6 +352,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     fast_skip_tokens: int = 128
     paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
     allow_truncation: bool = True
+    prepend_bos: bool = True
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -482,23 +483,20 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
                 tokens = tokens.flatten()
 
             action_code_tokens = self._act_tokens_to_paligemma_tokens(tokens)
-            bos_id = self._paligemma_tokenizer.bos_token_id
             prompt_tokens = torch.tensor(
                 self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
                 device=action.device,
             )
             end_tokens = torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)
 
-            code_start = 1 + len(prompt_tokens)
+            token_parts = []
+            if self.prepend_bos:
+                token_parts.append(
+                    torch.tensor([self._paligemma_tokenizer.bos_token_id], device=action.device)
+                )
+            code_start = sum(len(part) for part in token_parts) + len(prompt_tokens)
             code_end = code_start + len(action_code_tokens)
-            tokens = torch.cat(
-                [
-                    torch.tensor([bos_id], device=action.device),
-                    prompt_tokens,
-                    action_code_tokens,
-                    end_tokens,
-                ]
-            )
+            tokens = torch.cat([*token_parts, prompt_tokens, action_code_tokens, end_tokens])
             code_mask = torch.zeros(len(tokens), dtype=torch.bool, device=action.device)
             code_mask[code_start:code_end] = True
 
@@ -575,6 +573,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             "fast_skip_tokens": self.fast_skip_tokens,
             "paligemma_tokenizer_name": self.paligemma_tokenizer_name,
             "allow_truncation": self.allow_truncation,
+            "prepend_bos": self.prepend_bos,
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer

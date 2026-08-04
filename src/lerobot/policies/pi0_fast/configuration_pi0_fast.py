@@ -61,12 +61,12 @@ class PI0FastConfig(PreTrainedConfig):
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
     text_tokenizer_name: str = "google/paligemma-3b-pt-224"
     action_tokenizer_name: str = "lerobot/fast-action-tokenizer"
+    auto_fit_fast_tokenizer: bool = False
+    fast_tokenizer_cache_dir: str = "~/.cache/lerobot/fast_tokenizers"
+    fast_tokenizer_fit_samples: int = 1024
     temperature: float = 0.0
     max_decoding_steps: int = 256
     fast_skip_tokens: int = 128
-
-    # Whether to validate that decoded action tokens start with "Action: " prefix
-    validate_action_token_prefix: bool = True
 
     # Whether to use KV cache for faster autoregressive decoding
     use_kv_cache: bool = True
@@ -74,8 +74,8 @@ class PI0FastConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
-            "STATE": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for state
-            "ACTION": NormalizationMode.MEAN_STD,  # Pi0Fast uses quantiles for action
+            "STATE": NormalizationMode.QUANTILES,
+            "ACTION": NormalizationMode.QUANTILES,
         }
     )
 

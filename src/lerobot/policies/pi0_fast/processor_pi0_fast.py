@@ -70,7 +70,7 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 
         full_prompts = []
         for i, task in enumerate(tasks):
-            cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = task.strip().replace("_", " ").replace("\n", " ").lower()
             state_str = " ".join(map(str, discretized_states[i]))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
@@ -92,6 +92,11 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
 def make_pi0_fast_pre_post_processors(
     config: PI0FastConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_repo_id: str | None = None,
+    dataset_root: str | None = None,
+    dataset_revision: str | None = None,
+    episodes: list[int] | None = None,
+    exclude_episodes: list[int] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -136,6 +141,18 @@ def make_pi0_fast_pre_post_processors(
     # state from the observation but does not change it. NormalizerProcessorStep still runs
     # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
     # continues to receive normalized state in [-1, 1] as expected.
+    from ..pi052.fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
+
+    action_tokenizer_path = resolve_fast_tokenizer(
+        config,
+        dataset_repo_id,
+        dataset_root,
+        dataset_stats,
+        dataset_revision,
+        episodes,
+        exclude_episodes,
+    )
+
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,  # To mimic the same processor as pretrained one
         steps.add_batch_dim,
@@ -149,10 +166,11 @@ def make_pi0_fast_pre_post_processors(
             padding="max_length",
         ),
         ActionTokenizerProcessorStep(
-            action_tokenizer_name=config.action_tokenizer_name,
+            action_tokenizer_name=action_tokenizer_path,
             max_action_tokens=config.max_action_tokens,
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,
+            prepend_bos=False,
         ),
         steps.to_device,
     ]
