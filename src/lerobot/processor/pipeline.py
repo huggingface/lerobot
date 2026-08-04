@@ -1087,14 +1087,6 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
             module_path, class_name = full_class_path.rsplit(".", 1)
 
-            # Restrict dynamic imports to internal lerobot.processor namespace
-            if module_path != "lerobot.processor" and not module_path.startswith("lerobot.processor."):
-                raise ImportError(
-                    f"Failed to load processor step '{full_class_path}'. "
-                    f"Unauthorized module path '{module_path}' in step entry. "
-                    "Dynamic imports are restricted to internal 'lerobot.processor.*' modules."
-                )
-
             try:
                 module = importlib.import_module(module_path)
                 step_class = getattr(module, class_name)
@@ -1108,10 +1100,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 ) from e
 
         if not (isinstance(step_class, type) and issubclass(step_class, ProcessorStep)):
+            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
             raise TypeError(
-                f"Resolved step class '{getattr(step_class, '__name__', step_class)}' "
-                f"(from '{step_entry}') is not a subclass of ProcessorStep. "
-                "Registered/Imported classes must inherit from ProcessorStep."
+                f"Resolved target '{step_class}' for processor step '{step_name}' "
+                "is not a valid ProcessorStep subclass."
             )
         return step_class, step_key
 
