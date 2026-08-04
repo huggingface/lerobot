@@ -177,6 +177,7 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | ---------- | ------------------------------------------- | ----------------------------------- |
 | `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
 | `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `trackio`  | `trackio`                                   | Experiment tracking without wandb   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
 | `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
 
@@ -291,10 +292,54 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
+Training runs pick a tracker with `--tracker.type`. Passing it is what enables tracking; without it
+metrics are only written to the local log. Pass `--tracker=null` to switch tracking off again for a
+run started from a config that has a tracker in it.
+
+**Weights and Biases** is included in the `training` extra. To use
+[Weights and Biases](https://docs.wandb.ai/quickstart), log in once:
 
 ```bash
 wandb login
 ```
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_dataset \
+    --policy.type=act \
+    --policy.repo_id=${HF_USER}/my_policy \
+    --tracker.type=wandb \
+    --tracker.project=my-project
+```
+
+**Trackio** ([trackio](https://github.com/gradio-app/trackio)) is an alternative that needs no
+account and no API key: runs are written to a local SQLite database. Install it with the `trackio`
+extra:
+
+```bash
+pip install 'lerobot[trackio]'
+```
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_dataset \
+    --policy.type=act \
+    --policy.repo_id=${HF_USER}/my_policy \
+    --tracker.type=trackio \
+    --tracker.project=my-project
+```
+
+Then browse the run locally:
+
+```bash
+trackio show --project my-project
+```
+
+To view a run from anywhere instead (and to track a run submitted to HF Jobs with `--job.target`,
+whose local database would not outlive the job), host the dashboard on a Hugging Face Space by
+adding `--tracker.space_id=${HF_USER}/my-dashboard`. The Space is created on first use.
+
+> [!NOTE]
+> The older `--wandb.enable=true` flags still work and are equivalent to `--tracker.type=wandb`.
 
 You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.

@@ -22,40 +22,13 @@ from pathlib import Path
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
+from lerobot.common.tracker_utils import cfg_to_group
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
-
-def cfg_to_group(
-    cfg: TrainPipelineConfig, return_list: bool = False, truncate_tags: bool = False, max_tag_length: int = 64
-) -> list[str] | str:
-    """Return a group name for logging. Optionally returns group name as list."""
-
-    def _maybe_truncate(tag: str) -> str:
-        """Truncate tag to max_tag_length characters if required.
-
-        wandb rejects tags longer than 64 characters.
-        See: https://github.com/wandb/wandb/blob/main/wandb/sdk/wandb_settings.py
-        """
-        if len(tag) <= max_tag_length:
-            return tag
-        return tag[:max_tag_length]
-
-    if cfg.is_reward_model_training:
-        trainable_tag = f"reward_model:{cfg.reward_model.type}"
-    else:
-        trainable_tag = f"policy:{cfg.policy.type}"
-    lst = [
-        trainable_tag,
-        f"seed:{cfg.seed}",
-    ]
-    if cfg.dataset is not None:
-        lst.append(f"dataset:{cfg.dataset.repo_id}")
-    if cfg.env is not None:
-        lst.append(f"env:{cfg.env.type}")
-    if truncate_tags:
-        lst = [_maybe_truncate(tag) for tag in lst]
-    return lst if return_list else "-".join(lst)
+# `cfg_to_group` moved to `tracker_utils` when trackio joined wandb as a tracker (both need it).
+# Re-exported here because it was importable from this module first.
+__all__ = ["WandBLogger", "cfg_to_group", "get_safe_wandb_artifact_name", "get_wandb_run_id_from_filesystem"]
 
 
 def get_wandb_run_id_from_filesystem(log_dir: Path) -> str:
@@ -79,7 +52,9 @@ class WandBLogger:
     """A helper class to log object using wandb."""
 
     def __init__(self, cfg: TrainPipelineConfig):
-        self.cfg = cfg.wandb
+        # `validate()` builds this from the legacy `--wandb.*` flags when they are the ones set,
+        # so the tracker is the only source to read here.
+        self.cfg = cfg.tracker
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
@@ -90,8 +65,8 @@ class WandBLogger:
         import wandb
 
         wandb_run_id = (
-            cfg.wandb.run_id
-            if cfg.wandb.run_id
+            self.cfg.run_id
+            if self.cfg.run_id
             else get_wandb_run_id_from_filesystem(self.log_dir)
             if cfg.resume
             else None
@@ -113,9 +88,9 @@ class WandBLogger:
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         run_id = wandb.run.id
-        # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
+        # NOTE: We will override the configured run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
-        cfg.wandb.run_id = run_id
+        self.cfg.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
