@@ -178,7 +178,8 @@ def load_safetensors(path):
 
 
 def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
-    pytest.importorskip("diffusers")
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
     from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
 
     root = make_dummy_dataset(tmp_path)
@@ -221,6 +222,8 @@ def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
 
 
 def test_train_without_ema_writes_no_ema_files(tmp_path):
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
     from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
 
     root = make_dummy_dataset(tmp_path)
