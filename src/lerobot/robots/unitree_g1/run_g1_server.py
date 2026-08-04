@@ -45,6 +45,7 @@ from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState
 from unitree_sdk2py.utils.crc import CRC
 
+from lerobot.cameras.configs import Cv2Backends
 from lerobot.cameras.zmq.image_server import ImageServer
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -72,6 +73,7 @@ def cameras_from_args(args: argparse.Namespace) -> dict:
         "head_camera": {
             "device_id": int(device) if str(device).isdigit() else device,
             "shape": [args.camera_height, args.camera_width],
+            "backend": Cv2Backends[args.camera_backend.upper()],
         }
     }
 
@@ -289,6 +291,12 @@ def main() -> None:
         "--camera-device",
         default="4",
         help="Camera index or V4L2 path, e.g. 4 or /dev/video0 (default: 4)",
+    )
+    parser.add_argument(
+        "--camera-backend",
+        default="any",
+        choices=[b.name.lower() for b in Cv2Backends],
+        help="OpenCV capture backend; use v4l2 for UVC cams that reject set() under any (default: any)",
     )
     parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
     parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
