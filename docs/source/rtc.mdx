@@ -128,7 +128,7 @@ Set the maximum prefix delay when fine-tuning Pi0.5:
 lerobot-train \
     --policy.type=pi05 \
     --policy.pretrained_path=lerobot/pi05_base \
-    --policy.rtc_training_max_delay=10 \
+    --policy.rtc_training_max_delay=15 \
     --dataset.repo_id=${HF_USERNAME}/dataset_repo_id \
     --output_dir=outputs/pi05_training_rtc
 ```
@@ -138,7 +138,8 @@ the flow loss is computed only on the remaining postfix. Choose the maximum as
 approximately `ceil(p95 end-to-end inference latency * control frequency)` and
 keep it smaller than `policy.chunk_size`. Setting the value to zero preserves
 ordinary Pi0.5 training and existing checkpoints remain compatible with guided
-RTC.
+RTC. At a 50 Hz control rate, 15 steps cover up to 300 ms of end-to-end
+inference latency.
 
 ## Testing RTC Offline
 
@@ -195,7 +196,8 @@ lerobot-rollout \
     --policy.path=${HF_USERNAME}/pi05_training_rtc \
     --inference.type=rtc \
     --inference.rtc.mode=trained \
-    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.execution_horizon=15 \
+    --inference.queue_threshold=15 \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58FA0834591 \
     --task="Move green small object into the purple platform" \
