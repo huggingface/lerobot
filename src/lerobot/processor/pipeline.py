@@ -1073,7 +1073,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if "registry_name" in step_entry:
             try:
                 step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
-                return step_class, step_entry["registry_name"]
+                step_key = step_entry["registry_name"]
             except KeyError as e:
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
         else:
@@ -1098,7 +1098,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             try:
                 module = importlib.import_module(module_path)
                 step_class = getattr(module, class_name)
-                return step_class, class_name
+                step_key = class_name
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Failed to load processor step '{full_class_path}'. "
@@ -1106,6 +1106,14 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     f"Consider registering the step using @ProcessorStepRegistry.register() for better portability. "
                     f"Error: {str(e)}"
                 ) from e
+
+        if not (isinstance(step_class, type) and issubclass(step_class, ProcessorStep)):
+            raise TypeError(
+                f"Resolved step class '{getattr(step_class, '__name__', step_class)}' "
+                f"(from '{step_entry}') is not a subclass of ProcessorStep. "
+                "Registered/Imported classes must inherit from ProcessorStep."
+            )
+        return step_class, step_key
 
     @classmethod
     def _instantiate_step(

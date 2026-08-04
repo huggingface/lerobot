@@ -448,3 +448,63 @@ def test_simplified_three_way_loading():
         )
         assert loaded_config["name"] == "DirectoryTest"
         assert base_path == tmp_path
+
+
+# Step Class Validation Tests (issubclass check)
+
+
+def test_resolve_step_class_registry_rejects_non_processor_step():
+    """Registry resolution must reject classes that don't inherit ProcessorStep."""
+
+    @ProcessorStepRegistry.register("not_a_step")
+    class NotAStep:
+        """Looks like a step but doesn't inherit ProcessorStep."""
+
+        def __call__(self, transition):
+            return transition
+
+    try:
+        step_entry = {"registry_name": "not_a_step"}
+        with pytest.raises(TypeError, match="not a.*ProcessorStep"):
+            DataProcessorPipeline._resolve_step_class(step_entry)
+    finally:
+        ProcessorStepRegistry.unregister("not_a_step")
+
+
+def test_resolve_step_class_import_path_rejects_non_processor_step():
+    """Import-path resolution must reject classes that don't inherit ProcessorStep."""
+    step_entry = {"class": "lerobot.processor.pipeline.ProcessorStepRegistry"}
+
+    with pytest.raises(TypeError, match="not a.*ProcessorStep"):
+        DataProcessorPipeline._resolve_step_class(step_entry)
+
+
+def test_resolve_step_class_import_path_rejects_function():
+    """Import-path resolution must reject a resolved attribute that isn't a class at all,
+    hitting the isinstance(step_class, type) guard rather than a raw issubclass() TypeError."""
+    step_entry = {"class": "lerobot.processor.pipeline.create_transition"}
+
+    with pytest.raises(TypeError, match="not a.*ProcessorStep"):
+        DataProcessorPipeline._resolve_step_class(step_entry)
+
+
+def test_resolve_step_class_registry_accepts_valid_processor_step():
+    """Sanity check: a properly-formed ProcessorStep subclass still resolves cleanly
+    after adding the validation (regression guard against over-tightening the check)."""
+
+    @ProcessorStepRegistry.register("valid_step_for_validation_test")
+    class ValidStep(ProcessorStep):
+        def __call__(self, transition):
+            return transition
+
+        def transform_features(self, features):
+            return features
+
+    try:
+        step_entry = {"registry_name": "valid_step_for_validation_test"}
+        step_class, step_key = DataProcessorPipeline._resolve_step_class(step_entry)
+
+        assert step_class is ValidStep
+        assert step_key == "valid_step_for_validation_test"
+    finally:
+        ProcessorStepRegistry.unregister("valid_step_for_validation_test")
