@@ -313,10 +313,15 @@ class EO1Policy(PreTrainedPolicy):
         device = state.device
         inputs = {key: value.to(device) for key, value in inputs.items() if isinstance(value, Tensor)}
         do_sample = temperature > 0
+        tokenizer = processor.tokenizer
+        pad_token_id = tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = tokenizer.eos_token_id
         generation_kwargs: dict[str, Any] = {
             "max_new_tokens": max_new_tokens,
             "min_new_tokens": min_new_tokens,
             "do_sample": do_sample,
+            "pad_token_id": pad_token_id,
         }
         if do_sample:
             generation_kwargs.update(temperature=temperature, top_p=top_p)
