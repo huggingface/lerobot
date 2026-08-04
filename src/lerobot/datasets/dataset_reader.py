@@ -39,6 +39,7 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
+from .utils import resolve_episode_indices
 from .video_utils import decode_video_frames
 
 
@@ -83,7 +84,7 @@ class DatasetReader:
         """
         self._meta = meta
         self.root = root
-        self.episodes = episodes
+        self.episodes = resolve_episode_indices(episodes, meta.total_episodes)
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
         if image_transforms is not None and not callable(image_transforms):
@@ -163,39 +164,32 @@ class DatasetReader:
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self._meta.features)
-        # Annotated datasets may have language columns absent from metadata.
-        # Extend the schema before the strict Parquet cast.
-        features = self._extend_features_with_language_columns(features)
+        self._validate_language_columns_declared(features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
-    def _extend_features_with_language_columns(self, features: datasets.Features) -> datasets.Features:
-        """Register language columns found in Parquet but missing from metadata."""
+    def _validate_language_columns_declared(self, features: datasets.Features) -> None:
+        """Require language columns stored in Parquet to be declared in metadata."""
         # Leave empty datasets to fail through the normal loading path.
         try:
             sample = next((self.root / "data").glob("*/*.parquet"))
         except StopIteration:
-            return features
+            return
 
         from pyarrow import parquet as _pq  # noqa: PLC0415
 
         schema_names = set(_pq.read_schema(sample).names)
-        from .language import (  # noqa: PLC0415
-            LANGUAGE_EVENTS,
-            LANGUAGE_PERSISTENT,
-            language_events_column_feature,
-            language_persistent_column_feature,
-        )
+        from .language import LANGUAGE_COLUMNS  # noqa: PLC0415
 
-        extra: dict[str, object] = {}
-        if LANGUAGE_PERSISTENT in schema_names and LANGUAGE_PERSISTENT not in features:
-            extra[LANGUAGE_PERSISTENT] = language_persistent_column_feature()
-        if LANGUAGE_EVENTS in schema_names and LANGUAGE_EVENTS not in features:
-            extra[LANGUAGE_EVENTS] = language_events_column_feature()
-        if not extra:
-            return features
-        return datasets.Features({**features, **extra})
+        missing = sorted(set(LANGUAGE_COLUMNS) & schema_names - set(features))
+        if missing:
+            raise ValueError(
+                f"Dataset Parquet files contain language feature(s) missing from metadata: {missing}. "
+                "Metadata must describe the stored data; add the entries returned by "
+                "lerobot.datasets.language.language_feature_info() to meta/info.json['features'] "
+                "or rerun the annotation pipeline's metadata synchronization."
+            )
 
     def _check_cached_episodes_sufficient(self) -> bool:
         """Check if the cached dataset contains all requested episodes and their video files."""

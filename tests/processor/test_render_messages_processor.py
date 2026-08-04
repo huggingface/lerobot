@@ -4,12 +4,16 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
-from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: E402
+from lerobot.processor.render_messages_processor import (  # noqa: E402
+    RenderMessagesStep,
+    _select_batch_indices,
+)
 
 
 def test_render_messages_step_renders_task_fallback_without_language_columns():
@@ -145,3 +149,50 @@ def test_render_messages_step_falls_back_per_sample_in_batched_language():
     ]
     assert data["message_streams"] == [["low_level"], ["low_level"]]
     assert data["target_message_indices"] == [[], []]
+
+
+def test_render_messages_step_rejects_mismatched_non_empty_language_batches():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            )
+        ]
+    )
+    transition = create_transition(
+        complementary_data={
+            "timestamp": torch.tensor([0.0, 1.0, 2.0]),
+            "language_persistent": [[], []],
+            "language_events": [[{"style": "unmatched"}], [], []],
+        }
+    )
+
+    with pytest.raises(ValueError, match="must have equal lengths"):
+        RenderMessagesStep(recipe)(transition)
+
+
+def test_select_batch_indices_slices_numpy_action():
+    action = np.arange(6).reshape(3, 2)
+    transition = create_transition(action=action)
+
+    selected = _select_batch_indices(transition, [2, 0])
+
+    np.testing.assert_array_equal(selected[TransitionKey.ACTION], action[[2, 0]])
+
+
+def test_select_batch_indices_slices_robot_action_dict():
+    transition = create_transition(
+        action={
+            "joints": np.arange(6).reshape(3, 2),
+            "gripper": torch.tensor([[0.0], [1.0], [2.0]]),
+        }
+    )
+
+    selected = _select_batch_indices(transition, [2, 0])
+
+    np.testing.assert_array_equal(selected[TransitionKey.ACTION]["joints"], np.array([[4, 5], [0, 1]]))
+    assert torch.equal(selected[TransitionKey.ACTION]["gripper"], torch.tensor([[2.0], [0.0]]))

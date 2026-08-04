@@ -146,13 +146,15 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 Blend recipes select one weighted sub-recipe deterministically from the sample index.
 `recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
 
-A message recipe with a supervised assistant turn on the `low_level` stream trains
-the π0.5 paper's joint sequence instead of a blend: the target span gets text CE
-while also conditioning the action losses in the same forward.
-`recipes/subtask_joint.yaml` is the provided example; pair it with
-`--policy.joint_subtask_conditioning=true` at inference.
+`recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
+weighted blend. For the same sample, its assistant subtask is supervised with
+text cross-entropy on the `low_level` stream while action prediction remains
+active, matching the joint setup from the π0.5 paper. Enable
+`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
 
 ## Graceful absence
 
-If both language columns are missing, `None`, or empty, `RenderMessagesStep` is a no-op.
-If an event-scoped branch is selected on a frame without the required event row, rendering returns `None`, allowing a loader to retry another sample.
+If both language columns are missing, `None`, or empty, `RenderMessagesStep` uses
+the task string as low-level supervision when available and otherwise leaves the
+sample unchanged. For an annotated sample, if no recipe branch applies and no
+task fallback exists, rendering returns `None`, allowing a loader to retry another sample.

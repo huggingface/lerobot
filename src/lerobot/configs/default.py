@@ -14,12 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .video import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -77,10 +80,14 @@ class DatasetConfig:
             if len(self.episodes) != len(set(self.episodes)):
                 duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
                 raise ValueError(f"Episode indices contain duplicates: {duplicates}")
-        if self.exclude_episodes is not None and any(ep < 0 for ep in self.exclude_episodes):
-            raise ValueError(
-                f"exclude_episodes must be non-negative, got: {[ep for ep in self.exclude_episodes if ep < 0]}"
-            )
+        if self.exclude_episodes is not None:
+            negative_episodes = [episode for episode in self.exclude_episodes if episode < 0]
+            if negative_episodes:
+                logger.warning(
+                    "Ignoring negative exclude_episodes entries: %s",
+                    negative_episodes,
+                )
+                self.exclude_episodes = [episode for episode in self.exclude_episodes if episode >= 0]
 
 
 @dataclass

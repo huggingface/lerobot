@@ -1005,6 +1005,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             overrides: User-provided parameter overrides (keyed by class/registry name)
             model_id: The model identifier (needed for Hub state file downloads)
             base_path: Local directory path for finding state files
+            config_filename: Processor config path, used as the repository-relative
+                base for state files and declared artifacts.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
             is_local_source: Whether model_id resolved to a local directory or config file.
 
@@ -1049,7 +1051,19 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         config_filename: str,
         hub_download_kwargs: dict[str, Any],
     ) -> None:
-        """Resolve declared relative processor artifacts before step construction."""
+        """Resolve declared relative processor artifacts before step construction.
+
+        Args:
+            loaded_config: Mutable processor configuration containing step artifact declarations.
+            model_id: Local checkpoint path or Hub model identifier.
+            base_path: Local directory containing the resolved processor configuration.
+            config_filename: Processor config path, whose parent is the artifact root on the Hub.
+            hub_download_kwargs: Authentication, revision, and cache arguments for Hub downloads.
+
+        Raises:
+            ValueError: If a declared artifact path is absolute or escapes the checkpoint.
+            FileNotFoundError: If a declared artifact cannot be found locally or downloaded.
+        """
         is_local = Path(model_id).is_dir() or Path(model_id).is_file()
 
         for step_entry in loaded_config["steps"]:
@@ -1279,6 +1293,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_entry: The step configuration dictionary (may contain "state_file")
             model_id: The model identifier (used for Hub downloads if needed)
             base_path: Local directory path for finding state files (None for Hub-only)
+            config_filename: Processor config path, whose parent is used to resolve
+                repository-relative state files on the Hub.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
             is_local_source: Whether model_id resolved to a local directory or config file.
 

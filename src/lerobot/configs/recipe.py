@@ -148,7 +148,8 @@ class TrainingRecipe:
 
     def _validate_message_recipe(self) -> None:
         """Validate bindings and require text or low-level action supervision."""
-        assert self.messages is not None
+        if self.messages is None:
+            raise ValueError("Cannot validate a message recipe without messages.")
         known_bindings = set(DEFAULT_BINDINGS) | set(self.bindings or {}) | {"task"}
 
         for turn in self.messages:
@@ -167,7 +168,8 @@ class TrainingRecipe:
 
     def _validate_blend_recipe(self) -> None:
         """Ensure each blend component is a non-empty, weighted message recipe."""
-        assert self.blend is not None
+        if self.blend is None:
+            raise ValueError("Cannot validate a blend recipe without blend components.")
         if not self.blend:
             raise ValueError("Blend recipes must contain at least one component.")
 
