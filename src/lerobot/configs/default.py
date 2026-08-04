@@ -29,6 +29,9 @@ class DatasetConfig:
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
     repo_id: str
+    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket streamed over
+    # hf://buckets/. Buckets are streaming-only, so "bucket" requires streaming=true.
+    repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
@@ -48,6 +51,16 @@ class DatasetConfig:
     eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        if self.repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
+        if self.repo_type == "bucket" and not self.streaming:
+            raise ValueError(
+                "repo_type='bucket' is streaming-only: set streaming=true to train from an HF Storage Bucket."
+            )
+        if self.repo_type == "bucket" and self.eval_split != 0.0:
+            raise ValueError(
+                "eval_split requires map-style datasets and is not supported with repo_type='bucket'."
+            )
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
             raise ValueError(
                 f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"
