@@ -207,9 +207,9 @@ pip install 'lerobot[feetech]'        # Feetech motor support
 
 _Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
 
-### PyTorch CUDA variant (Linux only)
+### PyTorch CUDA / ROCm variant (Linux only)
 
-On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+On Linux, the install path determines which torch wheel you get: a CUDA build for NVIDIA GPUs, or a ROCm build for AMD. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section. The index URL for any variant is listed on the [PyTorch installation page](https://pytorch.org/get-started/locally/).
 
 <!-- prettier-ignore-start -->
 
@@ -220,11 +220,20 @@ On Linux, the install path determines which CUDA wheel you get. macOS and Window
 
 `torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
 
-To override for a different CUDA variant:
+To override for a different CUDA variant, or for a ROCm build on AMD:
+
+**NVIDIA** — another CUDA variant:
 
 ```bash
 uv pip install --force-reinstall torch torchvision \
     --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
+```
+
+**AMD** — ROCm:
+
+```bash
+uv pip install --force-reinstall torch torchvision \
+    --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
 </hfoption>
@@ -234,12 +243,15 @@ uv pip install --force-reinstall torch torchvision \
 
 PyPI default torch wheel is currently a cu130-bundled Linux wheel, driver floor **580.65**.
 
-To pick a specific CUDA variant:
+To pick a specific CUDA or ROCm variant:
 
 **Using `pip` or `conda`** — install torch first with an explicit index, then lerobot:
 
 ```bash
-pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision    # NVIDIA
+# — or, for AMD —
+pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch torchvision
+
 pip install -e ".[all]"          # source
 # — or —
 pip install lerobot              # from PyPI
@@ -248,10 +260,12 @@ pip install lerobot              # from PyPI
 **Using `uv` to install from PyPI** — one-liner via `--torch-backend` (uv ≥ 0.6):
 
 ```bash
-uv pip install --torch-backend cu128 lerobot
+uv pip install --torch-backend cu128 lerobot      # NVIDIA
+# — or —
+uv pip install --torch-backend rocm7.2 lerobot    # AMD
 ```
 
-Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus various `rocm*` and `xpu`. Swap as needed for your driver.
+Supported values include `auto`, `cpu`, `cu126` through `cu130`, `rocm6.0` through `rocm7.2`, and `xpu`. Swap as needed for your driver.
 
 </hfoption>
 </hfoptions>
