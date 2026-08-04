@@ -146,6 +146,23 @@ MUJOCO_GL=egl lerobot-eval \
   --job_name=flow_matching_libero_standard_400
 ```
 
+The published 100,000-step checkpoint is available at
+[`Piersondong/flow_matching_libero`](https://huggingface.co/Piersondong/flow_matching_libero). It was
+trained with seed 1000 on 4 NVIDIA H20 96 GB GPUs using BF16, batch size 64 per GPU, and an effective
+batch size of 256. The command above evaluated 10 episodes for each of the 10 tasks in every suite:
+
+| Suite | Tasks | Episodes per task | Episodes | Success rate |
+| --- | ---: | ---: | ---: | ---: |
+| `libero_spatial` | 10 | 10 | 100 | 13.0% |
+| `libero_object` | 10 | 10 | 100 | 4.0% |
+| `libero_goal` | 10 | 10 | 100 | 18.0% |
+| `libero_10` | 10 | 10 | 100 | 6.0% |
+| **Overall** | **40** | **10** | **400** | **10.25%** |
+
+The overall rate is episode-weighted and equals the unweighted mean here because every suite contains
+100 episodes. The Hub model card also includes full machine-readable per-task results. No Arena result is
+claimed.
+
 Report per-suite success rates, their unweighted mean, the seed, training steps, effective batch size,
 and the exact checkpoint. See the dedicated [LIBERO guide](./libero) for environment details.
 
@@ -168,9 +185,9 @@ lerobot-record \
 ## Reproducibility status
 
 Unit tests cover training, masked loss, multi-camera-compatible image encoding, classifier-free guidance,
-action queues, processors, factory construction, and checkpoint round trips. A benchmark result must only
-be added here together with its exact dataset, training command, evaluation protocol, seed, and a public
-checkpoint; the current implementation does not claim an unpublished benchmark score.
+action queues, processors, factory construction, and checkpoint round trips. The LIBERO result above is
+reported with its exact dataset, training command, evaluation protocol, seed, hardware, and public final
+checkpoint. Each of the 40 tasks contains exactly 10 evaluated episodes, for 400 rollouts in total.
 
 ## Reference
 
