@@ -299,16 +299,18 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         inputs = self._processor.apply_chat_template(
             messages,
             tokenize=True,
-            padding=True,
-            padding_side=padding_side,
-            min_pixels=self.image_min_pixels,
-            max_pixels=self.image_max_pixels,
             add_generation_prompt=False,
-            truncation=True,
-            max_length=self.tokenizer_max_length,
             return_dict=True,
             return_tensors="pt",
-            return_offsets_mapping=has_text_targets,
+            processor_kwargs={
+                "padding": True,
+                "padding_side": padding_side,
+                "min_pixels": self.image_min_pixels,
+                "max_pixels": self.image_max_pixels,
+                "truncation": True,
+                "max_length": self.tokenizer_max_length,
+                "return_offsets_mapping": has_text_targets,
+            },
         )
 
         complementary_data["input_ids"] = inputs["input_ids"]

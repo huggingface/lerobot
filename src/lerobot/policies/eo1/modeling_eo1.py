@@ -223,13 +223,15 @@ class EO1Policy(PreTrainedPolicy):
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
-            padding=True,
-            padding_side="left",
-            min_pixels=self.config.image_min_pixels,
-            max_pixels=self.config.image_max_pixels,
             add_generation_prompt=False,
             return_dict=True,
             return_tensors="pt",
+            processor_kwargs={
+                "padding": True,
+                "padding_side": "left",
+                "min_pixels": self.config.image_min_pixels,
+                "max_pixels": self.config.image_max_pixels,
+            },
         )
         device = state.device
         return {
@@ -297,13 +299,15 @@ class EO1Policy(PreTrainedPolicy):
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
-            padding=True,
-            padding_side="left",
-            min_pixels=self.config.image_min_pixels,
-            max_pixels=self.config.image_max_pixels,
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
+            processor_kwargs={
+                "padding": True,
+                "padding_side": "left",
+                "min_pixels": self.config.image_min_pixels,
+                "max_pixels": self.config.image_max_pixels,
+            },
         )
         prompt_length = inputs["input_ids"].shape[1]
         device = state.device
