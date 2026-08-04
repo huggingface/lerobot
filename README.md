@@ -128,6 +128,23 @@ lerobot-eval \
 
 Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub).
 
+### Third-Party Hardware
+
+Beyond the natively supported hardware, the community maintains a growing ecosystem of plugins for other robots, teleoperators, cameras, and sensors - UFACTORY xArm, Universal Robots UR5e, Franka, AgileX Piper, Trossen WidowX, ARX5, I2RT YAM, GELLO, SpaceMouse, Meta Quest, ROS 2 bridges, tactile and depth cameras, and more.
+
+Plugins are auto-discovered by package name: LeRobot imports any installed package prefixed with `lerobot_robot_`, `lerobot_teleoperator_`, or `lerobot_camera_`. Install one and use the `type` it registers straight from the CLI:
+
+```bash
+pip install lerobot_robot_<name> lerobot_teleoperator_<name>
+
+lerobot-record \
+  --robot.type=<robot_name> \
+  --teleop.type=<teleoperator_name> \
+  --dataset.repo_id=${HF_USER}/my-dataset
+```
+
+Browse the full list in the [Third-Party Robots & Teleoperators](https://huggingface.co/docs/lerobot/main/third_party_robots) and [Third-Party Cameras & Sensors](https://huggingface.co/docs/lerobot/main/third_party_sensors) documentation.
+
 ## Resources
 
 - **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
