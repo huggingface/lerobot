@@ -587,24 +587,36 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         if is_main_process:
             from diffusers.training_utils import EMAModel  # noqa: PLC0415
 
+            # A constant --ema.decay is expressed through the schedule clamp: with
+            # min_decay == max_decay, the warmup curve is pinned to that value at every step.
+            min_decay = cfg.ema.min_decay if cfg.ema.decay is None else cfg.ema.decay
+            max_decay = cfg.ema.max_decay if cfg.ema.decay is None else cfg.ema.decay
             ema = EMAModel(
                 accelerator.unwrap_model(policy).parameters(),
-                decay=cfg.ema.max_decay,
-                min_decay=cfg.ema.min_decay,
+                decay=max_decay,
+                min_decay=min_decay,
                 update_after_step=cfg.ema.update_after_step,
                 use_ema_warmup=True,
                 inv_gamma=cfg.ema.inv_gamma,
                 power=cfg.ema.power,
             )
             ema.to(device)
-            logging.info(
-                "EMA enabled: max_decay=%g, inv_gamma=%g, power=%g, update_after_step=%d, use_for_eval=%s",
-                cfg.ema.max_decay,
-                cfg.ema.inv_gamma,
-                cfg.ema.power,
-                cfg.ema.update_after_step,
-                cfg.ema.use_for_eval,
-            )
+            if cfg.ema.decay is not None:
+                logging.info(
+                    "EMA enabled: decay=%g (constant), update_after_step=%d, use_for_eval=%s",
+                    cfg.ema.decay,
+                    cfg.ema.update_after_step,
+                    cfg.ema.use_for_eval,
+                )
+            else:
+                logging.info(
+                    "EMA enabled: max_decay=%g, inv_gamma=%g, power=%g, update_after_step=%d, use_for_eval=%s",
+                    cfg.ema.max_decay,
+                    cfg.ema.inv_gamma,
+                    cfg.ema.power,
+                    cfg.ema.update_after_step,
+                    cfg.ema.use_for_eval,
+                )
             if cfg.checkpoint_path is not None:
                 ema_path = cfg.checkpoint_path / TRAINING_STATE_DIR / EMA_STATE_FILENAME
                 if ema_path.exists():

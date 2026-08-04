@@ -53,6 +53,10 @@ def test_ema_config_defaults_match_reference():
         {"inv_gamma": 0.0},
         {"power": -1.0},
         {"update_after_step": -1},
+        {"decay": 1.5},
+        {"decay": -0.1},
+        {"decay": 0.99, "min_decay": 0.5},
+        {"decay": 0.99, "max_decay": 0.9},
     ],
 )
 def test_ema_config_rejects_invalid_values(kwargs):
@@ -74,6 +78,36 @@ def test_ema_config_cli_parsing():
     assert cfg.ema.enable
     assert cfg.ema.power == 0.8
     assert cfg.ema.update_after_step == 10
+
+
+def test_ema_config_cli_parsing_constant_decay():
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        None,
+        args=[
+            f"--dataset.repo_id={DUMMY_REPO_ID}",
+            "--ema.enable=true",
+            "--ema.decay=0.99",
+        ],
+    )
+    assert cfg.ema.enable
+    assert cfg.ema.decay == 0.99
+
+
+def test_ema_constant_decay_pins_the_schedule():
+    """min_decay == max_decay clamps the warmup curve to a constant (how --ema.decay is implemented)."""
+    pytest.importorskip("diffusers")
+    from diffusers.training_utils import EMAModel
+
+    model = torch.nn.Linear(4, 4)
+    ema = EMAModel(
+        model.parameters(), decay=0.99, min_decay=0.99, use_ema_warmup=True, inv_gamma=1.0, power=0.75
+    )
+    # The first update is a hard copy (decay 0); every one after uses the constant decay.
+    for step in range(1, 6):
+        ema.step(model.parameters())
+        if step > 1:
+            assert ema.cur_decay_value == 0.99
 
 
 def test_ema_weights_context_swaps_and_restores():
@@ -132,7 +166,7 @@ def make_dummy_dataset(tmp_path):
     return root
 
 
-def make_train_config(root, output_dir, steps, ema_enable):
+def make_train_config(root, output_dir, steps, ema_enable, ema_decay=None):
     from lerobot.configs.default import DatasetConfig
     from lerobot.policies.factory import make_policy_config
 
@@ -162,7 +196,7 @@ def make_train_config(root, output_dir, steps, ema_enable):
         log_freq=0,
         env_eval_freq=0,
         save_freq=2,
-        ema=EMAConfig(enable=ema_enable),
+        ema=EMAConfig(enable=ema_enable, decay=ema_decay),
     )
     cfg.optimizer = policy_config.get_optimizer_preset()
     cfg.scheduler = policy_config.get_scheduler_preset()
@@ -219,6 +253,27 @@ def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
         weights_only=True,
     )
     assert resumed_state["optimization_step"] == 6
+
+
+def test_train_with_constant_ema_decay(tmp_path):
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
+    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
+
+    root = make_dummy_dataset(tmp_path)
+    output_dir = tmp_path / "_output"
+
+    cfg = make_train_config(root, output_dir, steps=2, ema_enable=True, ema_decay=0.99)
+    train(cfg)
+
+    ema_state = torch.load(
+        output_dir / "checkpoints" / "000002" / TRAINING_STATE_DIR / EMA_STATE_FILENAME,
+        weights_only=True,
+    )
+    # The constant decay is implemented by pinning the schedule clamp to that value.
+    assert ema_state["decay"] == 0.99
+    assert ema_state["min_decay"] == 0.99
+    assert ema_state["optimization_step"] == 2
 
 
 def test_train_without_ema_writes_no_ema_files(tmp_path):

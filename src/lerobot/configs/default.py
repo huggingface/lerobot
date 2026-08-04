@@ -123,10 +123,14 @@ class EMAConfig:
 
     The decay follows the warmup schedule from diffusers' `EMAModel`:
     `decay_t = 1 - (1 + t / inv_gamma) ** -power`, clamped to `[min_decay, max_decay]`.
-    The defaults mirror the reference implementation.
+    The defaults mirror the reference implementation. Alternatively, set `decay` for a constant
+    decay at every step, as used by openpi for pi0/pi05 (`ema_decay=0.99`).
     """
 
     enable: bool = False
+    # Constant decay coefficient (openpi-style, e.g. 0.99 for pi0/pi05). When set, the warmup
+    # schedule below is bypassed and the shadow uses this decay at every step.
+    decay: float | None = None
     # Number of optimizer steps during which the shadow stays a hard copy of the live weights.
     update_after_step: int = 0
     # Warmup schedule parameters (see class docstring).
@@ -151,6 +155,15 @@ class EMAConfig:
             raise ValueError(f"ema.power must be positive, got {self.power}.")
         if self.update_after_step < 0:
             raise ValueError(f"ema.update_after_step must be >= 0, got {self.update_after_step}.")
+        if self.decay is not None:
+            if not 0.0 <= self.decay <= 1.0:
+                raise ValueError(f"ema.decay must be in [0, 1], got {self.decay}.")
+            # Keep the literals in sync with the field defaults above.
+            if self.min_decay != 0.0 or self.max_decay != 0.9999:
+                raise ValueError(
+                    "ema.decay (constant decay) and ema.min_decay/ema.max_decay (schedule clamp) are "
+                    "mutually exclusive: set one or the other."
+                )
 
 
 @dataclass

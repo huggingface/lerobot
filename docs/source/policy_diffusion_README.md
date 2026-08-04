@@ -19,7 +19,7 @@ Checkpoints then contain a directly loadable copy of the EMA weights next to the
 lerobot-eval --policy.path=outputs/train/.../checkpoints/last/pretrained_model_ema ...
 ```
 
-The EMA decay schedule (`--ema.inv_gamma`, `--ema.power`, ...) defaults to the reference implementation's values.
+The EMA decay schedule (`--ema.inv_gamma`, `--ema.power`, ...) defaults to the reference implementation's values. For a constant decay instead of the warmup schedule (e.g. to match openpi's pi0/pi05 training), set `--ema.decay=0.99`.
 
 ## Citation
 
