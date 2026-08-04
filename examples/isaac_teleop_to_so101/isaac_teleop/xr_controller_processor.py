@@ -38,8 +38,8 @@ from .base import _GRIPPER_MOTOR_SCALE
 class MapXRControllerActionToRobotAction(RobotActionProcessorStep):
     """Maps an absolute base-frame EE pose + gripper closedness to the IK input contract.
 
-    Pure, stateless rename (the owning loop's clutch already produced the absolute base-frame
-    target). Each frame it writes:
+    Pure, stateless rename (the device's in-pipeline clutch retargeter already produced the
+    absolute base-frame target). Each frame it writes:
 
     - ``ee.x/y/z`` = ``ee_pose[:3]`` (position [m]);
     - ``ee.wx/wy/wz`` = rotvec of ``ee_pose[3:7]`` (orientation; the IK tracks it softly at a

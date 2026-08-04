@@ -124,9 +124,10 @@ Run either script with `--help` for all flags.
 ## Layout
 
 ```
-isaac_teleop/            device library: session lifecycle (base.py), XRController,
-                         SO101LeaderArm, Clutch, configs, and the XR→IK processor step
-common.py                shared loop infra: device bundles, clutch/IK pipeline wiring,
+isaac_teleop/            device library: session lifecycle (base.py), XRController (with its
+                         in-pipeline clutch retargeter), SO101LeaderArm, configs, and the
+                         XR→IK processor step
+common.py                shared loop infra: device bundles, IK pipeline wiring,
                          reset/align slews, URDF fetch, keyboard listener
 teleoperate.py           teleoperation CLI (device selected via --teleop.type)
 record.py                dataset-recording CLI (same device selection + --dataset.*)
