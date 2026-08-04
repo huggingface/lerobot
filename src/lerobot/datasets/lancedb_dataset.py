@@ -607,10 +607,11 @@ class LanceDBDataset(torch.utils.data.Dataset):
         plans = self._plan_batch(indices)
         rows, row_pos = self._batch_rows(plans)
 
-        # Video prep (byte-index, header ranges, decoder creation, window ranges)
-        # needs only the batch's files and frame indices, so it overlaps the
-        # frames-table fetch. The timestamp coverage check in _ensure_decoders is
-        # the safety net: any drift costs a re-fetch, never a wrong frame.
+        # Video prep (byte-index, header ranges, decoder creation, frame-window
+        # fetch) needs only the batch's files and frame indices, so it overlaps
+        # the frames-table fetch. Decoders read frames via the container index and
+        # fall back to a ranged read for any byte the prefetch missed, so a wrong
+        # speculative range costs a re-fetch, never a wrong frame.
         prepared_future = None
         if self.meta.video_keys:
             windows = self._plan_file_windows(plans)
@@ -721,7 +722,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
     ) -> list[dict[str, torch.Tensor]]:
         """Decode all camera frames a batch needs, one blob fetch + one decode pass per file."""
         requests = self._build_video_requests(plans, columns["timestamp"], row_pos)
-        entries = self._ensure_decoders(requests, prepared)
+        entries = prepared
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
 
@@ -772,14 +773,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
     def _prepare_files(
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
     ) -> dict[tuple, tuple]:
-        """Stage 1 of video decoding: everything that doesn't need timestamps.
-
-        Loads byte-index metadata, fetches container head/moov/first-packet ranges
-        for uncached files, creates their decoders, and prefetches the batch's
-        frame-window byte ranges. Timestamp-independent, so it runs in a background thread.
-        """
-        # Lazy: torchcodec is a platform-conditional extra (no wheel on some
-        # platforms); upstream video_utils imports it lazily for the same reason.
+        """Stage 1 of video decoding: everything that doesn't need timestamps"""
+        # Lazy load torchcodec to avoid platform-conditional dependencies.
         from torchcodec.decoders import VideoDecoder
 
         self._load_file_meta([key for key in file_keys if key not in self._file_meta])
@@ -841,6 +836,19 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 if spans:
                     window_spans[key] = spans
             self._fetch_spans(window_spans, {key: prepared[key][1] for key in window_spans})
+
+        # Insert/refresh each file in the decoder cache. Runs here because stage 1
+        # has already fetched every byte range the batch needs, so source.buffered
+        # is final; re-putting keeps the LRU byte budget accurate as cached sources
+        # grow across batches.
+        for key, (decoder, source) in prepared.items():
+            if decoder is not None:
+                height = decoder.metadata.height or 0
+                width = decoder.metadata.width or 0
+            else:  # depth: no torchcodec decoder; size from the feature shape
+                height, width = (tuple(self.meta.features[key[0]].get("shape") or (0, 0)) + (0, 0))[:2]
+            context_cost = (8 << 20) + 8 * height * width
+            self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered + context_cost)
         return prepared
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
@@ -858,42 +866,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
         _, _, from_ts_arr = self._video_locator[key]
         base = float(from_ts_arr[ep_idx])
         return [base + float(timestamps[row_pos[row]]) for row in window]
-
-    def _ensure_decoders(self, requests: dict, prepared: dict[tuple, tuple]) -> dict:
-        """Stage 2 of video decoding: fetch this batch's frame windows."""
-        decoders = {key: decoder for key, (decoder, _) in prepared.items()}
-        sources = {key: source for key, (_, source) in prepared.items()}
-
-        spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
-        fps = float(self.meta.fps)
-        for key, file_requests in requests.items():
-            meta = self._file_meta[key]
-            source = sources[key]
-            spans = []
-            reach_back = 1 if key[0] in self.meta.depth_keys else 0
-            for _, shifted_ts in file_requests:
-                first = round(shifted_ts[0] * fps)
-                last = round(shifted_ts[-1] * fps)
-                start, end = self._window_byte_range(
-                    key[0], meta, min(first, last) - reach_back, max(first, last)
-                )
-                if not source.covers(start, end):
-                    spans.append((start, end))
-            spans_by_key[key] = spans
-        self._fetch_spans(spans_by_key, sources)
-
-        for key in requests:
-            source = sources[key]
-            # Re-account each batch as sources grow, so the byte bounds memory
-            decoder = decoders[key]
-            if decoder is not None:
-                height = decoder.metadata.height or 0
-                width = decoder.metadata.width or 0
-            else:  # depth: no torchcodec decoder. size from the feature shape
-                height, width = (tuple(self.meta.features[key[0]].get("shape") or (0, 0)) + (0, 0))[:2]
-            context_cost = (8 << 20) + 8 * height * width
-            self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered + context_cost)
-        return prepared
 
     def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
         """Decode one depth window with upstream's pyav decoder over our sparse source."""
