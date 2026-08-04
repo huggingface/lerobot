@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import torch
 
 
 def mat2quat(rmat):
@@ -107,6 +108,52 @@ def rotate6d_to_axis_angle(r6d):
         axis_angle_array = axis_angle_array[0]
 
     return axis_angle_array
+
+
+def axis_angle_to_rotation_matrix(axis_angle: torch.Tensor) -> torch.Tensor:
+    """
+    Exponential map from axis-angle to a rotation matrix (Rodrigues' formula).
+    Matches `robosuite.utils.transform_utils.quat2mat(axisangle2quat(v))` exactly
+    (verified numerically), which is the convention LIBERO's OSC_POSE controller
+    uses to turn an orientation delta into a rotation matrix.
+
+    axis_angle: (..., 3) tensor
+    return: (..., 3, 3) tensor
+    """
+    dtype = axis_angle.dtype
+    vector = axis_angle.float()
+    angle = torch.linalg.vector_norm(vector, dim=-1, keepdim=True)
+    axis = vector / angle.clamp_min(1e-8)
+    x, y, z = axis.unbind(-1)
+    zero = torch.zeros_like(x)
+    skew = torch.stack((zero, -z, y, z, zero, -x, -y, x, zero), -1).reshape(*axis.shape[:-1], 3, 3)
+    identity = torch.eye(3, device=vector.device, dtype=vector.dtype).expand(*axis.shape[:-1], 3, 3)
+    rotation = identity + torch.sin(angle)[..., None] * skew
+    rotation = rotation + (1 - torch.cos(angle))[..., None] * (skew @ skew)
+    return rotation.to(dtype)
+
+
+def matrix_to_rotate6d(rotation: torch.Tensor) -> torch.Tensor:
+    """
+    Encode a rotation matrix as X-VLA's two-column 6D rotation representation
+    (first two columns of the matrix).
+
+    rotation: (..., 3, 3) tensor
+    return: (..., 6) tensor
+    """
+    return torch.cat((rotation[..., :, 0], rotation[..., :, 1]), -1)
+
+
+def axis_angle_to_rotate6d(axis_angle: torch.Tensor) -> torch.Tensor:
+    """
+    Inverse of `rotate6d_to_axis_angle`: convert axis-angle vectors into X-VLA's
+    two-column 6D rotation representation (first two columns of the rotation matrix).
+
+    axis_angle: (..., 3) tensor
+    return: (..., 6) tensor
+    """
+    dtype = axis_angle.dtype
+    return matrix_to_rotate6d(axis_angle_to_rotation_matrix(axis_angle)).to(dtype)
 
 
 def mat_to_rotate6d(abs_action):

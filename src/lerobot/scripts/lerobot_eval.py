@@ -396,7 +396,6 @@ def rollout(
 
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
-
     return ret
 
 
@@ -598,36 +597,6 @@ def eval_policy(
                 thread.start()
                 threads.append(thread)
                 n_episodes_rendered += 1
-
-        # Maybe save the policy's predicted (imagined) video for this batch's rollout.
-        if save_predicted_video and len(pred_latents) > 0:
-            predicted_latent = torch.cat(pred_latents, dim=2)
-            decoder = getattr(policy, "decode_predicted_latents", None) or getattr(
-                policy, "_decode_predicted_video", None
-            )
-            if decoder is None:
-                raise AttributeError(
-                    "Policy config requested predicted-video saving, but the policy does not expose "
-                    "`decode_predicted_latents` or `_decode_predicted_video`."
-                )
-            predicted_video = decoder(predicted_latent)
-            if hasattr(predicted_video, "detach"):
-                predicted_video = predicted_video.detach().to("cpu").numpy()
-            videos_dir.mkdir(parents=True, exist_ok=True)
-            predicted_video_path = videos_dir / f"pred_episode_{n_predicted_rendered}.mp4"
-            predicted_video_paths.append(str(predicted_video_path))
-            thread = threading.Thread(
-                target=write_video,
-                args=(
-                    str(predicted_video_path),
-                    predicted_video,
-                    env.unwrapped.metadata["render_fps"],
-                ),
-            )
-            thread.start()
-            threads.append(thread)
-            n_predicted_rendered += 1
-
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )

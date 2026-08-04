@@ -45,6 +45,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 from .act.configuration_act import ACTConfig
+from .cig_vla.configuration_cig_vla import CIGVLAConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
 from .evo1.configuration_evo1 import Evo1Config
@@ -58,12 +59,14 @@ from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig
+from .smolvla_rmoe.configuration_smolvla_rmoe import SmolVLARMoEConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
+from .xvla_rmoe.configuration_xvla_rmoe import XVLARMoEConfig
 
 
 def _reconnect_relative_absolute_steps(
@@ -141,6 +144,14 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "smolvla_rmoe":
+        from .smolvla_rmoe.modeling_smolvla_rmoe import SmolVLARMoEPolicy
+
+        return SmolVLARMoEPolicy
+    elif name == "cig_vla":
+        from .cig_vla.modeling_cig_vla import CIGVLAPolicy
+
+        return CIGVLAPolicy
     elif name == "groot":
         from .groot.modeling_groot import GrootPolicy
 
@@ -149,6 +160,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .xvla.modeling_xvla import XVLAPolicy
 
         return XVLAPolicy
+    elif name == "xvla_rmoe":
+        from .xvla_rmoe.modeling_xvla_rmoe import XVLARMoEPolicy
+
+        return XVLARMoEPolicy
     elif name == "wall_x":
         from .wall_x.modeling_wall_x import WallXPolicy
 
@@ -221,10 +236,16 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "smolvla_rmoe":
+        return SmolVLARMoEConfig(**kwargs)
+    elif policy_type == "cig_vla":
+        return CIGVLAConfig(**kwargs)
     elif policy_type == "groot":
         return GrootConfig(**kwargs)
     elif policy_type == "xvla":
         return XVLAConfig(**kwargs)
+    elif policy_type == "xvla_rmoe":
+        return XVLARMoEConfig(**kwargs)
     elif policy_type == "wall_x":
         return WallXConfig(**kwargs)
     elif policy_type == "eo1":
@@ -302,6 +323,10 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
+        if isinstance(policy_cfg, XVLARMoEConfig):
+            # Register RMoE processor steps before deserializing a local RMoE checkpoint.
+            from .xvla_rmoe import processor_xvlarmoe as _processor_xvlarmoe  # noqa: F401
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
@@ -341,6 +366,16 @@ def make_pre_post_processors(
             revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        if isinstance(policy_cfg, XVLARMoEConfig):
+            from .xvla_rmoe.processor_xvlarmoe import reconcile_xvlarmoe_processors
+
+            preprocessor, postprocessor = reconcile_xvlarmoe_processors(
+                policy_cfg, preprocessor, postprocessor
+            )
+        elif isinstance(policy_cfg, XVLAConfig):
+            from .xvla.processor_xvla import reconcile_xvla_processors
+
+            preprocessor, postprocessor = reconcile_xvla_processors(policy_cfg, preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
@@ -426,6 +461,22 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
+    elif isinstance(policy_cfg, SmolVLARMoEConfig):
+        from .smolvla_rmoe.processor_smolvla_rmoe import make_smolvla_pre_post_processors
+
+        processors = make_smolvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, CIGVLAConfig):
+        from .cig_vla.processor_cig_vla import make_cig_vla_pre_post_processors
+
+        processors = make_cig_vla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     elif isinstance(policy_cfg, GrootConfig):
         from .groot.processor_groot import make_groot_pre_post_processors
 
@@ -433,6 +484,14 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, XVLARMoEConfig):
+        from .xvla_rmoe.processor_xvlarmoe import make_xvlarmoe_pre_post_processors
+
+        processors = make_xvlarmoe_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     elif isinstance(policy_cfg, XVLAConfig):

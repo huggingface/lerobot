@@ -234,7 +234,28 @@ class XVLAModel(nn.Module):
             proprio=proprio_m,
             **enc,
         )
+        if self.config.action_mode.lower() == "ee6d" and self.config.single_arm_ee6d_loss:
+            return self._compute_single_arm_ee6d_loss(pred_action, action)
         return self.action_space.compute_loss(pred_action, action)
+
+    def _compute_single_arm_ee6d_loss(
+        self, pred_action: torch.Tensor, target_action: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Single-arm variant of `EE6DActionSpace.compute_loss`: only the first arm
+        slot (xyz[0:3], rotation-6D[3:9], gripper[9]) is real; channels [10:20] are
+        structural padding for a second arm that doesn't exist and must not
+        supervise the model.
+        """
+        if pred_action.shape[-1] < 10 or target_action.shape[-1] < 10:
+            raise ValueError("Single-arm EE6D loss requires at least 10 action channels.")
+        return {
+            "position_loss": F.mse_loss(pred_action[..., :3], target_action[..., :3])
+            * self.action_space.XYZ_SCALE,
+            "rotate6D_loss": F.mse_loss(pred_action[..., 3:9], target_action[..., 3:9])
+            * self.action_space.ROT_SCALE,
+            "gripper_loss": F.binary_cross_entropy_with_logits(pred_action[..., 9], target_action[..., 9])
+            * self.action_space.GRIPPER_SCALE,
+        }
 
     @torch.no_grad()
     def generate_actions(
