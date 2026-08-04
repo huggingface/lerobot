@@ -955,10 +955,10 @@ def test_joint_frame_transform_noop_when_none():
     state = torch.tensor([[10.0, -90.0, -120.0]])
 
     state_transition = {TransitionKey.OBSERVATION: {OBS_STATE: state}}
-    assert state_step(state_transition) is state_transition
+    assert torch.equal(state_step(state_transition)[TransitionKey.OBSERVATION][OBS_STATE], state)
 
     action_transition = {TransitionKey.ACTION: state}
-    assert action_step(action_transition) is action_transition
+    assert torch.equal(action_step(action_transition)[TransitionKey.ACTION], state)
 
 
 def test_action_padding_marks_only_real_dimensions():
