@@ -471,7 +471,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         examples: list[dict[str, Any]] = []
         for idx in range(batch_size):
             primary_images = [
-                self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).numpy() for key in primary_keys
+                self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).cpu().numpy() for key in primary_keys
             ]
             example: dict[str, Any] = {
                 "primary_image": primary_images,
@@ -481,7 +481,7 @@ class LaWAMPolicy(PreTrainedPolicy):
             }
             if wrist_keys:
                 example["wrist_image"] = [
-                    self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).numpy() for key in wrist_keys
+                    self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).cpu().numpy() for key in wrist_keys
                 ]
             if state_tensor is not None:
                 state = state_tensor[idx].detach().float().cpu()

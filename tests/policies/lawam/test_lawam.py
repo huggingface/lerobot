@@ -572,6 +572,19 @@ def test_libero_image2_defaults_to_wrist_view() -> None:
     assert collator.samples[0]["wrist_images"].shape[0] == 1
 
 
+def test_inference_examples_convert_device_images_to_numpy() -> None:
+    policy, _, _ = make_policy()
+    batch = make_batch(batch_size=1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    batch = {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
+
+    examples = policy._prepare_infer_examples(batch)
+
+    assert examples[0]["primary_image"][0].shape == (8, 8, 3)
+    assert examples[0]["wrist_image"][0].shape == (8, 8, 3)
+    assert examples[0]["state"].shape == (1, 7)
+
+
 def test_select_action_uses_action_queue_before_refill() -> None:
     policy, native_model, _ = make_policy()
     batch = make_batch(batch_size=1)
