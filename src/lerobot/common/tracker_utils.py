@@ -43,6 +43,41 @@ class TrackerLogger(Protocol):
     def log_video(self, video_path: str, step: int, mode: str = "train") -> None: ...
 
 
+def cfg_to_group(
+    cfg: "TrainPipelineConfig",
+    return_list: bool = False,
+    truncate_tags: bool = False,
+    max_tag_length: int = 64,
+) -> list[str] | str:
+    """Return a group name for logging. Optionally returns group name as list."""
+
+    def _maybe_truncate(tag: str) -> str:
+        """Truncate tag to max_tag_length characters if required.
+
+        wandb rejects tags longer than 64 characters.
+        See: https://github.com/wandb/wandb/blob/main/wandb/sdk/wandb_settings.py
+        """
+        if len(tag) <= max_tag_length:
+            return tag
+        return tag[:max_tag_length]
+
+    if cfg.is_reward_model_training:
+        trainable_tag = f"reward_model:{cfg.reward_model.type}"
+    else:
+        trainable_tag = f"policy:{cfg.policy.type}"
+    lst = [
+        trainable_tag,
+        f"seed:{cfg.seed}",
+    ]
+    if cfg.dataset is not None:
+        lst.append(f"dataset:{cfg.dataset.repo_id}")
+    if cfg.env is not None:
+        lst.append(f"env:{cfg.env.type}")
+    if truncate_tags:
+        lst = [_maybe_truncate(tag) for tag in lst]
+    return lst if return_list else "-".join(lst)
+
+
 def make_tracker(cfg: "TrainPipelineConfig") -> TrackerLogger | None:
     """Build the experiment tracker selected by ``cfg.tracker`` (None = tracking disabled).
 

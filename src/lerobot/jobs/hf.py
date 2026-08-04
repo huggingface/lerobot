@@ -103,8 +103,8 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     The pod runs `lerobot-train --config_path=<dest>` and downloads the dataset
     by repo_id into its own cache. Client-only fields are stripped so the config
     is accepted by the trainer image: `job` (pure client orchestration) is always
-    removed, and `save_checkpoint_to_hub` is removed unless explicitly enabled —
-    older lerobot images reject unknown keys, so the default keeps the config
+    removed, and `save_checkpoint_to_hub` and `tracker` are removed unless explicitly
+    set — older lerobot images reject unknown keys, so the defaults keep the config
     compatible with the released `lerobot-gpu` image. `tags` are merged into
     policy.tags so the trained model the pod pushes carries them too.
     """
@@ -125,6 +125,8 @@ def build_remote_config_file(cfg, repo_id: str, dest: Path, tags: list[str] | No
     data.pop("job", None)
     if not remote.save_checkpoint_to_hub:
         data.pop("save_checkpoint_to_hub", None)
+    if remote.tracker is None:
+        data.pop("tracker", None)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(data, indent=4))

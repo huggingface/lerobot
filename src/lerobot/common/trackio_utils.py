@@ -19,7 +19,7 @@ from pathlib import Path
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
 
-from lerobot.common.wandb_utils import cfg_to_group
+from lerobot.common.tracker_utils import cfg_to_group
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 

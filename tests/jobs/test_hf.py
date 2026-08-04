@@ -200,6 +200,8 @@ def test_build_remote_config_applies_overrides(tmp_path):
     assert "job" not in data
     # save_checkpoint_to_hub defaults off → omitted so older images accept the config.
     assert "save_checkpoint_to_hub" not in data
+    # No tracker selected → omitted for the same reason.
+    assert "tracker" not in data
     assert data["policy"]["push_to_hub"] is True
     assert data["policy"]["repo_id"] == "u/run"
     assert data["policy"]["device"] is None  # pod auto-detects its GPU
@@ -229,6 +231,30 @@ def test_build_remote_config_includes_checkpoint_flag_when_enabled(tmp_path):
     # explicitly enabled → kept in the config (requires a matching trainer image).
     assert data["save_checkpoint_to_hub"] is True
     assert "job" not in data
+
+
+def test_build_remote_config_includes_the_tracker_when_selected(tmp_path):
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=[
+            "--dataset.repo_id",
+            "u/d",
+            "--policy.type",
+            "act",
+            "--job.target",
+            "a10g-small",
+            "--tracker.type",
+            "trackio",
+            "--tracker.space_id",
+            "alice/dash",
+        ],
+    )
+    dest = tmp_path / "train_config.json"
+    build_remote_config_file(cfg, "u/run", dest)
+    data = json.loads(dest.read_text())
+    # Explicitly selected → kept (and the pod's image must be new enough to know the key).
+    assert data["tracker"]["type"] == "trackio"
+    assert data["tracker"]["space_id"] == "alice/dash"
 
 
 def test_build_remote_config_merges_tags_into_policy(tmp_path):
