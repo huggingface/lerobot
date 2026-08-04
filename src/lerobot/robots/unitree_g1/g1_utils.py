@@ -80,6 +80,26 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     return gravity_orientation
 
 
+def make_ort_session_options(
+    intra_op_num_threads: int | None = None, inter_op_num_threads: int | None = None
+):
+    """Build quiet ONNX Runtime SessionOptions, optionally capping the CPU thread pool.
+
+    These tiny MLP policies are latency-bound, not throughput-bound, so letting ORT grab
+    every core starves the real-time control loop / torch policy and causes stutter. Pass
+    1 intra + 1 inter thread for lowest-latency per-step inference.
+    """
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    if intra_op_num_threads is not None:
+        so.intra_op_num_threads = intra_op_num_threads
+    if inter_op_num_threads is not None:
+        so.inter_op_num_threads = inter_op_num_threads
+    return so
+
+
 class G1_29_JointArmIndex(IntEnum):
     # Left arm
     kLeftShoulderPitch = 15

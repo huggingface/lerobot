@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 import zmq
 
-from ..configs import ColorMode
+from ..configs import ColorMode, Cv2Backends
 from ..opencv import OpenCVCamera, OpenCVCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,9 @@ class ImageServer:
                 width=shape[1],
                 height=shape[0],
                 color_mode=ColorMode.RGB,
+                # Some UVC devices are only settable through V4L2: the auto-selected
+                # backend can open them but refuses `set()`, which reads as a failure.
+                backend=cfg.get("backend", Cv2Backends.ANY),
             )
             camera = OpenCVCamera(cam_config)
             camera.connect()
