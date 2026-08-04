@@ -630,6 +630,27 @@ class SerialMotorsBus(MotorsBusBase):
 
         self.set_baudrate(self.default_baudrate)
 
+    def setup_motor_interactive(self, motor: str) -> None:
+        """Prompt the user to connect `motor` alone, then set it up, retrying on failure.
+
+        Unlike :pymeth:`setup_motor`, a failure (motor not found, communication error) does not
+        propagate: the error is displayed and the user is asked to fix the connection and press
+        enter to retry the same motor. Press Ctrl-C to abort.
+
+        Args:
+            motor (str): Key of the motor in :pyattr:`motors`.
+        """
+        while True:
+            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+            try:
+                self.setup_motor(motor)
+            except (RuntimeError, ConnectionError) as e:
+                print(f"Setting up '{motor}' motor failed: {e}")
+                print("Check that only this motor is connected and powered, then press enter to retry.")
+            else:
+                print(f"'{motor}' motor id set to {self.motors[motor].id}")
+                return
+
     @abc.abstractmethod
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         pass
