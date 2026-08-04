@@ -51,6 +51,16 @@ class OpenCVCameraConfig(CameraConfig):
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
         backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
+        attempt_reconnect: If True, the background read thread tries to reopen the device after
+                      exceeding ``max_read_failures`` consecutive read failures, instead of dying.
+                      This makes long-running captures resilient to transient USB link drops.
+        max_read_failures: Number of consecutive read failures tolerated (logged as warnings)
+                      before a reconnect is attempted (or the thread errors out if
+                      ``attempt_reconnect`` is False).
+        reconnect_attempts: Maximum number of reopen attempts per reconnect episode. Use ``-1``
+                      for unbounded retries (recommended for live robot control so a brief blip
+                      never ends the session).
+        reconnect_delay_s: Delay in seconds between reopen attempts (backoff).
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -64,6 +74,10 @@ class OpenCVCameraConfig(CameraConfig):
     warmup_s: int = 1
     fourcc: str | None = None
     backend: Cv2Backends = Cv2Backends.ANY
+    attempt_reconnect: bool = True
+    max_read_failures: int = 10
+    reconnect_attempts: int = -1
+    reconnect_delay_s: float = 1.0
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
@@ -74,3 +88,9 @@ class OpenCVCameraConfig(CameraConfig):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
             )
+
+        if self.max_read_failures < 0:
+            raise ValueError(f"`max_read_failures` must be >= 0, but {self.max_read_failures} is provided.")
+
+        if self.reconnect_delay_s < 0:
+            raise ValueError(f"`reconnect_delay_s` must be >= 0, but {self.reconnect_delay_s} is provided.")

@@ -109,6 +109,10 @@ class OpenCVCamera(Camera):
         self.warmup_s = config.warmup_s
 
         self.videocapture: cv2.VideoCapture | None = None
+        # Logical connection state. Kept separate from the live VideoCapture handle so
+        # that ``is_connected`` stays stable while the background thread transiently
+        # releases/reopens the device during an auto-reconnect.
+        self._is_connected: bool = False
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
@@ -130,8 +134,14 @@ class OpenCVCamera(Camera):
 
     @property
     def is_connected(self) -> bool:
-        """Checks if the camera is currently connected and opened."""
-        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
+        """Checks if the camera is currently connected.
+
+        Reflects the logical connection state established by :meth:`connect` and cleared
+        by :meth:`disconnect`. It intentionally does not probe the live ``VideoCapture``
+        handle, which may be briefly released while the background read thread performs an
+        auto-reconnect after a transient device drop.
+        """
+        return self._is_connected
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
@@ -164,17 +174,29 @@ class OpenCVCamera(Camera):
                 f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
             )
 
-        self._configure_capture_settings()
-        self._start_read_thread()
+        # Mark connected before configuring/warming up so the ``@check_if_not_connected``
+        # helpers and the warmup ``async_read`` see a connected device.
+        self._is_connected = True
+        try:
+            self._configure_capture_settings()
+            self._start_read_thread()
 
-        if warmup and self.warmup_s > 0:
-            start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                self.async_read(timeout_ms=self.warmup_s * 1000)
-                time.sleep(0.1)
-            with self.frame_lock:
-                if self.latest_frame is None:
-                    raise ConnectionError(f"{self} failed to capture frames during warmup.")
+            if warmup and self.warmup_s > 0:
+                start_time = time.time()
+                while time.time() - start_time < self.warmup_s:
+                    self.async_read(timeout_ms=self.warmup_s * 1000)
+                    time.sleep(0.1)
+                with self.frame_lock:
+                    if self.latest_frame is None:
+                        raise ConnectionError(f"{self} failed to capture frames during warmup.")
+        except Exception:
+            # Roll back partial connection so the instance is left cleanly disconnected.
+            self._stop_read_thread()
+            if self.videocapture is not None:
+                self.videocapture.release()
+                self.videocapture = None
+            self._is_connected = False
+            raise
 
         logger.info(f"{self} connected.")
 
@@ -431,6 +453,70 @@ class OpenCVCamera(Camera):
 
         return processed_image
 
+    def _reopen_videocapture(self) -> bool:
+        """Release and reopen the underlying ``VideoCapture`` for auto-reconnect.
+
+        Runs inside the background read thread. Releases the current capture, opens a
+        fresh one on the same index/path, and re-applies the configured settings.
+
+        Returns:
+            bool: True if the device reopened and settings were reapplied successfully.
+        """
+        try:
+            if self.videocapture is not None:
+                self.videocapture.release()
+        except Exception as e:
+            logger.debug(f"{self} error releasing videocapture during reconnect: {e}")
+        finally:
+            self.videocapture = None
+
+        videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        if not videocapture.isOpened():
+            videocapture.release()
+            return False
+
+        self.videocapture = videocapture
+        try:
+            self._configure_capture_settings()
+        except Exception as e:
+            logger.warning(f"{self} failed to reapply settings after reconnect: {e}")
+            self.videocapture.release()
+            self.videocapture = None
+            return False
+
+        return True
+
+    def _reconnect_with_backoff(self, stop_event: Event, cause: BaseException) -> bool:
+        """Attempt to reopen the device until it succeeds, is asked to stop, or gives up.
+
+        Args:
+            stop_event: The read thread's stop event; a set event aborts reconnection.
+            cause: The exception that triggered the reconnect (for error chaining).
+
+        Returns:
+            bool: True if the device reconnected, False if ``stop_event`` was set.
+
+        Raises:
+            RuntimeError: If ``reconnect_attempts`` is non-negative and is exhausted.
+        """
+        attempt = 0
+        max_attempts = self.config.reconnect_attempts
+        while not stop_event.is_set():
+            attempt += 1
+            logger.warning(f"{self} attempting to reconnect (attempt {attempt})...")
+            if self._reopen_videocapture():
+                logger.info(f"{self} successfully reconnected.")
+                return True
+
+            if 0 <= max_attempts <= attempt:
+                raise RuntimeError(f"{self} failed to reconnect after {attempt} attempts.") from cause
+
+            # Interruptible backoff: returns True immediately if a stop is requested.
+            if stop_event.wait(self.config.reconnect_delay_s):
+                return False
+
+        return False
+
     def _read_loop(self) -> None:
         """
         Internal loop run by the background thread for asynchronous reading.
@@ -440,7 +526,9 @@ class OpenCVCamera(Camera):
         2. Stores result in latest_frame and updates timestamp (thread-safe)
         3. Sets new_frame_event to notify listeners
 
-        Stops on DeviceNotConnectedError, logs other errors and continues.
+        Stops on DeviceNotConnectedError. On other errors it logs and continues; once
+        ``max_read_failures`` consecutive failures accumulate it either attempts to
+        reconnect (if ``attempt_reconnect`` is set) or raises.
         """
         stop_event = self.stop_event
         if stop_event is None:
@@ -462,11 +550,22 @@ class OpenCVCamera(Camera):
             except DeviceNotConnectedError:
                 break
             except Exception as e:
-                if failure_count <= 10:
-                    failure_count += 1
+                failure_count += 1
+                if failure_count <= self.config.max_read_failures:
                     logger.warning(f"Error reading frame in background thread for {self}: {e}")
-                else:
+                    continue
+
+                if not self.config.attempt_reconnect:
                     raise RuntimeError(f"{self} exceeded maximum consecutive read failures.") from e
+
+                logger.warning(
+                    f"{self} exceeded {self.config.max_read_failures} consecutive read failures; "
+                    f"attempting to reconnect."
+                )
+                if not self._reconnect_with_backoff(stop_event, cause=e):
+                    # Stop was requested during reconnection.
+                    break
+                failure_count = 0
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -585,6 +684,8 @@ class OpenCVCamera(Camera):
         """
         if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(f"{self} not connected.")
+
+        self._is_connected = False
 
         if self.thread is not None:
             self._stop_read_thread()
