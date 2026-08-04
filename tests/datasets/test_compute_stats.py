@@ -687,8 +687,7 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
-def test_aggregate_feature_stats_with_quantiles():
-    """Test aggregating feature stats that include quantiles."""
+def test_aggregate_feature_stats_omits_non_composable_quantiles():
     stats_ft_list = [
         {
             "min": np.array([1.0]),
@@ -710,18 +709,11 @@ def test_aggregate_feature_stats_with_quantiles():
         },
     ]
 
-    result = aggregate_feature_stats(stats_ft_list)
+    with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
+        result = aggregate_feature_stats(stats_ft_list)
 
-    # Should preserve quantiles
-    assert "q01" in result
-    assert "q99" in result
-
-    # Verify quantile aggregation (weighted average)
-    expected_q01 = (1.5 * 100 + 2.5 * 150) / 250  # ≈ 2.1
-    expected_q99 = (9.5 * 100 + 11.5 * 150) / 250  # ≈ 10.7
-
-    np.testing.assert_allclose(result["q01"], np.array([expected_q01]), atol=1e-6)
-    np.testing.assert_allclose(result["q99"], np.array([expected_q99]), atol=1e-6)
+    assert "q01" not in result
+    assert "q99" not in result
 
 
 def test_aggregate_stats_mixed_quantiles():
@@ -878,3 +870,54 @@ def test_fixed_quantiles_always_computed():
         for q_key in expected_quantiles:
             assert q_key in episode_stats[key]
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
+
+
+def test_aggregate_stats_omits_non_composable_quantiles():
+    stats_1 = {
+        "observation.image": {
+            "min": np.array([0.0, 0.0, 0.0]).reshape(3, 1, 1),
+            "max": np.array([1.0, 1.0, 1.0]).reshape(3, 1, 1),
+            "mean": np.array([0.4, 0.4, 0.4]).reshape(3, 1, 1),
+            "std": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
+            "count": np.array([100]),
+            "q01": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
+            "q99": np.array([0.9, 0.9, 0.9]).reshape(3, 1, 1),
+        }
+    }
+    stats_2 = {
+        "observation.image": {
+            "min": np.array([0.0, 0.0, 0.0]).reshape(3, 1, 1),
+            "max": np.array([1.0, 1.0, 1.0]).reshape(3, 1, 1),
+            "mean": np.array([0.6, 0.6, 0.6]).reshape(3, 1, 1),
+            "std": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
+            "count": np.array([200]),
+            "q01": np.array([0.2, 0.2, 0.2]).reshape(3, 1, 1),
+            "q99": np.array([0.95, 0.95, 0.95]).reshape(3, 1, 1),
+        }
+    }
+
+    with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
+        result = aggregate_stats([stats_1, stats_2])
+
+    image_stats = result["observation.image"]
+    assert "q01" not in image_stats
+    assert "q99" not in image_stats
+    np.testing.assert_allclose(image_stats["mean"], np.full((3, 1, 1), 8 / 15))
+    np.testing.assert_array_equal(image_stats["count"], np.array([300]))
+
+
+def test_aggregate_stats_preserves_single_source_quantiles():
+    image_stats = {
+        "min": np.zeros((3, 1, 1)),
+        "max": np.ones((3, 1, 1)),
+        "mean": np.full((3, 1, 1), 0.4),
+        "std": np.full((3, 1, 1), 0.1),
+        "count": np.array([100]),
+        "q01": np.full((3, 1, 1), 0.1),
+        "q99": np.full((3, 1, 1), 0.9),
+    }
+
+    result = aggregate_stats([{"observation.image": image_stats}])
+
+    np.testing.assert_array_equal(result["observation.image"]["q01"], image_stats["q01"])
+    np.testing.assert_array_equal(result["observation.image"]["q99"], image_stats["q99"])
