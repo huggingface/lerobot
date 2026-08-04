@@ -1206,6 +1206,26 @@ def make_groot_pre_post_processors(
     formalize_language = checkpoint_assets.formalize_language if checkpoint_assets is not None else True
     clip_outliers = checkpoint_assets.clip_outliers if checkpoint_assets is not None else True
     video_modality_keys = checkpoint_assets.video_modality_keys if checkpoint_assets is not None else None
+
+    # Resolve the image preprocessing geometry. Honor the checkpoint's processor_config
+    # when it provides an image_target_size; otherwise fall back to the geometry the
+    # N1.7 backbone was trained on. Without this fallback a raw base checkpoint with no
+    # processor_config image sizing (e.g. fine-tuning nvidia/GR00T-N1.7-3B with a new
+    # embodiment, where checkpoint_assets is None) would patchify full-resolution camera
+    # frames, inflating the VLM token count and feeding the model a resolution it was not trained on.
+    if checkpoint_assets is not None and checkpoint_assets.image_target_size is not None:
+        image_target_size = checkpoint_assets.image_target_size
+        image_crop_size = checkpoint_assets.image_crop_size
+        shortest_image_edge = checkpoint_assets.shortest_image_edge
+        crop_fraction = checkpoint_assets.crop_fraction
+    else:
+        image_target_size = list(N1_7_DEFAULT_IMAGE_TARGET_SIZE)
+        image_crop_size = list(N1_7_DEFAULT_IMAGE_CROP_SIZE)
+        shortest_image_edge = None
+        crop_fraction = None
+    use_albumentations = checkpoint_assets.use_albumentations if checkpoint_assets is not None else False
+    letter_box_transform = checkpoint_assets.letter_box_transform if checkpoint_assets is not None else False
+
     try:
         env_action_dim = int(config.output_features[ACTION].shape[0])
     except Exception:
@@ -1227,29 +1247,11 @@ def make_groot_pre_post_processors(
         stats=padded_stats,
         clip_outliers=clip_outliers,
         video_modality_keys=video_modality_keys,
+        image_target_size=image_target_size,
         raw_stats=checkpoint_assets.raw_stats if checkpoint_assets is not None else None,
         use_percentiles=checkpoint_assets.use_percentiles if checkpoint_assets is not None else False,
         modality_config=checkpoint_assets.modality_config if checkpoint_assets is not None else None,
     )
-
-    # Resolve the image preprocessing geometry. Honor the checkpoint's processor_config
-    # when it provides an image_target_size; otherwise fall back to the geometry the
-    # N1.7 backbone was trained on. Without this fallback a raw base checkpoint with no
-    # processor_config image sizing (e.g. fine-tuning nvidia/GR00T-N1.7-3B with a new
-    # embodiment, where checkpoint_assets is None) would patchify full-resolution camera
-    # frames, inflating the VLM token count and feeding the model a resolution it was not trained on.
-    if checkpoint_assets is not None and checkpoint_assets.image_target_size is not None:
-        image_target_size = checkpoint_assets.image_target_size
-        image_crop_size = checkpoint_assets.image_crop_size
-        shortest_image_edge = checkpoint_assets.shortest_image_edge
-        crop_fraction = checkpoint_assets.crop_fraction
-    else:
-        image_target_size = list(N1_7_DEFAULT_IMAGE_TARGET_SIZE)
-        image_crop_size = list(N1_7_DEFAULT_IMAGE_CROP_SIZE)
-        shortest_image_edge = None
-        crop_fraction = None
-    use_albumentations = checkpoint_assets.use_albumentations if checkpoint_assets is not None else False
-    letter_box_transform = checkpoint_assets.letter_box_transform if checkpoint_assets is not None else False
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -1364,6 +1366,30 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
         return video[:, -horizon:]
     pad = np.repeat(video[:, :1], horizon - current, axis=1)
     return np.concatenate([pad, video], axis=1)
+
+
+def _resize_video_to_image_target(video: np.ndarray, image_target_size: list[int] | None) -> np.ndarray:
+    """Resize a ``(B, T, H, W, C)`` camera stream so heterogeneous views can be stacked."""
+
+    if image_target_size is None:
+        return video
+
+    target_h, target_w = image_target_size
+    target_h = int(target_h)
+    target_w = int(target_w)
+    if target_h <= 0 or target_w <= 0:
+        raise ValueError(f"image_target_size must contain positive dimensions, got {image_target_size}")
+    if tuple(video.shape[-3:-1]) == (target_h, target_w):
+        return video
+
+    flat_video = video.reshape(-1, *video.shape[-3:])
+    resized_frames = []
+    for frame in flat_video:
+        resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        if resized.ndim == 2:
+            resized = resized[:, :, None]
+        resized_frames.append(resized)
+    return np.stack(resized_frames, axis=0).reshape(*video.shape[:-3], target_h, target_w, video.shape[-1])
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1555,6 +1581,7 @@ class GrootN17PackInputsStep(ProcessorStep):
     clip_outliers: bool = True
     use_percentiles: bool = False
     video_modality_keys: list[str] | None = None
+    image_target_size: list[int] | None = None
     raw_stats: dict[str, Any] | None = None
     modality_config: dict[str, Any] | None = None
     _last_raw_state: dict[str, np.ndarray] | None = field(default=None, init=False, repr=False)
@@ -1852,6 +1879,8 @@ class GrootN17PackInputsStep(ProcessorStep):
         img_keys = self._ordered_image_keys(obs)
         if img_keys:
             cams = [_align_video_horizon(_to_uint8_np_bthwc(obs[k]), self.video_horizon) for k in img_keys]
+            if len({cam.shape[-3:] for cam in cams}) > 1:
+                cams = [_resize_video_to_image_target(camera, self.image_target_size) for camera in cams]
             video = np.stack(cams, axis=2)  # (B, T, V, H, W, C)
             obs["video"] = video
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]
@@ -2004,6 +2033,7 @@ class GrootN17PackInputsStep(ProcessorStep):
             "clip_outliers": self.clip_outliers,
             "use_percentiles": self.use_percentiles,
             "video_modality_keys": self.video_modality_keys,
+            "image_target_size": self.image_target_size,
             "raw_stats": self.raw_stats,
             "modality_config": self.modality_config,
         }

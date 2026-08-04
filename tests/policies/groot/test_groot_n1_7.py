@@ -606,6 +606,7 @@ def test_raw_n1_7_libero_checkpoint_processors_use_checkpoint_assets(tmp_path):
         106.0,
     ]
     assert pack_inputs.stats[ACTION]["min"] == [11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0]
+    assert pack_inputs.image_target_size == [256, 256]
     assert vlm_encode.image_crop_size == [230, 230]
     assert vlm_encode.image_target_size == [256, 256]
     assert vlm_encode.shortest_image_edge == 256
@@ -1253,6 +1254,55 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     assert f"{OBS_IMAGES}.zz_extra" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
+
+
+def test_groot_n1_7_pack_inputs_resizes_mixed_resolution_cameras_before_stack():
+    step = GrootN17PackInputsStep(
+        normalize_min_max=False,
+        video_modality_keys=["left_wrist", "right_wrist", "base"],
+        image_target_size=[256, 256],
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {
+            f"{OBS_IMAGES}.left_wrist": torch.full((1, 3, 720, 1280), 11, dtype=torch.uint8),
+            f"{OBS_IMAGES}.right_wrist": torch.full((1, 3, 720, 1280), 22, dtype=torch.uint8),
+            f"{OBS_IMAGES}.base": torch.full((1, 3, 480, 640), 33, dtype=torch.uint8),
+        },
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    output = step(transition)
+
+    video = output[TransitionKey.OBSERVATION]["video"]
+    assert video.shape == (1, 1, 3, 256, 256, 3)
+    assert np.unique(video[0, 0, 0]).tolist() == [11]
+    assert np.unique(video[0, 0, 1]).tolist() == [22]
+    assert np.unique(video[0, 0, 2]).tolist() == [33]
+    assert f"{OBS_IMAGES}.left_wrist" not in output[TransitionKey.OBSERVATION]
+    assert f"{OBS_IMAGES}.right_wrist" not in output[TransitionKey.OBSERVATION]
+    assert f"{OBS_IMAGES}.base" not in output[TransitionKey.OBSERVATION]
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["language"] == ["move"]
+
+
+def test_groot_n1_7_pack_inputs_keeps_uniform_camera_resolution_before_vlm_transform():
+    step = GrootN17PackInputsStep(
+        normalize_min_max=False,
+        image_target_size=[256, 256],
+    )
+    transition = {
+        TransitionKey.OBSERVATION: {
+            f"{OBS_IMAGES}.left": torch.full((1, 3, 4, 6), 11, dtype=torch.uint8),
+            f"{OBS_IMAGES}.right": torch.full((1, 3, 4, 6), 22, dtype=torch.uint8),
+        },
+        TransitionKey.COMPLEMENTARY_DATA: {"task": ["Move"]},
+    }
+
+    output = step(transition)
+
+    video = output[TransitionKey.OBSERVATION]["video"]
+    assert video.shape == (1, 1, 2, 4, 6, 3)
+    assert np.unique(video[0, 0, 0]).tolist() == [11]
+    assert np.unique(video[0, 0, 1]).tolist() == [22]
 
 
 def test_groot_n1_7_postprocessor_clips_normalized_action_before_unnormalizing():
