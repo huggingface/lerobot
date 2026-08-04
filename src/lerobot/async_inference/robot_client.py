@@ -64,6 +64,11 @@ from lerobot.transport import (
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.visualization_utils import (
+    init_visualization,
+    log_visualization_data,
+    shutdown_visualization,
+)
 
 from .configs import RobotClientConfig
 from .helpers import (
@@ -129,6 +134,9 @@ class RobotClient:
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
+        # Throttle for always-on FPS logging (log at most once per interval, in seconds)
+        self._fps_log_interval_s = 1.0
+        self._last_fps_log_t = 0.0
 
         self.logger.info("Robot connected and ready")
 
@@ -436,16 +444,20 @@ class RobotClient:
                 # must-go event will be set again after receiving actions
                 self.must_go.clear()
 
-            if verbose:
-                # Calculate comprehensive FPS metrics
-                fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
-
+            # Always track FPS so it can be monitored without --verbose. Logged at INFO, throttled to
+            # `self._fps_log_interval_s` so it doesn't spam the console at the control frequency.
+            fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
+            now = time.perf_counter()
+            if now - self._last_fps_log_t >= self._fps_log_interval_s:
+                self._last_fps_log_t = now
                 self.logger.info(
                     f"Obs #{observation.get_timestep()} | "
+                    f"FPS now: {fps_metrics['instant_fps']:.2f} | "
                     f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "
                     f"Target: {fps_metrics['target_fps']:.2f}"
                 )
 
+            if verbose:
                 self.logger.debug(
                     f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
                 )
@@ -466,13 +478,33 @@ class RobotClient:
 
         while self.running:
             control_loop_start = time.perf_counter()
+
+            # Track only data produced this iteration so we don't re-log stale values to the viewer.
+            _fresh_action = None
+            _fresh_observation = None
+
             """Control loop: (1) Performing actions, when available"""
             if self.actions_available():
-                _performed_action = self.control_loop_action(verbose)
+                _performed_action = _fresh_action = self.control_loop_action(verbose)
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(task, verbose)
+                _captured_observation = _fresh_observation = self.control_loop_observation(task, verbose)
+
+            """Control loop: (3) Streaming observations/actions to the live viewer, when enabled"""
+            if self.config.display_data and (_fresh_observation is not None or _fresh_action is not None):
+                # Drop the non-numeric "task" instruction; the viewer only handles scalars/images.
+                obs_to_log = (
+                    {k: v for k, v in _fresh_observation.items() if k != "task"}
+                    if _fresh_observation is not None
+                    else None
+                )
+                log_visualization_data(
+                    self.config.display_mode,
+                    observation=obs_to_log,
+                    action=_fresh_action,
+                    compress_images=self.config.display_compressed_images,
+                )
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
@@ -491,6 +523,14 @@ def async_client(cfg: RobotClientConfig):
 
     client = RobotClient(cfg)
 
+    if cfg.display_data:
+        init_visualization(
+            cfg.display_mode,
+            session_name="async_inference",
+            ip=cfg.display_ip,
+            port=cfg.display_port,
+        )
+
     if client.start():
         client.logger.info("Starting action receiver thread...")
 
@@ -507,6 +547,8 @@ def async_client(cfg: RobotClientConfig):
         finally:
             client.stop()
             action_receiver_thread.join()
+            if cfg.display_data:
+                shutdown_visualization(cfg.display_mode)
             if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
             client.logger.info("Client stopped")

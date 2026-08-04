@@ -241,10 +241,11 @@ class FPSTracker:
 
     target_fps: float
     first_timestamp: float = None
+    last_timestamp: float = None
     total_obs_count: int = 0
 
     def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
-        """Calculate average FPS vs target"""
+        """Calculate average FPS (since start) and instantaneous FPS (since last call) vs target."""
         self.total_obs_count += 1
 
         # Initialize first observation time
@@ -255,11 +256,19 @@ class FPSTracker:
         total_duration = current_timestamp - self.first_timestamp
         avg_fps = (self.total_obs_count - 1) / total_duration if total_duration > 1e-6 else 0.0
 
-        return {"avg_fps": avg_fps, "target_fps": self.target_fps}
+        # Calculate instantaneous FPS (from the gap since the previous observation)
+        instant_fps = 0.0
+        if self.last_timestamp is not None:
+            dt = current_timestamp - self.last_timestamp
+            instant_fps = 1.0 / dt if dt > 1e-6 else 0.0
+        self.last_timestamp = current_timestamp
+
+        return {"avg_fps": avg_fps, "instant_fps": instant_fps, "target_fps": self.target_fps}
 
     def reset(self):
         """Reset the FPS tracker state"""
         self.first_timestamp = None
+        self.last_timestamp = None
         self.total_obs_count = 0
 
 

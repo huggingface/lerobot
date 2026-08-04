@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.robots.config import RobotConfig
+from lerobot.utils.visualization_utils import VISUALIZATION_MODES
 
 from .constants import (
     DEFAULT_FPS,
@@ -148,6 +149,33 @@ class RobotClientConfig:
         default=False, metadata={"help": "Visualize the action queue size"}
     )
 
+    # Live visualization configuration (Rerun / Foxglove)
+    display_data: bool = field(
+        default=False,
+        metadata={"help": "Stream observations and actions to a live viewer (Rerun or Foxglove)"},
+    )
+    display_mode: str = field(
+        default="rerun",
+        metadata={"help": f"Visualization backend to use. Options: {list(VISUALIZATION_MODES)}"},
+    )
+    display_ip: str | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "For 'rerun', optional IP of a remote Rerun server. For 'foxglove', the interface to "
+                "bind the WebSocket server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces)."
+            )
+        },
+    )
+    display_port: int | None = field(
+        default=None,
+        metadata={"help": "Port of the visualization server (remote Rerun server or Foxglove WebSocket)."},
+    )
+    display_compressed_images: bool = field(
+        default=False,
+        metadata={"help": "JPEG-compress images before logging to the viewer to save bandwidth."},
+    )
+
     @property
     def environment_dt(self) -> float:
         """Environment time step, in seconds"""
@@ -179,6 +207,11 @@ class RobotClientConfig:
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
 
+        if self.display_data and self.display_mode not in VISUALIZATION_MODES:
+            raise ValueError(
+                f"display_mode must be one of {list(VISUALIZATION_MODES)}, got '{self.display_mode}'"
+            )
+
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 
     @classmethod
@@ -200,4 +233,9 @@ class RobotClientConfig:
             "task": self.task,
             "debug_visualize_queue_size": self.debug_visualize_queue_size,
             "aggregate_fn_name": self.aggregate_fn_name,
+            "display_data": self.display_data,
+            "display_mode": self.display_mode,
+            "display_ip": self.display_ip,
+            "display_port": self.display_port,
+            "display_compressed_images": self.display_compressed_images,
         }
