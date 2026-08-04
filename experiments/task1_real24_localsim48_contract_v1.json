@@ -1,0 +1,15 @@
+{
+  "schema": "task1_real24_localsim48_contract_v1",
+  "status": "software_ready_waiting_for_local_dataset",
+  "research_commit": "51fdea1a58d0d9a7fc2ce131fc75d67dab6e1009",
+  "conditions": [
+    {"id":"real24_sim24_overlap","sim_subset":"sim24_overlap"},
+    {"id":"real24_sim24_gap","sim_subset":"sim24_gap","primary":true},
+    {"id":"real24_sim48_full","sim_subset":"sim48_full"}
+  ],
+  "training": {"seed":1000,"steps":100000,"checkpoint_step":100000,"batch_size":8,"real_per_batch":4,"sim_per_batch":4,"chunk_size":67,"fps":20,"input":"state+front","output":"action"},
+  "eval": {"pose_bank":"existing_eval48_48_poses","trials_per_model":48,"no_retry":true,"no_checkpoint_switch":true},
+  "required_inputs": ["accepted LocalSim manifest","subset SHA","state-bank SHA","runtime/camera/alignment identities","actual-applied action provenance"],
+  "fail_closed": true,
+  "historical_real24_result": "23/48_reference_only"
+}
