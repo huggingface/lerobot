@@ -89,6 +89,7 @@ def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, mon
     metadata = _fake_meta(
         root=requested_root or tmp_path / "snapshot",
         revision=streaming_dataset_module.CODEBASE_VERSION,
+        total_episodes=10,
     )
     metadata_cls = Mock(return_value=metadata)
     load_dataset = Mock(return_value=SimpleNamespace(num_shards=1))
@@ -190,6 +191,81 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
 
     streaming_ds = StreamingLeRobotDataset(repo_id=repo_id, root=local_path, buffer_size=buffer_size)
     assert_stream_matches_reference(streaming_ds, ds, ds_num_frames)
+
+
+def test_streaming_episode_selection(tmp_path, lerobot_dataset_factory):
+    """episodes=[...] restricts both the streamed frames and the count properties to the selection."""
+    ds_num_frames = 200
+    ds_num_episodes = 10
+    selected = [2, 5, 7]
+
+    local_path = tmp_path / "test"
+    repo_id = DUMMY_REPO_ID
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+    )
+
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id, root=local_path, episodes=selected, buffer_size=50, shuffle=False
+    )
+
+    assert streaming_ds.num_episodes == len(selected)
+    assert streaming_ds.num_frames == sum(ds.meta.episodes[ep]["length"] for ep in selected)
+
+    episode_indices = [int(frame["episode_index"]) for frame in streaming_ds]
+    assert set(episode_indices) == set(selected)
+    assert len(episode_indices) == streaming_ds.num_frames
+
+
+def test_streaming_episode_filter(tmp_path, lerobot_dataset_factory):
+    """episode_filter restricts the stream to episodes whose metadata matches the predicate."""
+    ds_num_episodes = 6
+    ds_num_frames = 120  # 20 frames per episode
+
+    local_path = tmp_path / "test"
+    repo_id = DUMMY_REPO_ID
+
+    ds = lerobot_dataset_factory(
+        root=local_path,
+        repo_id=repo_id,
+        total_episodes=ds_num_episodes,
+        total_frames=ds_num_frames,
+    )
+
+    keep = {1, 4}
+    streaming_ds = StreamingLeRobotDataset(
+        repo_id=repo_id,
+        root=local_path,
+        episode_filter=lambda ep: ep["episode_index"] in keep,
+        buffer_size=50,
+        shuffle=False,
+    )
+
+    assert set(streaming_ds.episodes) == keep
+    assert streaming_ds.num_episodes == len(keep)
+    assert {int(frame["episode_index"]) for frame in streaming_ds} == keep
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"episodes": [99]}, "No valid episodes"),
+        ({"episode_filter": lambda ep: False}, "episode filter did not match"),
+    ],
+)
+def test_streaming_empty_selection_raises(tmp_path, lerobot_dataset_factory, kwargs, match):
+    """An empty selection (out-of-range episodes or a non-matching filter) must fail loudly."""
+    local_path = tmp_path / "test"
+    repo_id = DUMMY_REPO_ID
+
+    lerobot_dataset_factory(root=local_path, repo_id=repo_id, total_episodes=4, total_frames=40)
+
+    with pytest.raises(ValueError, match=match):
+        StreamingLeRobotDataset(repo_id=repo_id, root=local_path, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -397,6 +473,7 @@ def _fake_meta(*args, **kwargs):
     meta.root = root or "/tmp/_streaming_meta"
     meta.revision = revision or "v0"
     meta._version = streaming_dataset_module.CODEBASE_VERSION
+    meta.total_episodes = 10
     meta.features = {}
     meta.video_keys = []
     meta.depth_keys = []
@@ -521,7 +598,7 @@ def test_repo_type_is_keyword_only_and_preserves_positional_episodes():
         patch("lerobot.datasets.streaming_dataset.check_version_compatibility"),
         patch(
             "lerobot.datasets.streaming_dataset.load_dataset",
-            return_value=SimpleNamespace(num_shards=1),
+            return_value=SimpleNamespace(num_shards=1, filter=lambda *a, **k: SimpleNamespace(num_shards=1)),
         ),
     ):
         dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, None, episodes)
