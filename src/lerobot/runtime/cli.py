@@ -443,7 +443,10 @@ def _build_language_rollout_context(args: argparse.Namespace) -> Any:
         else:
             logger.warning("--fp8 ignored: %s does not support it", cfg.policy.type)
 
-    return build_rollout_context(cfg, threading.Event())
+    # The language runtime drives the policy processors directly (see
+    # _build_rollout_runtime_io) and never uses ctx.policy.inference, so the
+    # sync-engine restriction on relative-action policies does not apply.
+    return build_rollout_context(cfg, threading.Event(), check_relative_action_support=False)
 
 
 def _build_rollout_runtime_io(

@@ -194,11 +194,17 @@ def build_rollout_context(
     teleop_action_processor: RobotProcessorPipeline | None = None,
     robot_action_processor: RobotProcessorPipeline | None = None,
     robot_observation_processor: RobotProcessorPipeline | None = None,
+    check_relative_action_support: bool = True,
 ) -> RolloutContext:
     """Wire up policy, processors, hardware, dataset, and inference engine.
 
     The order is policy-first / hardware-last so a bad ``--policy.path``
     fails fast without touching the robot.
+
+    Callers that drive the policy processors themselves instead of the built
+    inference engine (the language runtime) pass
+    ``check_relative_action_support=False``: the sync-engine restriction on
+    relative actions does not apply to them.
     """
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
@@ -418,7 +424,7 @@ def build_rollout_context(
         },
     )
 
-    if isinstance(cfg.inference, SyncInferenceConfig) and any(
+    if check_relative_action_support and isinstance(cfg.inference, SyncInferenceConfig) and any(
         isinstance(step, RelativeActionsProcessorStep) and step.enabled
         for step in getattr(preprocessor, "steps", ())
     ):
