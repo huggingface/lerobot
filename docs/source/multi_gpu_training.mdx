@@ -1,14 +1,12 @@
 # Multi-GPU Training
 
-LeRobot trains on multiple GPUs through [Hugging Face Accelerate](https://huggingface.co/docs/accelerate), driven entirely by the training config: every parallelism and runtime knob is a `lerobot-train` CLI flag (`--parallelism.*`, `--accelerator.*`) and is recorded in the checkpoint's `train_config.json`, so any run is reproducible from that file alone. You never write an accelerate yaml.
+LeRobot trains on multiple GPUs through [Hugging Face Accelerate](https://huggingface.co/docs/accelerate). Three data-parallel layouts are supported:
 
-Three data-parallel layouts are supported, selected purely by the parallelism degrees:
-
-| Layout   | What it does                                                                       | Config                                                  |
-| -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **DDP**  | Replicates the full model on every GPU                                             | default on any multi-GPU launch                         |
-| **FSDP** | Shards parameters, gradients, and optimizer state across GPUs (FSDP2, ZeRO-3-like) | `--parallelism.dp_shard=N`                              |
-| **HSDP** | Shards within groups of GPUs, replicates across groups                             | `--parallelism.dp_replicate=R --parallelism.dp_shard=S` |
+| Layout   | What it does                                                  | Config                                                  |
+| -------- | ------------------------------------------------------------- | ------------------------------------------------------- |
+| **DDP**  | Replicates the full model on every GPU                        | default on any multi-GPU launch                         |
+| **FSDP** | Shards parameters, gradients, and optimizer state across GPUs | `--parallelism.dp_shard=N`                              |
+| **HSDP** | Shards within groups of GPUs, replicates across groups        | `--parallelism.dp_replicate=R --parallelism.dp_shard=S` |
 
 ## Installation
 
@@ -46,14 +44,14 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --wandb.enable=true
 ```
 
-With no `--parallelism.*` flags, a multi-process launch runs plain DDP. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or their `accelerate launch --num_machines/--machine_rank/--main_process_ip` equivalents).
+With no `--parallelism.*` flags, a multi-process launch runs plain DDP. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or `accelerate launch --num_machines/--machine_rank/--main_process_ip`).
 
 > [!WARNING]
-> Accelerate's yaml config files (`accelerate launch --config_file some.yaml`, `accelerate config`) are not supported. They configure the engine through environment variables, bypassing LeRobot's configuration system, so `train_config.json` would no longer describe the settings a run actually used. `lerobot-train` therefore refuses to start when [accelerate's environment variables](https://huggingface.co/docs/accelerate/usage_guides/fsdp) are set. Put the settings in `--parallelism.*` / `--accelerator.*` flags instead, or set `LEROBOT_ALLOW_ACCELERATE_ENV=1` to acknowledge the override and proceed anyway.
+> Accelerate's YAML config files (`accelerate launch --config_file some.yaml`, `accelerate config`) are not supported. They configure the engine through environment variables, bypassing LeRobot's configuration system, so `train_config.json` would no longer describe the settings a run actually used. `lerobot-train` therefore refuses to start when [accelerate environment variables](https://huggingface.co/docs/accelerate/usage_guides/fsdp) are set. Put the settings in `--parallelism.*` / `--accelerator.*` flags instead, or set `LEROBOT_ALLOW_ACCELERATE_ENV=1` to acknowledge the override and proceed anyway.
 
 ## Batch semantics, learning rate, and steps
 
-Each of the `dp_replicate × dp_shard` data-parallel workers loads its own `--batch_size` micro-batch every step, so one training step consumes `batch_size × dp_world_size` samples — and `× gradient_accumulation_steps` of those go into each optimizer update:
+Each of the `dp_replicate × dp_shard` data-parallel workers loads its own `--batch_size` micro-batch every step, so one training step consumes `batch_size × dp_world_size` samples, and `× gradient_accumulation_steps` of those go into each optimizer update:
 
 ```
 effective_batch_size = batch_size × dp_world_size × gradient_accumulation_steps
@@ -68,11 +66,11 @@ torchrun --nproc-per-node=2 $(which lerobot-train) \
   --batch_size=8 --accelerator.gradient_accumulation.steps=4 ...
 ```
 
-**LeRobot does not auto-scale the learning rate or the number of steps** when the effective batch size grows — you keep full control. If you scale out and want equivalent training, adjust manually, e.g. with 2 GPUs: double `--optimizer.lr` (linear scaling) and/or halve `--steps`.
+**LeRobot does not auto-scale the learning rate or the number of steps** when the effective batch size grows. If you scale out and want equivalent training, please adjust manually, e.g. with 2 GPUs: double `--optimizer.lr` (linear scaling), or halve `--steps`.
 
 ## Sharded training (FSDP)
 
-DDP replicates the full model, so a model that doesn't fit on one GPU won't fit under DDP either. Shard it instead with FSDP2:
+If a model is too large to train with DDP, shard it with FSDP2:
 
 ```bash
 torchrun --nproc-per-node=4 $(which lerobot-train) \
@@ -94,13 +92,17 @@ FSDP shards the model in units (typically the repeated transformer block) and ga
 --accelerator.fsdp.min_num_params=1000000                  # or: wrap every submodule above 1M params
 ```
 
-If a policy declares nothing and you pass neither flag, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
+If a policy doesn't declare `_fsdp_wrap_modules` and no `--accelerator.fsdp.wrap_modules` or `--accelerator.fsdp.min_num_params` is passed, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
 
-Other sharding knobs: `--accelerator.fsdp.reshard_after_forward` (default `true`; set `false` to trade memory for one gather less per step), `--accelerator.fsdp.cpu_offload`, and `--accelerator.fsdp.ignored_modules` (a regex of module paths to keep unsharded).
+Other sharding settings:
+
+- `--accelerator.fsdp.reshard_after_forward`: whether to keep each unit's parameters resident after forward.
+- `--accelerator.fsdp.cpu_offload`: keeps parameters, gradients and optimizer states on CPU.
+- `--accelerator.fsdp.ignored_modules`: a regex of module paths to keep unsharded.
 
 ### HSDP
 
-At larger scale, sharding across _all_ GPUs makes every gather cross the slow inter-node links. HSDP shards within a replica group (e.g. one node, over NVLink) and replicates across groups (DDP-style gradient sync over the slower links):
+Hybrid Sharded Data Parallel: parameters, gradients and optimizer states are sharded across `dp_shard` ranks, and that sharding is replicated `dp_replicate` times. Parameter all-gathers and gradient reduce-scatters stay inside a shard group; only the all-reduce that synchronizes the replicas crosses between groups. The two degrees must multiply to the world size:
 
 ```bash
 # 16 GPUs = 2 nodes × 8: shard within each node, replicate across nodes
@@ -108,23 +110,43 @@ torchrun --nnodes=2 --nproc-per-node=8 ... $(which lerobot-train) \
   --parallelism.dp_replicate=2 --parallelism.dp_shard=8 ...
 ```
 
-The degrees must multiply to the world size (`dp_replicate × dp_shard = WORLD_SIZE`); the error message echoes every degree when they don't.
-
 ## Checkpoints
 
-Every checkpoint contains a `pretrained_model/` directory (the loadable policy: `config.json`, `train_config.json`, processor files, weights) and a `training_state/` directory (step, RNG, optimizer, scheduler). What the _weights_ look like is controlled by `--checkpoint_format`:
+Every checkpoint contains a `pretrained_model/` directory and a `training_state/` directory:
 
-| `--checkpoint_format`     | Weights artifact                                 | Use when                                                                   |
-| ------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------- |
-| `safetensors` _(default)_ | single `model.safetensors` (full gather on save) | you want every checkpoint immediately loadable with `from_pretrained`      |
-| `dcp`                     | `pytorch_model_fsdp_0/` shard directory          | full gathers are too slow/large at your scale; convert offline when needed |
-| `safetensors_dcp`         | both                                             | you want fast sharded resume _and_ distributable checkpoints               |
+```text
+005000/  # the training step at that checkpoint
+├── pretrained_model/
+│   ├── config.json  # policy config
+│   ├── train_config.json  # the full training config
+│   ├── model.safetensors  # full weights (checkpoint_format ∈ {safetensors, safetensors_dcp}, or any non-sharded run)
+│   ├── pytorch_model_fsdp_0/  # DCP weight shards (checkpoint_format ∈ {dcp, safetensors_dcp})
+│   ├── policy_preprocessor.json  # preprocessor config (when the run has a preprocessor)
+│   ├── policy_preprocessor_step_*.safetensors  # state of the stateful preprocessor steps
+│   ├── policy_postprocessor.json  # postprocessor config (when the run has a postprocessor)
+│   └── policy_postprocessor_step_*.safetensors  # state of the stateful postprocessor steps
+└── training_state/
+    ├── training_step.json  # step counter, topology, and batch semantics
+    ├── rng_state.safetensors  # rng states
+    ├── scheduler_state.json  # scheduler state (when the run has a scheduler)
+    ├── optimizer_state.safetensors  # full optimizer state (non-sharded runs)
+    ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
+    └── optimizer_0/  # DCP optimizer shards (sharded runs)
+```
 
-The `dcp` and `safetensors_dcp` formats require a sharded run. On sharded runs the optimizer state is always saved as DCP shards (`training_state/optimizer_0/`) — resharding on load is the only correct way to restore it.
+During single-GPU or DDP training, the pipeline serializes each state dict into a single file: `model.safetensors` for the model and `optimizer_state.safetensors` for the optimizer.
+
+During sharded training, the optimizer state is saved as DCP shards under `training_state/optimizer_0/`, and the layout of the model under `pretrained_model/` can be configured through `--checkpoint_format`:
+
+| `--checkpoint_format`     | Weights artifact                             | Use when                                                              |
+| ------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
+| `safetensors` _(default)_ | single `model.safetensors` only              | you want every checkpoint immediately loadable with `from_pretrained` |
+| `dcp`                     | `pytorch_model_fsdp_0/` shard directory only | gathering the full weights makes saves and resumes too slow           |
+| `safetensors_dcp`         | both                                         | you want fast resume _and_ immediately loadable checkpoints           |
 
 Two things to know about gathered (`safetensors`) checkpoints from sharded runs:
 
-- **They store fp32 weights.** Under `bf16` FSDP keeps an fp32 master copy and the checkpoint saves it (~2× the bf16 size) so training resumes consistently; `from_pretrained` casts back to the policy dtype on load. Loading an fp32 checkpoint materializes it in full precision before casting, so on a tight GPU load on CPU first or cast the file offline.
+- **They store fp32 weights.** Under mixed precision training, FSDP keeps an fp32 master copy, and the checkpoint saves the master copy to make sure training resumes consistently.
 - The gather is collective (all ranks participate) but only the main process writes.
 
 ### Converting DCP checkpoints
@@ -136,22 +158,19 @@ lerobot-convert-dcp --checkpoint_dir=outputs/train/run/checkpoints/005000
 lerobot-convert-dcp --checkpoint_dir=... --delete_dcp=true --push_to_hub=${HF_USER}/my_policy
 ```
 
-`--push_to_hub` publishes the converted directory as a model repo (DCP shards are never uploaded — published repos carry safetensors only).
+`--push_to_hub` publishes the converted directory as a model repo.
 
 ### Resuming
 
-Resume with `--resume=true --config_path=.../checkpoints/last/pretrained_model/train_config.json`, as on a single GPU. Both model formats resume; DCP resume reshards the model and optimizer state to the _current_ topology, so you can resume on a different number of GPUs or a different `dp_replicate/dp_shard` split. Resharding works across sizes, not across kinds: resuming a sharded checkpoint on a non-sharded topology (single GPU or plain DDP), or vice versa, is rejected with an error. If a `dcp`-format checkpoint is missing its shard directory (e.g. it was pruned after conversion), the error tells you to run `lerobot-convert-dcp` on what remains or resume from a safetensors checkpoint.
-
-The data sampler resumes at the right epoch and offset in all cases, but is only _sample-exact_ when the world size and batch size match the original run (a warning is logged otherwise); model and optimizer state are unaffected.
+Resume with `--resume=true --config_path=.../checkpoints/last/pretrained_model/train_config.json`. Resuming from a DCP checkpoint supports resharding the model and optimizer state to the _current_ topology, which means you can resume with a different `dp_replicate/dp_shard` split. The data sampler can always resume at the right epoch and offset, but is only _sample-exact_ when the world size and batch size match the original run (a warning is logged otherwise).
 
 > [!NOTE]
-> FSDP checkpoints written by lerobot ≤ 0.6.x used a different on-disk layout (a gathered full optimizer state) and **cannot be resumed**.
+> FSDP checkpoints written by LeRobot 0.6.x and earlier used a different on-disk layout (a gathered full optimizer state) and **cannot be resumed**.
 
 ## Notes
 
-- Checkpoint saves and end-of-training publishes are collective: every rank enters them (sharded weights are gathered across ranks), and only the main process writes files, uploads, or logs, so call sites need no rank branches.
-- Metrics are reduced across ranks before logging: losses are averaged, timing takes the slowest rank (which is what actually gates the next step), and `samples/s` reports cluster-wide throughput. The gradient norm is not reduced — after gradient sync it is identical on every rank.
+- Checkpoint saves and end-of-training publishes are collective (every rank enters them). Gathered weights, sidecar files and Hub uploads are written by the main process alone.
+- Metrics are reduced across ranks before logging: losses are averaged, and `samples/s` reports cluster-wide throughput.
 - Learning-rate scheduling is stepped once per training step regardless of the number of processes (`step_scheduler_with_optimizer=False` is baked in).
-- When saving or publishing, LeRobot unwraps the model from accelerate's wrapper and, if sharded, gathers the full state dict — published models and safetensors-bearing checkpoints load with plain `from_pretrained` (a `dcp`-format checkpoint first needs `lerobot-convert-dcp`, per the table above).
 
 For background on the underlying machinery, see the [Accelerate FSDP guide](https://huggingface.co/docs/accelerate/usage_guides/fsdp). To go deeper on large-scale training, check out the [Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook).

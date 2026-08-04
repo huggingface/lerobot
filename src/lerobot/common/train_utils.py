@@ -199,14 +199,16 @@ def save_checkpoint(
     │   ├── model.safetensors  # policy weights (checkpoint_format ∈ {safetensors, safetensors_dcp}, or any non-sharded run)
     │   ├── pytorch_model_fsdp_0/  # DCP model shards (checkpoint_format ∈ {dcp, safetensors_dcp})
     │   ├── train_config.json  # train config
-    │   ├── processor.json  # processor config (if preprocessor provided)
-    │   └── step_*.safetensors  # processor state files (if any)
+    │   ├── policy_preprocessor.json  # preprocessor config (if preprocessor provided)
+    │   ├── policy_preprocessor_step_*.safetensors  # state of the stateful preprocessor steps
+    │   ├── policy_postprocessor.json  # postprocessor config (if postprocessor provided)
+    │   └── policy_postprocessor_step_*.safetensors  # state of the stateful postprocessor steps
     └── training_state/
         ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
         ├── optimizer_state.safetensors  # optimizer state (non-sharded runs)
         ├── optimizer_0/  # DCP optimizer shards (sharded runs)
         ├── rng_state.safetensors  # rng states
-        ├── scheduler_state.json  # scheduler state
+        ├── scheduler_state.json  # scheduler state (if scheduler provided)
         └── training_step.json  # training step + dp_world_size/batch_size/grad_accum + topology
 
     Collective: MUST be called on every rank. Rank-0-only writes are gated internally, so the
