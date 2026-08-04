@@ -353,6 +353,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
         Camera frames per ``obs_cam_keys`` are expected as a temporal clip ``[B, C, T, H, W]`` (or
         ``[B, T, C, H, W]``); they are VAE-encoded into ``F = T / temporal_downsample`` latent frames.
         Actions ``[B, F*action_per_frame, n_used]`` are scattered into the model's ``action_dim`` space.
+
+        ``F`` is read off the encoded latents rather than from ``frame_chunk_size`` so a training
+        clip can span several inference chunks (``train_latent_frames``).
         """
         cfg = self.config
         device = cfg.device
@@ -369,7 +372,24 @@ class LingBotVAPolicy(PreTrainedPolicy):
         act = batch[ACTION].to(device)  # [B, F*apf, n_used]
         b = act.shape[0]
         used = cfg.used_action_channel_ids
-        apf, fc = cfg.action_per_frame, cfg.frame_chunk_size
+        apf, fc = cfg.action_per_frame, latents.shape[2]
+        if act.shape[1] != fc * apf:
+            extra = ""
+            if cfg.action_anchor == "episode" and act.shape[1] == fc * apf + 1:
+                # The anchor row is still there, so LingBotEpisodeAnchorStep never ran. That happens
+                # when the preprocessor was loaded from a checkpoint saved before the step existed:
+                # the saved pipeline is authoritative, so the step is simply absent and no anchoring
+                # would have been applied. Fail loudly rather than train on absolute actions.
+                extra = (
+                    " The count is off by exactly one row, which is the episode anchor: the loaded "
+                    "preprocessor has no LingBotEpisodeAnchorStep. Re-save the checkpoint's "
+                    "processor config (make_lingbot_va_pre_post_processors) before training with "
+                    "action_anchor=episode."
+                )
+            raise ValueError(
+                f"LingBot-VA needs exactly {fc * apf} actions for {fc} latent frames "
+                f"(action_per_frame={apf}) but the batch carries {act.shape[1]}.{extra}"
+            )
         act = act[:, : fc * apf].reshape(b, fc, apf, len(used)).permute(0, 3, 1, 2)  # [B, n_used, F, apf]
         full = act.new_zeros(b, cfg.action_dim, fc, apf)
         idx = torch.as_tensor(used, device=device)
@@ -377,7 +397,16 @@ class LingBotVAPolicy(PreTrainedPolicy):
         actions = full.unsqueeze(-1).to(self.dtype)  # [B, action_dim, F, apf, 1]
         mask = torch.zeros(cfg.action_dim, device=device, dtype=self.dtype)
         mask[idx] = 1.0
-        actions_mask = mask.view(1, -1, 1, 1, 1).expand_as(actions)
+        actions_mask = mask.view(1, -1, 1, 1, 1).expand_as(actions).clone()
+
+        # Action frame 0 is pre-clip history (see ``action_delta_indices``); near an episode's start
+        # the dataset clamps those rows and flags them, so drop them from the supervision.
+        is_pad = batch.get(f"{ACTION}_is_pad")
+        if is_pad is not None:
+            is_pad = is_pad.to(device)[:, : fc * apf]  # [B, F*apf]
+            keep = (~is_pad).to(self.dtype).reshape(b, 1, fc, apf, 1)
+            actions_mask = actions_mask * keep
+            actions = actions * keep
         return latents, actions, actions_mask, text_emb
 
     @torch.no_grad()
@@ -436,7 +465,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
             actions, predictions = unpack_action_output(
-                self.predict_action_chunk(batch, return_intermediate_predictions=return_intermediate_predictions)
+                self.predict_action_chunk(
+                    batch, return_intermediate_predictions=return_intermediate_predictions
+                )
             )  # [B, chunk_size, n_used]
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
@@ -842,6 +873,15 @@ class LingBotVAPolicy(PreTrainedPolicy):
         # 2. Action denoising loop
         for i, t in enumerate(action_timesteps):
             last_step = i == len(action_timesteps) - 1
+            # Action frame 0 of the episode's first chunk is pre-episode history, which does not
+            # exist -- pin it to a "no history" frame of zeros. These are zeros in *normalized*
+            # space, and training matches: ``_build_training_streams`` zeroes the steps the dataset
+            # flagged via ``action_is_pad`` (which is exactly this pre-episode history) after the
+            # preprocessor's normalizer has run. Upstream instead zero-pads in *raw* space and
+            # normalizes afterwards, so its padded frame arrives as ``normalize(0)`` while its
+            # sampler pins literal zeros -- the two only coincide on channels whose quantile range
+            # happens to be symmetric. Do not "fix" this to normalize(0) without changing the
+            # training side to match.
             action_cond = (
                 torch.zeros([1, cfg.action_dim, 1, cfg.action_per_frame, 1], device=device, dtype=self.dtype)
                 if frame_st_id == 0

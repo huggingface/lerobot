@@ -16,7 +16,7 @@ import builtins
 import json
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from logging import getLogger
 from pathlib import Path
 from typing import Any, TypeVar
@@ -226,6 +226,21 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
+
+        # Drop keys the class no longer declares. draccus raises DecodingError on unknown keys, so
+        # without this a *published* checkpoint pins the config schema forever: retiring a field makes
+        # every checkpoint saved with it unloadable (e.g. LingBot-VA's `use_relative_actions`). This
+        # only relaxes the machine-written checkpoint file — `cli_overrides` still go through draccus
+        # untouched, so a mistyped `--policy.*` flag keeps failing loudly.
+        known = {f.name for f in fields(config_cls)}
+        stale = sorted(set(config) - known)
+        if stale:
+            logger.warning(
+                f"Ignoring {len(stale)} field(s) in {CONFIG_NAME} of {model_id} that "
+                f"{config_cls.__name__} no longer declares: {', '.join(stale)}. They were most likely "
+                "retired after this checkpoint was saved and have no effect."
+            )
+            config = {k: v for k, v in config.items() if k in known}
 
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)

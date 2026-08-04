@@ -533,6 +533,9 @@ def train(cfg: TrainPipelineConfig):
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
         processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
+        # Opt-in: take the pipeline structure from the config rather than from the checkpoint, so a
+        # --policy.* flag can add a processor step the checkpoint was saved without.
+        processor_kwargs["rebuild_from_config"] = cfg.rebuild_processors
 
     if cfg.is_reward_model_training:
         preprocessor, postprocessor = make_reward_pre_post_processors(

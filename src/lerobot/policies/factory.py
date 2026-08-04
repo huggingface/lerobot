@@ -185,6 +185,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
         preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
         postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
         dataset_stats: Dataset statistics for normalization.
+        rebuild_from_config: Rebuild the pipelines from the policy config instead of loading the
+            checkpoint's saved ones. See `make_pre_post_processors`.
     """
 
     preprocessor_config_filename: str | None
@@ -193,6 +195,56 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
+    rebuild_from_config: bool
+
+
+def _pipeline_stats(pipeline: PolicyProcessorPipeline) -> dict[str, dict[str, torch.Tensor]] | None:
+    """Normalization stats carried by a pipeline's first normalizer/unnormalizer step, if any."""
+    for step in pipeline.steps:
+        if isinstance(step, NormalizerProcessorStep | UnnormalizerProcessorStep):
+            tensor_stats = getattr(step, "_tensor_stats", None)
+            if tensor_stats:
+                return {key: dict(sub) for key, sub in tensor_stats.items()}
+    return None
+
+
+def _apply_step_overrides(
+    pipeline: PolicyProcessorPipeline, overrides: dict[str, Any] | None, label: str
+) -> None:
+    """Apply ``{step_key: {param: value}}`` overrides to an already-built pipeline, in place.
+
+    ``from_pretrained`` merges overrides into each step's *constructor* call, so a pipeline built
+    from the policy config instead never sees them -- and some carry information the policy config
+    does not hold at all (most importantly ``rename_observations_processor.rename_map``, which is a
+    dataset-to-policy key mapping supplied on the CLI). Steps are matched the same way
+    ``from_pretrained`` matches them: registry name if registered, else class name.
+
+    ``__post_init__`` is re-run after setting attributes because that is where dataclass steps derive
+    their working state (``NormalizerProcessorStep`` builds ``_tensor_stats`` from ``stats``;
+    ``DeviceProcessorStep`` resolves ``tensor_device``). Setting the field alone would leave the
+    derived state stale, which is worse than not applying the override at all.
+    """
+    if not overrides:
+        return
+    unmatched = set(overrides)
+    for step in pipeline.steps:
+        key = getattr(type(step), "_registry_name", None) or type(step).__name__
+        step_overrides = overrides.get(key)
+        if not step_overrides:
+            continue
+        unmatched.discard(key)
+        for name, value in step_overrides.items():
+            setattr(step, name, value)
+        if hasattr(step, "__post_init__"):
+            step.__post_init__()
+    if unmatched:
+        # Not fatal: these override dicts are assembled generically by the entry point, so a key
+        # simply may not apply to this policy's pipeline. Still worth surfacing -- a silently
+        # dropped rename_map or device override is hard to diagnose downstream.
+        logging.warning(
+            f"rebuild_from_config: {sorted(unmatched)} matched no step in the rebuilt {label}; "
+            "those overrides were not applied."
+        )
 
 
 def make_pre_post_processors(
@@ -224,6 +276,21 @@ def make_pre_post_processors(
 
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
+
+    Note:
+        ``rebuild_from_config=True`` rebuilds both pipelines from ``policy_cfg`` instead of using the
+        checkpoint's saved ones. Normally the saved pipeline is authoritative, which means a
+        ``--policy.*`` flag that should add or reconfigure a *step* silently does nothing whenever
+        the checkpoint predates that step -- the fix has historically been either bespoke
+        enable-or-inject code in this module or an out-of-band script that rewrites the checkpoint's
+        processor json. Rebuilding takes the structure from the config and the normalization stats
+        from the checkpoint (unless ``dataset_stats`` is given), so it does not clobber stats the
+        policy may have adapted. Steps the current factory does not produce are dropped -- that is
+        the point, but it is also why this is opt-in and why the before/after step lists are logged.
+
+        Only training exposes this (``TrainPipelineConfig.rebuild_processors``), because training is
+        where the pipeline changes: the run then *saves* the rebuilt pipeline, so eval and inference
+        load a checkpoint that already contains the new steps and need no flag of their own.
     """
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
@@ -273,6 +340,42 @@ def make_pre_post_processors(
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
         )
+        if kwargs.get("rebuild_from_config"):
+            # Structure from the config, stats from the checkpoint (or the dataset if it supplied
+            # any). Resolve the stats BEFORE building rather than building and then hotswapping:
+            # hotswap_stats() deepcopies the pipeline, which would give the pre- and post-processors
+            # two separate copies of any step they are meant to share by reference (e.g. the
+            # relative/anchor step whose cached reference the postprocessor reads back).
+            stats = kwargs.get("dataset_stats")
+            if stats is None:
+                stats = _pipeline_stats(preprocessor) or _pipeline_stats(postprocessor)
+            if stats is None:
+                raise ValueError(
+                    "rebuild_from_config=True needs normalization stats, but the checkpoint at "
+                    f"{pretrained_path} carries none and no dataset_stats were provided. Pass "
+                    "dataset_stats (training does this automatically) or drop the flag."
+                )
+            # Anything the config-driven factory does not build is intentionally dropped, so log both
+            # step lists -- a missing step is otherwise invisible until inference misbehaves.
+            rebuilt_pre, rebuilt_post = _make_processors_from_policy_config(
+                config=policy_cfg,
+                dataset_stats=stats,
+                dataset_meta=kwargs.get("dataset_meta"),
+            )
+            # The caller's step overrides still apply: the config-driven factory cannot know the
+            # rename_map (a dataset->policy key mapping that only exists on the CLI), and the loaded
+            # pipeline this replaces did have them applied.
+            _apply_step_overrides(rebuilt_pre, kwargs.get("preprocessor_overrides"), "preprocessor")
+            _apply_step_overrides(rebuilt_post, kwargs.get("postprocessor_overrides"), "postprocessor")
+            logging.info(
+                "Rebuilt processors from the policy config (rebuild_from_config=True).\n"
+                f"  preprocessor : {[type(s).__name__ for s in preprocessor.steps]}\n"
+                f"              -> {[type(s).__name__ for s in rebuilt_pre.steps]}\n"
+                f"  postprocessor: {[type(s).__name__ for s in postprocessor.steps]}\n"
+                f"              -> {[type(s).__name__ for s in rebuilt_post.steps]}"
+            )
+            return rebuilt_pre, rebuilt_post
+
         _ensure_relative_actions(preprocessor, postprocessor, policy_cfg)
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):

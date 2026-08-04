@@ -35,6 +35,15 @@ from lerobot.optim.schedulers import (
 )
 from lerobot.utils.constants import ACTION
 
+# Sentinel action delta used to fetch the episode's first action as the anchor.
+# ``DatasetReader._get_query_indices`` clamps every query index into
+# ``[dataset_from_index, dataset_to_index - 1]``, so any delta more negative than the longest episode
+# resolves to that episode's first frame (and sets ``action_is_pad[0]``). It rides on the ACTION key
+# on purpose: ``observation_delta_indices`` is applied to *every* ``observation.*`` feature, cameras
+# included, so an observation-side anchor would decode one extra video frame per camera per sample.
+# ACTION is not a video key, so this costs one extra parquet row lookup and nothing else.
+EPISODE_ANCHOR_DELTA = -(1 << 20)
+
 
 @PreTrainedConfig.register_subclass("lingbot_va")
 @dataclass
@@ -96,14 +105,29 @@ class LingBotVAConfig(PreTrainedConfig):
     # (un)normalization quantiles live in the checkpoint's ``policy_postprocessor.json``, not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
-    # Relative actions: converts absolute actions to relative (action -= state) during
-    # preprocessing, and reverses it at postprocessing. Requires the dataset to provide
-    # observation.state whose leading dims align 1:1 with the used action channels.
-    use_relative_actions: bool = False
-    # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
-    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Action anchoring. "none" = absolute actions (upstream LIBERO). "episode" = every action in an
+    # episode is expressed relative to a single anchor captured at the episode's first frame, which
+    # is what upstream's relative mode does (``get_relative_pose`` anchors on the segment's first
+    # action; the RoboTwin client captures ``inint_eef_pose`` once per episode and adds it back to
+    # every chunk). A per-episode anchor is *anchor-stable*: the fed-back action tokens in the KV
+    # cache and the tokens the model is about to emit share one reference, so the append-only cache
+    # stays coherent. The old per-chunk relative mode was not, which is what made the stream reset
+    # to zero displacement at every chunk boundary.
+    action_anchor: str = "none"
+    # Joint names to keep absolute (never anchored). Empty list = all dims anchored.
+    action_anchor_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
     # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
     action_feature_names: list[str] | None = None
+
+    # Number of latent frames per *training* sample. None -> frame_chunk_size (one inference chunk
+    # per sample, the historical behaviour). Upstream trains on whole ``action_config`` segments —
+    # tens of latent frames — which is what makes the block-causal mask's random chunk_size /
+    # window_size meaningful and what actually trains the autoregressive action-history
+    # conditioning the KV cache relies on at inference. With frame_chunk_size=2 a sample collapses
+    # into a single causal block for any sampled block size >= 2, so ~75% of steps train no
+    # cross-frame action conditioning at all. This knob is training-only: the inference chunk stays
+    # frame_chunk_size.
+    train_latent_frames: int | None = None
 
     # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
     save_predicted_video: bool = False
@@ -141,6 +165,18 @@ class LingBotVAConfig(PreTrainedConfig):
         super().__post_init__()
         if self.attn_mode not in ("torch", "flashattn", "flex"):
             raise ValueError(f"attn_mode must be one of 'torch', 'flashattn', 'flex'; got {self.attn_mode!r}")
+        if self.action_anchor not in ("none", "episode"):
+            raise ValueError(f"action_anchor must be one of 'none', 'episode'; got {self.action_anchor!r}")
+        if self.train_latent_frames is not None and self.train_latent_frames < self.frame_chunk_size:
+            raise ValueError(
+                f"train_latent_frames ({self.train_latent_frames}) must be >= frame_chunk_size "
+                f"({self.frame_chunk_size}): a training sample cannot be shorter than one inference chunk."
+            )
+
+    @property
+    def train_frames(self) -> int:
+        """Latent frames per training sample (``frame_chunk_size`` unless overridden)."""
+        return self.train_latent_frames or self.frame_chunk_size
 
     @property
     def chunk_size(self) -> int:
@@ -192,18 +228,43 @@ class LingBotVAConfig(PreTrainedConfig):
         ``[0, 4, 8, 12, 16]`` were used -- verified by ablation, scrambling the tail left the latents
         bit-identical.
 
-        Requesting exactly ``4 * (frame_chunk_size - 1) + 1`` frames yields the same
-        ``frame_chunk_size`` latent frames with every loaded frame used, and drops the wasted video
-        decode. The stride is unchanged, so the frames that do reach the model are the same ones.
+        Requesting exactly ``4 * (train_frames - 1) + 1`` frames yields the same ``train_frames``
+        latent frames with every loaded frame used, and drops the wasted video decode. The stride is
+        unchanged, so the frames that do reach the model are the same ones.
         """
         temporal_downsample = 4
         stride = max(1, self.action_per_frame // temporal_downsample)
-        num_frames = temporal_downsample * (self.frame_chunk_size - 1) + 1
+        num_frames = temporal_downsample * (self.train_frames - 1) + 1
         return [i * stride for i in range(num_frames)]
 
     @property
     def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
+        """Action deltas for one training clip, aligned to upstream's retrospective convention.
+
+        Latent frame ``j`` ends at ``t = j * action_per_frame`` (the Wan VAE folds each group of 4
+        loaded frames into one latent frame), and upstream's dataset puts in action frame ``j`` the
+        ``action_per_frame`` actions that were executed to get *from* latent frame ``j - 1`` *to*
+        latent frame ``j`` -- it left-pads one action frame before trimming to
+        ``latent_frames * action_per_frame`` (``lerobot_latent_dataset._action_post_process``).
+        Action frame 0 is therefore pre-clip history, which is exactly why the sampling loop pins it
+        (``action_cond``) and drops it on the first chunk.
+
+        So the deltas start at ``-action_per_frame``, not 0. The count is unchanged; the window is
+        shifted back by one action frame. Asking for ``range(train_frames * action_per_frame)``
+        instead -- as this did before -- puts every action one frame early relative to the video,
+        which the sampling loop then reads as a full ``action_per_frame`` phase lead.
+
+        Frame 0 gets the *real* previous actions rather than upstream's hard zeros; at an episode's
+        start the dataset clamps and flags them via ``action_is_pad``, which reproduces upstream's
+        zero frame exactly where it belongs.
+        """
+        apf = self.action_per_frame
+        deltas = list(range(-apf, (self.train_frames - 1) * apf))
+        if self.action_anchor == "episode":
+            # Prepended, so the anchor is ``batch[ACTION][:, 0]``; the anchoring processor step
+            # consumes and strips it before the normalizer sees it.
+            deltas = [EPISODE_ANCHOR_DELTA] + deltas
+        return deltas
 
     @property
     def reward_delta_indices(self) -> None:

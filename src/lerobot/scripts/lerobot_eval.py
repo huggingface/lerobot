@@ -218,8 +218,12 @@ def rollout(
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
 
-    # Reset the policy and environments.
+    # Reset the policy, its processors and the environments. The processors matter: steps that latch
+    # per-episode state (e.g. LingBot-VA's episode action anchor) would otherwise carry the previous
+    # batch of episodes' value into this one. ``SyncInferenceEngine`` already does this on the robot.
     policy.reset()
+    preprocessor.reset()
+    postprocessor.reset()
     # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
     # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
     observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})

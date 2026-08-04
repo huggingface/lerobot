@@ -122,6 +122,15 @@ class TrainPipelineConfig(HubMixin):
     # is to use the configuration from the checkpoint, regardless of what's provided with the training
     # command at the time of resumption (CLI `--*` flags still override).
     resume: bool = False
+    # Rebuild the pre/post-processor pipelines from the policy config instead of using the ones saved
+    # in the checkpoint pointed at by `--policy.path`. The saved pipeline is normally authoritative,
+    # which means a `--policy.*` flag that should add or reconfigure a processor *step* silently does
+    # nothing when the checkpoint predates that step. Set this to fine-tune such a checkpoint with a
+    # new step (e.g. an action-anchoring step) without rewriting its processor json out of band.
+    # Normalization stats still come from the dataset (or from the checkpoint when resuming), never
+    # from thin air; steps the config-driven factory does not build are dropped, and the before/after
+    # step lists are logged so that is visible.
+    rebuild_processors: bool = False
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
