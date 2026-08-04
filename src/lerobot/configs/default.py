@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import abc
 from dataclasses import dataclass, field
+
+import draccus
 
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
@@ -88,6 +91,57 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+
+
+@dataclass
+class TrackerConfig(draccus.ChoiceRegistry, abc.ABC):
+    """Experiment tracker selection, e.g. `--tracker.type=wandb` or `--tracker.type=trackio`.
+
+    Selecting a tracker enables it; there is no separate `enable` switch. Pass
+    `--tracker=null` to turn tracking off again (e.g. when reusing a config that has one).
+    The legacy `--wandb.*` flags are still honored and build a wandb tracker in
+    `TrainPipelineConfig.validate()`.
+    """
+
+    @property
+    def type(self) -> str:
+        return self.get_choice_name(self.__class__)
+
+
+@TrackerConfig.register_subclass("wandb")
+@dataclass
+class WandBTrackerConfig(WandBConfig, TrackerConfig):
+    """Weights & Biases tracker. Fields are shared with the legacy `WandBConfig`."""
+
+    # Inherited from `WandBConfig`, where it gates the legacy `--wandb.*` path. A tracker is
+    # enabled by being selected, so this is pinned True and hidden from the CLI (same
+    # `init=False` treatment as `TrainPipelineConfig.checkpoint_path`) to keep
+    # `--tracker.enable` from looking like a switch that does something.
+    enable: bool = field(default=True, init=False, repr=False)
+
+
+@TrackerConfig.register_subclass("trackio")
+@dataclass
+class TrackioTrackerConfig(TrackerConfig):
+    """Hugging Face Trackio tracker (https://github.com/gradio-app/trackio).
+
+    Local-first: runs are stored in a local SQLite DB (view with `trackio show`).
+    Set `space_id` to host the dashboard on a Hugging Face Space instead.
+    """
+
+    project: str = "lerobot"
+    # Host the dashboard on a HF Space (e.g. "my-org/trackio"). None = local-only.
+    space_id: str | None = None
+    # HF Dataset repo used for log persistence when hosting on a Space.
+    dataset_id: str | None = None
+    # Privacy of the Space/Dataset created when `space_id` is set (None = HF default).
+    private: bool | None = None
+    # Trackio resumes runs by *name*; this is filled with the run name after init so
+    # checkpoint resume can reattach to the same run.
+    run_id: str | None = None
+    # Checkpoints are multi-GB; prefer `--save_checkpoint_to_hub` for weights. Set to
+    # false to upload the model file as a trackio artifact anyway.
+    disable_artifact: bool = True
 
 
 @dataclass

@@ -45,6 +45,7 @@ from huggingface_hub import (
 
 from lerobot.common.train_utils import push_checkpoint_to_hub
 from lerobot.configs import parser
+from lerobot.configs.default import TrackioTrackerConfig, WandBTrackerConfig
 
 from .dataset import ensure_dataset_available
 
@@ -389,12 +390,26 @@ def submit_to_hf(cfg: TrainPipelineConfig) -> None:
             "Run reward-model training locally."
         )
 
+    # Trackio keeps its runs in a local SQLite DB under $HF_HOME, which the pod discards when the
+    # job exits. Without a Space to sync to, the run would train and then lose every metric.
+    # Checked here rather than in `validate()` because a config carries `job.target` around after
+    # the fact: resuming a remote run's config locally must not trip this.
+    if isinstance(cfg.tracker, TrackioTrackerConfig) and not (cfg.tracker.space_id or cfg.tracker.dataset_id):
+        raise ValueError(
+            "A remote run with `--tracker.type=trackio` needs somewhere durable to log: trackio "
+            "writes to a local SQLite DB under $HF_HOME, which is discarded when the job's pod "
+            "exits. Pass `--tracker.space_id=<user>/<space>` to host the dashboard on a Hugging "
+            "Face Space, or track the run with `--tracker.type=wandb` instead."
+        )
+
     secrets: dict[str, str] = {"HF_TOKEN": token}
-    if cfg.wandb.enable:
+    # `validate()` above turned the legacy `--wandb.*` flags into a wandb tracker, so the
+    # tracker is the single place to ask whether this job needs a wandb key.
+    if isinstance(cfg.tracker, WandBTrackerConfig):
         wandb_key = resolve_wandb_api_key()
         if wandb_key is None:
             raise ValueError(
-                "wandb is enabled but no WANDB_API_KEY found. "
+                "The wandb tracker is enabled but no WANDB_API_KEY found. "
                 "Set it via `export WANDB_API_KEY=...` or add it to ~/.netrc."
             )
         secrets["WANDB_API_KEY"] = wandb_key

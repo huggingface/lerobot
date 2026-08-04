@@ -437,8 +437,19 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
     submit_to_hf(cfg)
 
 
-def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
-    """wandb.enable with no key reachable anywhere fails fast, before submitting."""
+@pytest.mark.parametrize(
+    "tracking_args",
+    [
+        pytest.param(["--wandb.enable", "true"], id="legacy-wandb-flags"),
+        pytest.param(["--tracker.type", "wandb"], id="tracker-registry"),
+    ],
+)
+def test_submit_raises_when_wandb_enabled_without_key(monkeypatch, tracking_args):
+    """A wandb-tracked job with no key reachable anywhere fails fast, before submitting.
+
+    Both spellings must be caught: the key is forwarded off the resolved tracker, so selecting
+    wandb through the tracker registry cannot silently skip it.
+    """
 
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
@@ -461,12 +472,55 @@ def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
             "act",
             "--job.target",
             "a10g-small",
-            "--wandb.enable",
-            "true",
+            *tracking_args,
         ],
     )
     with pytest.raises(ValueError, match="WANDB_API_KEY"):
         submit_to_hf(cfg)
+
+
+def test_submit_raises_for_remote_trackio_without_a_space(monkeypatch):
+    """Trackio's local SQLite DB dies with the pod, so a remote run needs a Space to log to."""
+
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+
+    class FakeHfApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self, token=None):
+            return {"name": "alice"}
+
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
+
+    def parse(*tracker_args):
+        return draccus.parse(
+            TrainPipelineConfig,
+            args=[
+                "--dataset.repo_id",
+                "u/d",
+                "--policy.type",
+                "act",
+                "--job.target",
+                "a10g-small",
+                "--tracker.type",
+                "trackio",
+                *tracker_args,
+            ],
+        )
+
+    with pytest.raises(ValueError, match="space_id"):
+        submit_to_hf(parse())
+
+    # With a Space to sync to, the tracker itself no longer blocks the submission.
+    cfg = parse("--tracker.space_id", "alice/dash")
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "lerobot.jobs.hf._stage_config_on_hub", lambda cfg, repo_id, token, tags=None: repo_id
+    )
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", lambda **kw: SimpleNamespace(id="job-1", url="http://x"))
+    monkeypatch.setattr("lerobot.jobs.hf.follow_job", lambda *a, **kw: None)
+    submit_to_hf(cfg)
 
 
 @pytest.mark.timeout(15)

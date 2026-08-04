@@ -79,7 +79,9 @@ class WandBLogger:
     """A helper class to log object using wandb."""
 
     def __init__(self, cfg: TrainPipelineConfig):
-        self.cfg = cfg.wandb
+        # `validate()` builds this from the legacy `--wandb.*` flags when they are the ones set,
+        # so the tracker is the only source to read here.
+        self.cfg = cfg.tracker
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
         self.env_fps = cfg.env.fps if cfg.env else None
@@ -90,8 +92,8 @@ class WandBLogger:
         import wandb
 
         wandb_run_id = (
-            cfg.wandb.run_id
-            if cfg.wandb.run_id
+            self.cfg.run_id
+            if self.cfg.run_id
             else get_wandb_run_id_from_filesystem(self.log_dir)
             if cfg.resume
             else None
@@ -113,9 +115,9 @@ class WandBLogger:
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         run_id = wandb.run.id
-        # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
+        # NOTE: We will override the configured run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
-        cfg.wandb.run_id = run_id
+        self.cfg.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))

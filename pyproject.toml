@@ -118,6 +118,9 @@ training = [
     "wandb>=0.24.0,<0.28.0",
     "lerobot[accelerate-dep]",
 ]
+trackio = [
+    "trackio>=0.34.0,<1.0.0",
+]
 hardware = [
     "lerobot[pynput-dep]",
     "lerobot[pyserial-dep]",

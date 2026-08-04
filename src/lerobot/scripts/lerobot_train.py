@@ -35,6 +35,7 @@ from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
 
+from lerobot.common.tracker_utils import make_tracker
 from lerobot.common.train_utils import (
     gather_fsdp_state_dicts,
     get_step_checkpoint_dir,
@@ -48,7 +49,6 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
@@ -271,13 +271,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if is_main_process:
         logging.info(pformat(cfg.to_dict()))
 
-    # Initialize wandb only on main process
-    if cfg.wandb.enable and cfg.wandb.project and is_main_process:
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
-        if is_main_process:
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    # Initialize the experiment tracker (wandb/trackio) only on the main process
+    wandb_logger = make_tracker(cfg) if is_main_process else None
+    if wandb_logger is None and is_main_process:
+        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
