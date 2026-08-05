@@ -224,12 +224,12 @@ def test_streaming_episode_selection(tmp_path, lerobot_dataset_factory):
 def test_streaming_episode_filter(tmp_path, lerobot_dataset_factory):
     """episode_filter restricts the stream to episodes whose metadata matches the predicate."""
     ds_num_episodes = 6
-    ds_num_frames = 120  # 20 frames per episode
+    ds_num_frames = 120
 
     local_path = tmp_path / "test"
     repo_id = DUMMY_REPO_ID
 
-    ds = lerobot_dataset_factory(
+    lerobot_dataset_factory(
         root=local_path,
         repo_id=repo_id,
         total_episodes=ds_num_episodes,
