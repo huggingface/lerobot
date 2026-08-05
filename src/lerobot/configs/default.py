@@ -89,7 +89,6 @@ class DatasetConfig:
                 )
                 self.exclude_episodes = [episode for episode in self.exclude_episodes if episode >= 0]
 
-
 @dataclass
 class WandBConfig:
     enable: bool = False
@@ -101,6 +100,13 @@ class WandBConfig:
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+
+
+@dataclass
+class TensorBoardConfig:
+    enable: bool = False
+    # Set to true to disable saving an artifact despite training.save_checkpoint=True
+    disable_artifact: bool = False
 
 
 @dataclass
