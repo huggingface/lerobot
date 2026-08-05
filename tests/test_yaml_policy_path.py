@@ -4,11 +4,14 @@ import json
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
 
 from lerobot.configs import parser
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.parser import (
     _config_path_args,
     _config_yaml_overrides,
@@ -17,6 +20,7 @@ from lerobot.configs.parser import (
     get_path_arg,
     get_yaml_overrides,
 )
+from lerobot.configs.train import TrainPipelineConfig
 
 
 def test_extract_path_fields_from_yaml():
@@ -315,6 +319,62 @@ def test_wrap_uses_cleaned_config_for_draccus_parse():
     # class (a real PreTrainedConfig would now load the checkpoint and apply
     # the captured yaml_overrides via from_pretrained()).
     assert captured["cfg"].nested.foo == 0
+
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+
+
+def test_policy_pretrained_revision_passed_to_hub_download_from_cli():
+    """--policy.pretrained_revision must select the Hub revision used for loading."""
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/pusht"))
+    loaded_policy = SimpleNamespace(pretrained_path=None)
+
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "prog",
+                "--policy.path=lerobot/smolvla_base",
+                "--policy.pretrained_revision=checkpoint-000100",
+            ],
+        ),
+        patch(
+            "lerobot.configs.train.PreTrainedConfig.from_pretrained", return_value=loaded_policy
+        ) as from_pretrained,
+    ):
+        cfg._resolve_pretrained_from_cli()
+
+    from_pretrained.assert_called_once_with(
+        "lerobot/smolvla_base",
+        revision="checkpoint-000100",
+        cli_overrides=["--pretrained_revision=checkpoint-000100"],
+    )
+    assert cfg.policy is loaded_policy
+    assert loaded_policy.pretrained_path == Path("lerobot/smolvla_base")
+
+
+def test_policy_pretrained_revision_passed_to_hub_download_from_yaml():
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/pusht"))
+    loaded_policy = SimpleNamespace(pretrained_path=None)
+    _config_path_args.clear()
+    _config_yaml_overrides.clear()
+    _config_path_args["policy"] = "lerobot/smolvla_base"
+    _config_yaml_overrides["policy"] = ["--pretrained_revision=checkpoint-000200"]
+
+    with (
+        patch.object(sys, "argv", ["prog"]),
+        patch(
+            "lerobot.configs.train.PreTrainedConfig.from_pretrained", return_value=loaded_policy
+        ) as from_pretrained,
+    ):
+        cfg._resolve_pretrained_from_cli()
+
+    from_pretrained.assert_called_once_with(
+        "lerobot/smolvla_base",
+        revision="checkpoint-000200",
+        cli_overrides=["--pretrained_revision=checkpoint-000200"],
+    )
 
     _config_path_args.clear()
     _config_yaml_overrides.clear()
