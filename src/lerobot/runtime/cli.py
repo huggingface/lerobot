@@ -12,10 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Interactive CLI for language-conditioned policy rollouts.
-
-It supports a text-only REPL, real robots, and RoboCasa with local or Hub checkpoints.
-"""
+"""Interactive CLI for real-world language-conditioned policy rollouts."""
 
 from __future__ import annotations
 
@@ -97,114 +94,13 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
     p.add_argument(
         "--rerun",
         action="store_true",
-        help="Live rerun viewer for the robot cameras (real-robot mode). Serves a "
-        "headless web viewer; forward --rerun.web_port and --rerun.grpc_port over SSH.",
-    )
-    p.add_argument(
-        "--rerun.web_port",
-        dest="rerun_web_port",
-        type=int,
-        default=9090,
-        help="rerun web-viewer port (default 9090).",
-    )
-    p.add_argument(
-        "--rerun.grpc_port",
-        dest="rerun_grpc_port",
-        type=int,
-        default=9876,
-        help="rerun gRPC data port (default 9876).",
+        help="Launch the Rerun viewer for the real robot cameras.",
     )
     p.add_argument(
         "--direct_subtask",
         action="store_true",
-        help="Direct-subtask mode (sim OR robot): your typed text IS the subtask "
+        help="Direct-subtask mode: your typed text IS the subtask "
         "fed to the action expert; the LM subtask generator is disabled.",
-    )
-    # ``--sim`` uses the eval pipeline and is mutually exclusive with a robot.
-    p.add_argument(
-        "--sim",
-        action="store_true",
-        help=(
-            "Run the policy in the RoboCasa simulator instead of on a real "
-            "robot. Select the scene with --sim.task; type prompts with "
-            "/action <prompt> to have the policy execute them in that scene."
-        ),
-    )
-    p.add_argument(
-        "--sim.task",
-        dest="sim_task",
-        type=str,
-        default="CloseFridge",
-        help="RoboCasa task/scene to instantiate (e.g. OpenDrawer, LoadDishwasher).",
-    )
-    p.add_argument(
-        "--sim.split",
-        dest="sim_split",
-        type=str,
-        default="pretrain",
-        help="RoboCasa scene split (all/pretrain/target). Default: pretrain.",
-    )
-    p.add_argument(
-        "--sim.obj_registries",
-        dest="sim_obj_registries",
-        type=str,
-        default="objaverse,lightwheel",
-        help="Comma-separated object-mesh registries. Default: objaverse,lightwheel.",
-    )
-    p.add_argument(
-        "--sim.seed",
-        dest="sim_seed",
-        type=int,
-        default=1000,
-        help="Seed for RoboCasa scene reset (default: 1000, matches eval).",
-    )
-    p.add_argument(
-        "--sim.record",
-        dest="sim_record",
-        type=str,
-        choices=["mp4", "off"],
-        default="mp4",
-        help="Record an annotated mp4 (task/subtask/memory overlay) of the sim session. Default: mp4.",
-    )
-    p.add_argument(
-        "--sim.output_dir",
-        dest="sim_output_dir",
-        type=str,
-        default="outputs/runtime_sim",
-        help="Directory for the recorded sim video (default: outputs/runtime_sim).",
-    )
-    p.add_argument(
-        "--sim.render_size",
-        dest="sim_render_size",
-        type=int,
-        default=384,
-        help=(
-            "Resolution (px) of the observation cameras used for the display "
-            "(default 384; try 512 for sharper, 256 for faster). The policy is "
-            "unaffected — it resizes to 224 internally."
-        ),
-    )
-    p.add_argument(
-        "--sim.views",
-        dest="sim_views",
-        type=str,
-        default="robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right",
-        help=(
-            "Comma-separated camera views to show side by side. Default shows "
-            "left, wrist (eye-in-hand), right. Use e.g. 'robot0_eye_in_hand' "
-            "for wrist-only."
-        ),
-    )
-    p.add_argument(
-        "--sim.stream_port",
-        dest="sim_stream_port",
-        type=int,
-        default=8010,
-        help=(
-            "Port for the live MJPEG viewer (default: 8010; 0 disables). "
-            "Open http://localhost:<port> in a browser; over SSH forward it with "
-            "ssh -L <port>:localhost:<port> <host>."
-        ),
     )
     p.add_argument(
         "--chunk_hz",
@@ -224,16 +120,6 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         type=float,
         default=1.0,
         help="High-level subtask generation rate.",
-    )
-    p.add_argument(
-        "--sim.direct_subtask",
-        dest="sim_direct_subtask",
-        action="store_true",
-        help=(
-            "Direct-subtask mode: what you type IS the subtask fed to the action "
-            "expert (no LM subtask generation). Good when the model's subtask "
-            "head is weak — you steer the policy with exact imperatives."
-        ),
     )
     p.add_argument(
         "--disable_memory",
@@ -348,16 +234,15 @@ def _select_observation_to_device(sample: dict, device: Any) -> dict:
     }
 
 
-def _load_policy_and_preprocessor(
+def _load_policy(
     policy_path: str,
     *,
-    load_processors_from_checkpoint: bool = False,
     fp8: bool = False,
     device: str | None = None,
-) -> tuple[Any, Any, Any]:
-    """Load a local or Hub policy, optionally with its eval processors."""
+) -> Any:
+    """Load a local or Hub policy for the language-only REPL."""
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
-    from lerobot.policies.factory import get_policy_class, make_pre_post_processors  # noqa: PLC0415
+    from lerobot.policies.factory import get_policy_class  # noqa: PLC0415
 
     cfg = PreTrainedConfig.from_pretrained(policy_path)
     cfg.pretrained_path = policy_path
@@ -384,20 +269,11 @@ def _load_policy_and_preprocessor(
                 cfg.type,
             )
 
-    preprocessor = None
-    postprocessor = None
     policy_cls = get_policy_class(cfg.type)
     policy = policy_cls.from_pretrained(policy_path, config=cfg)
     policy.to(cfg.device)
-    if load_processors_from_checkpoint:
-        preprocessor, postprocessor = make_pre_post_processors(
-            cfg,
-            pretrained_path=cfg.pretrained_path,
-            preprocessor_overrides={"device_processor": {"device": str(cfg.device)}},
-        )
-
     policy.eval()
-    return policy, preprocessor, postprocessor
+    return policy
 
 
 def _build_language_rollout_context(args: argparse.Namespace) -> Any:
@@ -775,54 +651,17 @@ def run(
     )
     _silence_noisy_loggers()
 
-    sim_mode = bool(getattr(args, "sim", False)) and not args.no_robot
     autonomous_mode = bool(args.robot_type) and not args.no_robot
-    if sim_mode and autonomous_mode:
-        print(
-            "[runtime] ERROR: --sim and --robot.type are mutually exclusive "
-            "(pick a simulator scene OR a real robot).",
-            file=sys.stderr,
-        )
-        return 2
-    # Fork the simulator before CUDA initialization to avoid inherited EGL corruption.
-    sim_env = None
-    sim_obs = None
-    sim_stream_server = None
-    sim_holder: dict[str, Any] = {"backend": None}
-    if sim_mode:
-        from lerobot.runtime.sim_robocasa import create_sim_env, start_mjpeg_server  # noqa: PLC0415
-
-        # Start the live viewer first so the port listens during the ~60s model
-        # load (browsers get a loading page instead of connection-refused).
-        if args.sim_stream_port:
-            sim_stream_server = start_mjpeg_server(
-                args.sim_stream_port,
-                lambda: sim_holder["backend"]._latest_frame if sim_holder["backend"] else None,
-            )
-        print(
-            f"[runtime] starting RoboCasa sim scene={args.sim_task!r} split={args.sim_split!r}",
-            flush=True,
-        )
-        sim_env, sim_obs = create_sim_env(
-            task=args.sim_task,
-            split=args.sim_split,
-            obj_registries=[r.strip() for r in args.sim_obj_registries.split(",") if r.strip()],
-            seed=args.sim_seed,
-            render_size=args.sim_render_size,
-        )
 
     rollout_ctx = None
     if autonomous_mode:
         print("[runtime] building rollout context (policy, processors, robot)", flush=True)
         rollout_ctx = _build_language_rollout_context(args)
         policy = rollout_ctx.policy.policy
-        preprocessor = rollout_ctx.policy.preprocessor
-        postprocessor = rollout_ctx.policy.postprocessor
     else:
         print(f"[runtime] loading policy from {args.policy_path}", flush=True)
-        policy, preprocessor, postprocessor = _load_policy_and_preprocessor(
+        policy = _load_policy(
             args.policy_path,
-            load_processors_from_checkpoint=sim_mode,
             fp8=args.fp8,
             device=args.policy_device,
         )
@@ -841,7 +680,6 @@ def run(
     observation_provider: Callable[[], dict | None] | None = None
     robot_executor: Callable[[Any], None] | None = None
     robot = None
-    sim_backend = None
     # Late-bound handle to the runtime so the robot observation provider can read
     # the live task/subtask each frame (the runtime is created further below).
     runtime_box: dict[str, Any] = {}
@@ -852,45 +690,15 @@ def run(
             return args.task
         return rt.state.language_context.get("subtask") or rt.state.task or args.task
 
-    if sim_mode:
-        from lerobot.runtime.sim_robocasa import RoboCasaSimBackend  # noqa: PLC0415
-
-        sim_backend = RoboCasaSimBackend(
-            env=sim_env,
-            last_obs=sim_obs,
-            task=args.sim_task,
-            seed=args.sim_seed,
-            device=str(getattr(policy.config, "device", "cpu")),
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            record=(args.sim_record == "mp4"),
-            output_dir=args.sim_output_dir,
-            view_cams=[v.strip() for v in args.sim_views.split(",") if v.strip()],
-        )
-        observation_provider = sim_backend.observation_provider
-        robot_executor = sim_backend.action_executor
-        robot = sim_backend
-        # Point the already-running live viewer at the backend and hand it the
-        # server so disconnect() shuts it down cleanly.
-        sim_holder["backend"] = sim_backend
-        if sim_stream_server is not None:
-            sim_backend.attach_stream_server(sim_stream_server)
-    elif autonomous_mode:
+    if autonomous_mode:
         rerun_log = False
         if args.rerun:
             from lerobot.utils.rerun_visualization import init_rerun  # noqa: PLC0415
 
             try:
-                init_rerun(
-                    session_name=f"lerobot_{policy_type or 'runtime'}",
-                    port=args.rerun_grpc_port,
-                    web_port=args.rerun_web_port,
-                )
+                init_rerun(session_name=f"lerobot_{policy_type or 'runtime'}")
                 rerun_log = True
-                print(
-                    f"[runtime] rerun live view: http://localhost:{args.rerun_web_port}",
-                    flush=True,
-                )
+                print("[runtime] Rerun viewer started", flush=True)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("could not start rerun: %s", exc)
         robot = rollout_ctx.hardware.robot_wrapper.inner
@@ -907,7 +715,7 @@ def run(
         top_p=float(args.text_top_p or 1.0),
         chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
         enable_memory=not bool(getattr(args, "disable_memory", False)),
-        enable_subtask=not _direct_subtask_enabled(args),
+        enable_subtask=not args.direct_subtask,
     )
     runtime = LanguageConditionedRuntime(
         policy_adapter=adapter_factory(policy, gen_config),
@@ -925,147 +733,16 @@ def run(
     if args.task:
         runtime.set_task(args.task)
 
-    # Let the sim backend read live task/subtask/memory for the video overlay.
-    if sim_backend is not None:
-        sim_backend.bind_runtime(runtime)
-        # Keep EGL rendering on the main thread.
-        return _run_sim_interactive(
-            runtime,
-            sim_backend,
-            initial_task=args.task,
-            max_ticks=args.max_ticks,
-            panel_label=panel_label,
-            direct_subtask=_direct_subtask_enabled(args),
-        )
-
     if autonomous_mode:
         return _run_robot_interactive(
             runtime,
             robot,
             initial_task=args.task,
             max_ticks=args.max_ticks,
-            direct_subtask=_direct_subtask_enabled(args),
+            direct_subtask=args.direct_subtask,
             panel_label=panel_label,
         )
     return _run_repl(runtime, initial_task=args.task, max_ticks=args.max_ticks, panel_label=panel_label)
-
-
-def _direct_subtask_enabled(args: Any) -> bool:
-    """Direct-subtask mode via either the general or sim-scoped flag."""
-    return bool(getattr(args, "direct_subtask", False) or getattr(args, "sim_direct_subtask", False))
-
-
-def _run_sim_interactive(
-    runtime: Any,
-    sim_backend: Any,
-    *,
-    initial_task: str | None,
-    max_ticks: int | None,
-    panel_label: str = "Runtime",
-    direct_subtask: bool = False,
-) -> int:
-    """Keep RoboCasa rendering on the main thread while polling stdin."""
-    import select  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    import torch  # noqa: PLC0415
-
-    if initial_task:
-        runtime.set_task(initial_task)
-        # In direct-subtask mode the typed text IS the subtask; otherwise clear
-        # it so the model generates one.
-        runtime.state.set_context("subtask", initial_task if direct_subtask else None)
-        runtime.state["mode"] = "action"
-
-    # Keep the terminal quiet while the browser renders the rollout.
-    _mode_line = (
-        "  Mode: DIRECT subtask (your text drives the action expert as-is)\n"
-        if direct_subtask
-        else "  Mode: task (the model generates a subtask from your text)\n"
-    )
-    print(
-        f"\n{'=' * 64}\n"
-        f"  {panel_label} — RoboCasa interactive sim (one persistent kitchen)\n"
-        f"{_mode_line}"
-        f"  Type a command + Enter to run it, e.g.  open the fridge\n"
-        f"  Commands:  /pause  ·  /resume  ·  /reset (new kitchen)  ·  stop\n"
-        f"{'=' * 64}",
-        flush=True,
-    )
-
-    def _prompt() -> None:
-        print("\n> ", end="", flush=True)
-
-    _prompt()
-    ticks_done = 0
-    stdin_open = True
-    try:
-        while True:
-            # Non-blocking stdin: a full line (canonical-mode terminal) is read
-            # only when Enter is pressed, so line editing works normally.
-            if stdin_open and select.select([sys.stdin], [], [], 0)[0]:
-                line = sys.stdin.readline()
-                if line == "":  # EOF — keep running the sim, stop reading stdin
-                    stdin_open = False
-                else:
-                    cmd = line.strip()
-                    if cmd:
-                        low = cmd.lower()
-                        if low in {"stop", "quit", "exit"}:
-                            break
-                        elif low in {"/pause", "pause", "/p"}:
-                            runtime.state["mode"] = "paused"
-                            _clear_action_queue(runtime)
-                            print("[paused] robot holding", flush=True)
-                        elif low in {"/resume", "resume", "/run"}:
-                            runtime.state["mode"] = "action"
-                            print("[running]", flush=True)
-                        elif low in {"/reset", "reset"}:
-                            sim_backend.reset_scene()
-                            _clear_action_queue(runtime)
-                            runtime.state.set_context("subtask", None)
-                            if hasattr(runtime.policy, "reset"):
-                                runtime.policy.reset()
-                            print("[reset] new kitchen scene", flush=True)
-                        elif low.startswith(("/ask ", "/vqa ")):
-                            _ask_runtime(runtime, cmd.partition(" ")[2])
-                        else:
-                            # Clear queued actions and rearm generation for a new command.
-                            runtime.set_task(cmd)
-                            # Direct mode: the typed text is the subtask itself;
-                            # otherwise clear it so the model regenerates one.
-                            runtime.state.set_context("subtask", cmd if direct_subtask else None)
-                            _clear_action_queue(runtime)
-                            adapter = getattr(runtime, "policy_adapter", None)
-                            if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
-                                adapter._chunks_until_regen = 0
-                            gate = getattr(runtime, "_language_gate", None)
-                            if gate is not None and hasattr(gate, "rearm"):
-                                gate.rearm()
-                            runtime.state["mode"] = "action"
-                            print(f"[running] {cmd}", flush=True)
-                    _prompt()
-
-            # Match lerobot-eval's inference context on the main thread.
-            if runtime.state.get("mode", "paused") == "action":
-                with torch.inference_mode():
-                    runtime.step_once()
-                ticks_done += 1
-            else:
-                time.sleep(0.05)  # idle only while paused (robot not moving)
-            if runtime.state.stop:
-                break
-            if max_ticks is not None and ticks_done >= max_ticks:
-                break
-    except KeyboardInterrupt:
-        print("\n[stopping]", flush=True)
-    finally:
-        runtime.stop()
-        try:
-            sim_backend.disconnect()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[runtime] WARNING: sim disconnect raised {exc}", flush=True)
-    return 0
 
 
 def _run_robot_interactive(

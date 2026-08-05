@@ -26,6 +26,7 @@ import torch
 from lerobot.configs import recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -36,7 +37,6 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 

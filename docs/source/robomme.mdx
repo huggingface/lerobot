@@ -35,14 +35,11 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 ### Docker (recommended)
 
 ```bash
-# Build base image first (from repo root)
-docker build -f docker/Dockerfile.eval-base -t lerobot-eval-base .
-
-# Build RoboMME eval image (applies gymnasium + numpy pin overrides)
-docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-robomme .
+# Build the RoboMME evaluation image from the repo root
+docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
 ```
 
-The `docker/Dockerfile.benchmark.robomme` image overrides `gymnasium==0.29.1` and `numpy==1.26.4` after lerobot's install. Both versions are runtime-safe for lerobot's actual API usage.
+The benchmark Dockerfile extends the published `huggingface/lerobot-gpu:latest` image, then overrides `gymnasium==0.29.1` and `numpy==1.26.4`. Both versions are runtime-safe for lerobot's actual API usage.
 
 ## Running Evaluation
 

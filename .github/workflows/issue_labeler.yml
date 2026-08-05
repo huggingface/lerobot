@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot'
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           script: |
             // Setup Input Text

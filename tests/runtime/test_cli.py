@@ -40,6 +40,12 @@ def test_parse_args_rejects_removed_dataset_replay_flags():
         _parse_args(["--policy.path=checkpoint", "--dataset.repo_id=dataset"])
 
 
+@pytest.mark.parametrize("flag", ["--sim", "--sim.task=CloseFridge"])
+def test_parse_args_rejects_removed_simulation_flags(flag):
+    with pytest.raises(SystemExit):
+        _parse_args(["--policy.path=checkpoint", flag])
+
+
 def test_rollout_runtime_io_uses_context_processors():
     robot = MagicMock()
     robot.robot_type = "mock_robot"
