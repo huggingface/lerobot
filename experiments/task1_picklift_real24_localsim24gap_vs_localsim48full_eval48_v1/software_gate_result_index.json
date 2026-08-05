@@ -1,0 +1,54 @@
+{
+  "schema": "task1_picklift_real24_localsim_gap_full_eval48_software_gate_result_index_v1",
+  "evaluation_id": "task1_picklift_real24_localsim24gap_vs_localsim48full_eval48_v1",
+  "status": "software_gate_passed_hardware_not_authorized",
+  "research_authorization": {
+    "commit": "340facbbcf7b8eb60a062e8ec54d64b96ce0ba86",
+    "sha256": "696980b1a78d5f2d2ee71c96a72e7ede23a34b51fddde93caabfa04767394342"
+  },
+  "evaluation_plan": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_real24_localsim24gap_vs_localsim48full_eval48_v1/evaluation_plan.json",
+    "sha256": "61efcb5e4298c86a103d41a963643962801375a4a78f0919b50c037c783ce176",
+    "poses": 48,
+    "trials": 96
+  },
+  "models": {
+    "real24_localsim24_gap": {
+      "model_sha256": "e9bbbc96e3104435d670e450090ab143610e2cdba8d38485beec339d5230577c",
+      "trials": 48,
+      "first_model_poses": 24,
+      "offline_inference_sha256": "8c51a7d0b1011a98b916badbe481924853d3ce0713a0d5125613b045b007286b"
+    },
+    "real24_localsim48_full": {
+      "model_sha256": "735af1dc914c1ea5b82fada65a3c72439cb5603ac8731425f43819f849972c0e",
+      "trials": 48,
+      "first_model_poses": 24,
+      "offline_inference_sha256": "0ca803eb28f4833754f6feade6d48f5cd4c86f2b2753f89f1b4082b072b1c1b9"
+    }
+  },
+  "software_evidence": {
+    "root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_localsim24gap_vs_localsim48full_eval48_v1/software_preparation_v1",
+    "manifest_sha256": "4180db332062cfc4f864167070df6a507fea4c67fc79c7949a84799b44c801b6",
+    "dry_run_sha256": "c19ddc561e59877beaedaaf5727cc8a02f807787f9e471c52251a4f966573140",
+    "hashes_sha256": "3b58cd0c8ad775e7e426c93e37e789962d4fc1cf98d41074a41972e16035ae3b",
+    "independent_validation_sha256": "50ce63be63a194a3519af1293278bbbebba255cb662220a482d1a1459ecfb0f0"
+  },
+  "verification": {
+    "tests": "14 passed",
+    "fake_trials": 96,
+    "cuda_inference_models": 2,
+    "all_outputs_finite_shape_1x6": true,
+    "hardware_accessed": false,
+    "rollout_executed": false
+  },
+  "first_future_pair": {
+    "first_trial_id": "t001_p01_localsim24gap",
+    "second_trial_id": "t002_p01_localsim48full",
+    "cell": "r3c2",
+    "x_cm": 34,
+    "y_cm": -1,
+    "yaw_degrees_modulo_90": 45,
+    "keep_cube_fixed_between_models": true
+  },
+  "next_gate": "Wait for explicit hardware GO before Follower 12 V or any real rollout."
+}

@@ -1,0 +1,22 @@
+{
+  "schema": "task1_localsim_act_eval48_research_identity_verification_v1",
+  "head_commit": "340facbbcf7b8eb60a062e8ec54d64b96ce0ba86",
+  "tracked_working_tree_status": "clean",
+  "files": {
+    "experiment_design": {
+      "path": "manifests/task1-picklift-real24-localsim24gap-vs-localsim48full-eval48-software-authorization-v1.json",
+      "sha256": "696980b1a78d5f2d2ee71c96a72e7ede23a34b51fddde93caabfa04767394342",
+      "match": true
+    },
+    "pose_manifest": {
+      "path": "manifests/task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+      "sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7",
+      "match": true
+    },
+    "training_result": {
+      "path": "manifests/task1-picklift-real24-localsim24gap-localsim48full-act-training-result-v1.json",
+      "sha256": "a2a320bcfbc3ff6bfcbf2000a17ca15804e1a7b00e9477e9f16a1577b82b2477",
+      "match": true
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "manifest_id": "task1_picklift_real24_localsim24gap_vs_localsim48full_eval48_software_authorization_v1",
+  "authorization_id": "GO_TASK1_REAL24_LOCALSIM24GAP_VS_LOCALSIM48FULL_EVAL48_SOFTWARE_GATE_V1",
+  "decision_date": "2026-08-05",
+  "status": "software_preparation_authorized_hardware_not_authorized",
+  "scope": "Prepare and independently validate one paired 96-trial software plan for the two frozen LocalSim-augmented ACT checkpoints on the exact existing Eval48 pose bank. Stop before opening serial, camera, robot, torque, or starting any policy window.",
+  "training_result": {
+    "path": "manifests/task1-picklift-real24-localsim24gap-localsim48full-act-training-result-v1.json",
+    "sha256": "a2a320bcfbc3ff6bfcbf2000a17ca15804e1a7b00e9477e9f16a1577b82b2477",
+    "required_status": "offline_training_complete_ready_for_same_eval48_software_gate"
+  },
+  "models": {
+    "C_real24_localsim24_gap": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap/full_100k/checkpoints/100000/pretrained_model",
+      "model_sha256": "e9bbbc96e3104435d670e450090ab143610e2cdba8d38485beec339d5230577c",
+      "processor_sha256": "6f8cfd553d02e759515f92c0d4e40046f0391198c28f31f6dfa1c438e8a3c44c"
+    },
+    "D_real24_localsim48_full": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full/full_100k/checkpoints/100000/pretrained_model",
+      "model_sha256": "735af1dc914c1ea5b82fada65a3c72439cb5603ac8731425f43819f849972c0e",
+      "processor_sha256": "52611ce7bf838f15ae4737a4bc422321510898055382b8f0beb71690a78e1975"
+    }
+  },
+  "evaluation_bank": {
+    "pose_manifest_path": "manifests/task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+    "pose_manifest_sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7",
+    "owning_source_plan": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_real48_vs_real96_eval48_v1/evaluation_plan.json",
+    "owning_source_plan_sha256": "7de77eed859898a6397265244ab2f4c189d91dbb565202b99a0a5bdd208214f1",
+    "pose_count": 48,
+    "pose_order_reselected": false,
+    "pose_coordinates_or_yaw_changed": false,
+    "coverage_tiers": {
+      "seen_by_real48": 24,
+      "added_by_real96": 18,
+      "unseen_by_both": 6
+    }
+  },
+  "paired_order": {
+    "trials": 96,
+    "models_per_pose": 2,
+    "same_pose_trials_consecutive": true,
+    "odd_pose_first_model": "C_real24_localsim24_gap",
+    "even_pose_first_model": "D_real24_localsim48_full",
+    "first_model_pose_count_each": 24,
+    "result_based_reordering": false
+  },
+  "execution_contract": {
+    "official_send_engine_sha256": "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96",
+    "frozen_ready_pose_sha256": "ecb871efad5692e192ac0f690bc0e959fef371bbb8338a31b23ca697741e3b56",
+    "ready_observation_tolerance_degrees": 3.0,
+    "ready_and_return_motion": "3 second 60-step official-send interpolation",
+    "policy_queue_reset_after_ready": true,
+    "max_relative_target": null,
+    "runner_absolute_clamp": false,
+    "runner_five_degree_limiter": false,
+    "catch_up_actions": false,
+    "nominal_policy_hz": 20,
+    "wall_window_seconds": 30,
+    "success_early_stop": false,
+    "canonical_rgb": "640x480 at 20 FPS",
+    "action_path": "raw=requested then SO101Follower.send_action, recording official sent and upstream modification mask",
+    "replacement_rule": "only policy_window_never_started, confirmed_operator_placement_error, or infrastructure_error; preserve original evidence and allow at most one linked replacement"
+  },
+  "software_gate_checks": [
+    "recompute and match both checkpoint, processor, training-result, pose-manifest, and source-plan hashes",
+    "expand all 96 trial identities deterministically and verify 48 complete pairs with balanced first-model order",
+    "verify ACT chunk_size and n_action_steps are 67 and input/output schemas are front640x480 plus state6 to action6",
+    "run one bounded CUDA offline finite-action inference per checkpoint",
+    "run fake 96-trial execution covering ready, policy reset, official-send path, 30-second no-catch-up timing, evidence schema, and failure-preserving replacement semantics",
+    "freeze the software plan, dry-run, hash inventory, and independent validation"
+  ],
+  "historical_baseline": {
+    "model": "ACT Real24 budget extension seed1000 step100000",
+    "reviewed_result": "23/48",
+    "rerun": false,
+    "source_result_path": "manifests/task1-picklift-real24-same-eval48-result-v2.json"
+  },
+  "next_user_contact_if_software_gate_passes": "Ask for explicit onsite hardware GO, unchanged Real camera/grid setup, Follower 12V on, and placement of the first frozen Eval48 pose. Do not ask the user to wait for further software preparation.",
+  "prohibited": [
+    "open serial, camera, robot, torque, or 12V",
+    "start a real or simulation policy rollout",
+    "rerun the historical Real24 condition",
+    "change checkpoint, pose bank, pose order, action processing, timeout, success rule, or camera",
+    "add another model, seed, tuning condition, or safety/action limiter"
+  ],
+  "claim_boundary": "Software preparation and offline inference do not establish real policy performance or Sim-to-Real benefit."
+}

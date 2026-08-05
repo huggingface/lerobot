@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "result_manifest_id": "task1_picklift_real24_localsim24gap_localsim48full_act_training_result_v1",
+  "experiment_id": "task1_picklift_real24_localsim48_gap_recovery_act_v1",
+  "result_date": "2026-08-05",
+  "status": "offline_training_complete_ready_for_same_eval48_software_gate",
+  "paper_result": false,
+  "purpose": "Freeze the two predeclared seed-1000 ACT 100k offline training results for Real24 plus LocalSim24-gap and Real24 plus corrected LocalSim48-full before any policy rollout or real-robot evaluation.",
+  "authorization": {
+    "authorization_id": "GO_TASK1_REAL24_LOCALSIM24GAP_LOCALSIM48FULL_ACT_TRAINING_V1",
+    "path": "manifests/task1-picklift-real24-localsim24gap-localsim48full-act-training-authorization-v1.json",
+    "sha256": "398b56a322c04be0be8c6270f1d49a9cb5ffd8509e3b4aeed8f5023a4c608cc0",
+    "research_commit": "5f5bc60eb623f1f0829895b238469a1f1b26db37"
+  },
+  "source_finalization": {
+    "path": "manifests/task1-picklift-localsim48-v0420-gridphase0-postcollection-finalization-result-v1.json",
+    "research_manifest_sha256": "3338387538ce072df4714dfa1cfaf676555a9faf3a3dcfed90dd50d488fa0d5c",
+    "owning_result_manifest_sha256": "2e24b1f026c128c9b7f8e38b1d850407956a936e467f96571930ffce7f4076dc",
+    "independent_verification_sha256": "79265a1f9b57931c4548d4affa6b78af47fd6f36e2b519d2a5c00e068547ea1f",
+    "status": "accepted_engineering_data_ready_for_separately_authorized_training"
+  },
+  "matched_training_contract": {
+    "policy": "ACT",
+    "from_scratch": true,
+    "seed": 1000,
+    "optimizer_steps": 100000,
+    "batch_size": 8,
+    "real_samples_per_batch": 4,
+    "simulation_samples_per_batch": 4,
+    "actual_real_samples_per_formal_run": 400000,
+    "actual_simulation_samples_per_formal_run": 400000,
+    "chunk_size": 67,
+    "n_action_steps": 67,
+    "front_rgb": "640x480 at 20 FPS",
+    "state_action": "float32[6] Real SO-101 units",
+    "vision_backbone": "ResNet18 ImageNet",
+    "checkpoint_selection": "predeclared step 100000 only",
+    "hyperparameter_search": false
+  },
+  "conditions": {
+    "C": {
+      "model_id": "ACT_Real24_LocalSim24Gap_gridphase0_seed1000_step100000",
+      "data": "Real24 plus LocalSim24-gap",
+      "combined_dataset": {
+        "path": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap/combined48_v1",
+        "repo_id": "local/task1_picklift_real24_localsim24_gap_combined48_v1",
+        "episode_count": 48,
+        "frame_count": 6196,
+        "real_episode_count": 24,
+        "simulation_episode_count": 24,
+        "tree_sha256": "825c5d18ca9b45a69b4857cdd42cf7be8087a8c6bf67b149859e3cf62f43ad61",
+        "freeze_sha256": "b6f5d2c9f26f16eb30694b6500133861465503172329b9a28adfdc10e68cc2d8"
+      },
+      "smoke_500": {
+        "status": "pass",
+        "model_sha256": "554295e34338873e09214c3ac1cc1b5e5f31942a15608eaa09e8d64f3d4ba3e1",
+        "log_sha256": "dfeddae4455e642295960cc3d320cb933923bcb38b26b5c98dcde0089b9ef5de",
+        "offline_validation_sha256": "d09441a2b6f2bc67f4e2b18dbaae0c34eedd4cbf1e25244a6643a9e569beb46f",
+        "real_samples": 2000,
+        "simulation_samples": 2000
+      },
+      "formal_100k": {
+        "status": "pass",
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap/full_100k/checkpoints/100000/pretrained_model",
+        "model_sha256": "e9bbbc96e3104435d670e450090ab143610e2cdba8d38485beec339d5230577c",
+        "duration_seconds": 5017.4,
+        "final_loss": 0.037,
+        "final_l1_loss": 0.036,
+        "final_kld_loss": 0.0,
+        "log_sha256": "5ab3b86bf7f60f1f1eec575cf7cd6434cd5f9aad1441ab1bfdd5fed02b058885",
+        "offline_validation_sha256": "a96133a9fa4236d84fe8dc8a431c90841289713534dfe13c4542fd24b2020021",
+        "processor_sha256": "6f8cfd553d02e759515f92c0d4e40046f0391198c28f31f6dfa1c438e8a3c44c",
+        "cuda_reload_and_real_sim_finite_action_shape_1x6": true,
+        "checkpoint_model_sha256": {
+          "020000": "2270b9c45d20b4b3bc1c9840a98e9fd771b29ea17c96977855a9cb11f3826799",
+          "040000": "a30ec912ca683ff5b20a8c1c2df7f087507df6e76329d9c42f973fd774649591",
+          "060000": "b1c2cc2d467bb73a0f1cde204ddc5ee82a8900e0f71659d94ac4a1b532eb40e2",
+          "080000": "3bee6fac844031191673499a28a3d3955814ce097ef971497f409d1d9ee61561",
+          "100000": "e9bbbc96e3104435d670e450090ab143610e2cdba8d38485beec339d5230577c"
+        }
+      }
+    },
+    "D": {
+      "model_id": "ACT_Real24_LocalSim48Full_gridphase0_seed1000_step100000",
+      "data": "Real24 plus corrected LocalSim48-full",
+      "combined_dataset": {
+        "path": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full/combined72_v1",
+        "repo_id": "local/task1_picklift_real24_localsim48_full_combined72_v1",
+        "episode_count": 72,
+        "frame_count": 8312,
+        "real_episode_count": 24,
+        "simulation_episode_count": 48,
+        "tree_sha256": "920471719e59f06ae3218b20e41e928f2eb6c1fd6468a462dc160a4e6326fdb1",
+        "freeze_sha256": "e7d9b3c9fcdc8a213380c7bd31411e43b77bf0e7a19a9e65031364a310d528d5"
+      },
+      "smoke_500": {
+        "status": "pass",
+        "model_sha256": "7a6db78c643d5a4afdf1b6ec7c42e3b8211e0ef55bdb81bec710eccf09e98cbb",
+        "log_sha256": "d4d4c15b0af6513bf89f361cdb67afe45431a19b095c72fd1a67e784d3da5ba3",
+        "offline_validation_sha256": "77adabd20b88978b52fa1acc5b3ec27a6478b4bff25528a51ef2adf4ef3b3737",
+        "real_samples": 2000,
+        "simulation_samples": 2000
+      },
+      "formal_100k": {
+        "status": "pass",
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full/full_100k/checkpoints/100000/pretrained_model",
+        "model_sha256": "735af1dc914c1ea5b82fada65a3c72439cb5603ac8731425f43819f849972c0e",
+        "duration_seconds": 5017.4,
+        "final_loss": 0.04,
+        "final_l1_loss": 0.04,
+        "final_kld_loss": 0.0,
+        "log_sha256": "4bb6e8daeacdffd2d2caa9546f8832097fda4e2dcc33f16af6ca6bda4d0e136a",
+        "offline_validation_sha256": "6d4ae76e3f95b69d1e5b54602e2b64ad5676866d868f9b4c07b0287f13244ba6",
+        "processor_sha256": "52611ce7bf838f15ae4737a4bc422321510898055382b8f0beb71690a78e1975",
+        "cuda_reload_and_real_sim_finite_action_shape_1x6": true,
+        "checkpoint_model_sha256": {
+          "020000": "6319da66bbb1ba0ae06027d87ea248af2432ace1abc056cedef282d553634e71",
+          "040000": "c7a788a9f00b1356ad097ed0262f8fc97056d1dc83bec96a84567dc699714276",
+          "060000": "9e077da39473e5888469a0fb9ba0a677c29a6e5cfc8f7481d115dab5a7b11f72",
+          "080000": "3685306e05c817b9b6ef426cb9576fe5060e91ede01eb9b182f994ae0a7b1567",
+          "100000": "735af1dc914c1ea5b82fada65a3c72439cb5603ac8731425f43819f849972c0e"
+        }
+      }
+    }
+  },
+  "owning_evidence": {
+    "repository": "/home/ubuntu24/Teleop/lerobot",
+    "evidence_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_localsim48_gap_recovery_act_v1/training_result_v1",
+    "manifest_sha256": "a924d1179f5bc5ee3c90c0dd038e720ec679e61a53d6b1e9c84e7853adf0cee5",
+    "run_summary_sha256": "bb03bee417877b83c564ff79ab13457214758d19e59acf0ac790e884ae6f1ca2",
+    "hashes_sha256": "2465c9e0e45fce252468faa85709cac093473c9f0cbdbf52ceef57a72c6d88cb",
+    "independent_verification_sha256": "4104eaee2f674724f210fea3e18728cce44f456f5d8aa81ad853a619e335cf67",
+    "independent_verification_status": "pass",
+    "checked_hash_entries": 38,
+    "result_index_sha256": "d4bd230e6dca25bb4ebf85f301de289161749e0624d807a1ce880ea4dccb6021",
+    "commits": [
+      "2bdc3b8829355bc534407540122a693308257b30",
+      "2c2671d61bd96e4400536bed342cf512a78a8c8b",
+      "61042108d93ae717dc58993c68423313bc1f7545",
+      "5a8bbf6c2f818fde92c8c277dc025c7794e3d3eb"
+    ],
+    "pushed": false
+  },
+  "confirmed_engineering_facts": [
+    "Both independently smoked ACT conditions restarted from scratch and naturally completed the predeclared 100000 optimizer steps.",
+    "Each formal run consumed exactly 400000 Real and 400000 Sim samples using four Real plus four Sim samples per batch.",
+    "All ten predeclared formal checkpoints were preserved and independently hashed.",
+    "Both selected 100000-step checkpoints reloaded on CUDA and emitted finite action tensors with shape [1,6] on frozen Real and relevant LocalSim samples.",
+    "No hardware, serial, camera, robot, Quest, Remote, MuJoCo policy rollout, or real evaluation was accessed or started."
+  ],
+  "claim_boundary": {
+    "offline_training_result": true,
+    "policy_performance_result": false,
+    "sim_to_real_benefit_established": false,
+    "paper_result": false
+  },
+  "next_gate": {
+    "gate_id": "task1_picklift_real24_localsim24gap_vs_localsim48full_same_eval48_v1",
+    "purpose": "Evaluate conditions C and D once each on the exact frozen 48-pose Eval48 bank and compare them with the already frozen historical Real24 23/48 result.",
+    "new_real_rollouts": 96,
+    "rollouts_per_new_model": 48,
+    "historical_real24_rerun": false,
+    "pose_bank_reselected": false,
+    "hardware_authorized": false,
+    "required_before_hardware": "freeze and validate the paired Eval48 software plan, then obtain explicit onsite hardware GO"
+  }
+}
