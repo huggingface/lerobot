@@ -481,11 +481,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     ) -> tuple[dict[str, list[int]], dict[str, torch.BoolTensor]]:
         """Video-key query indices and padding from integer episode boundaries.
 
-        Mirrors ``DatasetReader._get_query_indices``: a delta is padding when
-        ``abs_idx + delta`` falls outside the episode's ``[dataset_from_index,
-        dataset_to_index)`` range, and is clamped back into it otherwise. Working from
-        integer indices means the padding flag has no rounding, tolerance, or dtype
-        dependence.
+        Mirrors ``DatasetReader._get_query_indices`` but only for video keys.
         """
         ep = self.meta.episodes[ep_idx]
         ep_start, ep_end = ep["dataset_from_index"], ep["dataset_to_index"]
@@ -532,9 +528,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             if self.delta_indices is not None:
                 query_indices, video_padding = self._get_query_indices(abs_idx, ep_idx)
 
-            # Episode-local timestamps ((abs_idx - ep_start) / fps, restarting from 0 each
-            # episode). `_query_videos` shifts them by the per-key `from_timestamp` at decode,
-            # so each frame is read from its own video file (v3.0 splits videos across files).
+            # Episode-local timestamps; `_query_videos` shifts them by the per-key `from_timestamp` at decode.
             query_timestamps = {
                 key: (
                     [(idx - ep_start) / self.fps for idx in query_indices[key]]
