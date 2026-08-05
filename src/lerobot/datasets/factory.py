@@ -29,6 +29,7 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
+from .utils import resolve_episode_indices
 
 
 def resolve_delta_timestamps(
@@ -90,6 +91,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             repo_type=cfg.dataset.repo_type,
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
+        episodes = resolve_episode_indices(
+            cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
+        )
         if not cfg.dataset.streaming:
             if cfg.dataset.repo_type == "bucket":
                 raise ValueError(
@@ -98,7 +102,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
@@ -111,7 +115,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
