@@ -12,7 +12,6 @@ import pytest
 import torch
 from torch import nn
 
-from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05.memory import (
     encode_video_with_mem,
@@ -37,6 +36,9 @@ def test_pi05_memory_delta_indices_are_modality_specific():
 
 
 def test_delta_timestamps_respect_raw_robomme_rename_map():
+    pytest.importorskip("datasets")
+    from lerobot.datasets.factory import resolve_delta_timestamps
+
     metadata = SimpleNamespace(
         fps=10,
         features={"image": {}, "wrist_image": {}, "state": {}, "actions": {}},
