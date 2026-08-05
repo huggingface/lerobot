@@ -28,6 +28,11 @@ pytest.importorskip("transformers")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.eo1.configuration_eo1 import EO1Config
+from lerobot.policies.eo1.convert_eo1_checkpoint import (
+    build_lerobot_config,
+    build_vlm_config,
+    convert_upstream_state_key,
+)
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
 from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -40,6 +45,56 @@ N_ACTION_STEPS = 2
 MAX_ACTION_DIM = 6
 STATE_TOKEN_ID = 5
 ACTION_TOKEN_ID = 6
+
+
+def test_eo1_defaults_match_released_base_checkpoint():
+    config = EO1Config(vlm_config={}, device="cpu")
+
+    assert config.chunk_size == 16
+    assert config.n_action_steps == 16
+    assert config.max_state_dim == 32
+    assert config.max_action_dim == 32
+    assert config.num_denoise_steps == 10
+
+
+@pytest.mark.parametrize(
+    ("upstream_key", "lerobot_key"),
+    [
+        (
+            "vlm_backbone.model.layers.0.self_attn.q_proj.weight",
+            "model.vlm_backbone.model.language_model.layers.0.self_attn.q_proj.weight",
+        ),
+        (
+            "vlm_backbone.visual.blocks.0.attn.qkv.weight",
+            "model.vlm_backbone.model.visual.blocks.0.attn.qkv.weight",
+        ),
+        ("action_in_proj.weight", "model.action_in_proj.weight"),
+    ],
+)
+def test_eo1_checkpoint_key_conversion(upstream_key, lerobot_key):
+    assert convert_upstream_state_key(upstream_key) == lerobot_key
+
+
+def test_eo1_checkpoint_config_conversion_preserves_release_defaults():
+    upstream = {
+        "action_chunk_size": 16,
+        "max_action_dim": 32,
+        "num_denoise_steps": 10,
+        "num_action_layers": 2,
+        "action_act": "linear",
+        "action_token_id": 151666,
+        "state_token_id": 151669,
+        "pad_token_id": 151643,
+    }
+    vlm_config = build_vlm_config(upstream, {"text_config": {}, "vision_config": {}})
+    config = build_lerobot_config(upstream, vlm_config, "lerobot/eo1-base")
+
+    assert config.chunk_size == 16
+    assert config.n_action_steps == 16
+    assert config.pretrained_path.as_posix() == "lerobot/eo1-base"
+    assert config.vlm_base == "lerobot/eo1-base"
+    assert config.vlm_config["action_token_id"] == 151666
+    assert config.vlm_config["tie_word_embeddings"] is True
 
 
 class DummyVLMBackbone(nn.Module):

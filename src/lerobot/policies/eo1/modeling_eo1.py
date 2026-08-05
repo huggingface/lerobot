@@ -146,6 +146,7 @@ class EO1Policy(PreTrainedPolicy):
             self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
                 self.config.vlm_base,
                 use_fast=self.config.use_fast_processor,
+                fix_mistral_regex=True,
             )
             self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         return self._text_processor

@@ -54,8 +54,9 @@ class EO1Config(PreTrainedConfig):
 
     # Execution and action horizon.
     n_obs_steps: int = 1
-    chunk_size: int = 8
-    n_action_steps: int = 8
+    # Match the released IPEC-COMMUNITY/EO-1-3B checkpoint.
+    chunk_size: int = 16
+    n_action_steps: int = 16
 
     # State/action padding to match EO1 flow head dimensionality.
     max_state_dim: int = 32

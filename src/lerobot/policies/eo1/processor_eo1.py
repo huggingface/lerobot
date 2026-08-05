@@ -278,6 +278,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         self._processor = Qwen2_5_VLProcessor.from_pretrained(
             self.processor_name,
             use_fast=self.use_fast_processor,
+            fix_mistral_regex=True,
         )
         self._processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         self._state_token_id = self._processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN)
