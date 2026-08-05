@@ -86,7 +86,7 @@ import tqdm
 
 from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS
+from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS, TASK
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     # single line of text, so a full grid cell would waste space and break up the camera layout.
     return rrb.Blueprint(
         rrb.Vertical(
-            rrb.TextDocumentView(origin=TASK_ENTITY, name="task"),
+            rrb.TextDocumentView(origin=TASK, name="task"),
             rrb.Grid(*views),
             row_shares=[1, 9],
         )
@@ -296,14 +296,13 @@ def visualize_dataset(
             if SUCCESS in batch:
                 rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
 
-            # display the natural-language task, re-logged only when it changes so that
-            # scrubbing shows the instruction in effect at that point. Markdown renders it as a
-            # heading, which stays readable in the thin banner the blueprint gives it.
-            if "task" in batch:
-                task = batch["task"][i]
+            # display the natural-language task (re-logged only when it changes)
+            # Markdown renders it as a heading in the thin banner.
+            if TASK in batch:
+                task = batch[TASK][i]
                 if task != prev_task:
                     rr.log(
-                        TASK_ENTITY,
+                        TASK,
                         rr.TextDocument(f"### {task}", media_type=rr.MediaType.MARKDOWN),
                     )
                     prev_task = task
