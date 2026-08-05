@@ -238,8 +238,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
 
-        # Selection policy (allowlist resolution + predicate filter) is owned here;
-        # the reader just consumes the finalized episode index set.
         episodes = resolve_episode_indices(episodes, self.meta.total_episodes)
         if episodes is not None and not episodes:
             raise ValueError(
