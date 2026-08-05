@@ -1,0 +1,15 @@
+{
+  "condition_C_model_sha256": "e9bbbc96e3104435d670e450090ab143610e2cdba8d38485beec339d5230577c",
+  "condition_D_model_sha256": "735af1dc914c1ea5b82fada65a3c72439cb5603ac8731425f43819f849972c0e",
+  "experiment_id": "task1_picklift_real24_localsim48_gap_recovery_act_v1",
+  "hardware_accessed": false,
+  "hashes_sha256": "2465c9e0e45fce252468faa85709cac093473c9f0cbdbf52ceef57a72c6d88cb",
+  "manifest_sha256": "a924d1179f5bc5ee3c90c0dd038e720ec679e61a53d6b1e9c84e7853adf0cee5",
+  "next_gate": "paired real Eval48 software preparation and explicit hardware GO",
+  "result_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_localsim48_gap_recovery_act_v1/training_result_v1",
+  "rollout_started": false,
+  "run_summary_path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_localsim48_gap_recovery_act_v1/training_result_v1/run_summary.json",
+  "run_summary_sha256": "bb03bee417877b83c564ff79ab13457214758d19e59acf0ac790e884ae6f1ca2",
+  "schema": "task1_picklift_real24_localsim_gap_full_act_pair_freeze_v1",
+  "status": "frozen_both_models_offline_complete"
+}
