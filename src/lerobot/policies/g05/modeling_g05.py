@@ -2746,7 +2746,7 @@ class G05Policy(PreTrainedPolicy):
     config_class = G05Config
     name = "g05"
 
-    def __init__(self, config: G05Config, backend: nn.Module | None = None):
+    def __init__(self, config: G05Config, backend: nn.Module | None = None, **kwargs):
         super().__init__(config)
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config)

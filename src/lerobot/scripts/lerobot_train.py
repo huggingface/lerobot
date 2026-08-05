@@ -352,7 +352,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             },
         }
         if getattr(active_cfg, "use_relative_actions", False):
-            preprocessor_overrides["relative_actions_processor"] = {
+            # Policies may implement relative actions with their own registered step.
+            relative_step_key = getattr(active_cfg, "relative_actions_step_key", "relative_actions_processor")
+            preprocessor_overrides[relative_step_key] = {
                 "enabled": True,
                 "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
                 "action_names": getattr(active_cfg, "action_feature_names", None),

@@ -199,6 +199,8 @@ class G05Config(PreTrainedConfig):
     normalization_mode: str = "checkpoint"
     normalization_clip: tuple[float, float] | None = None
     use_relative_actions: bool = False
+    # Class attribute (not a config field): training overrides target this registered step.
+    relative_actions_step_key = "g05_relative_joint_actions"
     relative_exclude_joints: tuple[str, ...] = ()
     action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
@@ -386,6 +388,11 @@ class G05Config(PreTrainedConfig):
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
+
+    @property
+    def rebuild_pretrained_processors(self) -> bool:
+        # Recipe steps and projected dataset stats only exist on freshly built pipelines.
+        return self.recipe_path is not None
 
     @property
     def observation_delta_indices(self) -> list[int]:
