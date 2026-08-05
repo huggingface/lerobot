@@ -1,0 +1,15 @@
+{
+  "schema": "task1_localsim_gap_full_act_training_contract_v1",
+  "status": "waiting_for_localsim_finalization_pass",
+  "research_commit": "5f5bc60eb623f1f0829895b238469a1f1b26db37",
+  "conditions": [
+    {"id":"C","name":"ACT_Real24_LocalSim24Gap_gridphase0_seed1000_step100000","sim_membership":"gap24"},
+    {"id":"D","name":"ACT_Real24_LocalSim48Full_gridphase0_seed1000_step100000","sim_membership":"full48"}
+  ],
+  "real_root":"/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+  "real_tree_sha256":"c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712",
+  "recipe":{"seed":1000,"steps":100000,"smoke_steps":500,"batch_size":8,"real_per_batch":4,"sim_per_batch":4,"chunk_size":67,"fps":20,"save_steps":[20000,40000,60000,80000,100000],"freeze_step":100000,"front_only":true,"imagenet":true},
+  "required_finalization_status":"accepted_engineering_data_ready_for_separately_authorized_training",
+  "fail_closed":true,
+  "hardware":false,"rollout":false,"quest":false,"remote":false
+}
