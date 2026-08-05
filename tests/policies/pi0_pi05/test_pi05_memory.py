@@ -100,8 +100,11 @@ def _tiny_siglip():
 
 def test_single_frame_mem_matches_original_siglip():
     model = _tiny_siglip()
+    model.config._attn_implementation = "flash_attention_2"  # noqa: SLF001
     image = torch.randn(2, 3, 16, 16)
+    model.config._attn_implementation = "eager"  # noqa: SLF001
     expected = model(image).last_hidden_state
+    model.config._attn_implementation = "flash_attention_2"  # noqa: SLF001
     actual = encode_video_with_mem(
         model,
         image[:, None],
@@ -109,6 +112,41 @@ def test_single_frame_mem_matches_original_siglip():
         temporal_attention_every=4,
     )
     torch.testing.assert_close(actual, expected)
+    assert model.config._attn_implementation == "eager"  # noqa: SLF001
+
+
+def test_mem_normalizes_tuple_encoder_layer_output(monkeypatch):
+    model = _tiny_siglip()
+    layer = model.encoder.layers[0]
+    original_forward = layer.forward
+
+    def tuple_forward(*args, **kwargs):
+        return (original_forward(*args, **kwargs),)
+
+    monkeypatch.setattr(layer, "forward", tuple_forward)
+    video = torch.randn(1, 1, 3, 16, 16)
+
+    output = encode_video_with_mem(
+        model,
+        video,
+        torch.ones(1, 1, dtype=torch.bool),
+        temporal_attention_every=4,
+    )
+
+    assert output.shape == (1, 4, 16)
+
+
+def test_mem_rejects_incompatible_siglip_layer():
+    model = _tiny_siglip()
+    model.encoder.layers[0] = nn.Identity()
+
+    with pytest.raises(TypeError, match="layer 0 is missing"):
+        encode_video_with_mem(
+            model,
+            torch.randn(1, 1, 3, 16, 16),
+            torch.ones(1, 1, dtype=torch.bool),
+            temporal_attention_every=4,
+        )
 
 
 def test_mem_video_encoder_compresses_time_and_backpropagates():
@@ -175,3 +213,41 @@ def test_pi05_base_checkpoint_keeps_fresh_proprio_memory_projection():
 
     assert "model.proprio_history_proj.weight" in state_dict
     assert "model.proprio_history_proj.bias" in state_dict
+
+
+def _make_inference_memory_policy() -> PI05Policy:
+    policy = PI05Policy.__new__(PI05Policy)
+    nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(
+        n_action_steps=1,
+        use_visual_memory=True,
+        use_proprioceptive_memory=False,
+        memory_frames=3,
+        memory_stride=1,
+        image_features=["camera"],
+    )
+    policy.reset()
+    return policy
+
+
+def test_inference_memory_snapshots_observations_instead_of_storing_references():
+    policy = _make_inference_memory_policy()
+    observation = torch.ones(2, 1)
+
+    policy._stack_inference_memory({"camera": observation})
+    observation.fill_(9)
+    history = policy._stack_inference_memory({"camera": observation})["camera"]
+
+    assert history[:, :, 0].tolist() == [[1, 1, 9], [1, 1, 9]]
+
+
+def test_inference_memory_requires_reset_before_batch_size_changes():
+    policy = _make_inference_memory_policy()
+    policy._stack_inference_memory({"camera": torch.ones(2, 1)})
+
+    with pytest.raises(ValueError, match="without policy.reset"):
+        policy._stack_inference_memory({"camera": torch.ones(1, 1)})
+
+    policy.reset()
+    history = policy._stack_inference_memory({"camera": torch.ones(1, 1)})["camera"]
+    assert history.shape == (1, 3, 1)

@@ -14,10 +14,36 @@ import torch
 from torch import Tensor
 
 
+def _hidden_tensor(output, *, source: str) -> Tensor:
+    """Normalize supported Transformers layer outputs and fail clearly on API drift."""
+    if isinstance(output, Tensor):
+        return output
+    if isinstance(output, tuple) and output and isinstance(output[0], Tensor):
+        return output[0]
+    raise TypeError(
+        f"{source} must return a Tensor or a tuple whose first item is a Tensor, got {type(output).__name__}"
+    )
+
+
+def _validate_siglip_layer(layer, *, layer_index: int) -> None:
+    """Validate the private SigLIP encoder-layer contract used by MEM."""
+    required = ("layer_norm1", "self_attn", "layer_norm2", "mlp")
+    missing = [name for name in required if not hasattr(layer, name)]
+    if missing:
+        raise TypeError(
+            "MEM visual memory requires SigLIP encoder layers exposing "
+            f"{required}; layer {layer_index} is missing {tuple(missing)}"
+        )
+
+
 def sample_observation_history(
     history: list[Tensor], *, num_frames: int, stride: int, steps_seen: int
 ) -> tuple[Tensor, Tensor]:
-    """Subsample an inference queue and mark repeated pre-episode padding."""
+    """Subsample a homogeneous-batch inference queue and mark pre-episode padding.
+
+    ``steps_seen`` applies to every batch row. Pi05 clears the queue at each
+    batched rollout boundary; independently resetting vector rows is unsupported.
+    """
     sampled = history[::stride][-num_frames:]
     if len(sampled) != num_frames:
         raise ValueError(f"observation history has {len(sampled)} samples, expected {num_frames}")
@@ -72,6 +98,10 @@ def encode_video_with_mem(
     The pretrained SigLIP projections are reused for causal temporal attention
     between matching patches every Nth layer. Only current-frame tokens leave
     the vision tower, so the downstream VLM prefix length does not grow.
+
+    This implementation intentionally relies on the Transformers SigLIP encoder
+    layer contract validated below. It forces eager attention because the MEM
+    temporal path uses an arbitrary 4-D additive mask unsupported by FlashAttention 2.
     """
     if pixel_values.ndim != 5:
         raise ValueError(f"pixel_values must have shape (B,T,C,H,W), got {tuple(pixel_values.shape)}")
@@ -85,6 +115,13 @@ def encode_video_with_mem(
         )
     if any(not hasattr(vision_model, name) for name in ("embeddings", "encoder", "post_layernorm")):
         raise TypeError("MEM visual memory requires a SigLIP-compatible vision transformer")
+    if not hasattr(vision_model.encoder, "layers"):
+        raise TypeError("MEM visual memory requires a SigLIP encoder exposing a layers collection")
+    if not hasattr(vision_model, "config"):
+        raise TypeError("MEM visual memory requires a SigLIP vision transformer with a config")
+
+    # SigLIP attention dispatch reads this config dynamically on every forward.
+    vision_model.config._attn_implementation = "eager"  # noqa: SLF001
 
     flat_pixels = pixel_values.reshape(batch_size * num_frames, channels, height, width)
     hidden_states = vision_model.embeddings(flat_pixels)
@@ -96,22 +133,31 @@ def encode_video_with_mem(
     temporal_mask = causal_temporal_mask(frame_mask, dtype=hidden_states.dtype, num_patches=num_patches)
 
     for layer_index, layer in enumerate(vision_model.encoder.layers):
+        _validate_siglip_layer(layer, layer_index=layer_index)
         spatial_input = hidden_states.reshape(batch_size * num_frames, num_patches, hidden_size)
         if num_frames == 1 or (layer_index + 1) % temporal_attention_every:
-            hidden_states = layer(spatial_input, attention_mask=None).reshape(
-                batch_size, num_frames, num_patches, hidden_size
+            layer_output = _hidden_tensor(
+                layer(spatial_input, attention_mask=None),
+                source=f"SigLIP encoder layer {layer_index}",
             )
+            hidden_states = layer_output.reshape(batch_size, num_frames, num_patches, hidden_size)
             continue
 
         residual = hidden_states
         spatial_norm = layer.layer_norm1(spatial_input)
-        spatial_output, _ = layer.self_attn(hidden_states=spatial_norm, attention_mask=None)
+        spatial_output = _hidden_tensor(
+            layer.self_attn(hidden_states=spatial_norm, attention_mask=None),
+            source=f"SigLIP self-attention layer {layer_index}",
+        )
         spatial_output = spatial_output.reshape(batch_size, num_frames, num_patches, hidden_size)
 
         temporal_input = (hidden_states + temporal_positions).permute(0, 2, 1, 3)
         temporal_input = temporal_input.reshape(batch_size * num_patches, num_frames, hidden_size)
         temporal_norm = layer.layer_norm1(temporal_input)
-        temporal_output, _ = layer.self_attn(hidden_states=temporal_norm, attention_mask=temporal_mask)
+        temporal_output = _hidden_tensor(
+            layer.self_attn(hidden_states=temporal_norm, attention_mask=temporal_mask),
+            source=f"SigLIP temporal self-attention layer {layer_index}",
+        )
         temporal_output = temporal_output.reshape(batch_size, num_patches, num_frames, hidden_size)
         temporal_output = temporal_output.permute(0, 2, 1, 3)
 

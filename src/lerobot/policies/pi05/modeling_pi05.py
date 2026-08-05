@@ -195,6 +195,7 @@ class PaliGemmaWithExpertModel(
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
+        use_visual_memory: bool = False,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -221,6 +222,9 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.vision_config.projection_dim = 2048
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.dtype = "float32"
+        if use_visual_memory:
+            # MEM uses a 4-D additive temporal mask, which FlashAttention 2 does not support.
+            vlm_config_hf.vision_config._attn_implementation = "eager"  # noqa: SLF001
 
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
             head_dim=action_expert_config.head_dim,
@@ -442,6 +446,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
+            use_visual_memory=config.use_visual_memory,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -1000,7 +1005,12 @@ class PI05Policy(PreTrainedPolicy):
         return self.parameters()
 
     def reset(self):
-        """Reset internal state - called when environment resets."""
+        """Reset internal state at the shared boundary of a batched rollout.
+
+        ``lerobot-eval`` calls this before every rollout and before resetting the
+        vector environment. MEM inference queues therefore assume all batch rows
+        share episode boundaries; independently autoresetting rows is unsupported.
+        """
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
@@ -1014,6 +1024,7 @@ class PI05Policy(PreTrainedPolicy):
                 memory_keys.append(OBS_STATE)
             self._memory_queues = {key: deque(maxlen=history_length) for key in memory_keys}
             self._memory_steps_seen = 0
+            self._memory_batch_size = None
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -1124,7 +1135,7 @@ class PI05Policy(PreTrainedPolicy):
         return states, state_masks
 
     def _stack_inference_memory(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        """Record one environment observation and attach sampled MEM histories."""
+        """Record one homogeneous-batch observation and attach MEM histories."""
         if not (self.config.use_visual_memory or self.config.use_proprioceptive_memory):
             return batch
         result = dict(batch)
@@ -1132,10 +1143,18 @@ class PI05Policy(PreTrainedPolicy):
             if key not in batch:
                 continue
             value = batch[key]
+            batch_size = value.shape[0]
+            if self._memory_batch_size is None:
+                self._memory_batch_size = batch_size
+            elif batch_size != self._memory_batch_size:
+                raise ValueError(
+                    "MEM inference batch size changed without policy.reset(); "
+                    f"expected {self._memory_batch_size}, got {batch_size}"
+                )
             if not queue:
-                queue.extend([value] * queue.maxlen)
+                queue.extend(value.clone() for _ in range(queue.maxlen))
             else:
-                queue.append(value)
+                queue.append(value.clone())
             result[key], result[f"{key}_is_pad"] = sample_observation_history(
                 list(queue),
                 num_frames=self.config.memory_frames,

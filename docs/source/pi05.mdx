@@ -231,6 +231,13 @@ frame. Visual and proprioceptive memory use the same `memory_frames` and
 or finetune with the selected memory options; enabling them only at inference
 does not give a single-frame checkpoint learned memory behavior.
 
+At inference, MEM keeps one batched history queue and assumes every batch row
+shares episode boundaries. `lerobot-eval` satisfies this by calling
+`policy.reset()` before each batched rollout and before resetting the vector
+environment. Independently autoresetting rows in an asynchronous vector batch
+is not supported; start a new rollout so the complete policy and action queues
+are reset together.
+
 ## Relative Actions
 
 By default, π₀.₅ predicts absolute actions. You can enable **relative actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
