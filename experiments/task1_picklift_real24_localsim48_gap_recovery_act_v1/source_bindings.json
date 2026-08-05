@@ -1,0 +1,72 @@
+{
+  "schema": "task1_picklift_real24_localsim_gap_full_source_bindings_v1",
+  "research_authorization": {
+    "commit": "5f5bc60eb623f1f0829895b238469a1f1b26db37",
+    "manifest_sha256": "398b56a322c04be0be8c6270f1d49a9cb5ffd8509e3b4aeed8f5023a4c608cc0"
+  },
+  "postcollection_finalization": {
+    "status": "accepted_engineering_data_ready_for_separately_authorized_training",
+    "result_manifest_file": "localsim_finalization_result.json",
+    "result_manifest_sha256": "2e24b1f026c128c9b7f8e38b1d850407956a936e467f96571930ffce7f4076dc"
+  },
+  "real": {
+    "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+    "repo_id": "local/task1_picklift_real24_budget_extension_v1_accepted",
+    "tree_hash_profile": "sha256_file_path_inventory_v1",
+    "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712",
+    "episodes": 24,
+    "frames": 4263
+  },
+  "simulation": {
+    "base_root": "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1",
+    "tree_hash_profile": "iam_robot_trainer_length_prefixed_file_tree_sha256_v1",
+    "gap24": {
+      "root_relative": "derived/sim24_gap/dataset",
+      "repo_id": "physicalai/task1_picklift_localsim24_gap_no_real_gap_leakage_gridphase0_v2",
+      "tree_sha256": "7f3b0ada0525fa1c358179f9c8823c877f1d81f88569253eaaecd81322531b22",
+      "episodes": 24,
+      "frames": 1933,
+      "membership_sha256": "4fb0ec1660408b80b5d754696b4aa448f3bfd3564a138c79ace19b8fe0f336ec",
+      "mapping_relative": "verification-inventories/sim24_gap-source-to-derived.jsonl",
+      "mapping_sha256": "fdb8ad28170ff6babeabba31478d092ede304b4c94e7ac49068aa6177b52eec0"
+    },
+    "overlap24": {
+      "root_relative": "derived/sim24_overlap/dataset",
+      "repo_id": "physicalai/task1_picklift_localsim24_overlap_no_real_gap_leakage_gridphase0_v2",
+      "tree_sha256": "babe63227a9fe5f2305e875f79a88d3314af8794b9cf8c056255d7ac3b9d572e",
+      "episodes": 24,
+      "frames": 2116,
+      "membership_sha256": "233b1098bb83f73ff034e51aa4ef7942dd0dbc08397b93fcf86ef084eedea9d6",
+      "mapping_relative": "verification-inventories/sim24_overlap-source-to-derived.jsonl",
+      "mapping_sha256": "e3d85e1a7998ebc1856d4228b3b994da22a87b70897e5f2ac471758084a26cbe"
+    },
+    "full48": {
+      "root_relative": "derived/sim48_full/dataset",
+      "repo_id": "physicalai/task1_picklift_localsim48_no_real_gap_leakage_gridphase0_v2",
+      "tree_sha256": "05ac3b34d14929b3185bc9e86f9c64844a7ad1b85838da9b801139eb9e001e34",
+      "episodes": 48,
+      "frames": 4049,
+      "membership_sha256": "5e83a1c40ddd8540aef083844ab2ef94f170a1199fbc09a8bc9080db7c7fb26e",
+      "mapping_relative": "verification-inventories/sim48_full-source-to-derived.jsonl",
+      "mapping_sha256": "1ea41f35621255e219b1e2c46ca6d122526fa763d9d92e0fb247b94d61fbf8f6"
+    }
+  },
+  "conditions": {
+    "C": {
+      "simulation_key": "gap24",
+      "dataset_id": "task1_picklift_real24_localsim24_gap_combined48_v1",
+      "repo_id": "local/task1_picklift_real24_localsim24_gap_combined48_v1",
+      "dataset_root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap/combined48_v1",
+      "evidence_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap/combined48_freeze_v1",
+      "training_root": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim24_gap"
+    },
+    "D": {
+      "simulation_key": "full48",
+      "dataset_id": "task1_picklift_real24_localsim48_full_combined72_v1",
+      "repo_id": "local/task1_picklift_real24_localsim48_full_combined72_v1",
+      "dataset_root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full/combined72_v1",
+      "evidence_root": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full/combined72_freeze_v1",
+      "training_root": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_real24_localsim48_gap_recovery_act_v1/real24_sim48_full"
+    }
+  }
+}

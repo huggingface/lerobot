@@ -1,0 +1,1805 @@
+{
+  "authorization_binding": {
+    "authorization_id": "GO_TASK1_LOCALSIM48_GRIDPHASE0_POSTCOLLECTION_FINALIZATION_V1",
+    "authorization_manifest_relative_path": "contracts/task1-picklift-localsim48-v0420-gridphase0-postcollection-finalization-authorization-v1.json",
+    "authorization_manifest_sha256": "86795d38770bfa233c19b6ad3f2cc107d0a75ff95b92b9c20334258feab2ff23",
+    "decision_relative_path": "contracts/2026-08-05-task1-picklift-localsim48-v0420-gridphase0-postcollection-finalization-go.md",
+    "decision_sha256": "7668dbab6d3a802789d0567877efc6a3744c771f1ca9a7ea21390f03ff153997",
+    "formal_precollection_manifest_path": "manifests/task1-picklift-localsim48-formal-precollection-v1.json",
+    "formal_precollection_manifest_sha256": "2666fc82898165fdb919c710f2678bfc0cd49b948e2a7a174037481835577e26",
+    "product_gate_result_path": "G:/PhysicalAI/SO101QuestLocalSim/manifests/quest-app-localsim48-v0.4.20-grid-phase0-acceptance-v1.json",
+    "product_gate_result_sha256": "a242a67c170eb9ea55561c85cb51dca5d7c40941be15f8fd635f7724cd2c3a75",
+    "research_commit": "faddc7b1190e1208ceee560fc535bfdf1d26b4a7"
+  },
+  "claim_boundary": {
+    "completion_status_if_independent_seal_passes": "accepted_engineering_data_ready_for_separately_authorized_training",
+    "paper_result": false,
+    "policy_evaluation_authorized": false,
+    "real_hardware_authorized": false,
+    "remote_authorized": false,
+    "training_authorized": false
+  },
+  "conversion": {
+    "commands": {
+      "sim24_gap": {
+        "command_record_relative_path": "reports/sim24_gap-conversion-command.json",
+        "command_record_sha256": "accaea52edc36535c18e96f5a60f9f9d6cfa0930768697842b5154e59f538796"
+      },
+      "sim24_overlap": {
+        "command_record_relative_path": "reports/sim24_overlap-conversion-command.json",
+        "command_record_sha256": "4e004ae1bc1e695d96a991cdc7c7da79c5c6a691d9bceb967a533b963bf7048f"
+      },
+      "sim48_full": {
+        "command_record_relative_path": "reports/sim48_full-conversion-command.json",
+        "command_record_sha256": "16df71e6468863f66a9ac000937804a8bfa3e196e3e10e4ce3cdfd6c4e01e478"
+      }
+    },
+    "conversion_run_id": "task1_localsim48_gridphase0_postcollection_finalization_20260805T044206Z",
+    "conversion_summary_relative_path": "reports/conversion-summary.json",
+    "conversion_summary_sha256": "8957b6b3e9f553751b6c772c4aaa329340edfdc0d47a310c9d67e649bf6ce7ca",
+    "converter_profile_id": "task1_local_dataset_v4_to_official_lerobot_v3_v1",
+    "converter_tool_sha256": "5ce3d70f7a49281f687ed7091904ce50f9fe3b9f37d488e6c1af4620926b92ae",
+    "historical_conversion_summary_status": "pass_pending_full_loader_qa",
+    "historical_status_resolved_by_full_loader_summary_pass": true,
+    "isolated_converter_commit": "892628685e3a2c55410e28a9b53aca8e046c4091",
+    "no_raw_mutation": true,
+    "remote_derived_evidence_archive_sha256": "897fce4f9f7da926363f08723c04a34b6bdd531b553b913f819a000be70253c3",
+    "source_to_derived_episode_map_relative_path": "result/source-to-derived-mapping.json",
+    "source_to_derived_episode_map_sha256": "c86667f90e1b6a3d6d5911248c8399cb14e9ac64d43021ccc35475a0a64e0c0f"
+  },
+  "datasets": {
+    "sim24_gap": {
+      "dataset_file_count": 6,
+      "dataset_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim24_gap\\dataset",
+      "dataset_total_bytes": 5329442,
+      "dataset_tree_sha256": "7f3b0ada0525fa1c358179f9c8823c877f1d81f88569253eaaecd81322531b22",
+      "diagnostics_file_count": 3802,
+      "diagnostics_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim24_gap\\diagnostics",
+      "diagnostics_total_bytes": 185191858,
+      "diagnostics_tree_sha256": "74c4a2638c4be345e801c02f06307671a9b6f14224138ec0a26f5d9f8fc97844",
+      "episode_count": 24,
+      "frame_count": 1933,
+      "image_decode_count": 1933,
+      "loader_command_relative_path": "reports/sim24_gap-full-loader-qa-command.json",
+      "loader_command_sha256": "5c68a9ba2cc11b4eb9d875a1615d2c6c51cc88751ab8ca98fc5d1b6d1f2bc1cd",
+      "loader_report_relative_path": "reports/sim24_gap-full-loader-qa.json",
+      "loader_report_sha256": "5ca994c57f886c6ee1ba2c186f64d150125b989ae44aff20e0396ffb4d3ccb7e",
+      "max_action_abs_error": 0.0,
+      "max_state_abs_error": 0.0,
+      "membership_sha256": "4fb0ec1660408b80b5d754696b4aa448f3bfd3564a138c79ace19b8fe0f336ec",
+      "repo_id": "physicalai/task1_picklift_localsim24_gap_no_real_gap_leakage_gridphase0_v2",
+      "source_to_derived_mapping_sha256": "fdb8ad28170ff6babeabba31478d092ede304b4c94e7ac49068aa6177b52eec0"
+    },
+    "sim24_overlap": {
+      "dataset_file_count": 6,
+      "dataset_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim24_overlap\\dataset",
+      "dataset_total_bytes": 5627372,
+      "dataset_tree_sha256": "babe63227a9fe5f2305e875f79a88d3314af8794b9cf8c056255d7ac3b9d572e",
+      "diagnostics_file_count": 4597,
+      "diagnostics_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim24_overlap\\diagnostics",
+      "diagnostics_total_bytes": 203978256,
+      "diagnostics_tree_sha256": "a6968a68704242839d0e2021f586228b037414ffbaaf03cf6bca4b981f1d4c6b",
+      "episode_count": 24,
+      "frame_count": 2116,
+      "image_decode_count": 2116,
+      "loader_command_relative_path": "reports/sim24_overlap-full-loader-qa-command.json",
+      "loader_command_sha256": "8f1b37b24ae8e4f44fce3ee692ad8eaac957f746a9da09fc3c60cf3cb80297ed",
+      "loader_report_relative_path": "reports/sim24_overlap-full-loader-qa.json",
+      "loader_report_sha256": "fc326340c769d0bd79a03cfbf8295c829fda53becc88a0e5373143f9b6a97333",
+      "max_action_abs_error": 0.0,
+      "max_state_abs_error": 0.0,
+      "membership_sha256": "233b1098bb83f73ff034e51aa4ef7942dd0dbc08397b93fcf86ef084eedea9d6",
+      "repo_id": "physicalai/task1_picklift_localsim24_overlap_no_real_gap_leakage_gridphase0_v2",
+      "source_to_derived_mapping_sha256": "e3d85e1a7998ebc1856d4228b3b994da22a87b70897e5f2ac471758084a26cbe"
+    },
+    "sim48_full": {
+      "dataset_file_count": 6,
+      "dataset_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim48_full\\dataset",
+      "dataset_total_bytes": 10918658,
+      "dataset_tree_sha256": "05ac3b34d14929b3185bc9e86f9c64844a7ad1b85838da9b801139eb9e001e34",
+      "diagnostics_file_count": 8398,
+      "diagnostics_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\derived\\sim48_full\\diagnostics",
+      "diagnostics_total_bytes": 389169261,
+      "diagnostics_tree_sha256": "c85f286705bdb4c402fbcbf401a0e517f5d7a9bb274ce4e45de704e9ebe34d43",
+      "episode_count": 48,
+      "frame_count": 4049,
+      "image_decode_count": 4049,
+      "loader_command_relative_path": "reports/sim48_full-full-loader-qa-command.json",
+      "loader_command_sha256": "2c8c60a9ca445719f34a5f586fa4c58bf61afea7f59d289ae32d32417aff9d41",
+      "loader_report_relative_path": "reports/sim48_full-full-loader-qa.json",
+      "loader_report_sha256": "55690c9c1b8e9730d05c37ae35c658e2a3f1100bdc1f871a7baa5fc17603c01c",
+      "max_action_abs_error": 0.0,
+      "max_state_abs_error": 0.0,
+      "membership_sha256": "5e83a1c40ddd8540aef083844ab2ef94f170a1199fbc09a8bc9080db7c7fb26e",
+      "repo_id": "physicalai/task1_picklift_localsim48_no_real_gap_leakage_gridphase0_v2",
+      "source_to_derived_mapping_sha256": "1ea41f35621255e219b1e2c46ca6d122526fa763d9d92e0fb247b94d61fbf8f6"
+    }
+  },
+  "diagnostic_provenance": {
+    "acceptance_rule": "diagnostic preflights are retained but are not final acceptance reports; final acceptance binds the v3 full-loader summary and independent verification PASS",
+    "historical_conversion_summary_status": "pass_pending_full_loader_qa",
+    "historical_status_resolution": "reports/full-loader-qa-summary.json status=pass",
+    "local_supporting_inventory_preflight": "result/diagnostic-failed-preflight-supporting-tree-profile-assumption",
+    "remote_loader_preflight_failures": [
+      "reports/diagnostic-failed-preflight-robot-type-assumption",
+      "reports/diagnostic-failed-preflight-feature-name-assumption"
+    ]
+  },
+  "excluded_attempts": [
+    {
+      "accepted_for_training": false,
+      "attempt_ordinal": 12,
+      "attempt_uuid": "869e898d-4a8e-472f-bd35-ee4de0d9ce17",
+      "collection_order": 12,
+      "derived_episode_indices": {},
+      "disposition": "grip_released_active_failure",
+      "file_count": 102,
+      "materialized_relative_path": "source-freeze/869e898d-4a8e-472f-bd35-ee4de0d9ce17",
+      "plan_item_id": "localsim48_real96_s03_r2c3_core_center_rep01_yaw45",
+      "reason_codes": [
+        "grip_released_active"
+      ],
+      "recorder_raw_tree_sha256": "d23ba0b5c176b18d3e49ef920e8f56fe752a48c648f5022ed651a294feffa88b",
+      "resolved_episode_tree_sha256": "d23ba0b5c176b18d3e49ef920e8f56fe752a48c648f5022ed651a294feffa88b",
+      "size_bytes": 5361557
+    },
+    {
+      "accepted_for_training": false,
+      "attempt_ordinal": 16,
+      "attempt_uuid": "b1e7a12d-9783-4d5e-a47f-97529f95432c",
+      "collection_order": 15,
+      "derived_episode_indices": {},
+      "disposition": "grip_released_active_failure",
+      "file_count": 186,
+      "materialized_relative_path": "source-freeze/b1e7a12d-9783-4d5e-a47f-97529f95432c",
+      "plan_item_id": "localsim48_real96_s03_r1c1_core_center_rep01_yaw45",
+      "reason_codes": [
+        "grip_released_active"
+      ],
+      "recorder_raw_tree_sha256": "b0ac68b98f9747910a714ca5ad97b2235c4576581839488b388190584221fb7f",
+      "resolved_episode_tree_sha256": "b0ac68b98f9747910a714ca5ad97b2235c4576581839488b388190584221fb7f",
+      "size_bytes": 10136047
+    },
+    {
+      "accepted_for_training": false,
+      "attempt_ordinal": 22,
+      "attempt_uuid": "ded98cad-6181-4782-b9a5-6f06885fddaf",
+      "collection_order": 20,
+      "derived_episode_indices": {},
+      "disposition": "host_qa_rejected",
+      "file_count": 203,
+      "materialized_relative_path": "source-freeze/ded98cad-6181-4782-b9a5-6f06885fddaf",
+      "plan_item_id": "localsim48_real96_s03_r3c4_core_center_rep01_yaw45",
+      "reason_codes": [
+        "task1_success_window_not_exact_25_steps"
+      ],
+      "recorder_raw_tree_sha256": "bc9c89719174904c4c560707b8eb83bbf7708edd0b7a97fb98cd3a327d8c2fa2",
+      "resolved_episode_tree_sha256": "f81868431490a8f56a231377c6e145eaab63dc3f45843a38bd5e000d9cd47940",
+      "size_bytes": 10996258
+    },
+    {
+      "accepted_for_training": false,
+      "attempt_ordinal": 47,
+      "attempt_uuid": "d33a2073-70c3-46be-ade4-42eceb45f0c0",
+      "collection_order": 44,
+      "derived_episode_indices": {},
+      "disposition": "host_qa_rejected",
+      "file_count": 181,
+      "materialized_relative_path": "source-freeze/d33a2073-70c3-46be-ade4-42eceb45f0c0",
+      "plan_item_id": "localsim48_real96_s02_r3c4_core_q1_rep01_yaw45",
+      "reason_codes": [
+        "task1_success_window_not_exact_25_steps"
+      ],
+      "recorder_raw_tree_sha256": "a851c8601890175aed75646611c4b7b4d6e5e3859f2e6c8a156f4619c59d64c6",
+      "resolved_episode_tree_sha256": "5f5a505890c982606ee9c9c62045f15f775ad2df153526e1e9a507a7b4ba858a",
+      "size_bytes": 9647522
+    }
+  ],
+  "fixed_identity": {
+    "alignment_profile_id": "task1_picklift_real96_crop_shift_zero_mirror_alignment_v3",
+    "apk_and_installed_base_sha256": "d2649185cafef9c0cb505c5d1684c00033cb6e97d6caa927ce4c74e8797cf521",
+    "attempt_ledger_id": "task1_picklift_localsim48_no_real_gap_leakage_gridphase0_s01_attempt_ledger_v1",
+    "camera_profile_id": "picklift_real96_crop_shift_zero_mirror_camera_v8",
+    "collection_id": "task1_picklift_localsim48_no_real_gap_leakage_gridphase0_v2",
+    "horizontal_mirror": false,
+    "operator_id": "task1_operator_primary_v1",
+    "plan_manifest_sha256": "6e27b04effff12bd940f3487a007c0b25f76d28e3dd7db38a7ab3c07c6883be9",
+    "plan_order_sha256": "5e83a1c40ddd8540aef083844ab2ef94f170a1199fbc09a8bc9080db7c7fb26e",
+    "product_acceptance_commit": "892628685e3a2c55410e28a9b53aca8e046c4091",
+    "product_acceptance_manifest_sha256": "a242a67c170eb9ea55561c85cb51dca5d7c40941be15f8fd635f7724cd2c3a75",
+    "product_version": "0.4.20",
+    "product_version_code": 64,
+    "session_id": "task1_picklift_localsim48_no_real_gap_leakage_gridphase0_s01",
+    "state_bank_manifest_sha256": "e04c3e7f3dfeb01c53c7cedfc6f9e4a29f0ff369c2fb99a4a36183e95acf2ead",
+    "state_multiset_sha256": "6c8e23e4292881e368c0371ee800a5e23903e79dbb0a5a2d55480c9298f6279c",
+    "subset_membership_sha256": {
+      "sim24_gap": "4fb0ec1660408b80b5d754696b4aa448f3bfd3564a138c79ace19b8fe0f336ec",
+      "sim24_overlap": "233b1098bb83f73ff034e51aa4ef7942dd0dbc08397b93fcf86ef084eedea9d6",
+      "sim48_full": "5e83a1c40ddd8540aef083844ab2ef94f170a1199fbc09a8bc9080db7c7fb26e"
+    },
+    "table_mat_profile_id": "reference_grid_mat_v4_world_phase0",
+    "world_fine_phase_m": 0.0,
+    "world_major_phase_m": 0.0
+  },
+  "format": "iam_robot_trainer_localsim48_gridphase0_postcollection_finalization_result_v1",
+  "generated_at_utc": "2026-08-05T05:00:06.644296Z",
+  "independent_verification": {
+    "check_count": 9,
+    "errors": [],
+    "relative_path": "result/independent-verification-report.json",
+    "sha256": "79265a1f9b57931c4548d4affa6b78af47fd6f36e2b519d2a5c00e068547ea1f",
+    "status": "pass",
+    "verifier_sha256": "d618c5d30645efa212a1881349592b6cf4c848c4434b16584cdcea33aa3b8b75"
+  },
+  "ledger_and_membership": {
+    "accepted_episode_count": 48,
+    "accepted_episode_ids": [
+      "7ab8a124-2431-42b1-948a-41b30932d864",
+      "b4ebd36a-1262-43df-a498-125c92fe9b47",
+      "d4b86beb-f7c9-455b-bca9-6c2c962dcfca",
+      "fa726813-8517-4f08-90f9-0b68fdf37e5d",
+      "70a75d41-5e12-48f7-b714-911dfeaae968",
+      "e8e3bc93-4a92-49f2-b534-fe856c531832",
+      "fcdaca2f-99a1-4d9b-ad98-065f14305eb8",
+      "544de35b-81fe-4c20-acbe-a651d5006a33",
+      "67d60dd0-0dd2-42d9-9617-059e3f2fa2b8",
+      "0100aca8-c39b-4652-bb1b-bae28a7e7849",
+      "35d78a16-0035-4691-a405-a8451ee53339",
+      "d38642bb-d1e9-4bad-a381-d67ced58aeed",
+      "9b1684f0-9af0-4c12-b684-4bb733f07f09",
+      "c5c13ff5-d898-4647-866a-dd6eb3003387",
+      "1b1f16a5-95b4-41d5-84e8-e10b7c5cef69",
+      "2e20a169-7d63-4a62-9344-7ded0510585e",
+      "91210079-5af6-40da-9762-f46bbdae1e5f",
+      "13627e84-0968-4943-9aff-d19bdbce0d47",
+      "aa6ffe86-1a0b-4f3e-a6fc-87cfd6f7a557",
+      "ddbbb4ac-4c78-4d09-9b91-7c3acfd7e240",
+      "69b1097c-4cfb-4f6e-979c-632014994aa2",
+      "ca6bcb07-08aa-446d-a9ae-3c9ff66fcf77",
+      "5cb3c049-1466-4621-bfc9-31010fac03bb",
+      "40135af6-e29d-4459-b209-582c5b6b67e4",
+      "56690b7a-8ffb-46f1-8092-ab93053b6fce",
+      "1e653620-ad21-45e1-b253-b15da03c2ba6",
+      "a0084510-3cd0-4ca3-9e4f-53329c024bde",
+      "009e9058-39dc-4a78-a924-c9fb95d4c1d8",
+      "e5e0569e-25eb-49f0-a37a-b9256f29be97",
+      "699b0fc1-1192-4617-8a7a-65d2da7d58d8",
+      "ce80e42d-c9dc-41b3-95a7-939f0b38556a",
+      "b3be92b9-eac0-4b0a-a5e8-dd07756801a7",
+      "349e5867-dbe5-4f57-8ee8-000d355939fa",
+      "b36e069a-7706-4d1f-8820-0b7be246897f",
+      "ad21548e-5d5d-47c2-ac02-d9bd0ec8422d",
+      "dd2805f2-f626-4bb7-abbd-feb41724ac6a",
+      "cbb51174-4baf-423d-a891-04a93a00dfb9",
+      "4d6ef552-c8f5-42dd-9d76-fd4b516d98e5",
+      "074ff30d-c669-4ab3-b6d0-14ebd22ee477",
+      "d17a57a3-9f00-4dfb-ae14-619416c594e4",
+      "051f9cd2-9c06-4366-bfbb-f5572b0ee895",
+      "9010f393-a703-4391-90ab-b40f002b111f",
+      "18cb2a43-dfd3-44c6-bd06-94dad860bf0a",
+      "77a1e437-fdef-4ec9-adce-5966187cd825",
+      "8ac48031-7eac-4cb4-88e7-1db376a3e4ec",
+      "5ee1949c-e33a-45c8-818d-2cf984e4aa46",
+      "5c381d9f-5f65-477d-ad5e-9026b0e2a261",
+      "622c7546-2ef7-4301-bbd1-4cd27e238554"
+    ],
+    "all_plan_and_membership_invariants_pass": true,
+    "attempt_ledger_tree_hash_profile": "iam_robot_trainer_length_prefixed_file_tree_sha256_v1",
+    "attempt_ledger_tree_sha256": "1cc10a313577a39733dcc6180f86c4af2b01b403a221be77b05d458e5f648a22",
+    "attempts": [
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 1,
+        "attempt_uuid": "7ab8a124-2431-42b1-948a-41b30932d864",
+        "collection_order": 1,
+        "derived_episode_indices": {
+          "sim24_overlap": 0,
+          "sim48_full": 0
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 291,
+        "host_qa_verdict_sha256": "1d27d89342d0b1b76b637ad4b48e7b1a1397b1bea83d3a0674ff5376a192b746",
+        "materialized_relative_path": "source-freeze/7ab8a124-2431-42b1-948a-41b30932d864",
+        "plan_item_id": "localsim48_real96_s02_r3c3_core_q0_rep01_yaw45",
+        "recorder_raw_tree_sha256": "93007262aed68c817af475883b18cf3683c201af6000283cbc8c4c649483137c",
+        "resolved_episode_tree_sha256": "962f47477e75ee647ba52f1f1bbfe9e3da010215019c3021714b681006bd704a",
+        "size_bytes": 15961572,
+        "source_validation_frame_count": 140,
+        "source_validation_report_sha256": "757a14a8339b59ad93c0c7e8fee343c41c7bc3bbf6a957d8f4370bda8da998d0"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 2,
+        "attempt_uuid": "b4ebd36a-1262-43df-a498-125c92fe9b47",
+        "collection_order": 2,
+        "derived_episode_indices": {
+          "sim24_gap": 0,
+          "sim48_full": 1
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 233,
+        "host_qa_verdict_sha256": "7e33c9ff1ef38d8fa96df310cb50e4d4c8c4d8c338075c3417f01ec7cfb86e9a",
+        "materialized_relative_path": "source-freeze/b4ebd36a-1262-43df-a498-125c92fe9b47",
+        "plan_item_id": "localsim48_real96_s02_r1c2_core_q3_rep01_yaw45",
+        "recorder_raw_tree_sha256": "7b2c8b8ae46a22cc688c746d56d94e46738706e8a727cd08b94d519aa0a7f2ee",
+        "resolved_episode_tree_sha256": "9675094de6d7894041c6d7b840ee9f16170e6f2517ff70d3d00b0eeac1be3945",
+        "size_bytes": 12684884,
+        "source_validation_frame_count": 111,
+        "source_validation_report_sha256": "ccdaeebfc03469021e0ddac78299495ec93dc6b83d738826e0b49f4e1fc81cfe"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 3,
+        "attempt_uuid": "d4b86beb-f7c9-455b-bca9-6c2c962dcfca",
+        "collection_order": 3,
+        "derived_episode_indices": {
+          "sim24_gap": 1,
+          "sim48_full": 2
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 179,
+        "host_qa_verdict_sha256": "714068d086fa6f2a501ae907c5bcf4e93e194092ddbd3a36bb4ad8e1e1b252ba",
+        "materialized_relative_path": "source-freeze/d4b86beb-f7c9-455b-bca9-6c2c962dcfca",
+        "plan_item_id": "localsim48_real96_s04_r3c4_core_q3_rep01_yaw00",
+        "recorder_raw_tree_sha256": "70b0597556c2c2e022a05dd842a7381acdd3a65746abb4529b5fca18eb8d41be",
+        "resolved_episode_tree_sha256": "7b983fde67d5b67e695c889b055a0bfa210fac6546d63611d9d513c82ec87bbf",
+        "size_bytes": 9591551,
+        "source_validation_frame_count": 84,
+        "source_validation_report_sha256": "47c91a99a0611c5b6bc780fbe8565971fc2fd0e90ca293aba0b304786c8744c0"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 4,
+        "attempt_uuid": "fa726813-8517-4f08-90f9-0b68fdf37e5d",
+        "collection_order": 4,
+        "derived_episode_indices": {
+          "sim24_gap": 2,
+          "sim48_full": 3
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 145,
+        "host_qa_verdict_sha256": "99dd5caf60c1ae435e867e9b90ed3b00d3739c43490486e8112c66253eaffd65",
+        "materialized_relative_path": "source-freeze/fa726813-8517-4f08-90f9-0b68fdf37e5d",
+        "plan_item_id": "localsim48_real96_s04_r3c2_core_q1_rep01_yaw00",
+        "recorder_raw_tree_sha256": "cd469aa9cb7e31152c739e75d5a91d35f3002d860f84c185562edbeadfb22b73",
+        "resolved_episode_tree_sha256": "7eefcc839f9afaa406874cb7fe23347cd52b06b71c317443ec722342dc918f7b",
+        "size_bytes": 7708271,
+        "source_validation_frame_count": 67,
+        "source_validation_report_sha256": "4e09dd73d744a04c7a728b7ed4d16195a85c834b3921b4f2a3ca66b49a8ede28"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 5,
+        "attempt_uuid": "70a75d41-5e12-48f7-b714-911dfeaae968",
+        "collection_order": 5,
+        "derived_episode_indices": {
+          "sim24_overlap": 1,
+          "sim48_full": 4
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 189,
+        "host_qa_verdict_sha256": "574f67a0776fedd4793de648bca4efa90d07f606dd740116315cb8f0d31052b6",
+        "materialized_relative_path": "source-freeze/70a75d41-5e12-48f7-b714-911dfeaae968",
+        "plan_item_id": "localsim48_real96_s03_r1c3_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "9df73fe511eb55ff86d1c9ea67b3c80057c599741491cc32157c050fe8cf045a",
+        "resolved_episode_tree_sha256": "312c6cb009206a46df8bd99d4f33883270c0e89f1330eb4e25d2fd2fdae81f2d",
+        "size_bytes": 10307490,
+        "source_validation_frame_count": 89,
+        "source_validation_report_sha256": "96ffddd931b2145bc9e4d23f476e3206a5770de9d8bd5bc76656ded88287a037"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 6,
+        "attempt_uuid": "e8e3bc93-4a92-49f2-b534-fe856c531832",
+        "collection_order": 6,
+        "derived_episode_indices": {
+          "sim24_gap": 3,
+          "sim48_full": 5
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 157,
+        "host_qa_verdict_sha256": "1934b80f6f5368777bd32915bb2fc78d1050f3de2eb126c39cf507d00e0aed7c",
+        "materialized_relative_path": "source-freeze/e8e3bc93-4a92-49f2-b534-fe856c531832",
+        "plan_item_id": "localsim48_real96_s01_r3c3_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "80bde7619bee8a9f628c797e6072f045ac8acae34fbec113796c857602e2f4ad",
+        "resolved_episode_tree_sha256": "364f73605c868d8a6fdfc3eab84ac4553a1bb65a426ad0e5f28a53080ef8838c",
+        "size_bytes": 8400471,
+        "source_validation_frame_count": 73,
+        "source_validation_report_sha256": "2a91b71040fe626658fa3c6a62288a81980b6484ef086d412e4c6c6e882e2aad"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 7,
+        "attempt_uuid": "fcdaca2f-99a1-4d9b-ad98-065f14305eb8",
+        "collection_order": 7,
+        "derived_episode_indices": {
+          "sim24_gap": 4,
+          "sim48_full": 6
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 195,
+        "host_qa_verdict_sha256": "864e58c81e13ae6b71330ec89a203528d1973ae92b54f92ec95b5bae9ce3d0b0",
+        "materialized_relative_path": "source-freeze/fcdaca2f-99a1-4d9b-ad98-065f14305eb8",
+        "plan_item_id": "localsim48_real96_s02_r1c1_core_q2_rep01_yaw45",
+        "recorder_raw_tree_sha256": "fa7fb013372e705a9be18f4f599e9781385aece65dc2f42117801526702d09ed",
+        "resolved_episode_tree_sha256": "9a19229c42a6764d43ac055696ec734d927a3496d6215b238a13d16ca81b2c9f",
+        "size_bytes": 10644143,
+        "source_validation_frame_count": 92,
+        "source_validation_report_sha256": "7439c1d605bffd47405a0d308d9935e72e3829515f4f14500103778a08ffb11d"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 8,
+        "attempt_uuid": "544de35b-81fe-4c20-acbe-a651d5006a33",
+        "collection_order": 8,
+        "derived_episode_indices": {
+          "sim24_gap": 5,
+          "sim48_full": 7
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 187,
+        "host_qa_verdict_sha256": "86f4b4740118072072d95b41688a02f7bd4647915a88b73c04ef45f2d7b5b3a4",
+        "materialized_relative_path": "source-freeze/544de35b-81fe-4c20-acbe-a651d5006a33",
+        "plan_item_id": "localsim48_real96_s01_r2c1_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "5dbb6dab2d8141b8ab8fcdb8652df5a52cc3de755f96df4bb005b31483ad6402",
+        "resolved_episode_tree_sha256": "8327b3ec2cec695aa23303d152a27157c6216a069acee2438fa33f2204d8354e",
+        "size_bytes": 10145435,
+        "source_validation_frame_count": 88,
+        "source_validation_report_sha256": "a5833809fffa99b9942089e6c4361ce2c5a5972060c33678018c3861e635a1ea"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 9,
+        "attempt_uuid": "67d60dd0-0dd2-42d9-9617-059e3f2fa2b8",
+        "collection_order": 9,
+        "derived_episode_indices": {
+          "sim24_gap": 6,
+          "sim48_full": 8
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 163,
+        "host_qa_verdict_sha256": "315b6faece278883073e11db31bd8ca54ff12920978edc4a84c3c4ccaf53446e",
+        "materialized_relative_path": "source-freeze/67d60dd0-0dd2-42d9-9617-059e3f2fa2b8",
+        "plan_item_id": "localsim48_real96_s01_r1c3_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "d64f39a6c946c66907d7f17a529727425636e07a8172e9abb1f9d6c5951cb42c",
+        "resolved_episode_tree_sha256": "e90c2f43a57b2d34169075afd131301e1785d259b7dcbe1c7f7ed2a2da544ad7",
+        "size_bytes": 8834548,
+        "source_validation_frame_count": 76,
+        "source_validation_report_sha256": "8426124297b1d93a4f319a2d8d2d7e25dd006c1c3a092b360eefbadd983981ea"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 10,
+        "attempt_uuid": "0100aca8-c39b-4652-bb1b-bae28a7e7849",
+        "collection_order": 10,
+        "derived_episode_indices": {
+          "sim24_overlap": 2,
+          "sim48_full": 9
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 209,
+        "host_qa_verdict_sha256": "726b9a5fcebfeddc922eeca1ae13d525e38455c5b7051e5cf6cf039178966334",
+        "materialized_relative_path": "source-freeze/0100aca8-c39b-4652-bb1b-bae28a7e7849",
+        "plan_item_id": "localsim48_real96_s02_r3c2_core_q3_rep01_yaw45",
+        "recorder_raw_tree_sha256": "10c51da3203c3143af8a38281fe2c5605703f3d2f8d20642dcb4a26f9551b38c",
+        "resolved_episode_tree_sha256": "9262fa9e17b24fc59f50ac4659142879d27570e5991f0ec73beeda955aff6c21",
+        "size_bytes": 11318543,
+        "source_validation_frame_count": 99,
+        "source_validation_report_sha256": "47b6719a9f8a72ba17c7419dd69f7e81d870930381745f9c940a07181ec94a77"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 11,
+        "attempt_uuid": "35d78a16-0035-4691-a405-a8451ee53339",
+        "collection_order": 11,
+        "derived_episode_indices": {
+          "sim24_gap": 7,
+          "sim48_full": 10
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 169,
+        "host_qa_verdict_sha256": "40d01cf1d168af991916613644df6bd71cbde4f7bc037474d1ca8aa3c015037c",
+        "materialized_relative_path": "source-freeze/35d78a16-0035-4691-a405-a8451ee53339",
+        "plan_item_id": "localsim48_real96_s02_r2c3_core_q0_rep01_yaw45",
+        "recorder_raw_tree_sha256": "58985589a5c408bc8a9e3b9040b85ebc9bed3fc36bbbdac368b35345af119563",
+        "resolved_episode_tree_sha256": "9d2a54a586916ace0e2378758d2fe584a7e377737f2bbacca58e7134e91b7ac2",
+        "size_bytes": 9139767,
+        "source_validation_frame_count": 79,
+        "source_validation_report_sha256": "8384eef9c48eae5539c028b65a01afb668ce05e1ebbd80f118c4689205e964d6"
+      },
+      {
+        "accepted_for_training": false,
+        "attempt_ordinal": 12,
+        "attempt_uuid": "869e898d-4a8e-472f-bd35-ee4de0d9ce17",
+        "collection_order": 12,
+        "derived_episode_indices": {},
+        "disposition": "grip_released_active_failure",
+        "file_count": 102,
+        "materialized_relative_path": "source-freeze/869e898d-4a8e-472f-bd35-ee4de0d9ce17",
+        "plan_item_id": "localsim48_real96_s03_r2c3_core_center_rep01_yaw45",
+        "reason_codes": [
+          "grip_released_active"
+        ],
+        "recorder_raw_tree_sha256": "d23ba0b5c176b18d3e49ef920e8f56fe752a48c648f5022ed651a294feffa88b",
+        "resolved_episode_tree_sha256": "d23ba0b5c176b18d3e49ef920e8f56fe752a48c648f5022ed651a294feffa88b",
+        "size_bytes": 5361557
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 13,
+        "attempt_uuid": "d38642bb-d1e9-4bad-a381-d67ced58aeed",
+        "collection_order": 12,
+        "derived_episode_indices": {
+          "sim24_gap": 8,
+          "sim48_full": 11
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 169,
+        "host_qa_verdict_sha256": "4e588a652f614b6aa4965b918e984bdb873195b78de57ee5fa83e00bc5fd3314",
+        "materialized_relative_path": "source-freeze/d38642bb-d1e9-4bad-a381-d67ced58aeed",
+        "plan_item_id": "localsim48_real96_s03_r2c3_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "4a622c5357388509b9fa6df36b23d06672fd9db27c97a0cf99d0afdc53238fa5",
+        "resolved_episode_tree_sha256": "f9b26932bf58b3b7bc3b97a592b070c0665f7ab987df6a57a9197882e27f86a9",
+        "size_bytes": 9052964,
+        "source_validation_frame_count": 79,
+        "source_validation_report_sha256": "dcf91e9406b28878b6598248f8bbfa228a90750f74c1b0159629ec5887f98e8b"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 14,
+        "attempt_uuid": "9b1684f0-9af0-4c12-b684-4bb733f07f09",
+        "collection_order": 13,
+        "derived_episode_indices": {
+          "sim24_overlap": 3,
+          "sim48_full": 12
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 181,
+        "host_qa_verdict_sha256": "8298db9e9d42d6015fe0f26b53bf82b2181e285bbd1e68290d7adff6921cfcde",
+        "materialized_relative_path": "source-freeze/9b1684f0-9af0-4c12-b684-4bb733f07f09",
+        "plan_item_id": "localsim48_real96_s03_r3c2_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "65dc45fdd8a7a2bb57d0de205442dea274ab4ebf0d5a0318714c0462430fe5ff",
+        "resolved_episode_tree_sha256": "063369882a4c5c7a1cf9d128e83b2c6f0ffc32da1da400d43615fef1bf2f9c9e",
+        "size_bytes": 9733182,
+        "source_validation_frame_count": 85,
+        "source_validation_report_sha256": "98a0e5b41873f05936e0a33a7b3c87d34e1c351809e6be9b4b1b177823f979db"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 15,
+        "attempt_uuid": "c5c13ff5-d898-4647-866a-dd6eb3003387",
+        "collection_order": 14,
+        "derived_episode_indices": {
+          "sim24_overlap": 4,
+          "sim48_full": 13
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 189,
+        "host_qa_verdict_sha256": "1f5f847de9eae29c743dc3e1833bcf915d74841b62d3b697108595eeb158f49d",
+        "materialized_relative_path": "source-freeze/c5c13ff5-d898-4647-866a-dd6eb3003387",
+        "plan_item_id": "localsim48_real96_s02_r3c1_core_q2_rep01_yaw45",
+        "recorder_raw_tree_sha256": "7cd3a40d3ff185e5ac5db8989493a4351def4359813464ac8f6c0a74505a0ba7",
+        "resolved_episode_tree_sha256": "e65a8c56f6d0ac3e70c8e33b7359434f3122b59f85f0648355c663dcf29fcdde",
+        "size_bytes": 10233480,
+        "source_validation_frame_count": 89,
+        "source_validation_report_sha256": "a9fab17d079ab436ba9871627fde377bd2a5b33517feefb823b8aa785eb0636d"
+      },
+      {
+        "accepted_for_training": false,
+        "attempt_ordinal": 16,
+        "attempt_uuid": "b1e7a12d-9783-4d5e-a47f-97529f95432c",
+        "collection_order": 15,
+        "derived_episode_indices": {},
+        "disposition": "grip_released_active_failure",
+        "file_count": 186,
+        "materialized_relative_path": "source-freeze/b1e7a12d-9783-4d5e-a47f-97529f95432c",
+        "plan_item_id": "localsim48_real96_s03_r1c1_core_center_rep01_yaw45",
+        "reason_codes": [
+          "grip_released_active"
+        ],
+        "recorder_raw_tree_sha256": "b0ac68b98f9747910a714ca5ad97b2235c4576581839488b388190584221fb7f",
+        "resolved_episode_tree_sha256": "b0ac68b98f9747910a714ca5ad97b2235c4576581839488b388190584221fb7f",
+        "size_bytes": 10136047
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 17,
+        "attempt_uuid": "1b1f16a5-95b4-41d5-84e8-e10b7c5cef69",
+        "collection_order": 15,
+        "derived_episode_indices": {
+          "sim24_gap": 9,
+          "sim48_full": 14
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 179,
+        "host_qa_verdict_sha256": "9d8d433939e999b7b3f9a37938421b2b3c447dee1e2de2caf3583c930ed75a4e",
+        "materialized_relative_path": "source-freeze/1b1f16a5-95b4-41d5-84e8-e10b7c5cef69",
+        "plan_item_id": "localsim48_real96_s03_r1c1_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "ac25f160e9813ae933da49acd6df2c694c9d356507cb311d47c7308347cae381",
+        "resolved_episode_tree_sha256": "c79bfc45ba7ab8400492aa5a8c9fe02e341759a067b5e8d5b34a6b13ad522cab",
+        "size_bytes": 9659540,
+        "source_validation_frame_count": 84,
+        "source_validation_report_sha256": "82df68a8d62795c65795f4c35f55f1bda8e148abc085027aff90fbfba223acee"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 18,
+        "attempt_uuid": "2e20a169-7d63-4a62-9344-7ded0510585e",
+        "collection_order": 16,
+        "derived_episode_indices": {
+          "sim24_gap": 10,
+          "sim48_full": 15
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 167,
+        "host_qa_verdict_sha256": "12eeae791f06fd457ab84eee592b5364a8ba29e6ec6d4259328ab9d00e91cc3d",
+        "materialized_relative_path": "source-freeze/2e20a169-7d63-4a62-9344-7ded0510585e",
+        "plan_item_id": "localsim48_real96_s04_r3c1_core_q0_rep01_yaw00",
+        "recorder_raw_tree_sha256": "dcb7a0af8f06e8a48dd6814bf0d05c3bf5578ceaa456f22b83fc3a53187c28ec",
+        "resolved_episode_tree_sha256": "2fc0fdefba6ebc6e8700b9727b3d8d77acdd3969f08661330cfeb516fa37d5e6",
+        "size_bytes": 8929908,
+        "source_validation_frame_count": 78,
+        "source_validation_report_sha256": "2911dc433fe9e894a38715e11350f1f35644129cebd4bfdc9a39d634b18a4714"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 19,
+        "attempt_uuid": "91210079-5af6-40da-9762-f46bbdae1e5f",
+        "collection_order": 17,
+        "derived_episode_indices": {
+          "sim24_overlap": 5,
+          "sim48_full": 16
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 183,
+        "host_qa_verdict_sha256": "89bad275364132ae373c74952d75427165c17e617668fbff0745ed24cb5af76e",
+        "materialized_relative_path": "source-freeze/91210079-5af6-40da-9762-f46bbdae1e5f",
+        "plan_item_id": "localsim48_real96_s03_r2c1_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "98a8fdb4015c93c7efa2c0d57feb029efd2d5df44ecccb42675b95617406d5e5",
+        "resolved_episode_tree_sha256": "7663d02b25da78329324d6d3fac68fc0967f4de051b21efdac5fa9032854a8f6",
+        "size_bytes": 9820820,
+        "source_validation_frame_count": 86,
+        "source_validation_report_sha256": "c13544dc9a7df93c35996cfe8019c47ffdc1f64d2b77bc76ada8534a47f325c0"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 20,
+        "attempt_uuid": "13627e84-0968-4943-9aff-d19bdbce0d47",
+        "collection_order": 18,
+        "derived_episode_indices": {
+          "sim24_gap": 11,
+          "sim48_full": 17
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 175,
+        "host_qa_verdict_sha256": "2f70509d0f14bfa8aed9926faa31f437eb053f17a79af6bb1557411d40d6f6e5",
+        "materialized_relative_path": "source-freeze/13627e84-0968-4943-9aff-d19bdbce0d47",
+        "plan_item_id": "localsim48_real96_s01_r3c4_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "d52894bb2932bce5b3ff49e516fa9a5e33d25ff51516ec625285a489709bbded",
+        "resolved_episode_tree_sha256": "42fc4c2a97ba5c6bd6b52844f91a4c9cceb5802c072d226268e2093de2ca132c",
+        "size_bytes": 9319002,
+        "source_validation_frame_count": 82,
+        "source_validation_report_sha256": "4412f99e9cc14710fecc43e27d43b11d20721063a7ddc94403b9eb88881e2605"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 21,
+        "attempt_uuid": "aa6ffe86-1a0b-4f3e-a6fc-87cfd6f7a557",
+        "collection_order": 19,
+        "derived_episode_indices": {
+          "sim24_overlap": 6,
+          "sim48_full": 18
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 219,
+        "host_qa_verdict_sha256": "8b194f8e19fcdd770015376ae400d0be59a2355f9fe4909621011eefceb4dbc5",
+        "materialized_relative_path": "source-freeze/aa6ffe86-1a0b-4f3e-a6fc-87cfd6f7a557",
+        "plan_item_id": "localsim48_real96_s04_r1c4_core_q3_rep01_yaw00",
+        "recorder_raw_tree_sha256": "4b9a17a311854ed09cd6ea299eecd362f7681555ec0c2a469bae504ca2eb8955",
+        "resolved_episode_tree_sha256": "eb016e2cc1857cb35200ed27075cad9922d45635710c8bfa4f1c95280ce69c76",
+        "size_bytes": 11932705,
+        "source_validation_frame_count": 104,
+        "source_validation_report_sha256": "a1783a9ece907c37e181f8468608e6af7d2d81e38b6868b5aafbf8567cbffd3a"
+      },
+      {
+        "accepted_for_training": false,
+        "attempt_ordinal": 22,
+        "attempt_uuid": "ded98cad-6181-4782-b9a5-6f06885fddaf",
+        "collection_order": 20,
+        "derived_episode_indices": {},
+        "disposition": "host_qa_rejected",
+        "file_count": 203,
+        "materialized_relative_path": "source-freeze/ded98cad-6181-4782-b9a5-6f06885fddaf",
+        "plan_item_id": "localsim48_real96_s03_r3c4_core_center_rep01_yaw45",
+        "reason_codes": [
+          "task1_success_window_not_exact_25_steps"
+        ],
+        "recorder_raw_tree_sha256": "bc9c89719174904c4c560707b8eb83bbf7708edd0b7a97fb98cd3a327d8c2fa2",
+        "resolved_episode_tree_sha256": "f81868431490a8f56a231377c6e145eaab63dc3f45843a38bd5e000d9cd47940",
+        "size_bytes": 10996258
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 23,
+        "attempt_uuid": "ddbbb4ac-4c78-4d09-9b91-7c3acfd7e240",
+        "collection_order": 20,
+        "derived_episode_indices": {
+          "sim24_overlap": 7,
+          "sim48_full": 19
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 171,
+        "host_qa_verdict_sha256": "9a207d315207e46ddf63daa949943aa5f90d65fb9ec8c81a695d15519a62fb45",
+        "materialized_relative_path": "source-freeze/ddbbb4ac-4c78-4d09-9b91-7c3acfd7e240",
+        "plan_item_id": "localsim48_real96_s03_r3c4_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "8bfb75887a945ea320009b78738fe846023a1d302765cd96c95dd1ed18908871",
+        "resolved_episode_tree_sha256": "4fa5d8db745939a488237596662d1e3fa6cf71326b9391da6a43c32787ba3d9b",
+        "size_bytes": 9103416,
+        "source_validation_frame_count": 80,
+        "source_validation_report_sha256": "70160805045d6743dc2b42eebf811d545878c08d5070c81b72c84dbdba12e9e9"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 24,
+        "attempt_uuid": "69b1097c-4cfb-4f6e-979c-632014994aa2",
+        "collection_order": 21,
+        "derived_episode_indices": {
+          "sim24_overlap": 8,
+          "sim48_full": 20
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 153,
+        "host_qa_verdict_sha256": "3759f8b5e133109aac4a879798a92238019b1736f465a8e53e50b0066b456ddc",
+        "materialized_relative_path": "source-freeze/69b1097c-4cfb-4f6e-979c-632014994aa2",
+        "plan_item_id": "localsim48_real96_s01_r1c4_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "0e3a8cff8cfb509c245ff855ccc95b5244b0756b25676b8a6c423a0cc1825161",
+        "resolved_episode_tree_sha256": "72c6abfd6107bd05b36a2fd0efe3bc01e1eb7accb852928350906c6707874a4c",
+        "size_bytes": 8210245,
+        "source_validation_frame_count": 71,
+        "source_validation_report_sha256": "1c1dfb75247bc0a281d4a0ecb34b7be415d726f50beaf5144d7f1f65d6b23fcf"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 25,
+        "attempt_uuid": "ca6bcb07-08aa-446d-a9ae-3c9ff66fcf77",
+        "collection_order": 22,
+        "derived_episode_indices": {
+          "sim24_gap": 12,
+          "sim48_full": 21
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 175,
+        "host_qa_verdict_sha256": "35f023a143c8f989ca7abf5d1958b629bf8c2e8f2aefc832a4e1044c6fd506a9",
+        "materialized_relative_path": "source-freeze/ca6bcb07-08aa-446d-a9ae-3c9ff66fcf77",
+        "plan_item_id": "localsim48_real96_s02_r1c4_core_q1_rep01_yaw45",
+        "recorder_raw_tree_sha256": "0ee234610b7fd79d1b174a21019ae96bbeb0693fd541a68d9cf0f942f7666536",
+        "resolved_episode_tree_sha256": "f0651cdbe6ce0e56b225a70d5d565c73d2833d121233185909b6857b8d46219c",
+        "size_bytes": 9405533,
+        "source_validation_frame_count": 82,
+        "source_validation_report_sha256": "28ce53e7644b2d957520dafe5a274dcb0d91d0a3908185ea3cf086562fe271a4"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 26,
+        "attempt_uuid": "5cb3c049-1466-4621-bfc9-31010fac03bb",
+        "collection_order": 23,
+        "derived_episode_indices": {
+          "sim24_gap": 13,
+          "sim48_full": 22
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 161,
+        "host_qa_verdict_sha256": "4a9a58ce79b7fa1b208dd38e6939db5e934fb74de5ced840034ad2e2de4167ce",
+        "materialized_relative_path": "source-freeze/5cb3c049-1466-4621-bfc9-31010fac03bb",
+        "plan_item_id": "localsim48_real96_s02_r2c4_core_q1_rep01_yaw45",
+        "recorder_raw_tree_sha256": "c58076b276aa0ac5e8cf83866490614face9974f99a43ee9e90bc0dbdfb62c56",
+        "resolved_episode_tree_sha256": "2fad7988c5cf4dd765cd642961992b8b3ba325d924b7d9a434ca421d846a039c",
+        "size_bytes": 8596609,
+        "source_validation_frame_count": 75,
+        "source_validation_report_sha256": "f011359b44b1b85546923b652372886230a3e20e34d5d925874659a704290c6c"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 27,
+        "attempt_uuid": "40135af6-e29d-4459-b209-582c5b6b67e4",
+        "collection_order": 24,
+        "derived_episode_indices": {
+          "sim24_gap": 14,
+          "sim48_full": 23
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 151,
+        "host_qa_verdict_sha256": "40d853243883d84d1596379457cfbfd7e543bdb2ac47b3b13b40413210b852ee",
+        "materialized_relative_path": "source-freeze/40135af6-e29d-4459-b209-582c5b6b67e4",
+        "plan_item_id": "localsim48_real96_s04_r3c3_core_q2_rep01_yaw00",
+        "recorder_raw_tree_sha256": "f069a9d5a9ee8ec4cea9acaef6ff3a1846c5d587cc20861e8d26ac51198b6714",
+        "resolved_episode_tree_sha256": "3756882926f4de183a04af2ea2a12b352e253942b029a6221ee2f3a1e395e065",
+        "size_bytes": 8006665,
+        "source_validation_frame_count": 70,
+        "source_validation_report_sha256": "37ba0e6447033cfc2c818159c461c3a8c921c51467dc066edf37126c7fbcfaf8"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 28,
+        "attempt_uuid": "56690b7a-8ffb-46f1-8092-ab93053b6fce",
+        "collection_order": 25,
+        "derived_episode_indices": {
+          "sim24_gap": 15,
+          "sim48_full": 24
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 143,
+        "host_qa_verdict_sha256": "2dc4c6c953c369a96c3cec699831325a0979eae32be93caaef12a8086125e8d9",
+        "materialized_relative_path": "source-freeze/56690b7a-8ffb-46f1-8092-ab93053b6fce",
+        "plan_item_id": "localsim48_real96_s02_r2c2_core_q3_rep01_yaw45",
+        "recorder_raw_tree_sha256": "27e78935e6b8cc584c412d661e43feaa580fbb5c9bc6786814ce8a138dca20cb",
+        "resolved_episode_tree_sha256": "eec5118a07d5404c90e3ec4547cfa27f6a2736afc6ef9b08db6a0151ef202c45",
+        "size_bytes": 7495526,
+        "source_validation_frame_count": 66,
+        "source_validation_report_sha256": "bfbceb045cc264c4f658b52cf06983a4414fa0b7d998e41ede97c03a07dabcf5"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 29,
+        "attempt_uuid": "1e653620-ad21-45e1-b253-b15da03c2ba6",
+        "collection_order": 26,
+        "derived_episode_indices": {
+          "sim24_overlap": 9,
+          "sim48_full": 25
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 147,
+        "host_qa_verdict_sha256": "5f9d829c4ade1831643ec346020bbf8565d2fb084d9a677ca0b7139ea483b2a3",
+        "materialized_relative_path": "source-freeze/1e653620-ad21-45e1-b253-b15da03c2ba6",
+        "plan_item_id": "localsim48_real96_s01_r1c1_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "d545a486aa81251beebe71fa01fb50c4963e90be1881a5c30344f6310ed6c168",
+        "resolved_episode_tree_sha256": "c252eeefce128e7bec16ec4b82d60d24cbc65ea47e239ec8d6f06d2a2dea3c42",
+        "size_bytes": 7790819,
+        "source_validation_frame_count": 68,
+        "source_validation_report_sha256": "194bc930d0a5a55c23e22d8289b3dfebe63d82af5d8c5a5895e0c4609a3dd550"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 30,
+        "attempt_uuid": "a0084510-3cd0-4ca3-9e4f-53329c024bde",
+        "collection_order": 27,
+        "derived_episode_indices": {
+          "sim24_overlap": 10,
+          "sim48_full": 26
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 139,
+        "host_qa_verdict_sha256": "267d5bb6f45f7720f8feb6f1d85ab1387c8af26939e720a900fb4286c0a86932",
+        "materialized_relative_path": "source-freeze/a0084510-3cd0-4ca3-9e4f-53329c024bde",
+        "plan_item_id": "localsim48_real96_s04_r1c2_core_q1_rep01_yaw00",
+        "recorder_raw_tree_sha256": "d7dc22c88159cb921f6212c30dff09d15087d2dbbae0e862386cf081d054ad1e",
+        "resolved_episode_tree_sha256": "e1444962547057b4ea5dd73b7dd783d4870f67d1b8b436c2b31fd7b1b503384c",
+        "size_bytes": 7416749,
+        "source_validation_frame_count": 64,
+        "source_validation_report_sha256": "0585a4a98c058ad1faa092d04be88f31521409f81b79af1fac09c5d51fc91ee3"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 31,
+        "attempt_uuid": "009e9058-39dc-4a78-a924-c9fb95d4c1d8",
+        "collection_order": 28,
+        "derived_episode_indices": {
+          "sim24_gap": 16,
+          "sim48_full": 27
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 165,
+        "host_qa_verdict_sha256": "0dc46531ffc19f15bdf7d619f201d713e908d8339d0ee9e3d39f22e5cb1b2f01",
+        "materialized_relative_path": "source-freeze/009e9058-39dc-4a78-a924-c9fb95d4c1d8",
+        "plan_item_id": "localsim48_real96_s03_r2c4_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "fd59166f4488e1542c4b59be9535b4498293536fa617e1a9f3e3740321850288",
+        "resolved_episode_tree_sha256": "6d54556291544bbaf695752c6632d62f2b4452300521edef12bb93773d35d2be",
+        "size_bytes": 8713396,
+        "source_validation_frame_count": 77,
+        "source_validation_report_sha256": "efd26602fe478ab3dd1b72a6d63ed7e4e94d3cd504d0b6bb1e71ac47872863d8"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 32,
+        "attempt_uuid": "e5e0569e-25eb-49f0-a37a-b9256f29be97",
+        "collection_order": 29,
+        "derived_episode_indices": {
+          "sim24_gap": 17,
+          "sim48_full": 28
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 181,
+        "host_qa_verdict_sha256": "8e6975bae324f89a2b061a08a1c7a19eac558e836555bb61b59a43d167ec00ed",
+        "materialized_relative_path": "source-freeze/e5e0569e-25eb-49f0-a37a-b9256f29be97",
+        "plan_item_id": "localsim48_real96_s01_r3c1_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "0781db37fa06a7b6beaafdcb02d00602d07d04fde3913a7b943110c1bc24c169",
+        "resolved_episode_tree_sha256": "a3811618ab5ec4f5cdb8d78cc681893690087629941fc5720d7c8d351c30610b",
+        "size_bytes": 9697043,
+        "source_validation_frame_count": 85,
+        "source_validation_report_sha256": "a31d3c719a085263c5c8ee106a14160aedd4abae031862a0a8cdfe552b331c82"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 33,
+        "attempt_uuid": "699b0fc1-1192-4617-8a7a-65d2da7d58d8",
+        "collection_order": 30,
+        "derived_episode_indices": {
+          "sim24_overlap": 11,
+          "sim48_full": 29
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 159,
+        "host_qa_verdict_sha256": "121144a1fabd65a03e1c1d866c0862dff06dadd26d41704ffd6324a48d168e7f",
+        "materialized_relative_path": "source-freeze/699b0fc1-1192-4617-8a7a-65d2da7d58d8",
+        "plan_item_id": "localsim48_real96_s04_r2c3_core_q2_rep01_yaw00",
+        "recorder_raw_tree_sha256": "0ddab95e41de252a671bb68987c797fa866906a0fabb612978601418a8f4a7e1",
+        "resolved_episode_tree_sha256": "aa512277503fdfbf77e4079b2a64da7c2968868d082a8da0b2424de7785b3cc7",
+        "size_bytes": 8467931,
+        "source_validation_frame_count": 74,
+        "source_validation_report_sha256": "29cb77b3e1bbf3df724f0d1851f69635b0f280d7168e1d0075e766605c8fb4c4"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 34,
+        "attempt_uuid": "ce80e42d-c9dc-41b3-95a7-939f0b38556a",
+        "collection_order": 31,
+        "derived_episode_indices": {
+          "sim24_gap": 18,
+          "sim48_full": 30
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 177,
+        "host_qa_verdict_sha256": "87ff2a8d4f6ba332fdc0c8aa448a57a8595cb092c8e0292d985196ed54974c52",
+        "materialized_relative_path": "source-freeze/ce80e42d-c9dc-41b3-95a7-939f0b38556a",
+        "plan_item_id": "localsim48_real96_s03_r2c2_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "e607a57b786725addbaf99640040b79327b62abbb62246bc105a4b8cafd20623",
+        "resolved_episode_tree_sha256": "d93a95ce6c0a29eb4d358523331187b492043e2aacb45589b02ff35d8031715f",
+        "size_bytes": 9436497,
+        "source_validation_frame_count": 83,
+        "source_validation_report_sha256": "198c5cfe4c1b7d82841bfdd11bcee4e6b92581e236e10b79610debe918e1bbb3"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 35,
+        "attempt_uuid": "b3be92b9-eac0-4b0a-a5e8-dd07756801a7",
+        "collection_order": 32,
+        "derived_episode_indices": {
+          "sim24_gap": 19,
+          "sim48_full": 31
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 175,
+        "host_qa_verdict_sha256": "cdbcc816f414f013f1bb09c9478f408eb32e2d1598a75ba23f150b9e5eda80cf",
+        "materialized_relative_path": "source-freeze/b3be92b9-eac0-4b0a-a5e8-dd07756801a7",
+        "plan_item_id": "localsim48_real96_s04_r2c1_core_q0_rep01_yaw00",
+        "recorder_raw_tree_sha256": "2dc353554adf1cfd6a8de1776d30054c28ca88292faab48c8bd994e8422ddd8d",
+        "resolved_episode_tree_sha256": "75a46913d7401411c421264b1ac36253153b81efc5a0f08a96b19d50cc7c1f32",
+        "size_bytes": 9445875,
+        "source_validation_frame_count": 82,
+        "source_validation_report_sha256": "2bec7f8ad3733780dfc6d5ee2a88b78003d6c3823234dd1579ab98eea10c381c"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 36,
+        "attempt_uuid": "349e5867-dbe5-4f57-8ee8-000d355939fa",
+        "collection_order": 33,
+        "derived_episode_indices": {
+          "sim24_overlap": 12,
+          "sim48_full": 32
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 203,
+        "host_qa_verdict_sha256": "04e1ca3177838098d337c6d91347dcc16613e1379d32b3fc38ca11f47fe384e3",
+        "materialized_relative_path": "source-freeze/349e5867-dbe5-4f57-8ee8-000d355939fa",
+        "plan_item_id": "localsim48_real96_s02_r2c1_core_q2_rep01_yaw45",
+        "recorder_raw_tree_sha256": "e2fd2a47c88bde385de4911eb02c5e75131a1078ed41ad40ca1c6e6c19fd762e",
+        "resolved_episode_tree_sha256": "8c67e86c5e5d99c8d5a77ae6cc684f0c4a0de9d981cedf8ba6f9968bb5060431",
+        "size_bytes": 10984902,
+        "source_validation_frame_count": 96,
+        "source_validation_report_sha256": "7da6bac161d7331b9a1722c4c75815607849977ee02203d7cbd6a13c03e83d60"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 37,
+        "attempt_uuid": "b36e069a-7706-4d1f-8820-0b7be246897f",
+        "collection_order": 34,
+        "derived_episode_indices": {
+          "sim24_overlap": 13,
+          "sim48_full": 33
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 165,
+        "host_qa_verdict_sha256": "50650a5813f451ae21d7ebaa254fe3592540caf43ae2bee23c608a6e9c2db4e1",
+        "materialized_relative_path": "source-freeze/b36e069a-7706-4d1f-8820-0b7be246897f",
+        "plan_item_id": "localsim48_real96_s04_r1c1_core_q0_rep01_yaw00",
+        "recorder_raw_tree_sha256": "8a5da421e5fd518cf2de1e189370a3eb0c2e831270a24338b4c6d7d5ed0dc27b",
+        "resolved_episode_tree_sha256": "4308248ea3065d3a93ff9015a0ef21382ca85e8089ae9fda5d080abda5fb6b6f",
+        "size_bytes": 8973381,
+        "source_validation_frame_count": 77,
+        "source_validation_report_sha256": "e50f2cbdc8d73815cd40a47ae32acb11523668d59d03b89099b87c47d9586669"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 38,
+        "attempt_uuid": "ad21548e-5d5d-47c2-ac02-d9bd0ec8422d",
+        "collection_order": 35,
+        "derived_episode_indices": {
+          "sim24_overlap": 14,
+          "sim48_full": 34
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 207,
+        "host_qa_verdict_sha256": "d6c711acdf758728e86257a3532ca1255440129bf308a6e005a2b51993896fab",
+        "materialized_relative_path": "source-freeze/ad21548e-5d5d-47c2-ac02-d9bd0ec8422d",
+        "plan_item_id": "localsim48_real96_s01_r2c4_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "caa48c7a83c26c2d89a74194764df3f2884578892a3f6e4f5b883ad2b3522f80",
+        "resolved_episode_tree_sha256": "ebf8cd6768a166f962bda90277d3b0beda5d6c9629f01c130f68b5fdc8223c6f",
+        "size_bytes": 11263750,
+        "source_validation_frame_count": 98,
+        "source_validation_report_sha256": "d14ece50f5f70ae8005388cb2bf8e6b773538c364b008d25d7e558ba7f53da0e"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 39,
+        "attempt_uuid": "dd2805f2-f626-4bb7-abbd-feb41724ac6a",
+        "collection_order": 36,
+        "derived_episode_indices": {
+          "sim24_overlap": 15,
+          "sim48_full": 35
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 187,
+        "host_qa_verdict_sha256": "20b8dc7aa232903260f71fb1dd24c72adc80bfa09eee9d06e0b11832fff3043c",
+        "materialized_relative_path": "source-freeze/dd2805f2-f626-4bb7-abbd-feb41724ac6a",
+        "plan_item_id": "localsim48_real96_s01_r1c2_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "291b2bb2404e7fcf95a6d603aa7adcb280caae87e207c22bf0d290d784ff73a2",
+        "resolved_episode_tree_sha256": "d72dc4db29f603502a1a220658c22770907e2b7d7824a7efacb47c43541244bc",
+        "size_bytes": 10219487,
+        "source_validation_frame_count": 88,
+        "source_validation_report_sha256": "912098786ea129a7baad5ef46398fcd1a35c86b7677cf5ccea4d952955ef7b1d"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 40,
+        "attempt_uuid": "cbb51174-4baf-423d-a891-04a93a00dfb9",
+        "collection_order": 37,
+        "derived_episode_indices": {
+          "sim24_gap": 20,
+          "sim48_full": 36
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 191,
+        "host_qa_verdict_sha256": "539b90d93e24973e8a44c929bb552b71c40d8b828dc6f145274473f98b609f61",
+        "materialized_relative_path": "source-freeze/cbb51174-4baf-423d-a891-04a93a00dfb9",
+        "plan_item_id": "localsim48_real96_s01_r3c2_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "b6d84cf87af9c5acc902666e894fd0b0c71b4bbad1927b10b581f3b062824064",
+        "resolved_episode_tree_sha256": "fc52b791b0411951b7588fb2226f648409eea22f5c631a00199521f3d84ed053",
+        "size_bytes": 10362320,
+        "source_validation_frame_count": 90,
+        "source_validation_report_sha256": "6547080e43786d4080ec95eb6abdba024ad6d1838cc0ca972cb5ee93326d0469"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 41,
+        "attempt_uuid": "4d6ef552-c8f5-42dd-9d76-fd4b516d98e5",
+        "collection_order": 38,
+        "derived_episode_indices": {
+          "sim24_overlap": 16,
+          "sim48_full": 37
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 231,
+        "host_qa_verdict_sha256": "2cc2af5442867431c324b184bbcd9394af994643db853dea44c3f148c29dd82f",
+        "materialized_relative_path": "source-freeze/4d6ef552-c8f5-42dd-9d76-fd4b516d98e5",
+        "plan_item_id": "localsim48_real96_s03_r3c1_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "65d1458fd969a3dae2d8f767f7b0778a03fcb2aa5fdd3edd9c4b62df133cc2f2",
+        "resolved_episode_tree_sha256": "ba5a52502f7a6c3e7d6da7f4952d23cc2efd57b18124f77e9f4455ef163c9391",
+        "size_bytes": 12729531,
+        "source_validation_frame_count": 110,
+        "source_validation_report_sha256": "4ce6e830a7af58da583947b4ca5d8ba0fe214112ebf56d77ccb287203bd299dd"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 42,
+        "attempt_uuid": "074ff30d-c669-4ab3-b6d0-14ebd22ee477",
+        "collection_order": 39,
+        "derived_episode_indices": {
+          "sim24_overlap": 17,
+          "sim48_full": 38
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 181,
+        "host_qa_verdict_sha256": "dd6377ef1d0295cc720f4f756aa877b6beb26ff9cbdfd0a995875c1c8e55d034",
+        "materialized_relative_path": "source-freeze/074ff30d-c669-4ab3-b6d0-14ebd22ee477",
+        "plan_item_id": "localsim48_real96_s04_r2c2_core_q1_rep01_yaw00",
+        "recorder_raw_tree_sha256": "1ef78ac1cee82d40c304bcaa10f753bbb35ab27bb2d503061189705843782ee1",
+        "resolved_episode_tree_sha256": "14d437be90d7e865065351db02389704e5737e64b5e02475b44d7630a6493723",
+        "size_bytes": 9862045,
+        "source_validation_frame_count": 85,
+        "source_validation_report_sha256": "e61a0910b898dbee2affb06d3e5aa8c3d6fad8e615d7a6db0ee52fce9ae806b2"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 43,
+        "attempt_uuid": "d17a57a3-9f00-4dfb-ae14-619416c594e4",
+        "collection_order": 40,
+        "derived_episode_indices": {
+          "sim24_gap": 21,
+          "sim48_full": 39
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 175,
+        "host_qa_verdict_sha256": "9512da67542acfb1d168527c5faee27e685618469337cb96cad5bc7a712229ca",
+        "materialized_relative_path": "source-freeze/d17a57a3-9f00-4dfb-ae14-619416c594e4",
+        "plan_item_id": "localsim48_real96_s03_r1c2_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "3105f033cba8ee46aa12edfa4e8778093a5653f0ce053c6f75f4f5f0de6ea0a1",
+        "resolved_episode_tree_sha256": "193ac0f52f496d7e05135622e506b9b6ee418f3e2a46e91b834e5f75a49c472a",
+        "size_bytes": 9515565,
+        "source_validation_frame_count": 82,
+        "source_validation_report_sha256": "4175ab2bdfd0a0d0d66db0e24402ae53d652ad2bf8f5eb94975bedbe5f8196be"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 44,
+        "attempt_uuid": "051f9cd2-9c06-4366-bfbb-f5572b0ee895",
+        "collection_order": 41,
+        "derived_episode_indices": {
+          "sim24_overlap": 18,
+          "sim48_full": 40
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 203,
+        "host_qa_verdict_sha256": "cb01226206cb97bd2be675197d3bf14494ee1f255604f33b55d8272810f54f22",
+        "materialized_relative_path": "source-freeze/051f9cd2-9c06-4366-bfbb-f5572b0ee895",
+        "plan_item_id": "localsim48_real96_s03_r3c3_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "918abc72418c221b575c493a5096e32885e7c1bdf0b5337bfda0cbbcee341909",
+        "resolved_episode_tree_sha256": "690f4bb3ecdf89ae9fcbe6cb5b985147583c9e72b27f4b5e3d785dd7102c96ef",
+        "size_bytes": 11023505,
+        "source_validation_frame_count": 96,
+        "source_validation_report_sha256": "cf49c15f0cda565d14657ee74c1b126635e180cbba4870305329bf0b3708083f"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 45,
+        "attempt_uuid": "9010f393-a703-4391-90ab-b40f002b111f",
+        "collection_order": 42,
+        "derived_episode_indices": {
+          "sim24_overlap": 19,
+          "sim48_full": 41
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 163,
+        "host_qa_verdict_sha256": "54bda3fb05c25dda3bdae6d0a00690756dfe2aaa66107ec7ebd447418021e581",
+        "materialized_relative_path": "source-freeze/9010f393-a703-4391-90ab-b40f002b111f",
+        "plan_item_id": "localsim48_real96_s04_r2c4_core_q3_rep01_yaw00",
+        "recorder_raw_tree_sha256": "d7cd0a704025ab25b5afbf8c0b841593af56c557b2e74879c6e92d9ab8b6e046",
+        "resolved_episode_tree_sha256": "51260da73cf146aa18a88049dc9b67b5e4605c8c29a4d0279309c1902f8fa873",
+        "size_bytes": 8717055,
+        "source_validation_frame_count": 76,
+        "source_validation_report_sha256": "485d06f2867bf263350d2c7b1b66c047add956bda385472f0f64cd1ec0fb576c"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 46,
+        "attempt_uuid": "18cb2a43-dfd3-44c6-bd06-94dad860bf0a",
+        "collection_order": 43,
+        "derived_episode_indices": {
+          "sim24_gap": 22,
+          "sim48_full": 42
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 163,
+        "host_qa_verdict_sha256": "533bbbd2a69a21bbde94a0531b61cf700dd4ced467b7ec76e9144a7e425bfd2b",
+        "materialized_relative_path": "source-freeze/18cb2a43-dfd3-44c6-bd06-94dad860bf0a",
+        "plan_item_id": "localsim48_real96_s03_r1c4_core_center_rep01_yaw45",
+        "recorder_raw_tree_sha256": "5988020af01a9b540c697dc7234076647113c0964b5263c23550dc1510bcc109",
+        "resolved_episode_tree_sha256": "837078091581facfe556a1d1e04926f277bb8dd8c429dc270f37e08bcaede987",
+        "size_bytes": 8769215,
+        "source_validation_frame_count": 76,
+        "source_validation_report_sha256": "2dfded7279e88b268d0f482cb141952cd20e9b1617fea3f7652b4fdba5039faa"
+      },
+      {
+        "accepted_for_training": false,
+        "attempt_ordinal": 47,
+        "attempt_uuid": "d33a2073-70c3-46be-ade4-42eceb45f0c0",
+        "collection_order": 44,
+        "derived_episode_indices": {},
+        "disposition": "host_qa_rejected",
+        "file_count": 181,
+        "materialized_relative_path": "source-freeze/d33a2073-70c3-46be-ade4-42eceb45f0c0",
+        "plan_item_id": "localsim48_real96_s02_r3c4_core_q1_rep01_yaw45",
+        "reason_codes": [
+          "task1_success_window_not_exact_25_steps"
+        ],
+        "recorder_raw_tree_sha256": "a851c8601890175aed75646611c4b7b4d6e5e3859f2e6c8a156f4619c59d64c6",
+        "resolved_episode_tree_sha256": "5f5a505890c982606ee9c9c62045f15f775ad2df153526e1e9a507a7b4ba858a",
+        "size_bytes": 9647522
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 48,
+        "attempt_uuid": "77a1e437-fdef-4ec9-adce-5966187cd825",
+        "collection_order": 44,
+        "derived_episode_indices": {
+          "sim24_overlap": 20,
+          "sim48_full": 43
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 173,
+        "host_qa_verdict_sha256": "74f4af4227b0a6c76f60efe58e87eee6149074f9917bcaecf940d000be3db72f",
+        "materialized_relative_path": "source-freeze/77a1e437-fdef-4ec9-adce-5966187cd825",
+        "plan_item_id": "localsim48_real96_s02_r3c4_core_q1_rep01_yaw45",
+        "recorder_raw_tree_sha256": "e9f85a1364f2048f2f8b5f972c2b3f2f4d81c7389ba24b967f75ee2c6dabbf01",
+        "resolved_episode_tree_sha256": "0fdfa037183f6348ed8ec1f3d7163611e8656fdab22246496876aa1a01b4e9ed",
+        "size_bytes": 9282002,
+        "source_validation_frame_count": 81,
+        "source_validation_report_sha256": "b7a0830d4a07876b16c32e56c0ee35a3c6c72028529a5c089111b71e7185a688"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 49,
+        "attempt_uuid": "8ac48031-7eac-4cb4-88e7-1db376a3e4ec",
+        "collection_order": 45,
+        "derived_episode_indices": {
+          "sim24_overlap": 21,
+          "sim48_full": 44
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 177,
+        "host_qa_verdict_sha256": "08112c9ffc602779b5fde4085d26058fc8fa1ba147cfdeb1c7eba333cc509f50",
+        "materialized_relative_path": "source-freeze/8ac48031-7eac-4cb4-88e7-1db376a3e4ec",
+        "plan_item_id": "localsim48_real96_s01_r2c2_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "cb3a21dbc90a789a1d1ac2444b71f759d32165f4e21f095f4b56b5d3cd5564dc",
+        "resolved_episode_tree_sha256": "f560612e12796b430f81235b38f6cab55aeaade761b18643e523fda2213ef747",
+        "size_bytes": 9506464,
+        "source_validation_frame_count": 83,
+        "source_validation_report_sha256": "df17255e20d667323e4732f02dd57e50afea85123e74c4bfc53671310b4c96ec"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 50,
+        "attempt_uuid": "5ee1949c-e33a-45c8-818d-2cf984e4aa46",
+        "collection_order": 46,
+        "derived_episode_indices": {
+          "sim24_overlap": 22,
+          "sim48_full": 45
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 199,
+        "host_qa_verdict_sha256": "b2e2ff48ce80b73da3dc7eeebe9f07cebe720a2cf9722b0a9846a1f3f489c729",
+        "materialized_relative_path": "source-freeze/5ee1949c-e33a-45c8-818d-2cf984e4aa46",
+        "plan_item_id": "localsim48_real96_s02_r1c3_core_q0_rep01_yaw45",
+        "recorder_raw_tree_sha256": "85f0eebca54a1aa9afb7583480bdae532873a14284ca7ea367e868e87fafe6f4",
+        "resolved_episode_tree_sha256": "621e14d483b01967e4f63ca98e59e5fa6e7cd008aaddc2bbdc4ee8d014e95e94",
+        "size_bytes": 10902773,
+        "source_validation_frame_count": 94,
+        "source_validation_report_sha256": "806b370efbaa2f0a272ea6ee48640fbeb8a90db0e9ee6c7dd29a74d70458cc9b"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 51,
+        "attempt_uuid": "5c381d9f-5f65-477d-ad5e-9026b0e2a261",
+        "collection_order": 47,
+        "derived_episode_indices": {
+          "sim24_overlap": 23,
+          "sim48_full": 46
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 177,
+        "host_qa_verdict_sha256": "e27eafc8f93fd441d64ef22862fa7bfe85772c6044e977d13e8849e030f982b4",
+        "materialized_relative_path": "source-freeze/5c381d9f-5f65-477d-ad5e-9026b0e2a261",
+        "plan_item_id": "localsim48_real96_s01_r2c3_core_center_rep01_yaw00",
+        "recorder_raw_tree_sha256": "3355b6cdd9aae9ced9bce18a54aea457091c1cc8ba5af31d3020c7725c7a5462",
+        "resolved_episode_tree_sha256": "4707baab69499b23e051b4beb038afb038aabaf86089c16c3bd617198add63c9",
+        "size_bytes": 9579508,
+        "source_validation_frame_count": 83,
+        "source_validation_report_sha256": "0fc5148903a495158d0e42ed36c7a9a2c9f1d1f434edd56e528e2adacb95e77f"
+      },
+      {
+        "accepted_for_training": true,
+        "attempt_ordinal": 52,
+        "attempt_uuid": "622c7546-2ef7-4301-bbd1-4cd27e238554",
+        "collection_order": 48,
+        "derived_episode_indices": {
+          "sim24_gap": 23,
+          "sim48_full": 47
+        },
+        "disposition": "accepted_for_training",
+        "file_count": 155,
+        "host_qa_verdict_sha256": "f155d5e356ea38336397f7bfc7479cacb2c409c0b4f98a963e9e6d801de84392",
+        "materialized_relative_path": "source-freeze/622c7546-2ef7-4301-bbd1-4cd27e238554",
+        "plan_item_id": "localsim48_real96_s04_r1c3_core_q2_rep01_yaw00",
+        "recorder_raw_tree_sha256": "ea8399eec27890603eeead545c1280afc3aff3ab6912e3aaa8324158a0544292",
+        "resolved_episode_tree_sha256": "47d2e626786ff4029cb1cfb325ed9ad08b2ad15b00f8765e39c0e089c1833ecf",
+        "size_bytes": 8324730,
+        "source_validation_frame_count": 72,
+        "source_validation_report_sha256": "ac42e98011f9a2ed6f058fc76311810e90fad8bdcc3d5dbd798a8965ff19afab"
+      }
+    ],
+    "byte_and_semantic_integrity": "pass_155_files_identity_revision154_tail_and_154_event_canonical_chain_match",
+    "ledger_event_count": 154,
+    "ledger_revision": 154,
+    "ledger_tail_event_sha256": "33b14d0461bf9e6ff8750bc734758de3e68d16db169f3e33fb1931797714a5df",
+    "membership_report_relative_path": "evidence/membership-revision154.json",
+    "membership_report_sha256": "3259dcd48ad18a43acc98b41660cae7f64b6f3baf97a6b4f23dc295c3cdf4c32",
+    "plan_item_to_episode": [
+      {
+        "attempt_uuid": "7ab8a124-2431-42b1-948a-41b30932d864",
+        "collection_order": 1,
+        "plan_item_id": "localsim48_real96_s02_r3c3_core_q0_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "b4ebd36a-1262-43df-a498-125c92fe9b47",
+        "collection_order": 2,
+        "plan_item_id": "localsim48_real96_s02_r1c2_core_q3_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "d4b86beb-f7c9-455b-bca9-6c2c962dcfca",
+        "collection_order": 3,
+        "plan_item_id": "localsim48_real96_s04_r3c4_core_q3_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "fa726813-8517-4f08-90f9-0b68fdf37e5d",
+        "collection_order": 4,
+        "plan_item_id": "localsim48_real96_s04_r3c2_core_q1_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "70a75d41-5e12-48f7-b714-911dfeaae968",
+        "collection_order": 5,
+        "plan_item_id": "localsim48_real96_s03_r1c3_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "e8e3bc93-4a92-49f2-b534-fe856c531832",
+        "collection_order": 6,
+        "plan_item_id": "localsim48_real96_s01_r3c3_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "fcdaca2f-99a1-4d9b-ad98-065f14305eb8",
+        "collection_order": 7,
+        "plan_item_id": "localsim48_real96_s02_r1c1_core_q2_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "544de35b-81fe-4c20-acbe-a651d5006a33",
+        "collection_order": 8,
+        "plan_item_id": "localsim48_real96_s01_r2c1_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "67d60dd0-0dd2-42d9-9617-059e3f2fa2b8",
+        "collection_order": 9,
+        "plan_item_id": "localsim48_real96_s01_r1c3_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "0100aca8-c39b-4652-bb1b-bae28a7e7849",
+        "collection_order": 10,
+        "plan_item_id": "localsim48_real96_s02_r3c2_core_q3_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "35d78a16-0035-4691-a405-a8451ee53339",
+        "collection_order": 11,
+        "plan_item_id": "localsim48_real96_s02_r2c3_core_q0_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "d38642bb-d1e9-4bad-a381-d67ced58aeed",
+        "collection_order": 12,
+        "plan_item_id": "localsim48_real96_s03_r2c3_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "9b1684f0-9af0-4c12-b684-4bb733f07f09",
+        "collection_order": 13,
+        "plan_item_id": "localsim48_real96_s03_r3c2_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "c5c13ff5-d898-4647-866a-dd6eb3003387",
+        "collection_order": 14,
+        "plan_item_id": "localsim48_real96_s02_r3c1_core_q2_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "1b1f16a5-95b4-41d5-84e8-e10b7c5cef69",
+        "collection_order": 15,
+        "plan_item_id": "localsim48_real96_s03_r1c1_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "2e20a169-7d63-4a62-9344-7ded0510585e",
+        "collection_order": 16,
+        "plan_item_id": "localsim48_real96_s04_r3c1_core_q0_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "91210079-5af6-40da-9762-f46bbdae1e5f",
+        "collection_order": 17,
+        "plan_item_id": "localsim48_real96_s03_r2c1_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "13627e84-0968-4943-9aff-d19bdbce0d47",
+        "collection_order": 18,
+        "plan_item_id": "localsim48_real96_s01_r3c4_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "aa6ffe86-1a0b-4f3e-a6fc-87cfd6f7a557",
+        "collection_order": 19,
+        "plan_item_id": "localsim48_real96_s04_r1c4_core_q3_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "ddbbb4ac-4c78-4d09-9b91-7c3acfd7e240",
+        "collection_order": 20,
+        "plan_item_id": "localsim48_real96_s03_r3c4_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "69b1097c-4cfb-4f6e-979c-632014994aa2",
+        "collection_order": 21,
+        "plan_item_id": "localsim48_real96_s01_r1c4_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "ca6bcb07-08aa-446d-a9ae-3c9ff66fcf77",
+        "collection_order": 22,
+        "plan_item_id": "localsim48_real96_s02_r1c4_core_q1_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "5cb3c049-1466-4621-bfc9-31010fac03bb",
+        "collection_order": 23,
+        "plan_item_id": "localsim48_real96_s02_r2c4_core_q1_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "40135af6-e29d-4459-b209-582c5b6b67e4",
+        "collection_order": 24,
+        "plan_item_id": "localsim48_real96_s04_r3c3_core_q2_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "56690b7a-8ffb-46f1-8092-ab93053b6fce",
+        "collection_order": 25,
+        "plan_item_id": "localsim48_real96_s02_r2c2_core_q3_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "1e653620-ad21-45e1-b253-b15da03c2ba6",
+        "collection_order": 26,
+        "plan_item_id": "localsim48_real96_s01_r1c1_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "a0084510-3cd0-4ca3-9e4f-53329c024bde",
+        "collection_order": 27,
+        "plan_item_id": "localsim48_real96_s04_r1c2_core_q1_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "009e9058-39dc-4a78-a924-c9fb95d4c1d8",
+        "collection_order": 28,
+        "plan_item_id": "localsim48_real96_s03_r2c4_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "e5e0569e-25eb-49f0-a37a-b9256f29be97",
+        "collection_order": 29,
+        "plan_item_id": "localsim48_real96_s01_r3c1_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "699b0fc1-1192-4617-8a7a-65d2da7d58d8",
+        "collection_order": 30,
+        "plan_item_id": "localsim48_real96_s04_r2c3_core_q2_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "ce80e42d-c9dc-41b3-95a7-939f0b38556a",
+        "collection_order": 31,
+        "plan_item_id": "localsim48_real96_s03_r2c2_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "b3be92b9-eac0-4b0a-a5e8-dd07756801a7",
+        "collection_order": 32,
+        "plan_item_id": "localsim48_real96_s04_r2c1_core_q0_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "349e5867-dbe5-4f57-8ee8-000d355939fa",
+        "collection_order": 33,
+        "plan_item_id": "localsim48_real96_s02_r2c1_core_q2_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "b36e069a-7706-4d1f-8820-0b7be246897f",
+        "collection_order": 34,
+        "plan_item_id": "localsim48_real96_s04_r1c1_core_q0_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "ad21548e-5d5d-47c2-ac02-d9bd0ec8422d",
+        "collection_order": 35,
+        "plan_item_id": "localsim48_real96_s01_r2c4_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "dd2805f2-f626-4bb7-abbd-feb41724ac6a",
+        "collection_order": 36,
+        "plan_item_id": "localsim48_real96_s01_r1c2_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "cbb51174-4baf-423d-a891-04a93a00dfb9",
+        "collection_order": 37,
+        "plan_item_id": "localsim48_real96_s01_r3c2_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "4d6ef552-c8f5-42dd-9d76-fd4b516d98e5",
+        "collection_order": 38,
+        "plan_item_id": "localsim48_real96_s03_r3c1_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "074ff30d-c669-4ab3-b6d0-14ebd22ee477",
+        "collection_order": 39,
+        "plan_item_id": "localsim48_real96_s04_r2c2_core_q1_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "d17a57a3-9f00-4dfb-ae14-619416c594e4",
+        "collection_order": 40,
+        "plan_item_id": "localsim48_real96_s03_r1c2_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "051f9cd2-9c06-4366-bfbb-f5572b0ee895",
+        "collection_order": 41,
+        "plan_item_id": "localsim48_real96_s03_r3c3_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "9010f393-a703-4391-90ab-b40f002b111f",
+        "collection_order": 42,
+        "plan_item_id": "localsim48_real96_s04_r2c4_core_q3_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "18cb2a43-dfd3-44c6-bd06-94dad860bf0a",
+        "collection_order": 43,
+        "plan_item_id": "localsim48_real96_s03_r1c4_core_center_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "77a1e437-fdef-4ec9-adce-5966187cd825",
+        "collection_order": 44,
+        "plan_item_id": "localsim48_real96_s02_r3c4_core_q1_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "8ac48031-7eac-4cb4-88e7-1db376a3e4ec",
+        "collection_order": 45,
+        "plan_item_id": "localsim48_real96_s01_r2c2_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "5ee1949c-e33a-45c8-818d-2cf984e4aa46",
+        "collection_order": 46,
+        "plan_item_id": "localsim48_real96_s02_r1c3_core_q0_rep01_yaw45"
+      },
+      {
+        "attempt_uuid": "5c381d9f-5f65-477d-ad5e-9026b0e2a261",
+        "collection_order": 47,
+        "plan_item_id": "localsim48_real96_s01_r2c3_core_center_rep01_yaw00"
+      },
+      {
+        "attempt_uuid": "622c7546-2ef7-4301-bbd1-4cd27e238554",
+        "collection_order": 48,
+        "plan_item_id": "localsim48_real96_s04_r1c3_core_q2_rep01_yaw00"
+      }
+    ],
+    "upstream_snapshot_aggregate_comparison": "not_directly_comparable_profile_and_root_scope_unspecified",
+    "upstream_snapshot_aggregate_sha256": "a1b0f3766a861a2379a1706a7a57eac07b002d5c7284570583a99ef8ac549abf"
+  },
+  "manifest_id": "task1_picklift_localsim48_v0420_gridphase0_postcollection_finalization_result_v1",
+  "official_loader": {
+    "commands": {
+      "sim24_gap": {
+        "argv": [
+          "/home/ubuntu24/Teleop/lerobot/.venv/bin/python",
+          "-B",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/scripts/verify_remote_lerobot_dataset.py",
+          "--subset",
+          "sim24_gap",
+          "--dataset-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim24_gap/dataset",
+          "--diagnostics-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim24_gap/diagnostics",
+          "--membership",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/evidence/membership-revision154.json",
+          "--clean-lerobot-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean",
+          "--report",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/reports/sim24_gap-full-loader-qa.json",
+          "--inventory-dir",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/verification-inventories"
+        ],
+        "environment_overrides": {
+          "HF_DATASETS_OFFLINE": "1",
+          "HF_HUB_OFFLINE": "1",
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONPATH": "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean/src"
+        }
+      },
+      "sim24_overlap": {
+        "argv": [
+          "/home/ubuntu24/Teleop/lerobot/.venv/bin/python",
+          "-B",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/scripts/verify_remote_lerobot_dataset.py",
+          "--subset",
+          "sim24_overlap",
+          "--dataset-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim24_overlap/dataset",
+          "--diagnostics-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim24_overlap/diagnostics",
+          "--membership",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/evidence/membership-revision154.json",
+          "--clean-lerobot-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean",
+          "--report",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/reports/sim24_overlap-full-loader-qa.json",
+          "--inventory-dir",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/verification-inventories"
+        ],
+        "environment_overrides": {
+          "HF_DATASETS_OFFLINE": "1",
+          "HF_HUB_OFFLINE": "1",
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONPATH": "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean/src"
+        }
+      },
+      "sim48_full": {
+        "argv": [
+          "/home/ubuntu24/Teleop/lerobot/.venv/bin/python",
+          "-B",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/scripts/verify_remote_lerobot_dataset.py",
+          "--subset",
+          "sim48_full",
+          "--dataset-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim48_full/dataset",
+          "--diagnostics-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim48_full/diagnostics",
+          "--membership",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/evidence/membership-revision154.json",
+          "--clean-lerobot-root",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean",
+          "--report",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/reports/sim48_full-full-loader-qa.json",
+          "--inventory-dir",
+          "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/verification-inventories"
+        ],
+        "environment_overrides": {
+          "HF_DATASETS_OFFLINE": "1",
+          "HF_HUB_OFFLINE": "1",
+          "PYTHONDONTWRITEBYTECODE": "1",
+          "PYTHONPATH": "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/lerobot-0.6.1-7de2e4c1-clean/src"
+        }
+      }
+    },
+    "feature_contract": {
+      "action": {
+        "dtype": "torch.float32",
+        "semantics": "actual-applied q-to-q+1 command",
+        "shape": [
+          6
+        ],
+        "units": "Real SO-101 units"
+      },
+      "all_values_finite": true,
+      "feature_order": [
+        "shoulder_pan",
+        "shoulder_lift",
+        "elbow_flex",
+        "wrist_flex",
+        "wrist_roll",
+        "gripper"
+      ],
+      "image": {
+        "color": "RGB",
+        "dtype": "torch.float32",
+        "shape_chw": [
+          3,
+          480,
+          640
+        ],
+        "source_rate_hz": 20
+      },
+      "observation_state": {
+        "dtype": "torch.float32",
+        "semantics": "pre-action state",
+        "shape": [
+          6
+        ],
+        "units": "Real SO-101 units"
+      },
+      "sidecar_highres_and_native_transition_identity": "pass",
+      "task": "Pick up the red cube.",
+      "timestamp": "timestamp == frame_index / 20 within each episode"
+    },
+    "full_loader_summary_relative_path": "reports/full-loader-qa-summary.json",
+    "full_loader_summary_sha256": "8f6673fd2f35debe67292b667e9dc51bd3e772acdc58d9e303213a53b7a1c703",
+    "official_lerobot_commit": "7de2e4c1efb27d7d678947349dba0d81b61205d0",
+    "official_lerobot_version": "0.6.1",
+    "official_loader_source_sha256": "da387f34291a659d27b5fad0f87372f243259ec4cb7f824d459fe414c293dd28",
+    "status": "pass"
+  },
+  "result_core": {
+    "relative_path": "result/result-core.json",
+    "sha256": "c45e6738b8e51da108c2523a787c36427e0ee6b5016fcf11da600da9b11ecc40"
+  },
+  "result_inventory": {
+    "file_count": 26807,
+    "relative_path": "result/supporting-artifact-inventory.jsonl",
+    "report_relative_path": "result/supporting-artifact-inventory-report.json",
+    "report_sha256": "524cc5c107097143c446abc0d07b9fc6705080cdf6f643261127da185b011e45",
+    "self_reference_rule": "inventory and its report, independent verification, and final manifest input are excluded",
+    "sha256": "48e978feafb6180927193afb60b0ee3abb45c69ce2d64acc24a8b86391571c68",
+    "total_bytes": 1316877271,
+    "tree_hash_profile": "iam_robot_trainer_length_prefixed_file_tree_sha256_v1",
+    "tree_sha256": "9cfe01b8ea9b49602f18dc251cb32efef571734e2a39368536b28a83cf332810"
+  },
+  "schema_version": 1,
+  "source_freeze": {
+    "device_gap_recovery": {
+      "applied_verdict_tree_sha256": "72e7017617ebe86d3681cf00cfe30f6f44779cb52fecd42915c09712567867dc",
+      "attempt_uuid": "b4ebd36a-1262-43df-a498-125c92fe9b47",
+      "operation": "read_only_adb_pull_of_missing_acceptance_receipt_and_applied_verdict_triad",
+      "receipt_sha256": "bb8c8470c87e39db7ddb3425f1edfe3e9c81ccd7162926c14e877484ac24be24"
+    },
+    "inventory_relative_path": "evidence/source-freeze-inventory.jsonl",
+    "inventory_sha256": "cdaa37a53042f0e82172a13ee57c873c8324fc509817577bdec670bf0f119feb",
+    "materialization_method": "immutable host merge of split early-attempt and worker-auto evidence plus one authorized read-only Quest pull for the missing order-2 receipt/applied-verdict triad",
+    "materialization_report_sha256": "9598e126aec658408dd14b83323f784bae0e2dabbc88e3842bbf27e4aacc3454",
+    "materialized_attempt_hashes_sha256": "e3c85881cbd6a69229188ce5cda831aa0e510047ae54e71d89b4a6beb524f79e",
+    "no_mutation": true,
+    "raw_file_count": 9603,
+    "raw_root": "G:\\PhysicalAI\\SO101LocalRecordings\\task1-localsim48-gridphase0-v2-s01-finalization-v1\\source-freeze",
+    "raw_total_bytes": 501723160,
+    "raw_tree_sha256": "601d5241c586fa9f390e23d9c7f25830d69df9b5b27c7fdb5fd9766cf7c53aae",
+    "remote_conversion_qa_before_after_equal": true,
+    "source_map_sha256": "a4dd1485f245cef79e459dcae56bef4baae849b01fd19eb263b927127f5fa096",
+    "source_validation_before_after_equal": true,
+    "tree_hash_profile": "iam_robot_trainer_length_prefixed_file_tree_sha256_v1"
+  },
+  "source_to_derived_mapping": {
+    "relative_path": "result/source-to-derived-mapping.json",
+    "sha256": "c86667f90e1b6a3d6d5911248c8399cb14e9ac64d43021ccc35475a0a64e0c0f"
+  },
+  "source_validation": {
+    "accepted_episode_count": 48,
+    "frame_count": 4049,
+    "no_source_mutation": true,
+    "per_episode_validator_report_sha256": [
+      "757a14a8339b59ad93c0c7e8fee343c41c7bc3bbf6a957d8f4370bda8da998d0",
+      "ccdaeebfc03469021e0ddac78299495ec93dc6b83d738826e0b49f4e1fc81cfe",
+      "47c91a99a0611c5b6bc780fbe8565971fc2fd0e90ca293aba0b304786c8744c0",
+      "4e09dd73d744a04c7a728b7ed4d16195a85c834b3921b4f2a3ca66b49a8ede28",
+      "96ffddd931b2145bc9e4d23f476e3206a5770de9d8bd5bc76656ded88287a037",
+      "2a91b71040fe626658fa3c6a62288a81980b6484ef086d412e4c6c6e882e2aad",
+      "7439c1d605bffd47405a0d308d9935e72e3829515f4f14500103778a08ffb11d",
+      "a5833809fffa99b9942089e6c4361ce2c5a5972060c33678018c3861e635a1ea",
+      "8426124297b1d93a4f319a2d8d2d7e25dd006c1c3a092b360eefbadd983981ea",
+      "47b6719a9f8a72ba17c7419dd69f7e81d870930381745f9c940a07181ec94a77",
+      "8384eef9c48eae5539c028b65a01afb668ce05e1ebbd80f118c4689205e964d6",
+      "dcf91e9406b28878b6598248f8bbfa228a90750f74c1b0159629ec5887f98e8b",
+      "98a0e5b41873f05936e0a33a7b3c87d34e1c351809e6be9b4b1b177823f979db",
+      "a9fab17d079ab436ba9871627fde377bd2a5b33517feefb823b8aa785eb0636d",
+      "82df68a8d62795c65795f4c35f55f1bda8e148abc085027aff90fbfba223acee",
+      "2911dc433fe9e894a38715e11350f1f35644129cebd4bfdc9a39d634b18a4714",
+      "c13544dc9a7df93c35996cfe8019c47ffdc1f64d2b77bc76ada8534a47f325c0",
+      "4412f99e9cc14710fecc43e27d43b11d20721063a7ddc94403b9eb88881e2605",
+      "a1783a9ece907c37e181f8468608e6af7d2d81e38b6868b5aafbf8567cbffd3a",
+      "70160805045d6743dc2b42eebf811d545878c08d5070c81b72c84dbdba12e9e9",
+      "1c1dfb75247bc0a281d4a0ecb34b7be415d726f50beaf5144d7f1f65d6b23fcf",
+      "28ce53e7644b2d957520dafe5a274dcb0d91d0a3908185ea3cf086562fe271a4",
+      "f011359b44b1b85546923b652372886230a3e20e34d5d925874659a704290c6c",
+      "37ba0e6447033cfc2c818159c461c3a8c921c51467dc066edf37126c7fbcfaf8",
+      "bfbceb045cc264c4f658b52cf06983a4414fa0b7d998e41ede97c03a07dabcf5",
+      "194bc930d0a5a55c23e22d8289b3dfebe63d82af5d8c5a5895e0c4609a3dd550",
+      "0585a4a98c058ad1faa092d04be88f31521409f81b79af1fac09c5d51fc91ee3",
+      "efd26602fe478ab3dd1b72a6d63ed7e4e94d3cd504d0b6bb1e71ac47872863d8",
+      "a31d3c719a085263c5c8ee106a14160aedd4abae031862a0a8cdfe552b331c82",
+      "29cb77b3e1bbf3df724f0d1851f69635b0f280d7168e1d0075e766605c8fb4c4",
+      "198c5cfe4c1b7d82841bfdd11bcee4e6b92581e236e10b79610debe918e1bbb3",
+      "2bec7f8ad3733780dfc6d5ee2a88b78003d6c3823234dd1579ab98eea10c381c",
+      "7da6bac161d7331b9a1722c4c75815607849977ee02203d7cbd6a13c03e83d60",
+      "e50f2cbdc8d73815cd40a47ae32acb11523668d59d03b89099b87c47d9586669",
+      "d14ece50f5f70ae8005388cb2bf8e6b773538c364b008d25d7e558ba7f53da0e",
+      "912098786ea129a7baad5ef46398fcd1a35c86b7677cf5ccea4d952955ef7b1d",
+      "6547080e43786d4080ec95eb6abdba024ad6d1838cc0ca972cb5ee93326d0469",
+      "4ce6e830a7af58da583947b4ca5d8ba0fe214112ebf56d77ccb287203bd299dd",
+      "e61a0910b898dbee2affb06d3e5aa8c3d6fad8e615d7a6db0ee52fce9ae806b2",
+      "4175ab2bdfd0a0d0d66db0e24402ae53d652ad2bf8f5eb94975bedbe5f8196be",
+      "cf49c15f0cda565d14657ee74c1b126635e180cbba4870305329bf0b3708083f",
+      "485d06f2867bf263350d2c7b1b66c047add956bda385472f0f64cd1ec0fb576c",
+      "2dfded7279e88b268d0f482cb141952cd20e9b1617fea3f7652b4fdba5039faa",
+      "b7a0830d4a07876b16c32e56c0ee35a3c6c72028529a5c089111b71e7185a688",
+      "df17255e20d667323e4732f02dd57e50afea85123e74c4bfc53671310b4c96ec",
+      "806b370efbaa2f0a272ea6ee48640fbeb8a90db0e9ee6c7dd29a74d70458cc9b",
+      "0fc5148903a495158d0e42ed36c7a9a2c9f1d1f434edd56e528e2adacb95e77f",
+      "ac42e98011f9a2ed6f058fc76311810e90fad8bdcc3d5dbd798a8965ff19afab"
+    ],
+    "reports_tree_sha256": "a53805b7aaae23eb8a7e28b223a39b32938f793a25013c621fc72a07800bf2a9",
+    "status": "pass",
+    "summary_relative_path": "evidence/source-validation-frozen/summary-with-hashes.json",
+    "summary_sha256": "644b687f4a2b4a52c9bcad54dd6d06a8ea2f0dadb67664fb9fb1e22d9a94c5cf",
+    "validator_tool_sha256": "bfe8882a794cc1b5c603e6ad0959a432cdb37d41786b2c67ad02721d6136602a"
+  },
+  "status": "accepted_engineering_data_ready_for_separately_authorized_training"
+}
