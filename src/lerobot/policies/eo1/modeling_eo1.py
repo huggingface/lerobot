@@ -35,14 +35,26 @@ from ..common.flow_matching import euler_integrate, sample_noise, sample_time_be
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
+from .processor_eo1 import (
+    ACTION_END_TOKEN,
+    ACTION_START_TOKEN,
+    DEFAULT_ACTION_TOKEN,
+    DEFAULT_STATE_TOKEN,
+    EO1_SPECIAL_TOKENS,
+    STATE_END_TOKEN,
+    STATE_START_TOKEN,
+    SYSTEM_MESSAGE,
+    TASK_VLA_TOKEN,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.activations import ACT2FN
-    from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+    from transformers.models.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
     from transformers.utils import torch_compilable_check
 else:
     ACT2FN = None
     Qwen2_5_VLForConditionalGeneration = None
+    Qwen2_5_VLProcessor = None
     torch_compilable_check = None
 
 logger = logging.getLogger(__name__)
@@ -131,10 +143,6 @@ class EO1Policy(PreTrainedPolicy):
 
     def _get_text_processor(self):
         if self._text_processor is None:
-            from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor  # noqa: PLC0415
-
-            from .processor_eo1 import EO1_SPECIAL_TOKENS  # noqa: PLC0415
-
             self._text_processor = Qwen2_5_VLProcessor.from_pretrained(
                 self.config.vlm_base,
                 use_fast=self.config.use_fast_processor,
@@ -170,17 +178,6 @@ class EO1Policy(PreTrainedPolicy):
 
     def prepare_runtime_action_batch(self, batch: dict[str, Any], task: str | list[str]) -> dict[str, Any]:
         """Rebuild the EO-1 action prompt from the runtime's current subtask."""
-        from .processor_eo1 import (  # noqa: PLC0415
-            ACTION_END_TOKEN,
-            ACTION_START_TOKEN,
-            DEFAULT_ACTION_TOKEN,
-            DEFAULT_STATE_TOKEN,
-            STATE_END_TOKEN,
-            STATE_START_TOKEN,
-            SYSTEM_MESSAGE,
-            TASK_VLA_TOKEN,
-        )
-
         state = batch[OBS_STATE]
         batch_size = state.shape[0]
         tasks = self._batch_tasks(task, batch_size)
@@ -281,8 +278,6 @@ class EO1Policy(PreTrainedPolicy):
             prompts = user_text
         else:
             raise ValueError(f"EO-1 expected exactly {batch_size} text prompts.")
-
-        from .processor_eo1 import SYSTEM_MESSAGE  # noqa: PLC0415
 
         image_rows = self._runtime_images(batch, batch_size)
         messages = [

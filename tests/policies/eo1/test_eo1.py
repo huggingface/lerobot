@@ -27,6 +27,7 @@ from torch import nn
 pytest.importorskip("transformers")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
 from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -99,6 +100,8 @@ class DummyVLMBackbone(nn.Module):
 
 
 class DummyTextProcessor:
+    tokenizer = SimpleNamespace(pad_token_id=0, eos_token_id=2)
+
     def apply_chat_template(self, messages, **kwargs):
         del kwargs
         batch_size = len(messages)
@@ -117,8 +120,6 @@ class DummyTextProcessor:
 
 
 def make_eo1_config():
-    from lerobot.policies.eo1.configuration_eo1 import EO1Config
-
     return EO1Config(
         device="cpu",
         dtype="float32",
