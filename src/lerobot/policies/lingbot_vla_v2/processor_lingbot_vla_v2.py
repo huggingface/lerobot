@@ -199,7 +199,15 @@ class LingbotVLAV2FeatureTransformStep(ProcessorStep):
             if action is not None:
                 item[ACTION] = _cpu(action[i])
                 item["action_is_pad"] = torch.zeros(self.chunk_size, dtype=torch.bool)
-            item["task"] = task[i] if isinstance(task, (list, tuple)) else task
+            # Task text can arrive as a list of strings, a collated tensor of indices,
+            # or a plain scalar; normalize to a string for the chat template.
+            if isinstance(task, torch.Tensor):
+                t = task[i].item() if task.ndim > 0 else task.item()
+            elif isinstance(task, (list, tuple)):
+                t = task[i]
+            else:
+                t = task
+            item["task"] = t if isinstance(t, str) else str(t)
             yield item, (action is None)
 
     def __call__(self, transition):

@@ -22,25 +22,43 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 def resolve_robot_config_and_stats(config: "LingbotVLAV2Config") -> None:
     """Fill ``config.robot_config`` / ``config.norm_stats`` from their path fields.
 
-    The parsed contents are serialized into config.json on save, so a checkpoint stays
-    self-contained and loadable on machines where the original paths do not exist.
-    Existing embedded contents always win over the paths.
+    Explicit paths win over the embedded contents, so fine-tuning a checkpoint on a new
+    embodiment actually picks up the new assets (previously the embedded stats from the
+    source checkpoint silently shadowed the CLI-provided paths). Embedded contents are
+    the fallback when the paths are missing — e.g. the checkpoint was moved to another
+    machine — which keeps saved checkpoints self-contained.
     """
-    if config.robot_config is None and config.robot_config_path:
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+
+    if config.robot_config_path and os.path.exists(config.robot_config_path):
         import yaml
 
         with open(config.robot_config_path) as f:
-            config.robot_config = yaml.safe_load(f)
+            robot_config = yaml.safe_load(f)
+        if config.robot_config is not None and config.robot_config != robot_config:
+            logger.warning(
+                "config.robot_config_path contents differ from the checkpoint's embedded "
+                "robot_config; using the path version."
+            )
+        config.robot_config = robot_config
 
-    if config.norm_stats is None:
+    stats_path = config.norm_stats_path
+    if stats_path is None and config.robot_config:
+        stats_path = config.robot_config.get("norm_stats")
+    if stats_path and os.path.exists(stats_path):
         import json
 
-        stats_path = config.norm_stats_path
-        if stats_path is None and config.robot_config:
-            stats_path = config.robot_config.get("norm_stats")
-        if stats_path:
-            with open(stats_path) as f:
-                config.norm_stats = json.load(f)
+        with open(stats_path) as f:
+            norm_stats = json.load(f)
+        if config.norm_stats is not None and config.norm_stats != norm_stats:
+            logger.warning(
+                "config.norm_stats_path contents differ from the checkpoint's embedded "
+                "norm_stats; using the path version."
+            )
+        config.norm_stats = norm_stats
 
 
 @PreTrainedConfig.register_subclass("lingbot_vla_v2")

@@ -143,12 +143,19 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         # the custom forward, and eager is required where flash-attn is absent (Jetson,
         # CPU, this A100 box without the flash_attn package).
         hf_attn = "flash_attention_2" if self.config.attention_implementation == "fa2" else "eager"
+        # The vision tower reads the value straight through, so "fa2" needs the same
+        # translation here (eager / sdpa are already transformers-valid).
+        hf_vit_attn = (
+            "flash_attention_2"
+            if self.config.vit_attn_implementation == "fa2"
+            else self.config.vit_attn_implementation
+        )
         vlm_config = AutoConfig.from_pretrained(self.config.tokenizer_path)
         if self.config.vocab_size not in (0, 257152):
             vlm_config.text_config.vocab_size = self.config.vocab_size
         vlm_config._attn_implementation = hf_attn
         vlm_config.text_config._attn_implementation = hf_attn
-        vlm_config.vision_config._attn_implementation = self.config.vit_attn_implementation
+        vlm_config.vision_config._attn_implementation = hf_vit_attn
         self.qwenvl = Qwen3VLForConditionalGeneration._from_config(vlm_config)
         if self.config.use_lm_head:
             self.qwenvl.tie_weights()
