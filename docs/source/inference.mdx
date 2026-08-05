@@ -149,13 +149,14 @@ lerobot-rollout \
 
 Foot pedal input is also supported via `--strategy.input_device=pedal`. Configure pedal codes with `--strategy.pedal.*` flags.
 
-| Flag                                 | Description                                             |
-| ------------------------------------ | ------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)   |
-| `--strategy.record_autonomous`       | Record autonomous frames too (default: false)           |
-| `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)               |
-| `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard) |
-| `--teleop.type`                      | **Required.** Teleoperator type                         |
+| Flag                                 | Description                                                                                                                                                    |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
+| `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
+| `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
+| `--strategy.smooth_handover`         | Smoothly hand control over at pause / correction start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
+| `--teleop.type`                      | **Required.** Teleoperator type                                                                                                                                |
 
 ### Episodic (`--strategy.type=episodic`)
 
@@ -186,14 +187,15 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `←` (left)  | Discard episode and re-record it |
 | `ESC`       | Stop the recording session       |
 
-| Flag                                            | Description                                                                |
-| ----------------------------------------------- | -------------------------------------------------------------------------- |
-| `--dataset.num_episodes`                        | Number of episodes to record                                               |
-| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                              |
-| `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                    |
-| `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                    |
-| `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes        |
-| `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
+| Flag                                            | Description                                                                                                                                                |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.num_episodes`                        | Number of episodes to record                                                                                                                               |
+| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                                                                                                              |
+| `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                                                                                                    |
+| `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                                                                                                    |
+| `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes                                                                                        |
+| `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior.                                                                                 |
+| `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 
 ---
 

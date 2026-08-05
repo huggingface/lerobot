@@ -62,7 +62,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from pprint import pformat
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import einops
 import gymnasium as gym
@@ -82,12 +82,13 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -107,6 +108,15 @@ def _annotate_eval_frames(frames: np.ndarray, task: str | None, subtask: str | N
     if frames.ndim != 4 or frames.shape[-1] != 3:
         return frames
     return np.stack([annotate_frame(frame, (("Task", task), ("Subtask", subtask))) for frame in frames])
+
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -222,7 +232,9 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
+    # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
+    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
     if render_callback is not None:
         render_callback(env)
 
@@ -457,13 +469,11 @@ def eval_policy(
         exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
-        try:
-            from peft import PeftModel
-
-            if not isinstance(policy, PeftModel):
-                raise exc
-        except ImportError:
-            raise exc from None
+        if not _peft_available:
+            raise exc
+        require_package("peft", extra="peft")
+        if not isinstance(policy, PeftModel):
+            raise exc
 
     start = time.time()
     # Preserve the mode for direct callers. eval_policy_all scopes the mode
@@ -596,7 +606,7 @@ def eval_policy(
         if seeds:
             all_seeds.extend(seeds)
         else:
-            all_seeds.append(None)
+            all_seeds.extend([None] * env.num_envs)
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
@@ -834,13 +844,13 @@ def eval_main(cfg: EvalPipelineConfig):
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
         )
-        print("Overall Aggregated Metrics:")
-        print(info["overall"])
+        logger.info("Overall Aggregated Metrics:")
+        logger.info(info["overall"])
 
         # Print per-suite stats
         for task_group, task_group_info in info.items():
-            print(f"\nAggregated Metrics for {task_group}:")
-            print(task_group_info)
+            logger.info(f"\nAggregated Metrics for {task_group}:")
+            logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
 

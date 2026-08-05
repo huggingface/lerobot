@@ -37,7 +37,7 @@ permissions:
 
 # Sets up the environment variables
 env:
-  UV_VERSION: "0.8.0"
+  UV_VERSION: "0.11.30"
   PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
@@ -63,7 +63,7 @@ jobs:
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
@@ -80,7 +80,7 @@ jobs:
           speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
@@ -137,21 +137,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4.4.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
           file: ./docker/Dockerfile.internal

@@ -162,9 +162,13 @@ def render_sample(
     task: str | None = None,
     dataset_ctx: Any | None = None,
 ) -> RenderedMessages | None:
-    """Resolve one sample's bindings and render its message recipe.
+    """Render recipe-defined messages and supervision for one dataset sample.
 
-    Returns ``None`` when no text or low-level action supervision applies.
+    Resolves bindings against ``persistent`` and ``events`` at frame timestamp
+    ``t``. Blend recipes first route matching sparse VQA annotations, then use
+    deterministic weighted selection for the remaining samples. Returns
+    ``None`` when the selected recipe provides no text or low-level action
+    supervision for this sample.
     """
     persistent_rows = _normalize_rows(persistent or [])
     event_rows = _normalize_rows(events or [])
@@ -211,10 +215,11 @@ def _render_vqa_if_present(
 
     Multiple matching views are selected deterministically by relative weight.
     """
-    assert recipe.blend is not None
+    if recipe.blend is None:
+        return None
     renderable: list[tuple[float, RenderedMessages]] = []
-    for name, component in recipe.blend.items():
-        if not name.startswith("ask_vqa"):
+    for component in recipe.blend.values():
+        if component.route != "vqa":
             continue
         bindings = _resolve_bindings(
             component,
@@ -227,20 +232,22 @@ def _render_vqa_if_present(
         )
         rendered = _render_message_recipe(component, bindings)
         if rendered is not None:
-            renderable.append((float(component.weight or 0.0), rendered))
+            if component.weight is None:
+                raise ValueError("Routed VQA blend components must define a weight.")
+            renderable.append((component.weight, rendered))
 
     if not renderable:
         return None
     if len(renderable) == 1:
         return renderable[0][1]
 
-    # Choose among matching cameras by relative weight, or uniformly when all weights are zero.
-    total = sum(w for w, _ in renderable) or float(len(renderable))
+    # Choose among matching cameras by their validated positive relative weights.
+    total = sum(weight for weight, _ in renderable)
     digest = hashlib.blake2b(f"vqa:{sample_idx}".encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total
     cumulative = 0.0
-    for w, rendered in renderable:
-        cumulative += w or (total / len(renderable))
+    for weight, rendered in renderable:
+        cumulative += weight
         if draw < cumulative:
             return rendered
     return renderable[-1][1]
@@ -264,7 +271,8 @@ def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
         cumulative += component.weight or 0.0
         if draw < cumulative:
             return component
-    assert last_component is not None
+    if last_component is None:
+        raise ValueError("Blend recipes must contain at least one component.")
     return last_component
 
 
@@ -390,7 +398,8 @@ def _render_message_recipe(
     bindings: dict[str, LanguageRow | str | None],
 ) -> RenderedMessages | None:
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
-    assert recipe.messages is not None
+    if recipe.messages is None:
+        raise ValueError("Cannot render a blend recipe as a message recipe.")
     messages: list[dict[str, Any]] = []
     streams: list[str | None] = []
     target_indices: list[int] = []
