@@ -39,6 +39,7 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
+TASK = "task"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
