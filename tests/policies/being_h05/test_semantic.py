@@ -165,6 +165,8 @@ def test_config_and_factories_are_wired_without_importing_author_dependencies():
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))},
     )
     assert isinstance(config, BeingH05Config)
+    assert config.text_loss_weight == 0.1
+    assert config.action_loss_weight == 1.0
     assert get_policy_class("being_h05").name == "being_h05"
     preprocessor, postprocessor = make_pre_post_processors(config)
     assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)

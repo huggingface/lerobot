@@ -142,7 +142,7 @@ lerobot-train \
   --policy.path=lerobot/being_h05_base \
   --policy.recipe_path=recipes/subtask_joint.yaml \
   --policy.action_loss_weight=1.0 \
-  --policy.text_loss_weight=1.0 \
+  --policy.text_loss_weight=0.1 \
   --dataset.repo_id=your_name/your_language_dataset \
   --batch_size=1 \
   --steps=3000 \
@@ -276,7 +276,7 @@ described in [Language columns and recipes](./language_and_recipes).
 | `image_size`          |     224 | Required input image size                 |
 | `recipe_path`         |  `None` | Optional language-supervision recipe      |
 | `action_loss_weight`  |     1.0 | Flow-matching loss weight                 |
-| `text_loss_weight`    |     1.0 | Assistant-token cross-entropy loss weight |
+| `text_loss_weight`    |     0.1 | Assistant-token cross-entropy loss weight |
 
 ## Semantic data convention
 
