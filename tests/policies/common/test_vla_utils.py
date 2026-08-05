@@ -56,8 +56,8 @@ def test_create_sinusoidal_pos_embedding_matches_openpi_formula():
 def test_create_sinusoidal_pos_embedding_validation():
     with pytest.raises(ValueError, match="divisible by 2"):
         create_sinusoidal_pos_embedding(torch.zeros(2), 7, 4e-3, 4.0, device=torch.device("cpu"))
-    with pytest.raises(ValueError, match="batch_size"):
-        create_sinusoidal_pos_embedding(torch.zeros(2, 2), 8, 4e-3, 4.0, device=torch.device("cpu"))
+    with pytest.raises(ValueError, match="must have shape"):
+        create_sinusoidal_pos_embedding(torch.zeros(2, 2, 2), 8, 4e-3, 4.0, device=torch.device("cpu"))
 
 
 def test_make_att_2d_masks_docstring_cases():

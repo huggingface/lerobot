@@ -58,6 +58,8 @@ class PI05Config(PreTrainedConfig):
 
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    # Maximum clean action-prefix length sampled during training. Zero disables trained RTC.
+    rtc_training_max_delay: int = 0
 
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,
@@ -110,6 +112,11 @@ class PI05Config(PreTrainedConfig):
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
+            )
+        if not 0 <= self.rtc_training_max_delay < self.chunk_size:
+            raise ValueError(
+                "rtc_training_max_delay must satisfy "
+                f"0 <= delay < chunk_size ({self.chunk_size}), got {self.rtc_training_max_delay}"
             )
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
