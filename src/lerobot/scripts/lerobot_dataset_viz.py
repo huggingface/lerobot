@@ -94,9 +94,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_FOXGLOVE_PORT = 8765
 DEFAULT_RERUN_PORT = 9090
 
-# Entity path under which the natural-language task is logged.
-TASK_ENTITY = "task"
-
 
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     """Return per-dimension names for a feature from the dataset metadata.
