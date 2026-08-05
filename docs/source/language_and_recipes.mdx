@@ -108,6 +108,7 @@ own binding plus a matching image block, e.g.
 
 ```yaml
 ask_vqa_top:
+  route: vqa
   bindings:
     vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.top)"
     vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.top)"
@@ -127,7 +128,9 @@ ask_vqa_top:
       }
 ```
 
-Add one such sub-recipe per camera the dataset records.
+Add one such sub-recipe per camera the dataset records. The explicit
+`route: vqa` marker makes a matching sparse VQA annotation take precedence
+over normal weighted blend selection; component names are purely descriptive.
 
 ## Layer 3 — training format
 
@@ -141,7 +144,20 @@ sample["target_message_indices"]
 
 The renderer does not apply a tokenizer chat template. Policy processors decide how to serialize the messages for their backbone, which keeps the same dataset usable across SmolVLA, Pi0.5, and any future VLM that expects OpenAI-style chat messages.
 
+## Blends
+
+Blend recipes select one weighted sub-recipe deterministically from the sample index.
+`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
+
+`recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
+weighted blend. For the same sample, its assistant subtask is supervised with
+text cross-entropy on the `low_level` stream while action prediction remains
+active, matching the joint setup from the π0.5 paper. Enable
+`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+
 ## Graceful absence
 
-If both language columns are missing, `None`, or empty, `RenderMessagesStep` is a no-op.
-If an event-scoped branch is selected on a frame without the required event row, rendering returns `None`, allowing a loader to retry another sample.
+If both language columns are missing, `None`, or empty, `RenderMessagesStep` uses
+the task string as low-level supervision when available and otherwise leaves the
+sample unchanged. For an annotated sample, if no recipe branch applies and no
+task fallback exists, rendering returns `None`, allowing a loader to retry another sample.
