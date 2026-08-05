@@ -1077,7 +1077,7 @@ class WallOSS05Policy(PreTrainedPolicy):
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> dict:
-        return {"params": self.parameters()}
+        return self.parameters()
 
     def _tasks(self, batch: dict[str, Any], batch_size: int) -> list[str]:
         task = batch.get("task")
