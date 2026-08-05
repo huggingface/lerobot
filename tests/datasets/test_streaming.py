@@ -113,8 +113,7 @@ def test_streaming_dataset_forwards_hub_token_only_for_remote_data(tmp_path, mon
 
 
 def assert_videos_roll_over(ds: LeRobotDataset) -> None:
-    """Videos spanning several files must decode each frame from its own file (v3.0 rollover).
-    """
+    """Videos spanning several files must decode each frame from its own file (v3.0 rollover)."""
     for key in ds.meta.video_keys:
         episodes = [ds.meta.episodes[ep_idx] for ep_idx in range(ds.meta.total_episodes)]
         file_indices = {ep[f"videos/{key}/file_index"] for ep in episodes}
@@ -561,11 +560,8 @@ def test_invalid_repo_type_fails_before_io():
         ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
-def test_consistency_across_video_files(
-    tmp_path, lerobot_dataset_factory, state_deltas, action_deltas
-):
-    """Videos spanning several files must decode each frame from its own file (v3.0 rollover).
-    """
+def test_consistency_across_video_files(tmp_path, lerobot_dataset_factory, state_deltas, action_deltas):
+    """Videos spanning several files must decode each frame from its own file (v3.0 rollover)."""
     local_path = tmp_path / "test"
     repo_id = f"{DUMMY_REPO_ID}-video-rollover"
     delta_timestamps = (
