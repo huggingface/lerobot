@@ -1368,8 +1368,8 @@ def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
     return np.concatenate([pad, video], axis=1)
 
 
-def _resize_video_to_image_target(video: np.ndarray, image_target_size: list[int] | None) -> np.ndarray:
-    """Resize a ``(B, T, H, W, C)`` camera stream so heterogeneous views can be stacked."""
+def _letterbox_video_to_image_target(video: np.ndarray, image_target_size: list[int] | None) -> np.ndarray:
+    """Fit a ``(B, T, H, W, C)`` camera stream to a common canvas without distortion."""
 
     if image_target_size is None:
         return video
@@ -1379,17 +1379,28 @@ def _resize_video_to_image_target(video: np.ndarray, image_target_size: list[int
     target_w = int(target_w)
     if target_h <= 0 or target_w <= 0:
         raise ValueError(f"image_target_size must contain positive dimensions, got {image_target_size}")
-    if tuple(video.shape[-3:-1]) == (target_h, target_w):
+    source_h, source_w = video.shape[-3:-1]
+    if (source_h, source_w) == (target_h, target_w):
         return video
 
+    scale = min(target_h / float(source_h), target_w / float(source_w))
+    resized_h = min(target_h, max(1, int(round(source_h * scale))))
+    resized_w = min(target_w, max(1, int(round(source_w * scale))))
+
     flat_video = video.reshape(-1, *video.shape[-3:])
-    resized_frames = []
+    letterboxed_frames = []
     for frame in flat_video:
-        resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        resized = cv2.resize(frame, (resized_w, resized_h), interpolation=cv2.INTER_AREA)
         if resized.ndim == 2:
             resized = resized[:, :, None]
-        resized_frames.append(resized)
-    return np.stack(resized_frames, axis=0).reshape(*video.shape[:-3], target_h, target_w, video.shape[-1])
+        canvas = np.zeros((target_h, target_w, video.shape[-1]), dtype=video.dtype)
+        top = (target_h - resized_h) // 2
+        left = (target_w - resized_w) // 2
+        canvas[top : top + resized_h, left : left + resized_w] = resized
+        letterboxed_frames.append(canvas)
+    return np.stack(letterboxed_frames, axis=0).reshape(
+        *video.shape[:-3], target_h, target_w, video.shape[-1]
+    )
 
 
 def _build_n1_7_processor(model_name: str = GROOT_N1_7_BACKBONE_MODEL) -> ProcessorMixin:
@@ -1880,7 +1891,7 @@ class GrootN17PackInputsStep(ProcessorStep):
         if img_keys:
             cams = [_align_video_horizon(_to_uint8_np_bthwc(obs[k]), self.video_horizon) for k in img_keys]
             if len({cam.shape[-3:] for cam in cams}) > 1:
-                cams = [_resize_video_to_image_target(camera, self.image_target_size) for camera in cams]
+                cams = [_letterbox_video_to_image_target(camera, self.image_target_size) for camera in cams]
             video = np.stack(cams, axis=2)  # (B, T, V, H, W, C)
             obs["video"] = video
             image_keys_to_remove = [key for key in obs if key.startswith(OBS_IMAGES)]

@@ -1256,7 +1256,7 @@ def test_groot_n1_7_pack_inputs_orders_video_by_checkpoint_modality_keys():
     assert f"{OBS_IMAGES}.image2" not in output[TransitionKey.OBSERVATION]
 
 
-def test_groot_n1_7_pack_inputs_resizes_mixed_resolution_cameras_before_stack():
+def test_groot_n1_7_pack_inputs_letterboxes_mixed_resolution_cameras_before_stack():
     step = GrootN17PackInputsStep(
         normalize_min_max=False,
         video_modality_keys=["left_wrist", "right_wrist", "base"],
@@ -1275,9 +1275,18 @@ def test_groot_n1_7_pack_inputs_resizes_mixed_resolution_cameras_before_stack():
 
     video = output[TransitionKey.OBSERVATION]["video"]
     assert video.shape == (1, 1, 3, 256, 256, 3)
-    assert np.unique(video[0, 0, 0]).tolist() == [11]
-    assert np.unique(video[0, 0, 1]).tolist() == [22]
-    assert np.unique(video[0, 0, 2]).tolist() == [33]
+    # 16:9 wrist views retain a 256:144 content region; the 4:3 base view
+    # retains a 256:192 region. Black bars fill the remaining canvas instead
+    # of stretching either camera to a square.
+    assert np.all(video[0, 0, 0, :56] == 0)
+    assert np.all(video[0, 0, 0, 56:200] == 11)
+    assert np.all(video[0, 0, 0, 200:] == 0)
+    assert np.all(video[0, 0, 1, :56] == 0)
+    assert np.all(video[0, 0, 1, 56:200] == 22)
+    assert np.all(video[0, 0, 1, 200:] == 0)
+    assert np.all(video[0, 0, 2, :32] == 0)
+    assert np.all(video[0, 0, 2, 32:224] == 33)
+    assert np.all(video[0, 0, 2, 224:] == 0)
     assert f"{OBS_IMAGES}.left_wrist" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.right_wrist" not in output[TransitionKey.OBSERVATION]
     assert f"{OBS_IMAGES}.base" not in output[TransitionKey.OBSERVATION]
