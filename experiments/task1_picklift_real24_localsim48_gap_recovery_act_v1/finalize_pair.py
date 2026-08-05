@@ -53,6 +53,45 @@ def last_metric(log_path: Path) -> dict:
     }
 
 
+def verify_saved_training_contract(
+    condition_id: str,
+    expected_config_path: Path,
+    checkpoint: Path,
+) -> dict:
+    expected = json.loads(expected_config_path.read_text(encoding="utf-8"))
+    saved_path = checkpoint / "train_config.json"
+    saved = json.loads(saved_path.read_text(encoding="utf-8"))
+    checks = {
+        "dataset.repo_id": (saved["dataset"]["repo_id"], expected["dataset"]["repo_id"]),
+        "dataset.root": (saved["dataset"]["root"], expected["dataset"]["root"]),
+        "dataset.domain_balanced_episode_groups": (
+            saved["dataset"]["domain_balanced_episode_groups"],
+            expected["dataset"]["domain_balanced_episode_groups"],
+        ),
+        "dataset.use_imagenet_stats": (
+            saved["dataset"]["use_imagenet_stats"],
+            expected["dataset"]["use_imagenet_stats"],
+        ),
+        "seed": (saved["seed"], 1000),
+        "steps": (saved["steps"], 100000),
+        "batch_size": (saved["batch_size"], 8),
+        "resume": (saved["resume"], False),
+        "output_dir": (saved["output_dir"], expected["output_dir"]),
+        "policy.type": (saved["policy"]["type"], "act"),
+        "policy.chunk_size": (saved["policy"]["chunk_size"], 67),
+        "policy.n_action_steps": (saved["policy"]["n_action_steps"], 67),
+        "policy.pretrained_path": (saved["policy"]["pretrained_path"], None),
+    }
+    mismatches = {
+        key: {"actual": actual, "expected": wanted}
+        for key, (actual, wanted) in checks.items()
+        if actual != wanted
+    }
+    if mismatches:
+        raise RuntimeError(f"Saved training contract mismatch for {condition_id}: {mismatches}")
+    return hash_entry(saved_path)
+
+
 def condition_summary(condition_id: str, condition: dict) -> dict:
     training_root = Path(condition["training_root"])
     smoke_root = training_root / "smoke_500"
@@ -69,6 +108,14 @@ def condition_summary(condition_id: str, condition: dict) -> dict:
     full_validation = json.loads(full_validation_path.read_text(encoding="utf-8"))
     if smoke_validation["status"] != "pass" or full_validation["status"] != "pass":
         raise RuntimeError(f"Offline validation failed for {condition_id}")
+    for label, validation in (("smoke", smoke_validation), ("full", full_validation)):
+        if not validation["all_outputs_shape_1x6_and_finite"]:
+            raise RuntimeError(f"{label} output validation failed for {condition_id}")
+        if [sample["domain"] for sample in validation["samples"]] != [
+            "real",
+            "simulation",
+        ] or not all(sample["output_finite"] for sample in validation["samples"]):
+            raise RuntimeError(f"{label} domain validation mismatch for {condition_id}")
     smoke_counts_path = smoke_root / "domain_sampling_counts.json"
     full_counts_path = full_root / "domain_sampling_counts.json"
     smoke_counts = json.loads(smoke_counts_path.read_text(encoding="utf-8"))
@@ -94,6 +141,8 @@ def condition_summary(condition_id: str, condition: dict) -> dict:
     contract_verification = Path(condition["evidence_root"]) / "training_contract_verification.json"
     config_smoke = EXPERIMENT_ROOT / "configs" / f"{condition_id}_smoke.json"
     config_full = EXPERIMENT_ROOT / "configs" / f"{condition_id}_full.json"
+    selected_checkpoint = full_root / "checkpoints/100000/pretrained_model"
+    saved_train_config = verify_saved_training_contract(condition_id, config_full, selected_checkpoint)
     return {
         "condition": condition_id,
         "status": "offline_training_and_validation_complete_no_rollout_started",
@@ -121,8 +170,9 @@ def condition_summary(condition_id: str, condition: dict) -> dict:
             "metrics": last_metric(full_log),
             "checkpoints": checkpoints,
             "selected_checkpoint_step": 100000,
-            "selected_checkpoint": str(full_root / "checkpoints/100000/pretrained_model"),
+            "selected_checkpoint": str(selected_checkpoint),
             "selected_model_sha256": selected,
+            "saved_train_config": saved_train_config,
             "log": hash_entry(full_log),
             "domain_counts": full_counts,
             "domain_counts_file": hash_entry(full_counts_path),
@@ -175,6 +225,8 @@ def main() -> None:
         "materializer": hash_entry(EXPERIMENT_ROOT / "materialize_pair.py"),
         "config_builder": hash_entry(EXPERIMENT_ROOT / "build_and_verify_configs.py"),
         "checkpoint_validator": hash_entry(EXPERIMENT_ROOT / "validate_checkpoint.py"),
+        "finalizer": hash_entry(EXPERIMENT_ROOT / "finalize_pair.py"),
+        "result_verifier": hash_entry(EXPERIMENT_ROOT / "verify_final_result.py"),
         "condition_C": hash_entry(RESULT_ROOT / "condition_C.json"),
         "condition_D": hash_entry(RESULT_ROOT / "condition_D.json"),
         "run_summary": hash_entry(pair_summary_path),
