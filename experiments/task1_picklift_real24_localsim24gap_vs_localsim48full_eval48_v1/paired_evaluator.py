@@ -25,9 +25,7 @@ SOURCE_RESEARCH_CONTRACT = EXPERIMENT_DIR / "source_authorization.json"
 SOURCE_TRAINING_RESULT = EXPERIMENT_DIR / "source_training_result.json"
 SOURCE_POSE_MANIFEST = EXPERIMENT_DIR / "source_pose_manifest.json"
 SOURCE_EVAL48_PLAN = REPO_ROOT / "experiments/task1_picklift_real48_vs_real96_eval48_v1/evaluation_plan.json"
-EXPECTED_RESEARCH_IDENTITY_VERIFICATION_SHA256 = (
-    "9b3d3c4b3ed65156a300c1731737b6dc789c86547eb848e208545e86a646ecb5"
-)
+EXPECTED_RESEARCH_IDENTITY_VERIFICATION_SHA256 = "9b3d3c4b3ed65156a300c1731737b6dc789c86547eb848e208545e86a646ecb5"
 EXPECTED_PLAN_SHA256 = "61efcb5e4298c86a103d41a963643962801375a4a78f0919b50c037c783ce176"
 EXPECTED_ENGINE_SHA256 = "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96"
 EXPECTED_PROFILE_SHA256 = "6b031bb4c980467addb3e69d68a16032ceae7e45fb3f8e2288d8a4989ff3cbf3"
@@ -165,7 +163,9 @@ def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
     source = json.loads(SOURCE_POSE_MANIFEST.read_text(encoding="utf-8"))
     source_poses = source["ordered_eval_poses"]
     source_trials = trials[::2]
-    if [trial["eval_pose_id"] for trial in source_trials] != [pose["eval_pose_id"] for pose in source_poses]:
+    if [trial["eval_pose_id"] for trial in source_trials] != [
+        pose["eval_pose_id"] for pose in source_poses
+    ]:
         raise RuntimeError("Pose order differs from the frozen research manifest.")
     if any(
         left["pose_order"] != pair_index
@@ -175,7 +175,8 @@ def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
         or left["quadrant"] != right["quadrant"]
         or left["nominal_x_forward_m"] != right["nominal_x_forward_m"]
         or left["nominal_y_lateral_m"] != right["nominal_y_lateral_m"]
-        or left["nominal_yaw_degrees_modulo_90"] != right["nominal_yaw_degrees_modulo_90"]
+        or left["nominal_yaw_degrees_modulo_90"]
+        != right["nominal_yaw_degrees_modulo_90"]
         or left["source_order_sha256"] != right["source_order_sha256"]
         for pair_index, (left, right) in enumerate(
             zip(trials[::2], trials[1::2], strict=True),
@@ -184,31 +185,33 @@ def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
     ):
         raise RuntimeError("A paired pose does not preserve identical frozen pose fields.")
     expected_pair_models = [
-        (MODEL_IDS[0], MODEL_IDS[1]) if pose["order"] % 2 == 1 else (MODEL_IDS[1], MODEL_IDS[0])
+        (MODEL_IDS[0], MODEL_IDS[1])
+        if pose["order"] % 2 == 1
+        else (MODEL_IDS[1], MODEL_IDS[0])
         for pose in source_poses
     ]
     actual_pair_models = [
-        (left["model_key"], right["model_key"]) for left, right in zip(trials[::2], trials[1::2], strict=True)
+        (left["model_key"], right["model_key"])
+        for left, right in zip(trials[::2], trials[1::2], strict=True)
     ]
     if actual_pair_models != expected_pair_models:
         raise RuntimeError("First/second model order differs from the frozen pose manifest.")
-    if {model_id: sum(trial["model_key"] == model_id for trial in trials) for model_id in MODEL_IDS} != {
-        MODEL_IDS[0]: 48,
-        MODEL_IDS[1]: 48,
-    }:
-        raise RuntimeError("Each fixed checkpoint must appear exactly once per frozen pose.")
     if {
-        tier: sum(trial["coverage_tier"] == tier for trial in source_trials)
-        for tier in ("seen_by_real48", "added_by_real96", "unseen_by_both")
-    } != {"seen_by_real48": 24, "added_by_real96": 18, "unseen_by_both": 6}:
+        model_id: sum(trial["model_key"] == model_id for trial in trials)
+        for model_id in MODEL_IDS
+    } != {MODEL_IDS[0]: 48, MODEL_IDS[1]: 48}:
+        raise RuntimeError("Each fixed checkpoint must appear exactly once per frozen pose.")
+    if {tier: sum(trial["coverage_tier"] == tier for trial in source_trials) for tier in (
+        "seen_by_real48", "added_by_real96", "unseen_by_both"
+    )} != {"seen_by_real48": 24, "added_by_real96": 18, "unseen_by_both": 6}:
         raise RuntimeError("Coverage-tier balance changed.")
-    if any(
-        sum(trial["cell"] == cell for trial in source_trials) != 4
-        for cell in {trial["cell"] for trial in source_trials}
-    ):
+    if any(sum(trial["cell"] == cell for trial in source_trials) != 4 for cell in {
+        trial["cell"] for trial in source_trials
+    }):
         raise RuntimeError("Each cell must contain exactly four frozen poses.")
     yaw_counts = {
-        yaw: sum(trial["nominal_yaw_degrees_modulo_90"] == yaw for trial in source_trials) for yaw in (0, 45)
+        yaw: sum(trial["nominal_yaw_degrees_modulo_90"] == yaw for trial in source_trials)
+        for yaw in (0, 45)
     }
     if yaw_counts != {0: 24, 45: 24}:
         raise RuntimeError(f"Yaw balance changed: {yaw_counts}.")
@@ -221,9 +224,7 @@ def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
     if replacement["maximum_linked_replacements_per_original"] != 1:
         raise RuntimeError("At most one linked infrastructure replacement is allowed.")
     if set(replacement["allowed_only_for"]) != {
-        "policy_window_never_started",
-        "confirmed_operator_placement_error",
-        "infrastructure_error",
+        "policy_window_never_started", "confirmed_operator_placement_error", "infrastructure_error"
     }:
         raise RuntimeError("Replacement reason contract changed.")
     authorization = plan["authorization"]
@@ -267,7 +268,9 @@ def verify_static_files(plan: dict) -> dict:
         raise RuntimeError("Ready/return revision must not add a current-relative limiter.")
     if sha256_file(RESEARCH_IDENTITY_VERIFICATION) != EXPECTED_RESEARCH_IDENTITY_VERIFICATION_SHA256:
         raise RuntimeError("Research identity verification record changed.")
-    research_verification = json.loads(RESEARCH_IDENTITY_VERIFICATION.read_text(encoding="utf-8"))
+    research_verification = json.loads(
+        RESEARCH_IDENTITY_VERIFICATION.read_text(encoding="utf-8")
+    )
     if research_verification["head_commit"] != EXPECTED_RESEARCH_COMMIT:
         raise RuntimeError("Verified research commit does not match the frozen plan.")
     if research_verification["tracked_working_tree_status"] != "clean":
@@ -587,7 +590,9 @@ def run_fake_interpolated_ready_probe(plan: dict) -> dict:
         "result": result,
         "commands_sent": len(robot.sent),
         "trajectory_rows": len(records),
-        "all_interpolation_phase": all(row["trajectory_phase"] == "linear_interpolation" for row in records),
+        "all_interpolation_phase": all(
+            row["trajectory_phase"] == "linear_interpolation" for row in records
+        ),
         "first_alpha": records[0]["interpolation_alpha"],
         "last_alpha": records[-1]["interpolation_alpha"],
         "requested_start_state": (ready_pose + start_offset).tolist(),
@@ -706,17 +711,14 @@ def write_software_evidence(plan: dict, dry_run: dict) -> dict:
     manifest_path = software_root / "manifest.json"
     hashes_path = software_root / "hashes.sha256"
     offline_smokes = {
-        model_id: software_root / f"offline_inference_{model_id}.json" for model_id in MODEL_IDS
+        model_id: software_root / f"offline_inference_{model_id}.json"
+        for model_id in MODEL_IDS
     }
     for model_id, path in offline_smokes.items():
         if not path.exists():
             raise RuntimeError(f"Missing required CUDA offline inference smoke: {model_id}")
         smoke = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            smoke.get("status") != "pass"
-            or smoke.get("output_shape") != [1, 6]
-            or smoke.get("output_finite") is not True
-        ):
+        if smoke.get("status") != "pass" or smoke.get("output_shape") != [1, 6] or smoke.get("output_finite") is not True:
             raise RuntimeError(f"Invalid CUDA offline inference smoke: {model_id}")
         if smoke.get("model_sha256") != plan["models"][model_id]["model_sha256"]:
             raise RuntimeError(f"Offline inference checkpoint mismatch: {model_id}")
@@ -826,7 +828,11 @@ def original_evidence_path(plan: dict, trial: dict) -> Path:
 
 
 def infrastructure_invalid_marker_path(plan: dict, trial: dict) -> Path:
-    return Path(plan["evidence_root"]) / "trials" / f"{trial['artifact_stem']}.infrastructure_invalid.json"
+    return (
+        Path(plan["evidence_root"])
+        / "trials"
+        / f"{trial['artifact_stem']}.infrastructure_invalid.json"
+    )
 
 
 def validate_execution_order(
@@ -869,12 +875,11 @@ def validate_execution_order(
             and marker.get("replacement_allowed") is True
             and marker.get("trial_id") == trial["trial_id"]
             and marker.get("artifact_stem") == trial["artifact_stem"]
-            and marker.get("original_evidence", {}).get("sha256") == sha256_file(original_path)
+            and marker.get("original_evidence", {}).get("sha256")
+            == sha256_file(original_path)
         )
         if not marker_invalid:
-            raise RuntimeError(
-                "Infrastructure-invalid marker is malformed or does not bind original evidence."
-            )
+            raise RuntimeError("Infrastructure-invalid marker is malformed or does not bind original evidence.")
     infrastructure_invalid = engine_infrastructure_invalid or marker_invalid
     if not infrastructure_invalid:
         raise RuntimeError("Replacement is allowed only for infrastructure-invalid trials.")
@@ -951,7 +956,9 @@ def build_interpolated_ready_move(engine, profile: dict):
                 start_state.astype(np.float64)
                 + alpha * (target.astype(np.float64) - start_state.astype(np.float64))
             ).astype(np.float32)
-            sent = engine.sent_action_vector(robot.send_action(engine.action_dict(requested)))
+            sent = engine.sent_action_vector(
+                robot.send_action(engine.action_dict(requested))
+            )
             delta = target.astype(np.float64) - observed.astype(np.float64)
             upstream_modified_mask = ~np.isclose(
                 sent,
@@ -979,7 +986,9 @@ def build_interpolated_ready_move(engine, profile: dict):
                 "loop_compute_seconds": compute_seconds,
                 "scheduled_sleep_seconds": scheduled_sleep_seconds,
             }
-            trajectory_handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            trajectory_handle.write(
+                json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+            )
             previous_requested = requested.copy()
             steps += 1
             sleep_fn(scheduled_sleep_seconds)
@@ -1014,7 +1023,9 @@ def build_interpolated_ready_move(engine, profile: dict):
                     "Frozen ready pose was not reached within the existing "
                     f"{engine.READY_MOVE_TIMEOUT_SECONDS}-second movement timeout."
                 )
-            sent = engine.sent_action_vector(robot.send_action(engine.action_dict(target)))
+            sent = engine.sent_action_vector(
+                robot.send_action(engine.action_dict(target))
+            )
             upstream_modified_mask = ~np.isclose(
                 sent,
                 target,
@@ -1041,7 +1052,9 @@ def build_interpolated_ready_move(engine, profile: dict):
                 "loop_compute_seconds": compute_seconds,
                 "scheduled_sleep_seconds": scheduled_sleep_seconds,
             }
-            trajectory_handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+            trajectory_handle.write(
+                json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+            )
             previous_requested = target.copy()
             steps += 1
             settle_steps += 1
