@@ -52,7 +52,7 @@ class WallOSS05Config(PreTrainedConfig):
     recipe_path: str | None = None
     tokenizer_max_length: int = 1000
     flow_loss_weight: float = 1.0
-    text_loss_weight: float = 0.01
+    text_loss_weight: float = 0.1
 
     # LeRobot image key -> model camera slot. Insertion order is prompt order.
     camera_key_mapping: dict[str, str] = field(

@@ -51,6 +51,13 @@ def _config(**overrides) -> WallOSS05Config:
     return WallOSS05Config(**values)
 
 
+def test_default_loss_weights_use_one_to_ten_text_flow_ratio():
+    config = _config()
+
+    assert config.text_loss_weight == 0.1
+    assert config.flow_loss_weight == 1.0
+
+
 class _FakeAdapter:
     def __init__(self):
         self.received_tasks: list[str] = []

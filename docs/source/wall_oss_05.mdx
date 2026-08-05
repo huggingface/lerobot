@@ -186,7 +186,7 @@ lerobot-train \
   --policy.type=wall_oss_05 \
   --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
   --policy.recipe_path=recipes/subtask_joint.yaml \
-  --policy.text_loss_weight=0.01 \
+  --policy.text_loss_weight=0.1 \
   --policy.flow_loss_weight=1.0 \
   --policy.device=cuda \
   --batch_size=1 \
@@ -217,7 +217,7 @@ schema and available recipes.
 | `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning       |
 | `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots        |
 | `recipe_path`             | `None`                     | Enables recipe-driven text and per-sample action supervision |
-| `text_loss_weight`        | `0.01`                     | Weight for supervised assistant-token cross-entropy          |
+| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy          |
 | `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                       |
 | `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length   |
 | `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                  |
