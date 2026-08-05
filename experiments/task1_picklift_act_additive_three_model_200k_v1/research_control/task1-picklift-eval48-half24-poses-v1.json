@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "manifest_id": "task1_picklift_eval48_half24_poses_v1",
+  "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+  "status": "frozen_pretraining_no_result_selection_hardware_not_authorized",
+  "freeze_date": "2026-08-06",
+  "purpose": "Reduce the first real-robot gate to a balanced, result-independent half of the existing frozen Eval48 bank while retaining all 12 cells, both yaws, and all coverage tiers.",
+  "source": {
+    "path": "manifests/task1-picklift-real48-vs-real96-eval48-poses-v1.json",
+    "sha256": "f6bc79e9b99818f12f0e6a374688850374ea6f5cb971ba5da7ef3f32ae8322e7",
+    "real24_membership_path": "manifests/task1-picklift-real24-budget-extension-v1.json",
+    "real24_membership_sha256": "3c2162aa8a9b559921d69bef0c2d2c12e9327c4963a92979458ccea305a54ab3"
+  },
+  "selection_contract": {
+    "result_data_used": false,
+    "allowed_inputs": "pose metadata and Real24 membership only",
+    "fixed_salt": "task1_picklift_eval48_half24_v1",
+    "selected_source_orders": [1, 3, 4, 5, 10, 11, 13, 17, 18, 19, 21, 23, 25, 26, 28, 32, 34, 35, 37, 39, 40, 41, 42, 43],
+    "ordered_eval_pose_id_lines_sha256": "9ad4b2115cf974dc5b58a1a18a158c03bb4827f1f504949f4203ccbb64f7e560"
+  },
+  "ordered_selected_poses": [
+    {"source_order": 1, "eval_pose_id": "eval48_r3c2_seen_by_real48_340_m010_yaw45", "cell": "r3c2", "coverage_tier": "seen_by_real24", "yaw": 45},
+    {"source_order": 3, "eval_pose_id": "eval48_r1c2_seen_by_real48_210_m010_yaw00", "cell": "r1c2", "coverage_tier": "seen_by_real24", "yaw": 0},
+    {"source_order": 4, "eval_pose_id": "eval48_r3c2_added_by_real96_340_m040_yaw00", "cell": "r3c2", "coverage_tier": "added_by_real96", "yaw": 0},
+    {"source_order": 5, "eval_pose_id": "eval48_r3c3_unseen_by_both_335_p025_yaw00", "cell": "r3c3", "coverage_tier": "unseen_by_both", "yaw": 0},
+    {"source_order": 10, "eval_pose_id": "eval48_r2c3_added_by_real96_290_p040_yaw00", "cell": "r2c3", "coverage_tier": "added_by_real96", "yaw": 0},
+    {"source_order": 11, "eval_pose_id": "eval48_r1c4_added_by_real96_240_p060_yaw45", "cell": "r1c4", "coverage_tier": "added_by_real96", "yaw": 45},
+    {"source_order": 13, "eval_pose_id": "eval48_r2c4_seen_by_real48_275_p075_yaw00", "cell": "r2c4", "coverage_tier": "seen_by_real24", "yaw": 0},
+    {"source_order": 17, "eval_pose_id": "eval48_r2c3_seen_by_real48_275_p025_yaw45", "cell": "r2c3", "coverage_tier": "added_by_real48", "yaw": 45},
+    {"source_order": 18, "eval_pose_id": "eval48_r2c1_seen_by_real48_260_m090_yaw00", "cell": "r2c1", "coverage_tier": "added_by_real48", "yaw": 0},
+    {"source_order": 19, "eval_pose_id": "eval48_r3c4_seen_by_real48_310_p090_yaw45", "cell": "r3c4", "coverage_tier": "seen_by_real24", "yaw": 45},
+    {"source_order": 21, "eval_pose_id": "eval48_r2c2_added_by_real96_290_m040_yaw00", "cell": "r2c2", "coverage_tier": "added_by_real96", "yaw": 0},
+    {"source_order": 23, "eval_pose_id": "eval48_r1c4_added_by_real96_210_p060_yaw00", "cell": "r1c4", "coverage_tier": "added_by_real96", "yaw": 0},
+    {"source_order": 25, "eval_pose_id": "eval48_r2c1_seen_by_real48_275_m075_yaw45", "cell": "r2c1", "coverage_tier": "seen_by_real24", "yaw": 45},
+    {"source_order": 26, "eval_pose_id": "eval48_r2c4_unseen_by_both_275_p065_yaw45", "cell": "r2c4", "coverage_tier": "unseen_by_both", "yaw": 45},
+    {"source_order": 28, "eval_pose_id": "eval48_r1c3_added_by_real96_240_p040_yaw00", "cell": "r1c3", "coverage_tier": "added_by_real96", "yaw": 0},
+    {"source_order": 32, "eval_pose_id": "eval48_r2c2_added_by_real96_260_m040_yaw45", "cell": "r2c2", "coverage_tier": "added_by_real96", "yaw": 45},
+    {"source_order": 34, "eval_pose_id": "eval48_r3c1_added_by_real96_340_m060_yaw45", "cell": "r3c1", "coverage_tier": "added_by_real96", "yaw": 45},
+    {"source_order": 35, "eval_pose_id": "eval48_r1c3_unseen_by_both_215_p025_yaw45", "cell": "r1c3", "coverage_tier": "unseen_by_both", "yaw": 45},
+    {"source_order": 37, "eval_pose_id": "eval48_r1c1_seen_by_real48_225_m075_yaw00", "cell": "r1c1", "coverage_tier": "seen_by_real24", "yaw": 0},
+    {"source_order": 39, "eval_pose_id": "eval48_r1c2_seen_by_real48_225_m025_yaw45", "cell": "r1c2", "coverage_tier": "added_by_real48", "yaw": 45},
+    {"source_order": 40, "eval_pose_id": "eval48_r3c1_seen_by_real48_310_m090_yaw00", "cell": "r3c1", "coverage_tier": "added_by_real48", "yaw": 0},
+    {"source_order": 41, "eval_pose_id": "eval48_r3c4_seen_by_real48_325_p075_yaw00", "cell": "r3c4", "coverage_tier": "added_by_real48", "yaw": 0},
+    {"source_order": 42, "eval_pose_id": "eval48_r3c3_added_by_real96_310_p040_yaw45", "cell": "r3c3", "coverage_tier": "added_by_real96", "yaw": 45},
+    {"source_order": 43, "eval_pose_id": "eval48_r1c1_seen_by_real48_240_m090_yaw45", "cell": "r1c1", "coverage_tier": "added_by_real48", "yaw": 45}
+  ],
+  "balance_invariants": {
+    "pose_count": 24,
+    "poses_per_cell": 2,
+    "yaw_counts": {"0": 12, "45": 12},
+    "coverage_counts": {
+      "seen_by_real24": 6,
+      "added_by_real48": 6,
+      "added_by_real96": 9,
+      "unseen_by_both": 3
+    }
+  },
+  "model_order_contract": {
+    "models": {
+      "A": "R24_repeat_200k",
+      "B": "R24_real_gap24_200k",
+      "C": "R24_localsim_gap24_200k"
+    },
+    "per_pose_permutations": ["ABC", "BCA", "CAB", "ACB", "CBA", "BAC"],
+    "assignment": "repeat the six-permutation sequence four times over the 24 selected poses",
+    "each_model_position_counts": {"first": 8, "second": 8, "third": 8},
+    "planned_valid_rollouts": 72
+  },
+  "timing_contract": {
+    "path": "../experiment-design/task1-picklift-real-evaluation-success-early-stop-v1.json",
+    "sha256": "d1025606a5e7139cf9aac383480d41da6d7e1fcb09e3152c5e7b18a5c439e8ff",
+    "use_only_after_owning_runner_implementation_passes": true,
+    "success_early_stop": true,
+    "failure_timeout_seconds": 30
+  },
+  "replacement_rule": "At most one linked replacement only when the policy window never started, operator placement error is confirmed, or infrastructure failed; model failure is never retried.",
+  "hardware_authorized": false,
+  "expansion_rule": "The other 24 Eval48 poses are not authorized by this manifest and require a separate research-control decision.",
+  "claim_boundary": "This is a pretraining pose-bank freeze and does not contain model results or authorize real-robot motion."
+}

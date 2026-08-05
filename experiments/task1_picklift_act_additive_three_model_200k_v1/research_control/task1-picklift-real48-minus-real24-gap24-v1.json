@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "manifest_id": "task1_picklift_real48_minus_real24_gap24_v1",
+  "status": "plan_membership_frozen_materialization_pending",
+  "freeze_date": "2026-08-06",
+  "purpose": "Freeze the exact 24 Real demonstrations added by the nested Real48 subset beyond the frozen Real24 budget subset, for the matched additive-data ACT experiment.",
+  "sources": {
+    "real48_membership": {
+      "path": "manifests/task1-picklift-real48-real96-subsets-v1.json",
+      "sha256": "bdf7ad387cd4d8f619ead947d40c7642682859a3986d6e30df591f767b24ac5b",
+      "dataset_path": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real48_accepted_v1/accepted",
+      "dataset_tree_sha256": "c4534befc536c10217638da91f5cbbaff59b0795ec91f0633e53e8a6d99507b9"
+    },
+    "real24_membership": {
+      "path": "manifests/task1-picklift-real24-budget-extension-v1.json",
+      "sha256": "3c2162aa8a9b559921d69bef0c2d2c12e9327c4963a92979458ccea305a54ab3",
+      "dataset_path": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+      "dataset_tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712"
+    }
+  },
+  "difference_rule": {
+    "definition": "Real48 ordered_plan_item_ids minus the set of Real24 ordered_selected_plan_items.plan_item_id",
+    "ordering": "preserve Real48 membership order",
+    "result_count": 24,
+    "ordered_id_lines_sha256": "48ce20342a931ec1cf63147dbe49f097efa3ca7d7e5553f7c8b667b96ce5a763"
+  },
+  "ordered_plan_item_ids": [
+    "real96_s01_r3c4_core_center_rep01_yaw00",
+    "real96_s01_r3c2_core_center_rep01_yaw00",
+    "real96_s01_r3c3_core_center_rep01_yaw00",
+    "real96_s01_r3c1_core_center_rep01_yaw00",
+    "real96_s01_r1c3_core_center_rep01_yaw00",
+    "real96_s01_r2c1_core_center_rep01_yaw00",
+    "real96_s02_r1c1_core_q2_rep01_yaw45",
+    "real96_s02_r1c2_core_q3_rep01_yaw45",
+    "real96_s02_r2c4_core_q1_rep01_yaw45",
+    "real96_s02_r2c3_core_q0_rep01_yaw45",
+    "real96_s02_r2c2_core_q3_rep01_yaw45",
+    "real96_s02_r1c4_core_q1_rep01_yaw45",
+    "real96_s03_r1c4_core_center_rep01_yaw45",
+    "real96_s03_r1c1_core_center_rep01_yaw45",
+    "real96_s03_r1c2_core_center_rep01_yaw45",
+    "real96_s03_r2c3_core_center_rep01_yaw45",
+    "real96_s03_r2c2_core_center_rep01_yaw45",
+    "real96_s03_r2c4_core_center_rep01_yaw45",
+    "real96_s04_r3c1_core_q0_rep01_yaw00",
+    "real96_s04_r3c2_core_q1_rep01_yaw00",
+    "real96_s04_r3c4_core_q3_rep01_yaw00",
+    "real96_s04_r1c3_core_q2_rep01_yaw00",
+    "real96_s04_r3c3_core_q2_rep01_yaw00",
+    "real96_s04_r2c1_core_q0_rep01_yaw00"
+  ],
+  "required_materialization_checks": [
+    "24 unique plan_item_ids and 24 accepted episodes",
+    "strictly disjoint from Real24 and union exactly equal to Real48",
+    "state and action remain actual-sent float32[6] Real units",
+    "front remains 640x480 at 20 FPS with no wrist camera",
+    "official LeRobot loader passes all 24 episodes",
+    "source frames are not resampled and source values remain exact"
+  ],
+  "claim_boundary": "This freezes Dataset membership only. It does not authorize hardware evaluation and does not establish a data-budget or Sim-to-Real effect."
+}

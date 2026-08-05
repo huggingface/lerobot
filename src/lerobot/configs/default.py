@@ -51,6 +51,10 @@ class DatasetConfig:
     # configured, every training batch contains an equal quota from each
     # domain; no domain is oversampled within an epoch.
     domain_balanced_episode_groups: dict[str, list[int]] | None = None
+    # Fixed-length, deterministic matched two-stream sampling. Unlike domain
+    # balancing, overlapping episode groups are allowed for repeat controls.
+    matched_two_stream_episode_groups: dict[str, list[int]] | None = None
+    matched_two_stream_batches_per_epoch: int | None = None
 
     def __post_init__(self) -> None:
         if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
@@ -82,6 +86,23 @@ class DatasetConfig:
                 flattened.extend(episodes)
             if len(flattened) != len(set(flattened)):
                 raise ValueError("An episode may belong to only one balanced domain")
+        if self.matched_two_stream_episode_groups is not None:
+            if self.domain_balanced_episode_groups is not None:
+                raise ValueError("Configure domain-balanced or matched two-stream sampling, not both")
+            groups = self.matched_two_stream_episode_groups
+            if len(groups) != 2:
+                raise ValueError("matched_two_stream_episode_groups must define exactly two streams")
+            for stream, episodes in groups.items():
+                if not stream or not episodes:
+                    raise ValueError("Every matched stream must have a non-empty name and episode list")
+                if any(ep < 0 for ep in episodes):
+                    raise ValueError(f"Stream {stream!r} contains a negative episode index")
+                if len(episodes) != len(set(episodes)):
+                    raise ValueError(f"Stream {stream!r} contains duplicate episode indices")
+            if not self.matched_two_stream_batches_per_epoch or self.matched_two_stream_batches_per_epoch <= 0:
+                raise ValueError("matched_two_stream_batches_per_epoch must be positive")
+        elif self.matched_two_stream_batches_per_epoch is not None:
+            raise ValueError("matched_two_stream_batches_per_epoch requires matched stream groups")
 
 
 @dataclass

@@ -154,7 +154,7 @@ def test_partial_episode_drop_warns(caplog):
 
 # --- seeded (seed, epoch) shuffling, resume, and state ---
 
-from lerobot.datasets.sampler import compute_sampler_state  # noqa: E402
+from lerobot.datasets.sampler import MatchedTwoStreamSampler, compute_sampler_state  # noqa: E402
 
 EPISODE_BOUNDS = ([0, 2, 3], [2, 3, 6])  # episodes of 2, 1 and 3 frames
 
@@ -280,3 +280,58 @@ def test_domain_balanced_sampler_requires_exact_episode_partition():
             domain_episode_groups={"real": [0], "simulation": [2]},
             batch_size=4,
         )
+
+
+def test_matched_two_stream_sampler_fixed_quota_and_overlap():
+    sampler = MatchedTwoStreamSampler(
+        dataset_from_indices=[0, 6],
+        dataset_to_indices=[6, 11],
+        episode_indices=[0, 1],
+        stream_episode_groups={"real_a": [0], "real_b": [0]},
+        batch_size=8,
+        batches_per_epoch=3,
+        episode_indices_to_use=[0],
+        seed=1000,
+    )
+    order = list(sampler)
+    assert len(order) == 24
+    for offset in range(0, len(order), 8):
+        assert all(index < 6 for index in order[offset : offset + 8])
+    assert order[:4] != order[4:8]
+
+
+def test_matched_two_stream_sampler_stream_zero_is_matched_across_conditions():
+    common = dict(
+        dataset_from_indices=[0, 8, 13],
+        dataset_to_indices=[8, 13, 25],
+        episode_indices=[0, 1, 2],
+        batch_size=8,
+        batches_per_epoch=7,
+        seed=1000,
+    )
+    small_b = MatchedTwoStreamSampler(
+        **common, stream_episode_groups={"real24": [0], "source_b": [1]}, episode_indices_to_use=[0, 1]
+    )
+    large_b = MatchedTwoStreamSampler(
+        **common, stream_episode_groups={"real24": [0], "source_b": [1, 2]}
+    )
+    order_small, order_large = list(small_b), list(large_b)
+    assert [order_small[i : i + 4] for i in range(0, len(order_small), 8)] == [
+        order_large[i : i + 4] for i in range(0, len(order_large), 8)
+    ]
+
+
+def test_matched_two_stream_sampler_resume_exact():
+    kwargs = dict(
+        dataset_from_indices=[0, 9],
+        dataset_to_indices=[9, 16],
+        episode_indices=[0, 1],
+        stream_episode_groups={"a": [0], "b": [1]},
+        batch_size=8,
+        batches_per_epoch=5,
+        seed=17,
+    )
+    expected = list(MatchedTwoStreamSampler(**kwargs))
+    resumed = MatchedTwoStreamSampler(**kwargs)
+    resumed.load_state_dict({"epoch": 0, "start_index": 16})
+    assert list(resumed) == expected[16:]

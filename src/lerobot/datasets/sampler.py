@@ -310,6 +310,147 @@ class DomainBalancedSampler:
         return self._num_samples
 
 
+class MatchedTwoStreamSampler:
+    """Deterministic fixed-length 4+4-style sampler for matched experiments.
+
+    The first half of every batch comes from stream 0 and the second half from
+    stream 1. Streams are independently shuffled and cycled as needed.  A
+    stream's sequence depends only on its own frame membership, seed, epoch and
+    stream index, so an identical stream 0 is byte-for-byte matched when stream
+    1 changes size or membership. Overlap between streams is intentional and
+    supports the Real24 repeat-compute control.
+    """
+
+    def __init__(
+        self,
+        dataset_from_indices: list[int],
+        dataset_to_indices: list[int],
+        episode_indices: list[int],
+        stream_episode_groups: dict[str, list[int]],
+        batch_size: int,
+        batches_per_epoch: int,
+        episode_indices_to_use: list[int] | None = None,
+        drop_n_first_frames: int = 0,
+        drop_n_last_frames: int = 0,
+        seed: int = 0,
+        absolute_to_relative_idx: dict[int, int] | None = None,
+    ):
+        if len(stream_episode_groups) != 2:
+            raise ValueError("matched two-stream sampling requires exactly two streams")
+        if batch_size <= 0 or batch_size % 2:
+            raise ValueError("batch_size must be a positive even number")
+        if batches_per_epoch <= 0:
+            raise ValueError("batches_per_epoch must be positive")
+        if drop_n_first_frames < 0 or drop_n_last_frames < 0:
+            raise ValueError("Frame-drop counts must be non-negative")
+
+        from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
+        to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
+        episode_indices_array = np.asarray(episode_indices, dtype=np.int64)
+        if not (from_indices.shape == to_indices.shape == episode_indices_array.shape):
+            raise ValueError("Episode indices and frame-bound arrays must have the same length")
+        if len(set(map(int, episode_indices_array))) != len(episode_indices_array):
+            raise ValueError("episode_indices must be unique")
+        available = set(map(int, episode_indices_array))
+        if episode_indices_to_use is not None:
+            requested = set(map(int, episode_indices_to_use))
+            unknown = requested - available
+            if unknown:
+                raise ValueError(f"Requested episodes are absent from the dataset: {sorted(unknown)}")
+            available = requested
+
+        bounds = {
+            int(episode): (int(start), int(stop))
+            for episode, start, stop in zip(episode_indices_array, from_indices, to_indices, strict=True)
+        }
+        self.stream_names = list(stream_episode_groups)
+        self._stream_frame_indices: list[np.ndarray] = []
+        configured_union: set[int] = set()
+        for stream, episodes in stream_episode_groups.items():
+            if not episodes or len(episodes) != len(set(episodes)):
+                raise ValueError(f"Stream {stream!r} must contain unique episodes")
+            stream_set = set(map(int, episodes))
+            unknown = stream_set - available
+            if unknown:
+                raise ValueError(f"Stream {stream!r} contains inactive episodes: {sorted(unknown)}")
+            configured_union |= stream_set
+            frame_indices: list[int] = []
+            for episode in episodes:
+                start, stop = bounds[int(episode)]
+                start += drop_n_first_frames
+                stop -= drop_n_last_frames
+                if stop <= start:
+                    raise ValueError(f"Episode {episode} in stream {stream!r} has no usable frames")
+                for absolute_idx in range(start, stop):
+                    frame_indices.append(
+                        absolute_to_relative_idx[absolute_idx]
+                        if absolute_to_relative_idx is not None
+                        else absolute_idx
+                    )
+            self._stream_frame_indices.append(np.asarray(frame_indices, dtype=np.int64))
+        if configured_union != available:
+            raise ValueError(
+                "Matched stream groups must cover all active episodes; "
+                f"missing={sorted(available - configured_union)}"
+            )
+
+        self.batch_size = batch_size
+        self.samples_per_stream_per_batch = batch_size // 2
+        self.num_batches = batches_per_epoch
+        self._num_samples = batches_per_epoch * batch_size
+        self.seed = seed
+        self._epoch = 0
+        self._start_index = 0
+
+    @property
+    def stream_frame_counts(self) -> dict[str, int]:
+        return dict(zip(self.stream_names, map(len, self._stream_frame_indices), strict=True))
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = epoch
+
+    def state_dict(self) -> dict:
+        return {"epoch": self._epoch, "start_index": self._start_index}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._epoch = state["epoch"]
+        self._start_index = state["start_index"]
+
+    def _generator(self, epoch: int, stream: int, cycle: int) -> torch.Generator:
+        value = int(
+            np.random.SeedSequence([self.seed, epoch, stream, cycle]).generate_state(1, dtype=np.uint64)[0]
+        )
+        return torch.Generator().manual_seed(value)
+
+    def _stream_sequence(self, epoch: int, stream: int, count: int) -> list[int]:
+        indices = self._stream_frame_indices[stream]
+        result: list[int] = []
+        cycle = 0
+        while len(result) < count:
+            order = torch.randperm(len(indices), generator=self._generator(epoch, stream, cycle)).numpy()
+            take = min(len(indices), count - len(result))
+            result.extend(int(value) for value in indices[order[:take]])
+            cycle += 1
+        return result
+
+    def __iter__(self) -> Iterator[int]:
+        epoch, start = self._epoch, self._start_index
+        self._epoch += 1
+        self._start_index = 0
+        per_stream = self.num_batches * self.samples_per_stream_per_batch
+        streams = [self._stream_sequence(epoch, i, per_stream) for i in range(2)]
+        sequence: list[int] = []
+        quota = self.samples_per_stream_per_batch
+        for batch in range(self.num_batches):
+            offset = batch * quota
+            sequence.extend(streams[0][offset : offset + quota])
+            sequence.extend(streams[1][offset : offset + quota])
+        return iter(sequence[start:])
+
+    def __len__(self) -> int:
+        return self._num_samples
+
+
 def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
     """Map an optimization step to an `EpisodeAwareSampler` state for sample-exact resume.
 

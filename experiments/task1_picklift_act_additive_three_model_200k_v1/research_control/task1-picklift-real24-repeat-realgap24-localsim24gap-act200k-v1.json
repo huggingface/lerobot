@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "experiment_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_v1",
+  "status": "frozen_offline_training_authorized_hardware_not_authorized",
+  "freeze_date": "2026-08-06",
+  "research_question": "Can 24 LocalSim demonstrations covering the positions absent from Real24 improve real-robot success beyond equal-compute Real24 replay, and how closely can they substitute for 24 added Real demonstrations?",
+  "task_contract": {
+    "task_id": "task1_picklift_final_v2",
+    "historical_task_or_evidence_rewritten": false
+  },
+  "sources": {
+    "real24": {
+      "dataset_path": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+      "episodes": 24,
+      "frames": 4263,
+      "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712",
+      "membership_manifest_sha256": "3c2162aa8a9b559921d69bef0c2d2c12e9327c4963a92979458ccea305a54ab3"
+    },
+    "real_gap24": {
+      "membership_manifest": "../manifests/task1-picklift-real48-minus-real24-gap24-v1.json",
+      "membership_manifest_sha256": "85c09a01d330b838ec34afd56d374aba6155bf9df2aa830fa49d1355b70d2081",
+      "episodes": 24,
+      "materialization_required_before_training": true
+    },
+    "localsim_gap24": {
+      "episodes": 24,
+      "frames": 1933,
+      "dataset_tree_sha256": "7f3b0ada0525fa1c358179f9c8823c877f1d81f88569253eaaecd81322531b22",
+      "finalization_manifest": "../manifests/task1-picklift-localsim48-v0420-gridphase0-postcollection-finalization-result-v1.json",
+      "finalization_manifest_sha256": "3338387538ce072df4714dfa1cfaf676555a9faf3a3dcfed90dd50d488fa0d5c"
+    }
+  },
+  "conditions": [
+    {
+      "condition_id": "R24_repeat_200k",
+      "batch_composition": {
+        "real24_base": 4,
+        "real24_repeat_independent_stream": 4
+      },
+      "sample_slots": {
+        "real24_base": 800000,
+        "real24_repeat": 800000,
+        "total": 1600000
+      },
+      "role": "equal-compute and additional-replay control"
+    },
+    {
+      "condition_id": "R24_real_gap24_200k",
+      "batch_composition": {
+        "real24_base": 4,
+        "real_gap24": 4
+      },
+      "sample_slots": {
+        "real24_base": 800000,
+        "real_gap24": 800000,
+        "total": 1600000
+      },
+      "role": "matched added-Real oracle"
+    },
+    {
+      "condition_id": "R24_localsim_gap24_200k",
+      "batch_composition": {
+        "real24_base": 4,
+        "localsim_gap24": 4
+      },
+      "sample_slots": {
+        "real24_base": 800000,
+        "localsim_gap24": 800000,
+        "total": 1600000
+      },
+      "role": "primary Sim condition"
+    }
+  ],
+  "matched_training_contract": {
+    "policy": "ACT",
+    "from_scratch": true,
+    "seed": 1000,
+    "optimizer_steps": 200000,
+    "batch_size": 8,
+    "two_stream_samples_per_batch": [4, 4],
+    "shared_real24_sample_indices": "The first four Real24 indices at every optimizer step must be byte-identical across all three conditions.",
+    "within_source_sampling": "one versioned deterministic rule shared by every source role; no result-, loss-, duration-, or episode-outcome-dependent weighting",
+    "front_rgb": "640x480 at 20 FPS",
+    "state_action": "float32[6] Real SO-101 units",
+    "chunk_size": 67,
+    "n_action_steps": 67,
+    "vision_backbone": "ResNet18 ImageNet",
+    "image_normalization": "ImageNet",
+    "state_action_normalization": "reuse the frozen Real24 processor statistics for all three conditions",
+    "real24_processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+    "recompute_union_stats": false,
+    "clip_added_sources_to_real24_stats": false,
+    "predeclared_checkpoint_step": 200000,
+    "checkpoint_selection_by_result": false,
+    "hyperparameter_search": false
+  },
+  "predeclared_comparisons": [
+    {
+      "priority": "primary",
+      "left": "R24_localsim_gap24_200k",
+      "right": "R24_repeat_200k",
+      "question": "Does gap-targeted Sim outperform equal-compute replay?"
+    },
+    {
+      "priority": "key_substitution",
+      "left": "R24_localsim_gap24_200k",
+      "right": "R24_real_gap24_200k",
+      "question": "How closely can 24 Sim demonstrations substitute for 24 added Real demonstrations?"
+    },
+    {
+      "priority": "sanity",
+      "left": "R24_real_gap24_200k",
+      "right": "R24_repeat_200k",
+      "question": "Do 24 added Real demonstrations outperform equal-compute replay?"
+    }
+  ],
+  "historical_context_only": [
+    "Real24-100k 23/48",
+    "Real48-100k 36/48",
+    "fixed-100k Real24+LocalSim24-gap and Real24+LocalSim48-full"
+  ],
+  "not_in_this_gate": [
+    "LocalSim48-full",
+    "LocalSim24-overlap",
+    "Real96",
+    "SmolVLA",
+    "additional training seeds",
+    "checkpoint selection by validation or real-robot outcome"
+  ],
+  "evaluation_gate": {
+    "pose_manifest": "../manifests/task1-picklift-eval48-half24-poses-v1.json",
+    "pose_manifest_sha256": "5a61888b54ef99b5daf1e7875319b41ce6fa410aa3550f38eef14dbd3f60e7d7",
+    "planned_poses": 24,
+    "models_per_pose": 3,
+    "planned_valid_rollouts": 72,
+    "hardware_authorized": false
+  },
+  "claim_boundary": "Offline completion establishes three matched checkpoints only. A Sim benefit or Real-data substitution claim requires the separately authorized real-robot evaluation."
+}
