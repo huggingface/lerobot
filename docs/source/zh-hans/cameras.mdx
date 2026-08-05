@@ -1,28 +1,28 @@
 # 相机
 
-LeRobot 提供多种视频捕获选项：
+LeRobot 提供多种视频采集选项：
 
-| 类                | 支持的相机                         |
-| ----------------- | ---------------------------------- |
-| `OpenCVCamera`    | 手机、笔记本内置、USB 网络摄像头    |
-| `ZMQCamera`       | 网络连接相机                       |
-| `RealSenseCamera` | Intel RealSense（带深度）          |
-| `Reachy2Camera`   | Reachy 2 机器人相机                |
+| 类 | 支持的相机 |
+| ---- | ---- |
+| `OpenCVCamera` | 手机、笔记本内置摄像头、USB 网络摄像头 |
+| `ZMQCamera` | 网络连接相机 |
+| `RealSenseCamera` | Intel RealSense（带深度） |
+| `Reachy2Camera` | Reachy 2 机器人相机 |
 
 > [!TIP]
-> 有关 `OpenCVCamera` 兼容性详情，请参阅 [OpenCV 视频 I/O 概述](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
+> 关于 `OpenCVCamera` 的兼容性详情，请参阅 [OpenCV 视频 I/O 概览](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
 
 ### 查找你的相机
 
 每个相机都需要一个唯一标识符来实例化，以便区分多个连接的设备。
 
-`OpenCVCamera` 和 `RealSenseCamera` 支持自动发现。运行以下命令列出可用设备及其标识符。请注意，根据操作系统的不同，这些标识符可能在重启计算机或重新插拔相机后发生变化。
+`OpenCVCamera` 和 `RealSenseCamera` 支持自动发现。运行以下命令列出可用设备及其标识符。请注意，重启计算机或重新插拔相机后，这些标识符可能会发生变化，具体取决于操作系统。
 
 ```bash
-lerobot-find-cameras opencv # 或者 realsense 用于 Intel Realsense 相机
+lerobot-find-cameras opencv # 或者 realsense（用于 Intel RealSense 相机）
 ```
 
-如果你连接了两个相机，输出将类似于：
+输出示例如下（如果有两个相机连接）：
 
 ```bash
 --- Detected Cameras ---
@@ -41,7 +41,7 @@ Camera #0:
 ```
 
 > [!WARNING]
-> 在 `macOS` 中使用 Intel RealSense 相机时，可能会遇到此 [错误](https://github.com/IntelRealSense/librealsense/issues/12307)：`Error finding RealSense cameras: failed to set power state`，可以通过使用 `sudo` 权限运行相同命令来解决。请注意，在 `macOS` 中使用 RealSense 相机不稳定。
+> 在 `macOS` 上使用 Intel RealSense 相机时，可能会遇到此 [错误](https://github.com/IntelRealSense/librealsense/issues/12307)：`Error finding RealSense cameras: failed to set power state`，可以通过使用 `sudo` 权限运行相同命令来解决。请注意在 `macOS` 上使用 RealSense 相机不稳定。
 
 `ZMQCamera` 和 `Reachy2Camera` 不支持自动发现。必须通过提供网络地址和端口或机器人 SDK 设置来手动配置。
 
@@ -49,17 +49,17 @@ Camera #0:
 
 ### 帧访问模式
 
-所有相机类都实现了三种捕获帧的访问模式：
+所有相机类都实现了三种帧捕获访问模式：
 
-| 方法                      | 行为                                                                                                                                              | 阻塞？         | 最佳用途                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------- |
-| `read()`                  | 等待相机硬件返回帧。根据相机和 SDK 的不同，可能会阻塞很长时间。                                             | 是             | 简单脚本、顺序捕获                     |
-| `async_read(timeout_ms)`  | 从后台线程返回最新的未消耗帧。仅在缓冲区为空时阻塞，最多 `timeout_ms`。如果没有帧到达，则抛出 `TimeoutError`。 | 有超时         | 与相机 FPS 同步的控制循环              |
-| `read_latest(max_age_ms)` | 查看缓冲区中最新的帧（可能已过时）。如果帧旧于 `max_age_ms`，则抛出 `TimeoutError`。                                   | 否             | UI 可视化、日志记录、监控              |
+| 方法 | 行为 | 阻塞？ | 最佳用途 |
+| ---- | ---- | ---- | ---- |
+| `read()` | 等待相机硬件返回帧。根据相机和 SDK 的不同，可能会阻塞较长时间。 | 是 | 简单脚本、顺序捕获 |
+| `async_read(timeout_ms)` | 从后台线程返回最新的未消费帧。仅在缓冲区为空时阻塞，最多阻塞 `timeout_ms`。如果没有帧到达，则抛出 `TimeoutError`。 | 带超时 | 与相机 FPS 同步的控制循环 |
+| `read_latest(max_age_ms)` | 查看缓冲区中最新的帧（可能已过时）。如果帧早于 `max_age_ms`，则抛出 `TimeoutError`。 | 否 | UI 可视化、日志记录、监控 |
 
 ### 使用示例
 
-以下示例展示了如何使用相机 API 配置和捕获不同相机类型的帧。
+以下示例展示如何使用相机 API 配置和捕获不同相机类型的帧。
 
 - 使用基于 OpenCV 的相机进行**阻塞和非阻塞帧捕获**
 - 使用 Intel RealSense 相机进行**颜色和深度捕获**
@@ -72,7 +72,7 @@ Camera #0:
 >     ...
 > ```
 >
-> 你也可以手动调用 `connect()` 和 `disconnect()`，但后者请始终使用 `finally` 块。
+> 你也可以手动调用 `connect()` 和 `disconnect()`，但始终在 `finally` 块中使用后者。
 
 <hfoptions id="shell_restart">
 <hfoption id="Open CV Camera">
@@ -95,27 +95,27 @@ config = OpenCVCameraConfig(
 # 实例化并连接 `OpenCVCamera`，执行预热读取（默认）。
 with OpenCVCamera(config) as camera:
 
-    # 同步读取帧 —— 阻塞直到硬件交付新帧
+    # 同步读取帧 — 阻塞直到硬件交付新帧
     frame = camera.read()
-    print(f"read() 调用返回的帧形状：", frame.shape)
+    print(f"read() call returned frame with shape:", frame.shape)
 
-    # 使用超时异步读取帧 —— 返回最新的未消耗帧，或等待最多 timeout_ms 获取新帧
+    # 带超时异步读取帧 — 返回最新的未消费帧，或等待最多 timeout_ms 获取新帧
     try:
         for i in range(10):
             frame = camera.async_read(timeout_ms=200)
-            print(f"async_read 调用返回的帧 {i} 形状：", frame.shape)
+            print(f"async_read call returned frame {i} with shape:", frame.shape)
     except TimeoutError as e:
-        print(f"超时内未收到帧：{e}")
+        print(f"No frame received within timeout: {e}")
 
     # 立即返回帧 - 返回相机捕获的最新帧
     try:
         initial_frame = camera.read_latest(max_age_ms=1000)
         for i in range(10):
             frame = camera.read_latest(max_age_ms=1000)
-            print(f"read_latest 调用返回的帧 {i} 形状：", frame.shape)
+            print(f"read_latest call returned frame {i} with shape:", frame.shape)
             print(f"相机是否收到了新帧？{not (initial_frame == frame).any()}")
     except TimeoutError as e:
-        print(f"帧太旧：{e}")
+        print(f"Frame too old: {e}")
 
 ```
 <!-- prettier-ignore-end -->
@@ -151,47 +151,52 @@ camera.connect()
 try:
     color_frame = camera.read()
     depth_map = camera.read_depth()
-    print("颜色帧形状：", color_frame.shape)
-    print("深度图形状：", depth_map.shape)
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
 finally:
     camera.disconnect()
 ```
 <!-- prettier-ignore-end -->
 
-手动颜色控制会禁用相应的自动曝光或白平衡模式。它们的 supported 范围因相机型号而异；无效值会在连接时引发错误，其中包含传感器报告的范围。请求不支持的控制也会引发错误。省略的控制保持传感器现有的自动或手动设置不变。这些选项需要 `use_rgb=True`。
+手动颜色控制会禁用相应的自动曝光或白平衡模式。它们的
+支持范围因相机型号而异；无效值会在连接时引发错误，其中
+包含传感器报告的范围。请求不支持的控制也会引发错误。
+省略的控制保持传感器现有的自动或手动设置不变。这些选项
+需要 `use_rgb=True`。
 
-手动颜色控制需要专用的 RGB 模块。没有此模块的相机（如 RealSense D405）不支持它们，并在连接时引发错误。
+手动颜色控制需要专用的 RGB 模块。没有此模块的相机（如 RealSense
+D405）不支持它们，并在连接时引发错误。
 
 </hfoption>
 </hfoptions>
 
 ### 使用深度
 
-Intel RealSense 和 Reachy 2 相机可以同时捕获颜色和深度。调用 `read()` 返回**颜色**帧，形状为 `(H, W, 3)` `uint8`。调用 `read_depth()` 返回**深度图**，形状为 `(H, W, 1)` `uint16`，其中每个像素值是从传感器到物体的距离，以**毫米**为单位。像素值 `0` 通常表示"无可用测量"（超出范围、被遮挡或低置信度）。
+Intel RealSense 和 Reachy 2 相机可以同时捕获颜色和深度。调用 `read()` 返回 **颜色** 帧，形状为 `(H, W, 3)` `uint8`。调用 `read_depth()` 返回 **深度图**，形状为 `(H, W, 1)` `uint16`，其中每个像素值是从传感器测量的距离，以**毫米**为单位。像素值 `0` 通常表示"无可用测量值"（超出范围、被遮挡或低置信度）。
 
-在录制期间，控制循环通过 `read_latest()`（颜色）和 `read_latest_depth()`（深度）非阻塞地查看最新的缓冲帧，将深度图作为兄弟特征添加（例如，`front_depth` 与 `front` 相邻）。
+在录制期间，控制循环通过 `read_latest()`（颜色）和 `read_latest_depth()`（深度）非阻塞地查看最新的缓冲帧，将深度图作为相邻特征添加（例如，`front_depth` 与 `front` 相邻）。
 
-有关录制数据集时深度流的存储和编码方式，请参阅视频编码指南的 [深度流](./video_encoding_parameters#depth-streams) 部分。
+关于录制数据集时深度流的存储和编码方式，请参阅视频编码指南的 [深度流](./video_encoding_parameters#depth-streams) 部分。
 
-## 使用手机相机
+## 使用手机的相机
 
 <hfoptions id="use phone">
 <hfoption id="iPhone & macOS">
 
-要在 macOS 上将 iPhone 用作相机，请启用 Continuity Camera 功能：
+要在 macOS 上使用 iPhone 作为相机，请启用连续互通相机功能：
 
 - 确保你的 Mac 运行 macOS 13 或更高版本，iPhone 运行 iOS 16 或更高版本。
-- 使用相同的 Apple ID 登录两个设备。
-- 使用 USB 电缆连接设备，或打开 Wi-Fi 和蓝牙进行无线连接。
+- 使用相同的 Apple ID 登录两台设备。
+- 使用 USB 线连接设备，或开启 Wi-Fi 和蓝牙进行无线连接。
 
 更多详情，请访问 [Apple 支持](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac)。
 
 </hfoption>
 <hfoption id="OBS virtual camera">
 
-如果你想使用 OBS 将手机用作相机，请按照以下步骤设置虚拟相机。
+如果想使用 OBS 将手机用作相机，请按照以下步骤设置虚拟相机。
 
-1. _（仅限 Linux）安装 `v4l2loopback-dkms` 和 `v4l-utils`_。这些包创建虚拟相机设备并验证其设置。安装方法：
+1. _（仅限 Linux）安装 `v4l2loopback-dkms` 和 `v4l-utils`_。这些软件包创建虚拟相机设备并验证其设置。安装命令：
 
 ```bash
 sudo apt install v4l2loopback-dkms v4l-utils
@@ -203,17 +208,17 @@ sudo apt install v4l2loopback-dkms v4l-utils
 5. _启动 OBS Studio_。
 
 6. _将手机添加为源_。按照 [此处](https://droidcam.app/obs/usage) 的说明操作。务必将分辨率设置为 `640x480` 以避免水印。
-7. _调整分辨率设置_。在 OBS Studio 中，转到 `File > Settings > Video` 或 `OBS > Preferences... > Video`。将 `Base(Canvas) Resolution` 和 `Output(Scaled) Resolution` 手动输入为 `640x480`。
+7. _调整分辨率设置_。在 OBS Studio 中，进入 `File > Settings > Video` 或 `OBS > Preferences... > Video`。将 `Base(Canvas) Resolution` 和 `Output(Scaled) Resolution` 手动输入为 `640x480`。
 8. _启动虚拟相机_。在 OBS Studio 中，按照 [此处](https://obsproject.com/kb/virtual-camera-guide) 的说明操作。
 9. _验证虚拟相机设置和分辨率_。
    - **Linux**：使用 `v4l2-ctl` 列出设备并检查分辨率：
      ```bash
-     v4l2-ctl --list-devices  # 找到 VirtualCam 并记录其 /dev/videoX 路径
+     v4l2-ctl --list-devices  # 查找 VirtualCam 并记录其 /dev/videoX 路径
      v4l2-ctl -d /dev/videoX --get-fmt-video  # 替换为你的 VirtualCam 路径
      ```
      你应该看到列出的 `VirtualCam` 和分辨率 `640x480`。
-   - **macOS**：打开 Photo Booth 或 FaceTime 并选择 "OBS Virtual Camera" 作为输入。
-   - **Windows**：原生相机应用不支持虚拟相机。使用视频会议应用（Zoom、Teams）或直接运行 `lerobot-find-cameras opencv` 来验证。
+   - **macOS**：打开 Photo Booth 或 FaceTime，选择 "OBS Virtual Camera" 作为输入。
+   - **Windows**：原生相机应用不支持虚拟相机。使用视频会议应用（Zoom、Teams）或直接运行 `lerobot-find-cameras opencv` 进行验证。
 
 <details>
 <summary><strong>故障排除</strong></summary>
@@ -224,11 +229,11 @@ sudo apt install v4l2loopback-dkms v4l-utils
 
 > Error reading frame in background thread for OpenCVCamera(X): OpenCVCamera(X) frame width=640 or height=480 do not match configured width=1920 or height=1080.
 
-此错误是由于 OBS Virtual Camera 宣传 `1920x1080` 分辨率尽管进行了重新缩放。目前的唯一修复方法是在 `_postprocess_image()` 中注释掉宽度和高度检查。
+此错误是由于 OBS Virtual Camera 宣传 `1920x1080` 分辨率，尽管实际进行了重新缩放。目前的唯一修复方法是在 `_postprocess_image()` 中注释掉宽度和高度检查。
 
 </details>
 
 </hfoption>
 </hfoptions>
 
-如果一切设置正确，你的手机将显示为标准的 OpenCV 相机，并可以与 `OpenCVCamera` 一起使用。
+如果一切设置正确，你的手机将显示为标准 OpenCV 相机，可以与 `OpenCVCamera` 一起使用。
