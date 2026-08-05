@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "profile_id": "task1_picklift_real_evaluation_success_early_stop_v1",
+  "status": "frozen_for_future_explicit_opt_in_real_evaluations",
+  "research_commit": "e18c9ba629432996655da52d1cfeb66768c9b81f",
+  "research_contract_path": "IAmRobotTrainerResearch/experiment-design/task1-picklift-real-evaluation-success-early-stop-v1.json",
+  "research_contract_sha256": "d1025606a5e7139cf9aac383480d41da6d7e1fcb09e3152c5e7b18a5c439e8ff",
+  "enabled": true,
+  "explicit_opt_in": true,
+  "maximum_trial_seconds": 30.0,
+  "policy_hz": 20,
+  "marker_filename_suffix": ".success.json",
+  "marker_schema": {
+    "evaluation_id": "string",
+    "trial_id": "string",
+    "operator_confirmed_success": true,
+    "created_at_utc": "UTC ISO-8601"
+  },
+  "termination_on_accept": "success_early_stop",
+  "invalid_marker_action": "reject_without_stopping",
+  "return_and_torque_after_window_unchanged": true,
+  "historical_full_window_plans_changed": false
+}

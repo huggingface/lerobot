@@ -68,6 +68,10 @@ READY_MOVE_TOLERANCE = 1.0
 READY_MOVE_TIMEOUT_SECONDS = 60.0
 POLICY_TIMING_PROFILE_ID = "lerobot_per_tick_pacing_no_catchup_v1"
 ACTION_PATH_PROFILE_ID = "lerobot_so101_official_send_no_custom_clamp_v1"
+SUCCESS_EARLY_STOP_CONTRACT_SHA256 = (
+    "d1025606a5e7139cf9aac383480d41da6d7e1fcb09e3152c5e7b18a5c439e8ff"
+)
+SUCCESS_EARLY_STOP_PROFILE_ID = "task1_picklift_real_evaluation_success_early_stop_v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,7 +131,124 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--maximum-trial-seconds", type=float, default=30.0)
+    parser.add_argument(
+        "--success-early-stop-profile",
+        type=Path,
+        default=None,
+        help="Explicit opt-in profile for future evaluations; omitted means full-window.",
+    )
+    parser.add_argument(
+        "--success-marker-dir",
+        type=Path,
+        default=None,
+        help="External per-trial marker root; required when early stop is enabled.",
+    )
     return parser.parse_args()
+
+
+def load_success_early_stop_profile(args: argparse.Namespace) -> dict | None:
+    profile_path = getattr(args, "success_early_stop_profile", None)
+    marker_dir = getattr(args, "success_marker_dir", None)
+    if profile_path is None:
+        if marker_dir is not None:
+            raise RuntimeError("A marker directory cannot enable early stop implicitly.")
+        return None
+    if marker_dir is None:
+        raise RuntimeError("Early-stop opt-in requires --success-marker-dir.")
+    profile = json.loads(Path(profile_path).read_text(encoding="utf-8"))
+    if profile.get("profile_id") != SUCCESS_EARLY_STOP_PROFILE_ID:
+        raise RuntimeError("Unexpected success early-stop profile identity.")
+    if profile.get("research_contract_sha256") != SUCCESS_EARLY_STOP_CONTRACT_SHA256:
+        raise RuntimeError("Success early-stop research contract hash changed.")
+    if profile.get("enabled") is not True or profile.get("explicit_opt_in") is not True:
+        raise RuntimeError("Success early stop must be explicitly enabled by profile.")
+    if profile.get("maximum_trial_seconds") != 30.0:
+        raise RuntimeError("Success early-stop profile must retain the 30-second maximum.")
+    if profile.get("policy_hz") != CONTROL_FPS:
+        raise RuntimeError("Success early-stop profile policy rate changed.")
+    if profile.get("marker_filename_suffix") != ".success.json":
+        raise RuntimeError("Unexpected success-marker filename contract.")
+    return profile
+
+
+def success_marker_path(
+    marker_root: Path,
+    evaluation_id: str,
+    trial_id: str,
+) -> Path:
+    if not evaluation_id or not trial_id:
+        raise RuntimeError("Success marker requires evaluation and trial identities.")
+    return marker_root / evaluation_id / f"{trial_id}.success.json"
+
+
+def parse_utc_timestamp(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("created_at_utc must be a string.")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() != UTC.utcoffset(parsed):
+        raise ValueError("created_at_utc must be timezone-aware UTC.")
+    return parsed
+
+
+def build_success_marker_predicate(
+    marker_path: Path,
+    *,
+    evaluation_id: str,
+    trial_id: str,
+    policy_started_at_utc: datetime,
+    utc_now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> tuple[Callable[[dict, int, float], dict | None], dict]:
+    state: dict[str, Any] = {"accepted": None, "rejections": []}
+    rejected_hashes: set[str] = set()
+
+    def reject(reason: str, marker_sha256: str | None) -> None:
+        rejection_key = marker_sha256 or f"missing-hash:{reason}"
+        if rejection_key in rejected_hashes:
+            return
+        rejected_hashes.add(rejection_key)
+        state["rejections"].append(
+            {
+                "reason": reason,
+                "marker_sha256": marker_sha256,
+                "observed_at_utc": utc_now_fn().isoformat(),
+            }
+        )
+
+    def predicate(record: dict, step: int, elapsed_seconds: float) -> dict | None:
+        del record
+        if state["accepted"] is not None or not marker_path.is_file():
+            return state["accepted"]
+        marker_sha256: str | None = None
+        try:
+            marker_sha256 = sha256_file(marker_path)
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if marker.get("evaluation_id") != evaluation_id:
+                raise ValueError("wrong_evaluation_id")
+            if marker.get("trial_id") != trial_id:
+                raise ValueError("wrong_trial_id")
+            if marker.get("operator_confirmed_success") is not True:
+                raise ValueError("operator_confirmed_success_not_true")
+            created_at = parse_utc_timestamp(marker.get("created_at_utc"))
+            if created_at < policy_started_at_utc:
+                raise ValueError("stale_before_policy_window")
+            if created_at > utc_now_fn():
+                raise ValueError("created_at_utc_in_future")
+        except Exception as exc:
+            reject(str(exc), marker_sha256)
+            return None
+        accepted = {
+            "termination": "success_early_stop",
+            "success_signal_path": str(marker_path),
+            "success_signal_sha256": marker_sha256,
+            "success_signal_created_at_utc": created_at.isoformat(),
+            "success_signal_observed_policy_step": step,
+            "success_signal_observed_elapsed_seconds": elapsed_seconds,
+            "success_signal_observed_at_utc": utc_now_fn().isoformat(),
+        }
+        state["accepted"] = accepted
+        return accepted
+
+    return predicate, state
 
 
 def finite_joint_vector(values: Any, label: str) -> np.ndarray:
@@ -380,6 +501,8 @@ def run_paced_ticks(
     period: float,
     now_fn: Callable[[], float] = time.perf_counter,
     sleep_fn: Callable[[float], None] = precise_sleep,
+    stop_predicate: Callable[[dict, int, float], dict | None] | None = None,
+    termination_out: dict | None = None,
 ) -> list[dict]:
     if not np.isfinite(duration_seconds) or duration_seconds <= 0:
         raise ValueError("duration_seconds must be positive and finite.")
@@ -403,6 +526,14 @@ def run_paced_ticks(
         )
         record_fn(record)
         records.append(record)
+        observed_elapsed_seconds = now_fn() - loop_started
+        if stop_predicate is not None:
+            stop_result = stop_predicate(record, step, observed_elapsed_seconds)
+            if stop_result is not None:
+                if termination_out is not None:
+                    termination_out.update(stop_result)
+                record["tick_completed_elapsed_seconds"] = observed_elapsed_seconds
+                break
         sleep_fn(scheduled_sleep_seconds)
         record["tick_completed_elapsed_seconds"] = now_fn() - loop_started
         step += 1
@@ -477,6 +608,7 @@ def run_hardware_trial(args: argparse.Namespace, preflight_record: dict) -> None
         if path.exists():
             raise RuntimeError(f"{label} already exists; refusing to overwrite {path}.")
 
+    early_stop_profile = load_success_early_stop_profile(args)
     started_at = datetime.now(UTC).isoformat()
     termination = "maximum_duration"
     torque_may_be_enabled = False
@@ -490,6 +622,9 @@ def run_hardware_trial(args: argparse.Namespace, preflight_record: dict) -> None
     video_process: subprocess.Popen[bytes] | None = None
     video_stderr = ""
     steps: list[dict] = []
+    success_marker: Path | None = None
+    success_marker_state: dict[str, Any] = {"accepted": None, "rejections": []}
+    termination_detail: dict[str, Any] = {}
     steps_handle = steps_path.open("x", encoding="utf-8", buffering=1)
     ready_handle = ready_path.open("x", encoding="utf-8", buffering=1)
     return_handle = return_path.open("x", encoding="utf-8", buffering=1)
@@ -526,6 +661,22 @@ def run_hardware_trial(args: argparse.Namespace, preflight_record: dict) -> None
         if video_process.stdin is None or video_process.stderr is None:
             raise RuntimeError("Failed to open ffmpeg video pipes.")
         policy_reset_at_utc = reset_policy_after_ready_pose(model, ready_result)
+        if early_stop_profile is not None:
+            marker_root = Path(args.success_marker_dir)
+            success_marker = success_marker_path(
+                marker_root,
+                preflight_record["evaluation_id"],
+                args.spawn_region,
+            )
+            success_marker.parent.mkdir(parents=True, exist_ok=True)
+            stop_predicate, success_marker_state = build_success_marker_predicate(
+                success_marker,
+                evaluation_id=preflight_record["evaluation_id"],
+                trial_id=args.spawn_region,
+                policy_started_at_utc=parse_utc_timestamp(policy_reset_at_utc),
+            )
+        else:
+            stop_predicate = None
 
         def policy_tick(
             step: int,
@@ -603,7 +754,11 @@ def run_hardware_trial(args: argparse.Namespace, preflight_record: dict) -> None
             policy_tick,
             write_step,
             period=1.0 / CONTROL_FPS,
+            stop_predicate=stop_predicate,
+            termination_out=termination_detail,
         )
+        if termination_detail.get("termination") == "success_early_stop":
+            termination = "success_early_stop"
         return_result = move_to_frozen_ready_pose(robot, return_handle)
 
     except KeyboardInterrupt:
@@ -669,6 +824,34 @@ def run_hardware_trial(args: argparse.Namespace, preflight_record: dict) -> None
         "started_at_utc": started_at,
         "ended_at_utc": ended_at,
         "termination": termination,
+        "success_early_stop_profile": (
+            {
+                "enabled": True,
+                "profile_id": early_stop_profile["profile_id"],
+                "path": str(args.success_early_stop_profile),
+                "sha256": sha256_file(Path(args.success_early_stop_profile)),
+                "research_contract_sha256": SUCCESS_EARLY_STOP_CONTRACT_SHA256,
+            }
+            if early_stop_profile is not None
+            else {"enabled": False, "profile_id": None}
+        ),
+        "success_signal_path": str(success_marker) if success_marker else None,
+        "success_signal_sha256": termination_detail.get("success_signal_sha256"),
+        "success_signal_created_at_utc": termination_detail.get(
+            "success_signal_created_at_utc"
+        ),
+        "success_signal_observed_policy_step": termination_detail.get(
+            "success_signal_observed_policy_step"
+        ),
+        "success_signal_observed_elapsed_seconds": termination_detail.get(
+            "success_signal_observed_elapsed_seconds"
+        ),
+        "success_signal_rejections": success_marker_state["rejections"],
+        "actual_policy_ticks": len(steps),
+        "actual_policy_duration_seconds": (
+            steps[-1].get("tick_completed_elapsed_seconds") if steps else 0.0
+        ),
+        "maximum_trial_seconds": args.maximum_trial_seconds,
         "run_error": run_error,
         "shutdown_errors": shutdown_errors,
         "torque_disable_verified": torque_disable_verified,

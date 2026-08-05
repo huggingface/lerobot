@@ -28,6 +28,7 @@ SOURCE_EVAL48_PLAN = REPO_ROOT / "experiments/task1_picklift_real48_vs_real96_ev
 EXPECTED_RESEARCH_IDENTITY_VERIFICATION_SHA256 = "9b3d3c4b3ed65156a300c1731737b6dc789c86547eb848e208545e86a646ecb5"
 EXPECTED_PLAN_SHA256 = "61efcb5e4298c86a103d41a963643962801375a4a78f0919b50c037c783ce176"
 EXPECTED_ENGINE_SHA256 = "380b8c1c13f0f38a59e129b78d845a1cbd8916411af1f61a56b9267e83205f96"
+CURRENT_COMPATIBLE_ENGINE_SHA256 = "d92da4847100963458d82e9c3bc74c77345f72fd4b3a7c41fafaf5bd1afdf763"
 EXPECTED_PROFILE_SHA256 = "6b031bb4c980467addb3e69d68a16032ceae7e45fb3f8e2288d8a4989ff3cbf3"
 EXPECTED_READY_MOVE_TOLERANCE = 3.0
 READY_INTERPOLATION_DURATION_SECONDS = 3.0
@@ -84,6 +85,28 @@ def ready_pose_state_sha256(values: Any) -> str:
 def resolve_repo_path(path_value: str) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def resolve_success_early_stop_execution(plan: dict) -> dict:
+    contract = plan.get("success_early_stop")
+    if contract is None:
+        return {
+            "enabled": False,
+            "profile": None,
+            "marker_dir": None,
+        }
+    if contract.get("enabled") is not True or contract.get("explicit_opt_in") is not True:
+        raise RuntimeError("Partial or implicit success early-stop configuration is forbidden.")
+    profile = resolve_repo_path(contract["profile_path"])
+    marker_dir = Path(contract["marker_root"])
+    if not profile.is_file():
+        raise RuntimeError("Success early-stop profile is unavailable.")
+    if not marker_dir.is_absolute():
+        raise RuntimeError("Success marker root must be an absolute external path.")
+    expected_hash = contract.get("profile_sha256")
+    if not expected_hash or sha256_file(profile) != expected_hash:
+        raise RuntimeError("Success early-stop profile hash mismatch.")
+    return {"enabled": True, "profile": profile, "marker_dir": marker_dir}
 
 
 def load_frozen_plan(path: Path = DEFAULT_PLAN) -> dict:
@@ -248,8 +271,8 @@ def verify_static_files(plan: dict) -> dict:
     engine_path = resolve_repo_path(plan["execution_engine"]["path"])
     profile_path = resolve_repo_path(plan["evaluation_profile"]["path"])
     calibration_path = Path(plan["setup"]["follower_calibration_path"])
-    if sha256_file(engine_path) != EXPECTED_ENGINE_SHA256:
-        raise RuntimeError("Current official-send engine differs from commit 34cc7ac.")
+    if sha256_file(engine_path) != CURRENT_COMPATIBLE_ENGINE_SHA256:
+        raise RuntimeError("Current backward-compatible official-send engine hash changed.")
     if sha256_file(profile_path) != EXPECTED_PROFILE_SHA256:
         raise RuntimeError("Current evaluation profile differs from the frozen profile.")
     if sha256_file(calibration_path) != plan["setup"]["follower_calibration_sha256"]:
@@ -370,7 +393,8 @@ def verify_static_files(plan: dict) -> dict:
     return {
         "plan_sha256": EXPECTED_PLAN_SHA256,
         "engine_path": str(engine_path),
-        "engine_sha256": EXPECTED_ENGINE_SHA256,
+        "engine_sha256": CURRENT_COMPATIBLE_ENGINE_SHA256,
+        "plan_legacy_engine_sha256": EXPECTED_ENGINE_SHA256,
         "profile_path": str(profile_path),
         "profile_sha256": EXPECTED_PROFILE_SHA256,
         "research_identity_verification": {
@@ -1065,8 +1089,8 @@ def build_interpolated_ready_move(engine, profile: dict):
 
 def load_official_engine(plan: dict):
     engine_path = resolve_repo_path(plan["execution_engine"]["path"])
-    if sha256_file(engine_path) != EXPECTED_ENGINE_SHA256:
-        raise RuntimeError("Official-send engine source hash changed.")
+    if sha256_file(engine_path) != CURRENT_COMPATIBLE_ENGINE_SHA256:
+        raise RuntimeError("Current backward-compatible official-send engine hash changed.")
     if str(engine_path.parent) not in sys.path:
         sys.path.insert(0, str(engine_path.parent))
     if str(REPO_ROOT) not in sys.path:
@@ -1234,6 +1258,7 @@ def execute_hardware(args: argparse.Namespace, plan: dict) -> None:
         replacement=args.replacement,
     )
     engine = load_official_engine(plan)
+    early_stop = resolve_success_early_stop_execution(plan)
     model = plan["models"][trial["model_key"]]
     engine.EXPECTED_MODEL_SHA256 = model["model_sha256"]
     engine.EXPECTED_PLAN_SHA256 = EXPECTED_PLAN_SHA256
@@ -1262,6 +1287,8 @@ def execute_hardware(args: argparse.Namespace, plan: dict) -> None:
         profile=profile_path,
         evidence_dir=Path(plan["evidence_root"]) / "trials",
         maximum_trial_seconds=30.0,
+        success_early_stop_profile=early_stop["profile"],
+        success_marker_dir=early_stop["marker_dir"],
     )
     preflight = engine.preflight(engine_args)
     preflight.update(
