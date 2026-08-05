@@ -26,6 +26,7 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
+from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
@@ -201,8 +202,6 @@ def test_policy_instantiation():
     config = WallXConfig(device="cuda")
 
     # Set up input_features and output_features in the config
-    from lerobot.configs.types import FeatureType, PolicyFeature
-
     config.input_features = {
         "observation.state": PolicyFeature(
             type=FeatureType.STATE,
