@@ -38,10 +38,7 @@ def _is_scalar(x):
 
 
 def init_rerun(
-    session_name: str = "lerobot_control_loop",
-    ip: str | None = None,
-    port: int | None = None,
-    web_port: int | None = None,
+    session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
 ) -> None:
     """
     Initializes the Rerun SDK for visualizing the control loop.
@@ -50,7 +47,6 @@ def init_rerun(
         session_name: Name of the Rerun session.
         ip: Optional IP for connecting to a Rerun server.
         port: Optional port for connecting to a Rerun server.
-        web_port: Serve a headless web viewer on this port, using ``port`` for gRPC.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
@@ -64,10 +60,6 @@ def init_rerun(
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
     if ip and port:
         rr.connect_grpc(url=f"rerun+http://{ip}:{port}/proxy")
-    elif web_port is not None:
-        grpc_port = port or 9876
-        url = rr.serve_grpc(grpc_port=grpc_port)
-        rr.serve_web_viewer(web_port=web_port, open_browser=False, connect_to=url)
     else:
         rr.spawn(memory_limit=memory_limit)
 

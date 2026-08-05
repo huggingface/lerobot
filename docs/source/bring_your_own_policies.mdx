@@ -331,8 +331,6 @@ lerobot-rollout \
     --task="put the cup in the sink"
 ```
 
-For RoboCasa-compatible policies, replace the robot arguments with `--sim --sim.task=<task>`. Without `--direct_subtask`, the adapter generates the low-level subtask; with it, the operator bypasses high-level generation and supplies each subtask.
-
 ### Keep training and deployment aligned
 
 The adapter is intentionally small, but its prompts are part of the model contract:

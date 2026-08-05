@@ -246,14 +246,11 @@ def rollout(cfg: RolloutConfig):
 _LANGUAGE_RUNTIME_FLAGS = {
     "--language",
     "--no_robot",
-    "--sim",
     "--direct_subtask",
-    "--sim.direct_subtask",
     "--disable_memory",
     "--fp8",
 }
 _LANGUAGE_RUNTIME_PREFIXES = (
-    "--sim.",
     "--chunk_hz",
     "--ctrl_hz",
     "--high_level_hz",
@@ -269,8 +266,7 @@ def _uses_language_runtime(argv: list[str]) -> bool:
 
     ``--language`` is the explicit selector for real-robot runs whose other
     options overlap with the standard rollout CLI. Language-only options also
-    select it automatically, which keeps the former language-runtime examples
-    working after replacing their command name with ``lerobot-rollout``.
+    select it automatically.
     """
     return any(
         arg.split("=", 1)[0] in _LANGUAGE_RUNTIME_FLAGS or arg.startswith(_LANGUAGE_RUNTIME_PREFIXES)
@@ -282,7 +278,7 @@ def main(argv: list[str] | None = None):
     """CLI entry point for ``lerobot-rollout``.
 
     Standard policy deployment continues through :class:`RolloutConfig`.
-    Interactive language-conditioned and RoboCasa runs share this entry point
+    Interactive language-conditioned real-robot runs share this entry point
     and are selected with ``--language`` or any language-runtime-only option.
     """
     register_third_party_plugins()
