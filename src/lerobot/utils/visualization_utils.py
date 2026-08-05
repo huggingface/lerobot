@@ -57,13 +57,23 @@ def log_visualization_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    diagnostics: dict[str, float] | None = None,
 ) -> None:
-    """Logs observation/action data to the backend selected by ``display_mode``."""
+    """Logs observation/action data to the backend selected by ``display_mode``.
+
+    ``diagnostics`` is an optional mapping of scalar pipeline-telemetry values (e.g. action queue
+    size, chunk staleness, server latency) logged in a dedicated view/topic, separate from the
+    robot's observation/action state.
+    """
 
     if display_mode == "rerun":
-        log_rerun_data(observation=observation, action=action, compress_images=compress_images)
+        log_rerun_data(
+            observation=observation, action=action, compress_images=compress_images, diagnostics=diagnostics
+        )
     elif display_mode == "foxglove":
-        log_foxglove_data(observation=observation, action=action, compress_images=compress_images)
+        log_foxglove_data(
+            observation=observation, action=action, compress_images=compress_images, diagnostics=diagnostics
+        )
     else:
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 

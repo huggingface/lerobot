@@ -132,6 +132,26 @@ class RobotClient:
         self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
+        # --- Async-inference diagnostics (streamed to the live viewer under the `diagnostics.*` namespace) ---
+        # Metadata of the chunk whose action we are currently executing, refreshed on each dequeue.
+        self._executing_chunk_id: int | None = None
+        self._executing_obs_timestamp: float | None = None
+        self._executing_server_recv_timestamp: float | None = None
+        self._executing_inference_start: float | None = None
+        self._executing_inference_end: float | None = None
+        # Queue length observed at the moment we last dequeued an action to execute.
+        self._last_dequeue_queue_size: int = 0
+        # Latest robot joint state (in action-feature order), used to measure the first-action-vs-state
+        # jump when a new chunk arrives. Written by the control loop, read by the action-receiver thread.
+        self._latest_state_lock = threading.Lock()
+        self._latest_state_vec: torch.Tensor | None = None
+        # One-shot diagnostic events produced off the control-loop thread (chunk_received, in the
+        # receiver thread) and drained by the control loop so all viewer logging stays single-threaded.
+        self._diag_events_lock = threading.Lock()
+        self._pending_diag_events: list[dict[str, float]] = []
+        # chunk_requested marker stashed by control_loop_observation (same thread) for the viewer step.
+        self._pending_chunk_requested: dict[str, float] | None = None
+
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
         # Throttle for always-on FPS logging (log at most once per interval, in seconds)
@@ -261,6 +281,8 @@ class RobotClient:
 
             # If the new action's timestep is in the current action queue, aggregate it
             # TODO: There is probably a way to do this with broadcasting of the two action tensors
+            # Attribute the aggregated action to the newest contributing chunk (carry its diagnostics
+            # metadata), since the blend is dominated by / freshest from the incoming chunk.
             future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
@@ -268,6 +290,11 @@ class RobotClient:
                     action=aggregate_fn(
                         current_action_queue[new_action.get_timestep()], new_action.get_action()
                     ),
+                    chunk_id=new_action.get_chunk_id(),
+                    obs_timestamp=new_action.get_obs_timestamp(),
+                    server_recv_timestamp=new_action.server_recv_timestamp,
+                    inference_start_timestamp=new_action.inference_start_timestamp,
+                    inference_end_timestamp=new_action.inference_end_timestamp,
                 )
             )
 
@@ -310,6 +337,33 @@ class RobotClient:
                     self.logger.debug(f"Actions kept on device: {client_device}")
 
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
+
+                # Diagnostic event: a new chunk arrived. Record its id, the end-to-end latency, and how
+                # far the first action is from the current robot state (the jump you'd see at a chunk
+                # boundary). Stashed for the control loop to log so viewer writes stay single-threaded.
+                if len(timed_actions) > 0:
+                    first_action = timed_actions[0].get_action()
+                    chunk_id = timed_actions[0].get_chunk_id()
+                    obs_ts = timed_actions[0].get_obs_timestamp()
+
+                    with self._latest_state_lock:
+                        state_vec = self._latest_state_vec
+
+                    event: dict[str, float] = {}
+                    if chunk_id is not None:
+                        event["chunk_received_chunk_id"] = float(chunk_id)
+                    if obs_ts is not None:
+                        event["chunk_received_latency_ms"] = (receive_time - obs_ts) * 1000.0
+                    if state_vec is not None and first_action is not None:
+                        fa = first_action.detach().to("cpu").reshape(-1).float()
+                        if fa.shape == state_vec.shape:
+                            event["chunk_received_first_action_delta"] = float(
+                                torch.linalg.norm(fa - state_vec)
+                            )
+
+                    if event:
+                        with self._diag_events_lock:
+                            self._pending_diag_events.append(event)
 
                 # Calculate network latency if we have matching observations
                 if len(timed_actions) > 0 and verbose:
@@ -375,16 +429,38 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
+    def _state_vector_from_raw_observation(self, raw_observation: RawObservation) -> torch.Tensor | None:
+        """Build a joint-state tensor ordered like ``robot.action_features`` (the same order used to
+        turn action tensors into action dicts), or ``None`` if any action feature is missing/non-scalar.
+
+        Diagnostics-only: lets the receiver thread measure how far a new chunk's first action is from
+        the current robot state (the jump visible at a chunk boundary)."""
+        try:
+            values = [raw_observation[key] for key in self.robot.action_features]
+            return torch.tensor([float(v) for v in values])
+        except (KeyError, TypeError, ValueError):
+            return None
+
     def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
         """Reading and performing actions in local queue"""
 
         # Lock only for queue operations
         get_start = time.perf_counter()
         with self.action_queue_lock:
-            self.action_queue_size.append(self.action_queue.qsize())
+            queue_size_at_dequeue = self.action_queue.qsize()
+            self.action_queue_size.append(queue_size_at_dequeue)
             # Get action from queue
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
+
+        # Record which chunk this action came from (and its timing) so the control loop can stream
+        # per-tick diagnostics: queue size at dequeue, chunk id, staleness and server-side latencies.
+        self._last_dequeue_queue_size = queue_size_at_dequeue
+        self._executing_chunk_id = timed_action.get_chunk_id()
+        self._executing_obs_timestamp = timed_action.get_obs_timestamp()
+        self._executing_server_recv_timestamp = timed_action.server_recv_timestamp
+        self._executing_inference_start = timed_action.inference_start_timestamp
+        self._executing_inference_end = timed_action.inference_end_timestamp
 
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
@@ -421,6 +497,12 @@ class RobotClient:
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
 
+            # Cache the current joint state (action-feature order) for the chunk-jump diagnostic.
+            state_vec = self._state_vector_from_raw_observation(raw_observation)
+            if state_vec is not None:
+                with self._latest_state_lock:
+                    self._latest_state_vec = state_vec
+
             with self.latest_action_lock:
                 latest_action = self.latest_action
 
@@ -438,6 +520,12 @@ class RobotClient:
                 current_queue_size = self.action_queue.qsize()
 
             _ = self.send_observation(observation)
+
+            # Sending an observation is effectively a request for the server to produce a new chunk.
+            # Record it as a one-shot marker (value = source observation timestep) for the viewer.
+            self._pending_chunk_requested = {
+                "chunk_requested_obs_timestep": float(observation.get_timestep()),
+            }
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
@@ -467,6 +555,60 @@ class RobotClient:
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
+    def _collect_diagnostics(self, had_action: bool) -> dict[str, float]:
+        """Assemble the per-tick diagnostics scalars streamed to the live viewer.
+
+        Combines steady per-tick signals (queue size, which chunk is executing, staleness, server
+        latencies) with one-shot events produced this tick on the control-loop thread
+        (``chunk_requested``) and drained from the action-receiver thread (``chunk_received``). All
+        viewer logging happens on the control-loop thread, so draining here keeps it single-threaded.
+
+        Args:
+            had_action: Whether an action was dequeued and executed this tick.
+        """
+        diagnostics: dict[str, float] = {}
+
+        # Queue-starvation marker: 1 while the queue is empty and we have no fresh action to execute
+        # (the client holds/repeats the last commanded action), 0 otherwise.
+        diagnostics["queue_starved"] = 0.0 if had_action else 1.0
+
+        if had_action:
+            diagnostics["queue_size"] = float(self._last_dequeue_queue_size)
+            if self._executing_chunk_id is not None:
+                diagnostics["action_source_chunk_id"] = float(self._executing_chunk_id)
+            if self._executing_inference_start is not None and self._executing_inference_end is not None:
+                diagnostics["server_inference_latency_ms"] = (
+                    self._executing_inference_end - self._executing_inference_start
+                ) * 1000.0
+            if (
+                self._executing_inference_start is not None
+                and self._executing_server_recv_timestamp is not None
+            ):
+                diagnostics["server_queue_wait_ms"] = (
+                    self._executing_inference_start - self._executing_server_recv_timestamp
+                ) * 1000.0
+
+        # Staleness of what we're executing right now: wall-clock now minus the timestamp of the
+        # observation that generated the currently-executing action.
+        if self._executing_obs_timestamp is not None:
+            diagnostics["time_since_chunk_requested_ms"] = (
+                time.time() - self._executing_obs_timestamp
+            ) * 1000.0
+
+        # Drain the chunk_requested marker (produced on this thread in control_loop_observation).
+        if self._pending_chunk_requested is not None:
+            diagnostics.update(self._pending_chunk_requested)
+            self._pending_chunk_requested = None
+
+        # Drain one-shot events produced by the action-receiver thread (chunk_received).
+        with self._diag_events_lock:
+            events = self._pending_diag_events
+            self._pending_diag_events = []
+        for event in events:
+            diagnostics.update(event)
+
+        return diagnostics
+
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
@@ -484,27 +626,31 @@ class RobotClient:
             _fresh_observation = None
 
             """Control loop: (1) Performing actions, when available"""
-            if self.actions_available():
+            had_action = self.actions_available()
+            if had_action:
                 _performed_action = _fresh_action = self.control_loop_action(verbose)
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
                 _captured_observation = _fresh_observation = self.control_loop_observation(task, verbose)
 
-            """Control loop: (3) Streaming observations/actions to the live viewer, when enabled"""
-            if self.config.display_data and (_fresh_observation is not None or _fresh_action is not None):
+            """Control loop: (3) Streaming observations/actions/diagnostics to the live viewer, when enabled"""
+            if self.config.display_data:
+                diagnostics = self._collect_diagnostics(had_action=had_action)
                 # Drop the non-numeric "task" instruction; the viewer only handles scalars/images.
                 obs_to_log = (
                     {k: v for k, v in _fresh_observation.items() if k != "task"}
                     if _fresh_observation is not None
                     else None
                 )
-                log_visualization_data(
-                    self.config.display_mode,
-                    observation=obs_to_log,
-                    action=_fresh_action,
-                    compress_images=self.config.display_compressed_images,
-                )
+                if obs_to_log is not None or _fresh_action is not None or diagnostics:
+                    log_visualization_data(
+                        self.config.display_mode,
+                        observation=obs_to_log,
+                        action=_fresh_action,
+                        compress_images=self.config.display_compressed_images,
+                        diagnostics=diagnostics or None,
+                    )
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency

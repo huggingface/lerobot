@@ -221,15 +221,35 @@ class TimedData:
 @dataclass
 class TimedAction(TimedData):
     action: Action
+    # Chunk-level diagnostics, stamped by the policy server so the client can attribute each executed
+    # action back to the chunk (and source observation) it came from. All optional / default None so
+    # actions created without this metadata (e.g. older payloads, aggregated actions) still work.
+    chunk_id: int | None = None
+    # Wall-clock (time.time()) timestamp of the observation this chunk was generated from.
+    obs_timestamp: float | None = None
+    # Wall-clock time the server received that source observation (for server-side queue-wait).
+    server_recv_timestamp: float | None = None
+    # Wall-clock start/end of the server's policy inference for this chunk (for compute latency).
+    inference_start_timestamp: float | None = None
+    inference_end_timestamp: float | None = None
 
     def get_action(self):
         return self.action
+
+    def get_chunk_id(self):
+        return self.chunk_id
+
+    def get_obs_timestamp(self):
+        return self.obs_timestamp
 
 
 @dataclass
 class TimedObservation(TimedData):
     observation: RawObservation
     must_go: bool = False
+    # Wall-clock (time.time()) time the policy server received this observation. Set server-side and
+    # used to measure how long the observation waited on the server before inference started.
+    server_recv_timestamp: float | None = None
 
     def get_observation(self):
         return self.observation

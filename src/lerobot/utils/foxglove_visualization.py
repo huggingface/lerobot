@@ -32,6 +32,8 @@ from lerobot.types import RobotAction, RobotObservation
 from .constants import (
     ACTION,
     ACTION_PREFIX,
+    DIAGNOSTICS_PREFIX,
+    DIAGNOSTICS_STR,
     DONE,
     OBS_IMAGES,
     OBS_PREFIX,
@@ -284,6 +286,7 @@ def log_foxglove_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    diagnostics: dict[str, float] | None = None,
 ) -> None:
     """
     Logs observation and action data to a Foxglove WebSocket server for real-time visualization.
@@ -304,6 +307,9 @@ def log_foxglove_data(
         action: An optional dictionary containing action data to log.
         compress_images: Whether to JPEG-compress images before logging to save bandwidth in exchange
             for CPU and quality.
+        diagnostics: An optional mapping of scalar pipeline-telemetry values (e.g. action queue size,
+            chunk staleness, server latency) logged on the ``/diagnostics/state`` topic, kept separate
+            from observation/action state.
     """
 
     require_package("foxglove-sdk", extra="viz", import_name="foxglove")
@@ -345,6 +351,15 @@ def log_foxglove_data(
             elif isinstance(v, np.ndarray):
                 action_scalars.update(_labeled_scalars(key, v.flatten()))
         _log_foxglove_scalars(_foxglove_topic(ACTION), action_scalars, log_time=now)
+
+    if diagnostics:
+        diagnostics_scalars: dict[str, float] = {}
+        for k, v in diagnostics.items():
+            if v is None:
+                continue
+            key = k[len(DIAGNOSTICS_PREFIX) :] if str(k).startswith(DIAGNOSTICS_PREFIX) else str(k)
+            diagnostics_scalars[key] = float(v)
+        _log_foxglove_scalars(f"/{DIAGNOSTICS_STR}/state", diagnostics_scalars, log_time=now)
 
 
 # ── Dataset playback over a Foxglove WebSocket server ─────────────────────

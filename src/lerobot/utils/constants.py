@@ -34,6 +34,11 @@ ACTION = "action"
 ACTION_PREFIX = ACTION + "."
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
+
+# Diagnostics namespace for pipeline-telemetry scalars (queue size, chunk staleness, server latency, ...)
+# logged to the live viewer separately from robot observation/action state.
+DIAGNOSTICS_STR = "diagnostics"
+DIAGNOSTICS_PREFIX = DIAGNOSTICS_STR + "."
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"

@@ -77,6 +77,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self._predicted_timesteps_lock = threading.Lock()
         self._predicted_timesteps = set()
 
+        # Monotonically increasing id assigned to each generated action chunk, so the client can tell
+        # which chunk an executed action came from (and detect chunk boundaries / jumps).
+        self._chunk_counter_lock = threading.Lock()
+        self._chunk_counter = 0
+
         self.last_processed_obs = None
 
         # Attributes will be set by SendPolicyInstructions
@@ -104,6 +109,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
+
+        with self._chunk_counter_lock:
+            self._chunk_counter = 0
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -182,6 +190,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
+
+        # Record when the server received this observation so the generated chunk can report how long
+        # the observation waited here before inference started (server-side queue wait).
+        timed_observation.server_recv_timestamp = receive_time
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -309,13 +321,37 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         return False
 
-    def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
+    def _time_action_chunk(
+        self,
+        t_0: float,
+        action_chunk: list[torch.Tensor],
+        i_0: int,
+        *,
+        chunk_id: int | None = None,
+        obs_timestamp: float | None = None,
+        server_recv_timestamp: float | None = None,
+        inference_start_timestamp: float | None = None,
+        inference_end_timestamp: float | None = None,
+    ) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
         with the first action corresponding to t_0 and the rest corresponding to
         t_0 + i*environment_dt for i in range(len(action_chunk))
+
+        The chunk-level diagnostics (``chunk_id`` and the various timestamps) are identical for every
+        action in the chunk; they let the client attribute an executed action back to its chunk and
+        measure staleness / server latency.
         """
         return [
-            TimedAction(timestamp=t_0 + i * self.config.environment_dt, timestep=i_0 + i, action=action)
+            TimedAction(
+                timestamp=t_0 + i * self.config.environment_dt,
+                timestep=i_0 + i,
+                action=action,
+                chunk_id=chunk_id,
+                obs_timestamp=obs_timestamp,
+                server_recv_timestamp=server_recv_timestamp,
+                inference_start_timestamp=inference_start_timestamp,
+                inference_end_timestamp=inference_end_timestamp,
+            )
             for i, action in enumerate(action_chunk)
         ]
 
@@ -353,9 +389,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         preprocessing_time = time.perf_counter() - start_preprocess
 
         """3. Get action chunk"""
+        # Wall-clock (time.time()) brackets around core inference, sent to the client so it can report
+        # actual compute latency (inference_end - inference_start), independent of network latency.
+        inference_start_timestamp = time.time()
         start_inference = time.perf_counter()
         action_tensor = self._get_action_chunk(observation)
         inference_time = time.perf_counter() - start_inference
+        inference_end_timestamp = time.time()
         self.logger.info(
             f"Preprocessing and inference took {inference_time:.4f}s, action shape: {action_tensor.shape}"
         )
@@ -382,8 +422,19 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         action_tensor = action_tensor.detach().cpu()
 
         """5. Convert to TimedAction list"""
+        with self._chunk_counter_lock:
+            chunk_id = self._chunk_counter
+            self._chunk_counter += 1
+
         action_chunk = self._time_action_chunk(
-            observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
+            observation_t.get_timestamp(),
+            list(action_tensor),
+            observation_t.get_timestep(),
+            chunk_id=chunk_id,
+            obs_timestamp=observation_t.get_timestamp(),
+            server_recv_timestamp=getattr(observation_t, "server_recv_timestamp", None),
+            inference_start_timestamp=inference_start_timestamp,
+            inference_end_timestamp=inference_end_timestamp,
         )
         postprocess_stops = time.perf_counter()
         postprocessing_time = postprocess_stops - start_postprocess

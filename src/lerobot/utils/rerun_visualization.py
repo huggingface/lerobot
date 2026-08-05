@@ -27,7 +27,7 @@ import numpy as np
 from lerobot.configs import DEPTH_MILLIMETER_UNIT, infer_depth_unit
 from lerobot.types import RobotAction, RobotObservation
 
-from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
+from .constants import ACTION, ACTION_PREFIX, DIAGNOSTICS_PREFIX, DIAGNOSTICS_STR, OBS_PREFIX, OBS_STR
 from .import_utils import require_package
 
 
@@ -73,10 +73,17 @@ def shutdown_rerun() -> None:
     rr.rerun_shutdown()
 
 
-def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]):
+def _build_blueprint(
+    observation_paths: set[str],
+    action_paths: set[str],
+    image_paths: set[str],
+    diagnostics_paths: set[str],
+):
     """Build a Rerun blueprint laying out camera images, observation and action scalars in separate views.
 
-    Camera images, observation and action scalars are arranged in a grid.
+    Camera images, observation, action and diagnostics scalars are arranged in a grid. Diagnostics
+    (pipeline telemetry such as queue size / chunk staleness) get their own view, kept separate from
+    the robot's observation/action state.
     """
 
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
@@ -88,22 +95,33 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
         views.append(rrb.TimeSeriesView(name="observation", contents=sorted(observation_paths)))
     if action_paths:
         views.append(rrb.TimeSeriesView(name="action", contents=sorted(action_paths)))
+    if diagnostics_paths:
+        # Use an origin-based view (rather than an explicit `contents` list) so every diagnostics
+        # entity is shown, including ones first logged after this one-shot blueprint is built (e.g.
+        # `chunk_received_*`, which only appears when a chunk arrives). Diagnostics are logged under
+        # nested `diagnostics/<name>` paths precisely so this subtree view captures them all.
+        views.append(rrb.TimeSeriesView(name="diagnostics", origin=f"/{DIAGNOSTICS_STR}"))
 
     return rrb.Blueprint(rrb.Grid(*views))
 
 
-def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]) -> None:
+def _ensure_blueprint(
+    observation_paths: set[str],
+    action_paths: set[str],
+    image_paths: set[str],
+    diagnostics_paths: set[str],
+) -> None:
     """Build and send the blueprint once, from the first observation and action data."""
     if getattr(log_rerun_data, "blueprint", None) is not None:
         return
 
-    if not (observation_paths or action_paths or image_paths):
+    if not (observation_paths or action_paths or image_paths or diagnostics_paths):
         return
 
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun as rr
 
-    blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
+    blueprint = _build_blueprint(observation_paths, action_paths, image_paths, diagnostics_paths)
     log_rerun_data.blueprint = blueprint
     rr.send_blueprint(blueprint)
 
@@ -112,6 +130,7 @@ def log_rerun_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    diagnostics: dict[str, float] | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -134,6 +153,9 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        diagnostics: An optional mapping of scalar pipeline-telemetry values (e.g. action queue size,
+            chunk staleness, server latency) logged under the ``diagnostics.*`` namespace in a
+            dedicated time-series view, kept separate from observation/action state.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
@@ -142,6 +164,7 @@ def log_rerun_data(
     observation_paths: set[str] = set()
     action_paths: set[str] = set()
     image_paths: set[str] = set()
+    diagnostics_paths: set[str] = set()
 
     if observation:
         for k, v in observation.items():
@@ -188,4 +211,15 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(v.reshape(-1).astype(float)))
                 action_paths.add(key)
 
-    _ensure_blueprint(observation_paths, action_paths, image_paths)
+    if diagnostics:
+        for k, v in diagnostics.items():
+            if v is None:
+                continue
+            # Log under a nested `diagnostics/<name>` path so a single origin-based blueprint view
+            # captures every diagnostic (see `_build_blueprint`), even ones that appear later.
+            name = k[len(DIAGNOSTICS_PREFIX) :] if str(k).startswith(DIAGNOSTICS_PREFIX) else str(k)
+            path = f"{DIAGNOSTICS_STR}/{name}"
+            rr.log(path, rr.Scalars(float(v)))
+            diagnostics_paths.add(path)
+
+    _ensure_blueprint(observation_paths, action_paths, image_paths, diagnostics_paths)
