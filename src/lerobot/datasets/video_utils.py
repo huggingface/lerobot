@@ -645,6 +645,26 @@ def reencode_video(
         raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
 
 
+def check_video_files_compatibility(input_video_paths: list[Path | str]) -> None:
+    """Probes all input videos and raises ValueError upfront if any mismatch."""
+    if len(input_video_paths) <= 1:
+        return
+
+    reference_video_info = get_video_info(input_video_paths[0])
+    for input_path in input_video_paths[1:]:
+        video_info = get_video_info(input_path)
+        if (
+            video_info["video.height"] != reference_video_info["video.height"]
+            or video_info["video.width"] != reference_video_info["video.width"]
+            or video_info["video.fps"] != reference_video_info["video.fps"]
+            or video_info["video.codec"] != reference_video_info["video.codec"]
+            or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]
+        ):
+            raise ValueError(
+                f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
+            )
+
+
 def concatenate_video_files(
     input_video_paths: list[Path | str],
     output_video_path: Path,
@@ -683,19 +703,7 @@ def concatenate_video_files(
 
     # This check may be skipped at recording time as videos are encoded with the same encoder config.
     if compatibility_check:
-        reference_video_info = get_video_info(input_video_paths[0])
-        for input_path in input_video_paths[1:]:
-            video_info = get_video_info(input_path)
-            if (
-                video_info["video.height"] != reference_video_info["video.height"]
-                or video_info["video.width"] != reference_video_info["video.width"]
-                or video_info["video.fps"] != reference_video_info["video.fps"]
-                or video_info["video.codec"] != reference_video_info["video.codec"]
-                or video_info["video.pix_fmt"] != reference_video_info["video.pix_fmt"]
-            ):
-                raise ValueError(
-                    f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
-                )
+        check_video_files_compatibility(input_video_paths)
 
     # Create a temporary .ffconcat file to list the input video paths
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
