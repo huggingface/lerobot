@@ -404,7 +404,10 @@ class LeKiwi(Robot):
             present_pos = self.bus.sync_read(
                 "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
             )
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
+            # `arm_goal_pos` is keyed with the ".pos" suffix, `present_pos` with bare motor names.
+            goal_present_pos = {
+                key: (g_pos, present_pos[key.removesuffix(".pos")]) for key, g_pos in arm_goal_pos.items()
+            }
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             arm_goal_pos = arm_safe_goal_pos
 

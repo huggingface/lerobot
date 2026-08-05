@@ -22,7 +22,7 @@ from torch.utils.data._utils.collate import default_collate
 
 from lerobot.datasets.language import LANGUAGE_COLUMNS
 
-_PYTHON_LIST_KEYS = {"messages", "message_streams", "target_message_indices"}
+_PYTHON_LIST_KEYS = {"messages", "message_streams", "target_message_indices", *LANGUAGE_COLUMNS}
 
 
 def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | None:
