@@ -13,9 +13,11 @@
       "45": 12
     }
   },
+  "comparison_role": "matched additive data ACT200k minimal Eval24 engineering comparison",
   "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
   "evaluation_profile": {
     "path": "experiments/task1_picklift_real48_vs_real96_eval48_v1/real_evaluation_profile.json",
+    "profile_id": "task1_real48_vs_real96_eval48_official_send_interpolated3s_tolerance3_v1",
     "sha256": "6b031bb4c980467addb3e69d68a16032ceae7e45fb3f8e2288d8a4989ff3cbf3"
   },
   "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
@@ -173,6 +175,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 1,
+      "spawn_region": "t001_h01_a",
       "trial_id": "t001_h01_a",
       "within_pose_order": 1
     },
@@ -195,6 +198,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 1,
+      "spawn_region": "t002_h01_b",
       "trial_id": "t002_h01_b",
       "within_pose_order": 2
     },
@@ -217,6 +221,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 1,
+      "spawn_region": "t003_h01_c",
       "trial_id": "t003_h01_c",
       "within_pose_order": 3
     },
@@ -239,6 +244,7 @@
       "quadrant": "Q1",
       "row": 1,
       "source_eval48_pose_order": 3,
+      "spawn_region": "t004_h02_b",
       "trial_id": "t004_h02_b",
       "within_pose_order": 1
     },
@@ -261,6 +267,7 @@
       "quadrant": "Q1",
       "row": 1,
       "source_eval48_pose_order": 3,
+      "spawn_region": "t005_h02_c",
       "trial_id": "t005_h02_c",
       "within_pose_order": 2
     },
@@ -283,6 +290,7 @@
       "quadrant": "Q1",
       "row": 1,
       "source_eval48_pose_order": 3,
+      "spawn_region": "t006_h02_a",
       "trial_id": "t006_h02_a",
       "within_pose_order": 3
     },
@@ -305,6 +313,7 @@
       "quadrant": "Q2",
       "row": 3,
       "source_eval48_pose_order": 4,
+      "spawn_region": "t007_h03_c",
       "trial_id": "t007_h03_c",
       "within_pose_order": 1
     },
@@ -327,6 +336,7 @@
       "quadrant": "Q2",
       "row": 3,
       "source_eval48_pose_order": 4,
+      "spawn_region": "t008_h03_a",
       "trial_id": "t008_h03_a",
       "within_pose_order": 2
     },
@@ -349,6 +359,7 @@
       "quadrant": "Q2",
       "row": 3,
       "source_eval48_pose_order": 4,
+      "spawn_region": "t009_h03_b",
       "trial_id": "t009_h03_b",
       "within_pose_order": 3
     },
@@ -371,6 +382,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 5,
+      "spawn_region": "t010_h04_a",
       "trial_id": "t010_h04_a",
       "within_pose_order": 1
     },
@@ -393,6 +405,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 5,
+      "spawn_region": "t011_h04_c",
       "trial_id": "t011_h04_c",
       "within_pose_order": 2
     },
@@ -415,6 +428,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 5,
+      "spawn_region": "t012_h04_b",
       "trial_id": "t012_h04_b",
       "within_pose_order": 3
     },
@@ -437,6 +451,7 @@
       "quadrant": "Q3",
       "row": 2,
       "source_eval48_pose_order": 10,
+      "spawn_region": "t013_h05_c",
       "trial_id": "t013_h05_c",
       "within_pose_order": 1
     },
@@ -459,6 +474,7 @@
       "quadrant": "Q3",
       "row": 2,
       "source_eval48_pose_order": 10,
+      "spawn_region": "t014_h05_b",
       "trial_id": "t014_h05_b",
       "within_pose_order": 2
     },
@@ -481,6 +497,7 @@
       "quadrant": "Q3",
       "row": 2,
       "source_eval48_pose_order": 10,
+      "spawn_region": "t015_h05_a",
       "trial_id": "t015_h05_a",
       "within_pose_order": 3
     },
@@ -503,6 +520,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 11,
+      "spawn_region": "t016_h06_b",
       "trial_id": "t016_h06_b",
       "within_pose_order": 1
     },
@@ -525,6 +543,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 11,
+      "spawn_region": "t017_h06_a",
       "trial_id": "t017_h06_a",
       "within_pose_order": 2
     },
@@ -547,6 +566,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 11,
+      "spawn_region": "t018_h06_c",
       "trial_id": "t018_h06_c",
       "within_pose_order": 3
     },
@@ -569,6 +589,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 13,
+      "spawn_region": "t019_h07_a",
       "trial_id": "t019_h07_a",
       "within_pose_order": 1
     },
@@ -591,6 +612,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 13,
+      "spawn_region": "t020_h07_b",
       "trial_id": "t020_h07_b",
       "within_pose_order": 2
     },
@@ -613,6 +635,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 13,
+      "spawn_region": "t021_h07_c",
       "trial_id": "t021_h07_c",
       "within_pose_order": 3
     },
@@ -635,6 +658,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 17,
+      "spawn_region": "t022_h08_b",
       "trial_id": "t022_h08_b",
       "within_pose_order": 1
     },
@@ -657,6 +681,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 17,
+      "spawn_region": "t023_h08_c",
       "trial_id": "t023_h08_c",
       "within_pose_order": 2
     },
@@ -679,6 +704,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 17,
+      "spawn_region": "t024_h08_a",
       "trial_id": "t024_h08_a",
       "within_pose_order": 3
     },
@@ -701,6 +727,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 18,
+      "spawn_region": "t025_h09_c",
       "trial_id": "t025_h09_c",
       "within_pose_order": 1
     },
@@ -723,6 +750,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 18,
+      "spawn_region": "t026_h09_a",
       "trial_id": "t026_h09_a",
       "within_pose_order": 2
     },
@@ -745,6 +773,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 18,
+      "spawn_region": "t027_h09_b",
       "trial_id": "t027_h09_b",
       "within_pose_order": 3
     },
@@ -767,6 +796,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 19,
+      "spawn_region": "t028_h10_a",
       "trial_id": "t028_h10_a",
       "within_pose_order": 1
     },
@@ -789,6 +819,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 19,
+      "spawn_region": "t029_h10_c",
       "trial_id": "t029_h10_c",
       "within_pose_order": 2
     },
@@ -811,6 +842,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 19,
+      "spawn_region": "t030_h10_b",
       "trial_id": "t030_h10_b",
       "within_pose_order": 3
     },
@@ -833,6 +865,7 @@
       "quadrant": "Q2",
       "row": 2,
       "source_eval48_pose_order": 21,
+      "spawn_region": "t031_h11_c",
       "trial_id": "t031_h11_c",
       "within_pose_order": 1
     },
@@ -855,6 +888,7 @@
       "quadrant": "Q2",
       "row": 2,
       "source_eval48_pose_order": 21,
+      "spawn_region": "t032_h11_b",
       "trial_id": "t032_h11_b",
       "within_pose_order": 2
     },
@@ -877,6 +911,7 @@
       "quadrant": "Q2",
       "row": 2,
       "source_eval48_pose_order": 21,
+      "spawn_region": "t033_h11_a",
       "trial_id": "t033_h11_a",
       "within_pose_order": 3
     },
@@ -899,6 +934,7 @@
       "quadrant": "Q0",
       "row": 1,
       "source_eval48_pose_order": 23,
+      "spawn_region": "t034_h12_b",
       "trial_id": "t034_h12_b",
       "within_pose_order": 1
     },
@@ -921,6 +957,7 @@
       "quadrant": "Q0",
       "row": 1,
       "source_eval48_pose_order": 23,
+      "spawn_region": "t035_h12_a",
       "trial_id": "t035_h12_a",
       "within_pose_order": 2
     },
@@ -943,6 +980,7 @@
       "quadrant": "Q0",
       "row": 1,
       "source_eval48_pose_order": 23,
+      "spawn_region": "t036_h12_c",
       "trial_id": "t036_h12_c",
       "within_pose_order": 3
     },
@@ -965,6 +1003,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 25,
+      "spawn_region": "t037_h13_a",
       "trial_id": "t037_h13_a",
       "within_pose_order": 1
     },
@@ -987,6 +1026,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 25,
+      "spawn_region": "t038_h13_b",
       "trial_id": "t038_h13_b",
       "within_pose_order": 2
     },
@@ -1009,6 +1049,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 25,
+      "spawn_region": "t039_h13_c",
       "trial_id": "t039_h13_c",
       "within_pose_order": 3
     },
@@ -1031,6 +1072,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 26,
+      "spawn_region": "t040_h14_b",
       "trial_id": "t040_h14_b",
       "within_pose_order": 1
     },
@@ -1053,6 +1095,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 26,
+      "spawn_region": "t041_h14_c",
       "trial_id": "t041_h14_c",
       "within_pose_order": 2
     },
@@ -1075,6 +1118,7 @@
       "quadrant": null,
       "row": 2,
       "source_eval48_pose_order": 26,
+      "spawn_region": "t042_h14_a",
       "trial_id": "t042_h14_a",
       "within_pose_order": 3
     },
@@ -1097,6 +1141,7 @@
       "quadrant": "Q3",
       "row": 1,
       "source_eval48_pose_order": 28,
+      "spawn_region": "t043_h15_c",
       "trial_id": "t043_h15_c",
       "within_pose_order": 1
     },
@@ -1119,6 +1164,7 @@
       "quadrant": "Q3",
       "row": 1,
       "source_eval48_pose_order": 28,
+      "spawn_region": "t044_h15_a",
       "trial_id": "t044_h15_a",
       "within_pose_order": 2
     },
@@ -1141,6 +1187,7 @@
       "quadrant": "Q3",
       "row": 1,
       "source_eval48_pose_order": 28,
+      "spawn_region": "t045_h15_b",
       "trial_id": "t045_h15_b",
       "within_pose_order": 3
     },
@@ -1163,6 +1210,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 32,
+      "spawn_region": "t046_h16_a",
       "trial_id": "t046_h16_a",
       "within_pose_order": 1
     },
@@ -1185,6 +1233,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 32,
+      "spawn_region": "t047_h16_c",
       "trial_id": "t047_h16_c",
       "within_pose_order": 2
     },
@@ -1207,6 +1256,7 @@
       "quadrant": "Q0",
       "row": 2,
       "source_eval48_pose_order": 32,
+      "spawn_region": "t048_h16_b",
       "trial_id": "t048_h16_b",
       "within_pose_order": 3
     },
@@ -1229,6 +1279,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 34,
+      "spawn_region": "t049_h17_c",
       "trial_id": "t049_h17_c",
       "within_pose_order": 1
     },
@@ -1251,6 +1302,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 34,
+      "spawn_region": "t050_h17_b",
       "trial_id": "t050_h17_b",
       "within_pose_order": 2
     },
@@ -1273,6 +1325,7 @@
       "quadrant": "Q3",
       "row": 3,
       "source_eval48_pose_order": 34,
+      "spawn_region": "t051_h17_a",
       "trial_id": "t051_h17_a",
       "within_pose_order": 3
     },
@@ -1295,6 +1348,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 35,
+      "spawn_region": "t052_h18_b",
       "trial_id": "t052_h18_b",
       "within_pose_order": 1
     },
@@ -1317,6 +1371,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 35,
+      "spawn_region": "t053_h18_a",
       "trial_id": "t053_h18_a",
       "within_pose_order": 2
     },
@@ -1339,6 +1394,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 35,
+      "spawn_region": "t054_h18_c",
       "trial_id": "t054_h18_c",
       "within_pose_order": 3
     },
@@ -1361,6 +1417,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 37,
+      "spawn_region": "t055_h19_a",
       "trial_id": "t055_h19_a",
       "within_pose_order": 1
     },
@@ -1383,6 +1440,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 37,
+      "spawn_region": "t056_h19_b",
       "trial_id": "t056_h19_b",
       "within_pose_order": 2
     },
@@ -1405,6 +1463,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 37,
+      "spawn_region": "t057_h19_c",
       "trial_id": "t057_h19_c",
       "within_pose_order": 3
     },
@@ -1427,6 +1486,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 39,
+      "spawn_region": "t058_h20_b",
       "trial_id": "t058_h20_b",
       "within_pose_order": 1
     },
@@ -1449,6 +1509,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 39,
+      "spawn_region": "t059_h20_c",
       "trial_id": "t059_h20_c",
       "within_pose_order": 2
     },
@@ -1471,6 +1532,7 @@
       "quadrant": null,
       "row": 1,
       "source_eval48_pose_order": 39,
+      "spawn_region": "t060_h20_a",
       "trial_id": "t060_h20_a",
       "within_pose_order": 3
     },
@@ -1493,6 +1555,7 @@
       "quadrant": "Q0",
       "row": 3,
       "source_eval48_pose_order": 40,
+      "spawn_region": "t061_h21_c",
       "trial_id": "t061_h21_c",
       "within_pose_order": 1
     },
@@ -1515,6 +1578,7 @@
       "quadrant": "Q0",
       "row": 3,
       "source_eval48_pose_order": 40,
+      "spawn_region": "t062_h21_a",
       "trial_id": "t062_h21_a",
       "within_pose_order": 2
     },
@@ -1537,6 +1601,7 @@
       "quadrant": "Q0",
       "row": 3,
       "source_eval48_pose_order": 40,
+      "spawn_region": "t063_h21_b",
       "trial_id": "t063_h21_b",
       "within_pose_order": 3
     },
@@ -1559,6 +1624,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 41,
+      "spawn_region": "t064_h22_a",
       "trial_id": "t064_h22_a",
       "within_pose_order": 1
     },
@@ -1581,6 +1647,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 41,
+      "spawn_region": "t065_h22_c",
       "trial_id": "t065_h22_c",
       "within_pose_order": 2
     },
@@ -1603,6 +1670,7 @@
       "quadrant": null,
       "row": 3,
       "source_eval48_pose_order": 41,
+      "spawn_region": "t066_h22_b",
       "trial_id": "t066_h22_b",
       "within_pose_order": 3
     },
@@ -1625,6 +1693,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 42,
+      "spawn_region": "t067_h23_c",
       "trial_id": "t067_h23_c",
       "within_pose_order": 1
     },
@@ -1647,6 +1716,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 42,
+      "spawn_region": "t068_h23_b",
       "trial_id": "t068_h23_b",
       "within_pose_order": 2
     },
@@ -1669,6 +1739,7 @@
       "quadrant": "Q1",
       "row": 3,
       "source_eval48_pose_order": 42,
+      "spawn_region": "t069_h23_a",
       "trial_id": "t069_h23_a",
       "within_pose_order": 3
     },
@@ -1691,6 +1762,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 43,
+      "spawn_region": "t070_h24_b",
       "trial_id": "t070_h24_b",
       "within_pose_order": 1
     },
@@ -1713,6 +1785,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 43,
+      "spawn_region": "t071_h24_a",
       "trial_id": "t071_h24_a",
       "within_pose_order": 2
     },
@@ -1735,6 +1808,7 @@
       "quadrant": "Q2",
       "row": 1,
       "source_eval48_pose_order": 43,
+      "spawn_region": "t072_h24_c",
       "trial_id": "t072_h24_c",
       "within_pose_order": 3
     }

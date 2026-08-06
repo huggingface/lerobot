@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import importlib.util
 import json
@@ -94,6 +95,24 @@ def configure_base(base, plan: dict, plan_path: Path) -> None:
     base.EXPECTED_PROFILE_SHA256 = PROFILE_SHA
     base.EXPECTED_EVALUATION_ID = plan["evaluation_id"]
     base.verify_static_files = verify_static
+    def write_sidecar(plan_: dict, trial: dict, artifact_stem: str, replacement_for: str | None) -> None:
+        root = Path(plan_["evidence_root"]) / "trials"
+        evidence_path = root / f"{artifact_stem}.json"
+        if not evidence_path.exists(): return
+        sidecar_path = root / f"{artifact_stem}.eval24.json"
+        if sidecar_path.exists(): return
+        evidence = json.loads(evidence_path.read_text())
+        pre_action = base.build_pre_action_evidence(evidence, trial, root, artifact_stem)
+        sidecar = {"schema":"task1_additive_three_model_eval24_trial_sidecar_v1",
+            "evaluation_id":plan_["evaluation_id"],"trial":trial,"artifact_stem":artifact_stem,
+            "replacement_for":replacement_for,"engine_evidence":{"path":str(evidence_path),"sha256":sha(evidence_path)},
+            "actual_policy_ticks":evidence["steps_jsonl"]["lines"],
+            "wall_duration_seconds":(datetime.fromisoformat(evidence["ended_at_utc"])-datetime.fromisoformat(evidence["started_at_utc"])).total_seconds(),
+            "pre_action_frame":pre_action,"operator_label":{"status":"pending"},
+            "canonical_video_review_label":{"status":"pending"},"success_contract":plan_["success_contract"],
+            "return":evidence["automatic_return"],"torque_disable_verified":evidence["torque_disable_verified"]}
+        sidecar_path.write_text(json.dumps(sidecar,indent=2,sort_keys=True)+"\n")
+    base.write_eval48_sidecar = write_sidecar
 
 
 def dry_run(base, plan: dict) -> dict:

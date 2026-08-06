@@ -1,0 +1,134 @@
+{
+  "by_cell": {
+    "r1c1": {
+      "rate": 0.5,
+      "success": 3,
+      "total": 6
+    },
+    "r1c2": {
+      "rate": 1.0,
+      "success": 6,
+      "total": 6
+    },
+    "r1c3": {
+      "rate": 0.6666666666666666,
+      "success": 4,
+      "total": 6
+    },
+    "r1c4": {
+      "rate": 0.16666666666666666,
+      "success": 1,
+      "total": 6
+    },
+    "r2c1": {
+      "rate": 0.5,
+      "success": 3,
+      "total": 6
+    },
+    "r2c2": {
+      "rate": 0.16666666666666666,
+      "success": 1,
+      "total": 6
+    },
+    "r2c3": {
+      "rate": 0.6666666666666666,
+      "success": 4,
+      "total": 6
+    },
+    "r2c4": {
+      "rate": 0.5,
+      "success": 3,
+      "total": 6
+    },
+    "r3c1": {
+      "rate": 0.3333333333333333,
+      "success": 2,
+      "total": 6
+    },
+    "r3c2": {
+      "rate": 0.6666666666666666,
+      "success": 4,
+      "total": 6
+    },
+    "r3c3": {
+      "rate": 0.16666666666666666,
+      "success": 1,
+      "total": 6
+    },
+    "r3c4": {
+      "rate": 0.8333333333333334,
+      "success": 5,
+      "total": 6
+    }
+  },
+  "by_coverage_tier": {
+    "added_by_real48": {
+      "rate": 0.6111111111111112,
+      "success": 11,
+      "total": 18
+    },
+    "added_by_real96": {
+      "rate": 0.25925925925925924,
+      "success": 7,
+      "total": 27
+    },
+    "seen_by_real24": {
+      "rate": 0.8333333333333334,
+      "success": 15,
+      "total": 18
+    },
+    "unseen_by_both": {
+      "rate": 0.4444444444444444,
+      "success": 4,
+      "total": 9
+    }
+  },
+  "by_model": {
+    "A": {
+      "rate": 0.4583333333333333,
+      "success": 11,
+      "total": 24
+    },
+    "B": {
+      "rate": 0.625,
+      "success": 15,
+      "total": 24
+    },
+    "C": {
+      "rate": 0.4583333333333333,
+      "success": 11,
+      "total": 24
+    }
+  },
+  "by_yaw": {
+    "0": {
+      "rate": 0.6111111111111112,
+      "success": 22,
+      "total": 36
+    },
+    "45": {
+      "rate": 0.4166666666666667,
+      "success": 15,
+      "total": 36
+    }
+  },
+  "claim_boundary": "Operator-stage engineering result; canonical-video review pending; no causal paper conclusion.",
+  "created_at_utc": "2026-08-06T10:21:57.118172+00:00",
+  "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+  "integrity": {
+    "maximum_duration": 72,
+    "run_error_null": 72,
+    "success_early_stop": 0,
+    "torque_disable_verified": 72
+  },
+  "operator_labels": 72,
+  "overall": {
+    "rate": 0.5138888888888888,
+    "success": 37,
+    "total": 72
+  },
+  "plan_sha256": "ad711d39df8f2e5334665add1c2fdfee00e4a57e4550fa9960cffaf32728c8c3",
+  "schema": "task1_additive_three_model_eval24_operator_result_v1",
+  "status": "operator_labels_frozen_pending_canonical_video_review",
+  "trials": 72
+}

@@ -54,7 +54,7 @@ def main() -> None:
             trial_id = f"t{order:03d}_h{pose_index:02d}_{key.lower()}"
             row, column = int(selected["cell"][1]), int(selected["cell"][3])
             trial = {
-                "order": order, "trial_id": trial_id, "artifact_stem": trial_id,
+                "order": order, "trial_id": trial_id, "artifact_stem": trial_id, "spawn_region": trial_id,
                 "pose_order": pose_index, "source_eval48_pose_order": selected["source_order"],
                 "within_pose_order": within, "model_key": key, "model_id": models[key]["model_id"],
                 "eval_pose_id": selected["eval_pose_id"], "cell": selected["cell"], "row": row, "column": column,
@@ -71,6 +71,7 @@ def main() -> None:
     plan = {
         "schema_version": 1, "evaluation_id": EVALUATION_ID,
         "status": "software_gate_frozen_hardware_not_authorized",
+        "comparison_role": "matched additive data ACT200k minimal Eval24 engineering comparison",
         "research_contract": {
             "research_repo_commit": "cc252373b71ad38032e2a5e418fbe57f1efa541d",
             "half_bank_sha256": sha(HALF), "source_eval48_plan_sha256": sha(SOURCE_PLAN),
@@ -78,7 +79,9 @@ def main() -> None:
         },
         "execution_engine": {"path": "experiments/task1_picklift_real24_act_v1/evaluate_real.py",
                              "source_sha256": sha(REPO / "experiments/task1_picklift_real24_act_v1/evaluate_real.py")},
-        "evaluation_profile": {"path": str(PROFILE.relative_to(REPO)), "sha256": sha(PROFILE)},
+        "evaluation_profile": {"path": str(PROFILE.relative_to(REPO)),
+            "profile_id": "task1_real48_vs_real96_eval48_official_send_interpolated3s_tolerance3_v1",
+            "sha256": sha(PROFILE)},
         "evidence_root": f"/home/ubuntu24/Teleop/artifacts/evaluation/{EVALUATION_ID}",
         "models": models, "setup": base_setup,
         "success_early_stop": {"enabled": True, "explicit_opt_in": True,

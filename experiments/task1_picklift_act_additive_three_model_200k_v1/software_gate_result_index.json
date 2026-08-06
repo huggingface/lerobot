@@ -13,7 +13,7 @@
       "45": 12
     }
   },
-  "created_at_utc": "2026-08-06T00:56:49.899171+00:00",
+  "created_at_utc": "2026-08-06T01:05:33.717131+00:00",
   "dry_run": {
     "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1/software_preparation_v1/dry_run.json",
     "sha256": "739f0981d4694c62a36ff86dbadc4271643119f302ad43358a2f6083532661ed"
@@ -38,6 +38,7 @@
     "quadrant": "Q3",
     "row": 3,
     "source_eval48_pose_order": 1,
+    "spawn_region": "t001_h01_a",
     "trial_id": "t001_h01_a",
     "within_pose_order": 1
   },
@@ -77,7 +78,7 @@
   },
   "plan": {
     "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_additive_three_model_200k_v1/evaluation_plan.json",
-    "sha256": "3a30997f38e7ca887652c831aa92963b4a701b283f95965db7c490ad2dd88d3d"
+    "sha256": "ad711d39df8f2e5334665add1c2fdfee00e4a57e4550fa9960cffaf32728c8c3"
   },
   "pose_count": 24,
   "schema": "task1_additive_three_model_eval24_software_gate_v1",
