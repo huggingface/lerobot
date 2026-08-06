@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-IK helper for exoskeleton-to-G1 teleoperation. We map Exoskeleton joint angles to end-effector pose in world frame,
-visualizing the result in meshcat after calibration.
+"""IK helper for exoskeleton-to-G1 teleoperation.
+
+We map Exoskeleton joint angles to end-effector pose in world frame, visualizing the result in meshcat
+after calibration.
 """
 
 import logging
@@ -43,6 +44,24 @@ def _frame_id(model, name: str) -> int | None:
 
 @dataclass
 class ArmCfg:
+    """Static per-arm configuration linking an exoskeleton URDF to its G1 counterpart.
+
+    Args:
+        side (`str`):
+            Which arm this describes, `"left"` or `"right"`.
+        urdf (`str`):
+            Path to the exoskeleton arm's URDF file.
+        root (`str`):
+            Name of the exoskeleton's root node in the meshcat scene tree.
+        g1_ee (`str`):
+            Name of the corresponding end-effector frame on the G1 URDF model.
+        offset (`np.ndarray`):
+            World-frame translation applied to the exoskeleton and its IK target, so the exoskeleton's
+            visualization does not overlap the G1's.
+        marker_prefix (`str`):
+            Prefix used to namespace this arm's meshcat marker paths.
+    """
+
     side: str  # "left" | "right"
     urdf: str  # exo_left.urdf / exo_right.urdf
     root: str  # "exo_left" / "exo_right"
@@ -52,12 +71,28 @@ class ArmCfg:
 
 
 class Markers:
-    """Creates meshcat visualization primitives, showing end-effector frames of exoskeleton and G1"""
+    """Creates meshcat visualization primitives, showing end-effector frames of exoskeleton and G1."""
 
     def __init__(self, viewer):
+        """Store the meshcat viewer (or scene-tree node) markers will be attached under.
+
+        Args:
+            viewer:
+                The meshcat viewer markers are added to.
+        """
         self.v = viewer
 
     def sphere(self, path: str, r: float, rgba: tuple[float, float, float, float]):
+        """Add a colored sphere marker to the meshcat scene.
+
+        Args:
+            path (`str`):
+                Meshcat scene-tree path for this marker, e.g. `"markers/left_exo_ee"`.
+            r (`float`):
+                Sphere radius, in meters.
+            rgba (`tuple[float, float, float, float]`):
+                Red, green, and blue components (each 0-1) followed by opacity (0-1).
+        """
         import meshcat.geometry as mg
 
         c = (int(rgba[0] * 255) << 16) | (int(rgba[1] * 255) << 8) | int(rgba[2] * 255)
@@ -67,6 +102,16 @@ class Markers:
         )
 
     def axes(self, path: str, axis_len: float = 0.1, axis_w: int = 6):
+        """Add a red/green/blue XYZ axis-triad marker to the meshcat scene.
+
+        Args:
+            path (`str`):
+                Meshcat scene-tree path for this marker.
+            axis_len (`float`, *optional*, defaults to 0.1):
+                Length of each axis line, in meters.
+            axis_w (`int`, *optional*, defaults to 6):
+                Line width, in pixels.
+        """
         import meshcat.geometry as mg
 
         pts = np.array(
@@ -85,21 +130,37 @@ class Markers:
         )
 
     def tf(self, path: str, mat: np.ndarray):
+        """Update the transform of an existing marker.
+
+        Args:
+            path (`str`):
+                Meshcat scene-tree path of the marker to move.
+            mat (`np.ndarray`):
+                New 4x4 homogeneous transform for the marker, in world frame.
+        """
         self.v[path].set_transform(mat)
 
 
 class ExoskeletonIKHelper:
-    """
-    - Loads G1 robot and exoskeleton URDF models via Pinocchio
-    - Computes forward kinematics on exoskeleton to get end-effector poses
-    - Solves inverse kinematics on G1 to match those poses
-    - Provides meshcat visualization showing both robots and targets
+    """Maps exoskeleton joint angles to G1 arm joint angles via forward and inverse kinematics.
+
+    Loads the G1 robot and both exoskeleton arm URDF models via Pinocchio, computes forward kinematics on
+    the exoskeleton to obtain end-effector poses in the world frame, then solves inverse kinematics on the
+    G1 model to find joint angles reproducing those poses. Also provides an optional meshcat
+    visualization showing both robots alongside their IK targets.
 
     Args:
-        frozen_joints: List of G1 joint names to exclude from IK (kept at neutral).
+        frozen_joints (`list[str] | None`, *optional*):
+            G1 joint names to exclude from IK; these are held at their current pose instead of being
+            solved for.
     """
 
     def __init__(self, frozen_joints: list[str] | None = None):
+        """Load the G1 and exoskeleton Pinocchio models and precompute frozen-joint indices.
+
+        Raises:
+            ImportError: If `pinocchio` is not installed.
+        """
         try:
             import pinocchio as pin
         except ImportError as e:
@@ -188,9 +249,9 @@ class ExoskeletonIKHelper:
             logger.info(f"loaded {a.side} exo urdf: {a.urdf}")
 
     def init_visualization(self):
-        """
-        Creates a browser-based visualization of exoskeleton and G1 robot,
-        highlighting end-effector frames and target positions.
+        """Creates a browser-based visualization of exoskeleton and G1 robot.
+
+        Highlights end-effector frames and target positions.
         """
         try:
             from pinocchio.visualize import MeshcatVisualizer
@@ -237,7 +298,7 @@ class ExoskeletonIKHelper:
         print(f"\nmeshcat url: {self.viewer.url()}\n")
 
     def _fk_target_world(self, side: str, angles: dict[str, float]) -> np.ndarray | None:
-        """returns wrist frame target to be used for G1 IK in 4x4 homogeneous transform. Takes offset into account."""
+        """Returns wrist frame target to be used for G1 IK in 4x4 homogeneous transform. Takes offset into account."""
         if side not in self.exo or not angles:
             return None
 
@@ -263,6 +324,10 @@ class ExoskeletonIKHelper:
         return target
 
     def update_visualization(self):
+        """Refresh the meshcat scene with the G1's and both exoskeletons' current poses and IK targets.
+
+        No-op if `init_visualization` has not been called yet.
+        """
         if self.viewer is None or self.markers is None:
             return
 
@@ -311,9 +376,9 @@ class ExoskeletonIKHelper:
         left_angles: dict[str, float],
         right_angles: dict[str, float],
     ) -> dict[str, float]:
-        """
-        Performs FK on exoskeleton to get end-effector poses in world frame,
-        after which it solves IK on G1 to return joint angles matching those poses in G1 motor order.
+        """Performs FK on exoskeleton to get end-effector poses in world frame.
+
+        Solves IK on G1 to return joint angles matching those poses in G1 motor order.
         """
         pin = self.pin
 

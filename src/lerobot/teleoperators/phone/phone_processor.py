@@ -26,8 +26,7 @@ from .config_phone import PhoneOS
 @ProcessorStepRegistry.register("map_phone_action_to_robot_action")
 @dataclass
 class MapPhoneActionToRobotAction(RobotActionProcessorStep):
-    """
-    Maps calibrated phone pose actions to standardized robot action inputs.
+    """Maps calibrated phone pose actions to standardized robot action inputs.
 
     This processor step acts as a bridge between the phone teleoperator's output
     and the robot's expected action format. It remaps the phone's 6-DoF pose
@@ -45,17 +44,22 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     _enabled_prev: bool = field(default=False, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
-        """
-        Processes the phone action dictionary to create a robot action dictionary.
+        """Processes the phone action dictionary to create a robot action dictionary.
 
         Args:
-            act: The input action dictionary from the phone teleoperator.
+            action (`RobotAction`):
+                The input action dictionary from the phone teleoperator, keyed `"phone.pos"`,
+                `"phone.rot"`, `"phone.raw_inputs"`, and `"phone.enabled"`.
 
         Returns:
-            A new action dictionary formatted for the robot controller.
+            `RobotAction`: A new action dictionary formatted for the robot controller, keyed
+            `"enabled"`, `"target_x"`/`"target_y"`/`"target_z"`, `"target_wx"`/`"target_wy"`/`"target_wz"`,
+            and `"gripper_vel"`.
 
         Raises:
-            ValueError: If 'pos' or 'rot' keys are missing from the input action.
+            KeyError: If `"phone.pos"`, `"phone.rot"`, `"phone.raw_inputs"`, or `"phone.enabled"` is
+                missing from `action`.
+            ValueError: If `"phone.pos"` or `"phone.rot"` is `None`.
         """
         # Pop them from the action
         enabled = bool(action.pop("phone.enabled"))
@@ -92,6 +96,20 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Replace the `phone.*` action feature entries with the robot action features `action` produces.
+
+        Drops the `"phone.enabled"`, `"phone.pos"`, `"phone.rot"`, and `"phone.raw_inputs"` feature
+        entries, and adds one scalar (`shape=(1,)`) entry for each of `"enabled"`, `"target_x"`,
+        `"target_y"`, `"target_z"`, `"target_wx"`, `"target_wy"`, `"target_wz"`, and `"gripper_vel"`.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature dictionary, keyed by pipeline feature type and then feature name.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The same dictionary, with the action
+            feature entries updated in place.
+        """
         for feat in ["enabled", "pos", "rot", "raw_inputs"]:
             features[PipelineFeatureType.ACTION].pop(f"phone.{feat}", None)
 

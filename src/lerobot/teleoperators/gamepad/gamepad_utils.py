@@ -34,68 +34,88 @@ else:
 
 
 class InputController:
-    """Base class for input controllers that generate motion deltas."""
+    """Base class for input controllers that generate motion deltas for gamepad-style teleoperation.
+
+    Subclasses override `start`, `stop`, `update`, and `get_deltas` to read an actual device; this base
+    class returns inert defaults.
+    """
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
-        """
-        Initialize the controller.
+        """Instantiate the controller's step sizes and reset its state.
 
         Args:
-            x_step_size: Base movement step size in meters
-            y_step_size: Base movement step size in meters
-            z_step_size: Base movement step size in meters
+            x_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along X, in meters.
+            y_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Y, in meters.
+            z_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Z, in meters.
         """
         self.x_step_size = x_step_size
         self.y_step_size = y_step_size
         self.z_step_size = z_step_size
         self.running = True
-        self.episode_end_status = None  # None, "success", or "failure"
+        self.episode_end_status = None  # None, or a TeleopEvents member (SUCCESS, FAILURE, RERECORD_EPISODE)
         self.intervention_flag = False
         self.open_gripper_command = False
         self.close_gripper_command = False
 
     def start(self):
-        """Start the controller and initialize resources."""
+        """Start the controller and initialize resources. Subclasses open the actual device here."""
         pass
 
     def stop(self):
-        """Stop the controller and release resources."""
+        """Stop the controller and release resources. Subclasses close the actual device here."""
         pass
 
     def get_deltas(self):
-        """Get the current movement deltas (dx, dy, dz) in meters."""
+        """Get the current movement deltas.
+
+        Returns:
+            `tuple[float, float, float]`: `(dx, dy, dz)` in meters. Always `(0.0, 0.0, 0.0)` on the base
+            class.
+        """
         return 0.0, 0.0, 0.0
 
     def update(self):
-        """Update controller state - call this once per frame."""
+        """Refresh the controller's internal state. Call this once per frame before reading deltas or events."""
         pass
 
     def __enter__(self):
-        """Support for use in 'with' statements."""
+        """Support for use in `with` statements. Calls `start`."""
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Ensure resources are released when exiting 'with' block."""
+        """Ensure resources are released when exiting a `with` block, even on error."""
         self.stop()
 
     def get_episode_end_status(self):
-        """
-        Get the current episode end status.
+        """Read and clear the current episode end status.
 
         Returns:
-            None if episode should continue, "success" or "failure" otherwise
+            `TeleopEvents | None`: `None` if the episode should continue, otherwise whichever
+            [`~teleoperators.TeleopEvents`] member (e.g. `SUCCESS`, `FAILURE`, `RERECORD_EPISODE`) a
+            subclass most recently recorded.
         """
         status = self.episode_end_status
         self.episode_end_status = None  # Reset after reading
         return status
 
     def should_intervene(self):
-        """Return True if intervention flag was set."""
+        """Whether the intervention flag is currently set.
+
+        Returns:
+            `bool`: `True` if a human is currently intervening.
+        """
         return self.intervention_flag
 
     def gripper_command(self):
-        """Return the current gripper command."""
+        """Derive a gripper command from the open/close button flags.
+
+        Returns:
+            `str`: `"open"` or `"close"` if exactly one of the flags is set, `"stay"` otherwise.
+        """
         if self.open_gripper_command == self.close_gripper_command:
             return "stay"
         elif self.open_gripper_command:
@@ -105,9 +125,14 @@ class InputController:
 
 
 class KeyboardController(InputController):
-    """Generate motion deltas from keyboard input."""
+    """Generate motion deltas from keyboard input via `pynput`, as an alternative to a physical gamepad.
+
+    Arrow keys drive X/Y, shift/shift_r drive Z, `enter`/`backspace` end the episode with success/failure,
+    and `esc` stops the listener.
+    """
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
+        """See `InputController.__init__`; the step sizes have the same meaning here."""
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.key_states = {
             "forward_x": False,
@@ -123,7 +148,7 @@ class KeyboardController(InputController):
         self.listener = None
 
     def start(self):
-        """Start the keyboard listener."""
+        """Start the `pynput` keyboard listener, if the current session can capture key events."""
         if not pynput_can_capture():
             logging.warning(
                 "Keyboard control is unavailable in this environment. pynput cannot capture keys "
@@ -136,6 +161,7 @@ class KeyboardController(InputController):
         from pynput import keyboard
 
         def on_press(key):
+            """Update key/episode state for a key-down event."""
             try:
                 if key == keyboard.Key.up:
                     self.key_states["forward_x"] = True
@@ -163,6 +189,7 @@ class KeyboardController(InputController):
                 pass
 
         def on_release(key):
+            """Update key state for a key-up event."""
             try:
                 if key == keyboard.Key.up:
                     self.key_states["forward_x"] = False
@@ -194,12 +221,16 @@ class KeyboardController(InputController):
         print("  ESC: Exit")
 
     def stop(self):
-        """Stop the keyboard listener."""
+        """Stop the `pynput` keyboard listener."""
         if self.listener and self.listener.is_alive():
             self.listener.stop()
 
     def get_deltas(self):
-        """Get the current movement deltas from keyboard state."""
+        """Get the current movement deltas from held-down arrow/shift keys.
+
+        Returns:
+            `tuple[float, float, float]`: `(dx, dy, dz)` in meters.
+        """
         delta_x = delta_y = delta_z = 0.0
 
         if self.key_states["forward_x"]:
@@ -219,9 +250,29 @@ class KeyboardController(InputController):
 
 
 class GamepadController(InputController):
-    """Generate motion deltas from gamepad input."""
+    """Generate motion deltas from gamepad input via `pygame`.
+
+    Left stick drives X/Y, the right stick's vertical axis drives Z. Y/Triangle, A/Cross, and X/Square
+    end the episode with success, failure, or rerecord respectively; RB/LT open and close the gripper;
+    holding RB also sets the intervention flag.
+    """
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+        """Instantiate the controller.
+
+        Args:
+            x_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along X, in meters.
+            y_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Y, in meters.
+            z_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Z, in meters.
+            deadzone (`float`, *optional*, defaults to 0.1):
+                Minimum absolute stick reading before it is treated as input, to filter out drift.
+
+        Raises:
+            ImportError: If `pygame` is not installed.
+        """
         require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
@@ -229,7 +280,7 @@ class GamepadController(InputController):
         self.intervention_flag = False
 
     def start(self):
-        """Initialize pygame and the gamepad."""
+        """Initialize `pygame` and connect to the first detected joystick."""
         pygame.init()
         pygame.joystick.init()
 
@@ -251,7 +302,7 @@ class GamepadController(InputController):
         print("  X/Square button: Rerecord episode")
 
     def stop(self):
-        """Clean up pygame resources."""
+        """Clean up `pygame` joystick and display resources."""
         if pygame.joystick.get_init():
             if self.joystick:
                 self.joystick.quit()
@@ -259,7 +310,7 @@ class GamepadController(InputController):
         pygame.quit()
 
     def update(self):
-        """Process pygame events to get fresh gamepad readings."""
+        """Drain pending `pygame` events to refresh button, episode, and intervention state."""
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
@@ -297,7 +348,12 @@ class GamepadController(InputController):
                 self.intervention_flag = False
 
     def get_deltas(self):
-        """Get the current movement deltas from gamepad state."""
+        """Get the current movement deltas from the joystick axes, after applying the deadzone.
+
+        Returns:
+            `tuple[float, float, float]`: `(dx, dy, dz)` in meters. `(0.0, 0.0, 0.0)` if reading the
+            joystick raises `pygame.error` (e.g. the controller was disconnected).
+        """
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
@@ -325,7 +381,12 @@ class GamepadController(InputController):
 
 
 class GamepadControllerHID(InputController):
-    """Generate motion deltas from gamepad input using HIDAPI."""
+    """Generate motion deltas from gamepad input by reading raw HID reports via `hidapi`.
+
+    An alternative to `GamepadController` for controllers `pygame` does not reliably detect (notably on
+    macOS). Byte offsets in `update` are tuned for the Logitech RumblePad 2 and may need adjusting for
+    other controllers.
+    """
 
     def __init__(
         self,
@@ -334,13 +395,20 @@ class GamepadControllerHID(InputController):
         z_step_size=1.0,
         deadzone=0.1,
     ):
-        """
-        Initialize the HID gamepad controller.
+        """Instantiate the controller.
 
         Args:
-            step_size: Base movement step size in meters
-            z_scale: Scaling factor for Z-axis movement
-            deadzone: Joystick deadzone to prevent drift
+            x_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along X, in meters.
+            y_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Y, in meters.
+            z_step_size (`float`, *optional*, defaults to 1.0):
+                Movement step size along Z, in meters.
+            deadzone (`float`, *optional*, defaults to 0.1):
+                Minimum absolute stick reading before it is treated as input, to filter out drift.
+
+        Raises:
+            ImportError: If `hidapi` is not installed.
         """
         require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
@@ -358,7 +426,14 @@ class GamepadControllerHID(InputController):
         self.buttons = {}
 
     def find_device(self):
-        """Look for the gamepad device by vendor and product ID."""
+        """Look for a supported gamepad among enumerated HID devices.
+
+        Matches the first device whose product string contains `"Logitech"`, `"Xbox"`, `"PS4"`, or
+        `"PS5"`.
+
+        Returns:
+            `dict | None`: The `hidapi` device info dict, or `None` if no matching device was found.
+        """
         devices = hid.enumerate()
         for device in devices:
             device_name = device["product_string"]
@@ -371,7 +446,7 @@ class GamepadControllerHID(InputController):
         return None
 
     def start(self):
-        """Connect to the gamepad using HIDAPI."""
+        """Find and open the gamepad's HID device in non-blocking mode."""
         self.device_info = self.find_device()
         if not self.device_info:
             self.running = False
@@ -406,9 +481,9 @@ class GamepadControllerHID(InputController):
             self.device = None
 
     def update(self):
-        """
-        Read and process the latest gamepad data.
-        Due to an issue with the HIDAPI, we need to read the read the device several times in order to get a stable reading
+        """Read and process the latest gamepad HID report.
+
+        Reads the device 10 times in a row, since a single `hidapi` read can otherwise return stale data.
         """
         for _ in range(10):
             self._update()
@@ -464,7 +539,11 @@ class GamepadControllerHID(InputController):
             logging.error(f"Error reading from gamepad: {e}")
 
     def get_deltas(self):
-        """Get the current movement deltas from gamepad state."""
+        """Get the current movement deltas from the last-read HID report.
+
+        Returns:
+            `tuple[float, float, float]`: `(dx, dy, dz)` in meters.
+        """
         # Calculate deltas - invert as needed based on controller orientation
         delta_x = -self.left_x * self.x_step_size  # Forward/backward
         delta_y = -self.left_y * self.y_step_size  # Left/right

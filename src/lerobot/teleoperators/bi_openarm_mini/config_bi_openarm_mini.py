@@ -23,7 +23,18 @@ from ..openarm_mini import OpenArmMiniConfigBase
 @TeleoperatorConfig.register_subclass("bi_openarm_mini")
 @dataclass
 class BiOpenArmMiniConfig(TeleoperatorConfig):
-    """Configuration class for Bi OpenArm Mini teleoperators."""
+    """Configuration for a bimanual pair of OpenArm Mini leader arms.
+
+    Args:
+        left_arm_config (`OpenArmMiniConfigBase`):
+            Configuration for the left arm.
+        right_arm_config (`OpenArmMiniConfigBase`):
+            Configuration for the right arm.
+        id (`str`, *optional*):
+            Identifier for this particular unit; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
 
     left_arm_config: OpenArmMiniConfigBase
     right_arm_config: OpenArmMiniConfigBase

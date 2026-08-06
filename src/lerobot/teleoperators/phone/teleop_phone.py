@@ -46,6 +46,14 @@ logger = logging.getLogger(__name__)
 
 
 class BasePhone:
+    """Shared calibration state and `Teleoperator` interface parts common to both phone backends.
+
+    `IOSPhone` and `AndroidPhone` mix this in alongside `Teleoperator` so that the action/feedback feature
+    schemas, calibration status, and the no-op configuration step only need to be written once. Each
+    backend implements the parts that genuinely differ: connecting, reading the raw pose, and capturing a
+    calibration reference.
+    """
+
     _enabled: bool = False
     _calib_pos: np.ndarray | None = None
     _calib_rot_inv: Rotation | None = None
@@ -55,10 +63,24 @@ class BasePhone:
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether a calibration reference pose has been captured.
+
+        Returns:
+            `bool`: `True` once both a reference position and inverse rotation have been recorded by
+            `calibrate`.
+        """
         return (self._calib_pos is not None) and (self._calib_rot_inv is not None)
 
     @property
     def action_features(self) -> dict[str, type]:
+        """Describe the action dictionary returned by `get_action`.
+
+        Returns:
+            `dict[str, type]`: Maps `"phone.pos"` (3D position, shape `(3,)`), `"phone.rot"` (orientation,
+            a `scipy.spatial.transform.Rotation`), `"phone.raw_inputs"` (device-specific analog/button or
+            WebXR values), and `"phone.enabled"` (whether the teleoperation trigger is currently held) to
+            their value types.
+        """
         return {
             "phone.pos": np.ndarray,  # shape (3,)
             "phone.rot": Rotation,  # scipy.spatial.transform.Rotation
@@ -68,22 +90,60 @@ class BasePhone:
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """Feedback schema accepted by `send_feedback`.
+
+        No haptic or other feedback channel is implemented for phone teleoperators yet.
+
+        Returns:
+            `dict[str, type]`: Currently always `None`, since `feedback_features` has no implementation
+            yet; this deviates from the declared return type and should not be relied on.
+        """
         # No haptic or other feedback implemented yet
         pass
 
     def configure(self) -> None:
+        """No-op. Phone teleoperators require no runtime configuration.
+
+        See [`~teleoperators.Teleoperator.configure`] for the base contract.
+        """
         # No additional configuration required for phone teleop
         pass
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not implemented. Phone teleoperators do not support feedback yet.
+
+        Args:
+            feedback (`dict[str, float]`):
+                Feedback values; see [`~teleoperators.Teleoperator.send_feedback`] for the base contract.
+
+        Raises:
+            NotImplementedError: Always. Haptic feedback (phone vibration) is not implemented yet.
+        """
         # We could add haptic feedback (vibrations) here, but it's not implemented yet
         raise NotImplementedError
 
 
 class IOSPhone(BasePhone, Teleoperator):
+    """ARKit-based teleoperator backend for iOS, driven through the HEBI Mobile I/O app.
+
+    Reads the phone's 6-DoF pose (position and orientation) captured by ARKit and relayed over the HEBI
+    SDK, along with the app's 8 analog (`a1`-`a8`) and 8 digital (`b1`-`b8`) inputs. `Phone` instantiates
+    this internally when `PhoneConfig.phone_os` is `PhoneOS.IOS`; use `Phone` directly rather than this
+    class.
+    """
+
     name = "ios_phone"
 
     def __init__(self, config: PhoneConfig):
+        """Check for the optional dependencies this backend needs and store the configuration.
+
+        Args:
+            config (`PhoneConfig`):
+                Configuration shared with the parent `Phone` teleoperator.
+
+        Raises:
+            ImportError: If the `hebi-py` or `teleop` packages are not installed.
+        """
         require_package("hebi-py", extra="phone", import_name="hebi")
         require_package("teleop", extra="phone")
         super().__init__(config)
@@ -92,10 +152,26 @@ class IOSPhone(BasePhone, Teleoperator):
 
     @property
     def is_connected(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_connected`].
+
+        Returns:
+            `bool`: `True` once a HEBI feedback group has been acquired by `connect`.
+        """
         return self._group is not None
 
     @check_if_already_connected
     def connect(self) -> None:
+        """Look up the HEBI Mobile I/O group over the network, then calibrate.
+
+        Waits briefly for the HEBI lookup service to discover the phone running the Mobile I/O app under
+        the `"HEBI"` family / `"mobileIO"` name, then immediately runs `calibrate`, which blocks until the
+        user captures a reference pose in the app. Unlike
+        [`~teleoperators.Teleoperator.connect`], this method always calibrates; there is no way to skip it.
+
+        Raises:
+            DeviceAlreadyConnectedError: If already connected.
+            RuntimeError: If no matching Mobile I/O group is found on the network.
+        """
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
         time.sleep(2.0)
@@ -108,6 +184,13 @@ class IOSPhone(BasePhone, Teleoperator):
         self.calibrate()
 
     def calibrate(self) -> None:
+        """Block until the user captures a reference pose via the HEBI Mobile I/O app.
+
+        Prompts the user to hold the phone so its top edge points along the robot's +x axis and its
+        screen faces the robot's +z axis, then to press and hold button `B1` in the app to capture that
+        pose as the calibration reference. See [`~teleoperators.Teleoperator.calibrate`] for the base
+        contract.
+        """
         print(
             "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
         )
@@ -119,8 +202,7 @@ class IOSPhone(BasePhone, Teleoperator):
         print("Calibration done\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
-        """
-        Blocks execution until the calibration trigger is detected from the iOS device.
+        """Blocks execution until the calibration trigger is detected from the iOS device.
 
         This method enters a loop, continuously reading the phone's state. It waits for the user to press
         and hold the 'B1' button in the HEBI Mobile I/O app. Once B1 is pressed, the loop breaks and
@@ -147,8 +229,7 @@ class IOSPhone(BasePhone, Teleoperator):
             time.sleep(0.01)
 
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
-        """
-        Reads the instantaneous 6-DoF pose from the connected iOS device via the HEBI SDK.
+        """Reads the instantaneous 6-DoF pose from the connected iOS device via the HEBI SDK.
 
         This method fetches the latest feedback packet from the HEBI group, extracts the ARKit
         position and orientation, and converts them into a standard format. It also applies a
@@ -183,6 +264,20 @@ class IOSPhone(BasePhone, Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict:
+        """Read the phone's current calibrated pose and raw HEBI inputs.
+
+        Applies the calibration captured by `calibrate` to the raw ARKit pose, and re-anchors the
+        reference position on the rising edge of the `b1` "enable" button so that moving the phone while
+        disabled does not cause a jump once teleoperation resumes.
+
+        Returns:
+            `dict`: Matches `action_features`: `"phone.pos"`, `"phone.rot"`, `"phone.raw_inputs"` (the
+            app's analog/digital channel values, keyed e.g. `"a1"`, `"b1"`), and `"phone.enabled"`. An
+            empty `dict` if no pose has been received yet or the teleoperator has not been calibrated.
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
         if not has_pose or not self.is_calibrated:
             return {}
@@ -224,13 +319,34 @@ class IOSPhone(BasePhone, Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """See [`~teleoperators.Teleoperator.disconnect`].
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         self._group = None
 
 
 class AndroidPhone(BasePhone, Teleoperator):
+    """WebXR-based teleoperator backend for Android, driven through the `teleop` Python package.
+
+    Runs the `teleop` package's local WebXR server on a background thread and reads the pose and touch
+    events posted by the phone's browser session. `Phone` instantiates this internally when
+    `PhoneConfig.phone_os` is `PhoneOS.ANDROID`; use `Phone` directly rather than this class.
+    """
+
     name = "android_phone"
 
     def __init__(self, config: PhoneConfig):
+        """Check for the optional dependencies this backend needs and store the configuration.
+
+        Args:
+            config (`PhoneConfig`):
+                Configuration shared with the parent `Phone` teleoperator.
+
+        Raises:
+            ImportError: If the `hebi-py` or `teleop` packages are not installed.
+        """
         require_package("hebi-py", extra="phone", import_name="hebi")
         require_package("teleop", extra="phone")
         super().__init__(config)
@@ -243,10 +359,26 @@ class AndroidPhone(BasePhone, Teleoperator):
 
     @property
     def is_connected(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_connected`].
+
+        Returns:
+            `bool`: `True` once the `teleop` background thread has been started by `connect`.
+        """
         return self._teleop is not None
 
     @check_if_already_connected
     def connect(self) -> None:
+        """Start the `teleop` WebXR server on a background thread, then calibrate.
+
+        Subscribes to pose/message updates from the `teleop` package and starts its server loop on a
+        daemon thread, then immediately runs `calibrate`, which blocks until the user captures a reference
+        pose from the phone's browser session. Unlike
+        [`~teleoperators.Teleoperator.connect`], this method always calibrates; there is no way to skip
+        it.
+
+        Raises:
+            DeviceAlreadyConnectedError: If already connected.
+        """
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
         self._teleop.subscribe(self._android_callback)
@@ -257,6 +389,13 @@ class AndroidPhone(BasePhone, Teleoperator):
         self.calibrate()
 
     def calibrate(self) -> None:
+        """Block until the user captures a reference pose via touch on the WebXR page.
+
+        Prompts the user to hold the phone so its top edge points along the robot's +x axis and its
+        screen faces the robot's +z axis, then to touch and move a finger on the WebXR page to capture
+        that pose as the calibration reference. See [`~teleoperators.Teleoperator.calibrate`] for the base
+        contract.
+        """
         print(
             "Hold the phone so that: top edge points forward in same direction as the robot (robot +x) and screen points up (robot +z)"
         )
@@ -269,8 +408,7 @@ class AndroidPhone(BasePhone, Teleoperator):
         print("Calibration done\n")
 
     def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
-        """
-        Blocks execution until the calibration trigger is detected from the Android device.
+        """Blocks execution until the calibration trigger is detected from the Android device.
 
         This method enters a loop, continuously checking the latest message received from the WebXR
         session. It waits for the user to touch and move their finger on the screen, which generates
@@ -293,8 +431,7 @@ class AndroidPhone(BasePhone, Teleoperator):
             time.sleep(0.01)
 
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
-        """
-        Reads the latest 6-DoF pose received from the Android device's WebXR session.
+        """Reads the latest 6-DoF pose received from the Android device's WebXR session.
 
         This method accesses the most recent pose data stored by the `_android_callback`. It uses a
         thread lock to safely read the shared `_latest_pose` variable. The pose, a 4x4 matrix, is
@@ -317,8 +454,7 @@ class AndroidPhone(BasePhone, Teleoperator):
         return True, pos, rot, pose
 
     def _android_callback(self, pose: np.ndarray, message: dict) -> None:
-        """
-        Callback function to handle incoming data from the Android teleop stream.
+        """Callback function to handle incoming data from the Android teleop stream.
 
         This method is executed by the `teleop` package's subscriber thread whenever a new
         pose and message are received from the WebXR session on the Android phone. It updates
@@ -336,6 +472,20 @@ class AndroidPhone(BasePhone, Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict:
+        """Read the phone's current calibrated pose and raw touch/button state.
+
+        Applies the calibration captured by `calibrate` to the latest pose received from the `teleop`
+        background thread, and re-anchors the reference position on the rising edge of the `"move"` touch
+        event so that moving the phone while disabled does not cause a jump once teleoperation resumes.
+
+        Returns:
+            `dict`: Matches `action_features`: `"phone.pos"`, `"phone.rot"`, `"phone.raw_inputs"`
+            (`"move"`, `"scale"`, `"reservedButtonA"`, `"reservedButtonB"`), and `"phone.enabled"`. An
+            empty `dict` if no pose has been received yet or the teleoperator has not been calibrated.
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
         if not ok or not self.is_calibrated:
             return {}
@@ -369,6 +519,11 @@ class AndroidPhone(BasePhone, Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Stop the `teleop` background thread.
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         self._teleop = None
         if self._teleop_thread and self._teleop_thread.is_alive():
             self._teleop_thread.join(timeout=1.0)
@@ -377,18 +532,42 @@ class AndroidPhone(BasePhone, Teleoperator):
 
 
 class Phone(Teleoperator):
-    """
-    Phone-based teleoperator using ARKit (iOS via HEBI Mobile I/O App) or the teleop Python package (Android via WebXR API).
-    For HEBI Mobile I/O we also expose 8 analog (a1-a8) and 8 digital (b1-b8) inputs.
+    """Phone-based teleoperator: iOS via ARKit and the HEBI Mobile I/O app, Android via WebXR.
 
-    Press and hold **B1** to enable teleoperation. While enabled, the first B1 press
-    captures a reference pose and rotation, when disabled and pressed again the position is reapplied.
+    Reads the phone's 6-DoF pose and, for the HEBI Mobile I/O app, 8 analog (`a1`-`a8`) and 8 digital
+    (`b1`-`b8`) inputs. Which backend is used is picked at construction time from
+    `config.phone_os` and delegated to internally: [`~teleoperators.Teleoperator`] method calls on `Phone`
+    forward to either an `IOSPhone` or an `AndroidPhone` instance.
+
+    Press and hold **B1** (iOS) or touch and move on the WebXR page (Android) to enable teleoperation.
+    The first press/touch while enabled captures a reference pose; releasing and re-triggering re-anchors
+    the reference position to wherever the phone currently is, so motion is always relative to where
+    teleoperation was last resumed.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.phone import Phone, PhoneConfig
+        >>> teleop = Phone(PhoneConfig())  # doctest: +SKIP
+        >>> teleop.connect()  # doctest: +SKIP
+        >>> teleop.get_action()  # doctest: +SKIP
+        ```
     """
 
     config_class = PhoneConfig
     name = "phone"
 
     def __init__(self, config: PhoneConfig):
+        """Pick and construct the backend matching `config.phone_os`.
+
+        Args:
+            config (`PhoneConfig`):
+                Configuration selecting the phone platform (`config.phone_os`) and forwarded to the
+                chosen backend.
+
+        Raises:
+            ValueError: If `config.phone_os` is not a valid `PhoneOS` member.
+            ImportError: If the `hebi-py` or `teleop` packages are not installed.
+        """
         super().__init__(config)
         self.config = config
 
@@ -403,34 +582,89 @@ class Phone(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_connected`].
+
+        Returns:
+            `bool`: `True` if the underlying `IOSPhone` or `AndroidPhone` backend is connected.
+        """
         return self._phone_impl.is_connected
 
     def connect(self) -> None:
+        """Connect and calibrate through the underlying backend.
+
+        Unlike [`~teleoperators.Teleoperator.connect`], this always calibrates; there is no `calibrate`
+        argument to opt out.
+
+        Raises:
+            DeviceAlreadyConnectedError: If already connected.
+            RuntimeError: If the iOS backend cannot find the Mobile I/O group on the network.
+        """
         return self._phone_impl.connect()
 
     def calibrate(self) -> None:
+        """See [`~teleoperators.Teleoperator.calibrate`]. Delegates to the underlying backend."""
         return self._phone_impl.calibrate()
 
     @property
     def is_calibrated(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_calibrated`].
+
+        Returns:
+            `bool`: `True` once a calibration reference pose has been captured.
+        """
         return self._phone_impl.is_calibrated
 
     @property
     def action_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Returns:
+            `dict[str, type]`: `"phone.pos"`, `"phone.rot"`, `"phone.raw_inputs"`, and `"phone.enabled"`
+            mapped to their value types; see `get_action` for what each holds.
+        """
         return self._phone_impl.action_features
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.feedback_features`].
+
+        Returns:
+            `dict[str, type]`: Currently always `None`, since no feedback channel is implemented yet.
+        """
         return self._phone_impl.feedback_features
 
     def configure(self) -> None:
+        """No-op. See [`~teleoperators.Teleoperator.configure`]."""
         return self._phone_impl.configure()
 
     def get_action(self) -> dict:
+        """Read the phone's current calibrated pose and raw inputs from the underlying backend.
+
+        Returns:
+            `dict`: Matches `action_features`. An empty `dict` if no pose has been received yet or the
+            teleoperator has not been calibrated.
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         return self._phone_impl.get_action()
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not implemented. See [`~teleoperators.Teleoperator.send_feedback`].
+
+        Args:
+            feedback (`dict[str, float]`):
+                Feedback values; unused.
+
+        Raises:
+            NotImplementedError: Always. Haptic feedback is not implemented yet.
+        """
         return self._phone_impl.send_feedback(feedback)
 
     def disconnect(self) -> None:
+        """See [`~teleoperators.Teleoperator.disconnect`]. Delegates to the underlying backend.
+
+        Raises:
+            DeviceNotConnectedError: If `connect` has not been called.
+        """
         return self._phone_impl.disconnect()

@@ -22,6 +22,22 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("gamepad")
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
+    """Configuration for the gamepad teleoperator.
+
+    Args:
+        use_gripper (`bool`, *optional*, defaults to `True`):
+            Whether to include a `gripper` entry in the produced actions.
+        hidapi_fallback (`bool`, *optional*, defaults to `False`):
+            Read the gamepad through `hidapi` instead of `pygame`. Set this on macOS if `pygame` does not
+            reliably detect input from your controller.
+        id (`str`, *optional*):
+            Identifier for this particular unit, used to tell apart several teleoperators of the same
+            type. It also names the calibration file, so keep it stable for a given piece of hardware.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to a per-teleoperator directory under
+            the LeRobot calibration home.
+    """
+
     use_gripper: bool = True
     # Use hidapi instead of pygame for controllers that pygame cannot detect reliably.
     hidapi_fallback: bool = False

@@ -21,10 +21,14 @@ from ..config import TeleoperatorConfig
 
 @dataclass
 class RebotArm102LeaderConfig:
-    """Base configuration class for the Seeed Studio StarArm102 / reBot Arm 102 leader.
+    """Field definitions shared by the reBot Arm 102 leader.
 
-    The reBot Arm 102 is a 7-joint (incl. gripper) leader arm driven by FashionStar
-    UART smart servos. Servo communication goes through ``motorbridge-smart-servo``.
+    The reBot Arm 102 is a 7-joint (incl. gripper) leader arm driven by FashionStar UART smart servos.
+    Servo communication goes through ``motorbridge-smart-servo``.
+
+    This class only carries the fields. The registered configuration users instantiate is
+    [`RebotArm102LeaderTeleopConfig`], which combines these with [`~teleoperators.TeleoperatorConfig`] and
+    documents them all in one place — doc-builder renders only a class's own docstring, never its bases'.
     """
 
     # USB-to-UART device the leader arm is connected to (e.g. "/dev/ttyUSB0").
@@ -78,6 +82,28 @@ class RebotArm102LeaderConfig:
 @TeleoperatorConfig.register_subclass("rebot_102_leader")
 @dataclass
 class RebotArm102LeaderTeleopConfig(TeleoperatorConfig, RebotArm102LeaderConfig):
-    """Registered configuration for the reBot Arm 102 leader teleoperator."""
+    """Registered configuration for the reBot Arm 102 leader teleoperator.
+
+    Args:
+        port (`str`):
+            USB-to-UART device the leader arm is connected to, e.g. `/dev/ttyUSB0`.
+        baudrate (`int`, *optional*, defaults to 1000000):
+            Baud rate of the UART link to the FashionStar smart servos.
+        joint_ids (`dict[str, int]`, *optional*):
+            Servo id of each joint on the UART bus. Defaults to the reBot Arm 102's standard 7-joint
+            layout (`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_yaw`,
+            `wrist_roll`, `gripper`).
+        joint_directions (`dict[str, int]`, *optional*):
+            Per-joint sign applied to raw servo angles so the leader matches the follower convention. The
+            gripper additionally carries a scale (e.g. `-6`) to widen its range to the reBot B601
+            follower's gripper travel.
+        joint_ranges (`dict[str, list[int]]`, *optional*):
+            Per-joint `[min, max]` output range in degrees. Defaults to ranges matching the reBot B601
+            follower's joint limits so leader actions can drive the follower key-for-key.
+        id (`str`, *optional*):
+            Identifier for this particular arm; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
 
     pass

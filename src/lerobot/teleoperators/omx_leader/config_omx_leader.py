@@ -22,6 +22,28 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("omx_leader")
 @dataclass
 class OmxLeaderConfig(TeleoperatorConfig):
+    """Configuration for the OMX leader arm.
+
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0` on Linux or `COM3` on Windows. Run
+            `lerobot-find-port` to identify it.
+        gripper_open_pos (`float`, *optional*, defaults to 60.0):
+            Goal position written to the gripper motor, held under current-based position control so the
+            gripper springs back to this position when released, letting it be used as a physical trigger.
+        id (`str`, *optional*):
+            Identifier for this particular arm; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.omx_leader import OmxLeader, OmxLeaderConfig
+        >>> config = OmxLeaderConfig(port="/dev/ttyACM0")  # doctest: +SKIP
+        >>> teleop = OmxLeader(config)  # doctest: +SKIP
+        ```
+    """
+
     # Port to connect to the arm
     port: str
 
