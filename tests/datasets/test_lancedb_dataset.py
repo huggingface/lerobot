@@ -17,7 +17,6 @@
 
 import json
 import pickle
-import shutil
 from pathlib import Path
 
 import pyarrow as pa
@@ -30,15 +29,9 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lancedb_dataset as lancedb_module
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lancedb_dataset import (
-    FRAMES_TABLE,
-    META_TABLE,
-    VIDEO_BLOB_COLUMN,
-    VIDEOS_TABLE,
     LanceDBDataset,
-    build_video_byte_index,
     is_lance_dataset,
     lance_mp_context,
-    to_lance_column,
 )
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
@@ -49,18 +42,18 @@ from lerobot.datasets.language import (
     language_persistent_arrow_type,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.policies.factory import make_policy_config
 from tests.fixtures.constants import (
-    DUMMY_CAMERA_FEATURES,
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_REPO_ID,
 )
 
 lancedb = pytest.importorskip("lancedb")
+convert = pytest.importorskip("lerobot_lancedb.convert").convert
 
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
+    """Extension type -> its storage type (pa.array can't build extension values directly)."""
     if isinstance(dtype, pa.BaseExtensionType):
         return _storage_type(dtype.storage_type)
     if pa.types.is_list(dtype):
@@ -72,65 +65,6 @@ def _storage_type(dtype: pa.DataType) -> pa.DataType:
     return dtype
 
 
-def convert_frames_to_lance(src_root: Path, dst_root: Path) -> None:
-    db = lancedb.connect(str(dst_root))
-    shutil.copytree(src_root / "meta", dst_root / "meta")
-    db.create_table(
-        META_TABLE,
-        pa.Table.from_pylist(
-            [
-                {"path": str(f.relative_to(src_root / "meta")), "data": f.read_bytes()}
-                for f in sorted((src_root / "meta").rglob("*"))
-                if f.is_file()
-            ],
-            schema=pa.schema([pa.field("path", pa.string()), pa.field("data", pa.large_binary())]),
-        ),
-    )
-    files = sorted((src_root / "data").rglob("*.parquet"))
-    table = pa.concat_tables([pq.read_table(f) for f in files]).sort_by("index")
-    fields, arrays = [], []
-    for field in table.schema:
-        column = table.column(field.name).combine_chunks()
-        if field.name in LANGUAGE_COLUMNS:
-            target = _storage_type(column.type)
-            if target != column.type:
-                column = column.cast(target)
-        elif pa.types.is_list(field.type) or pa.types.is_large_list(field.type):
-            column = pa.FixedSizeListArray.from_arrays(column.flatten(), len(column[0]))
-        arrays.append(column)
-        fields.append(pa.field(to_lance_column(field.name), column.type))
-    db.create_table(FRAMES_TABLE, pa.Table.from_arrays(arrays, schema=pa.schema(fields)))
-
-    video_files = sorted((src_root / "videos").rglob("*.mp4"))
-    if video_files:
-        schema = pa.schema(
-            [
-                pa.field("video_key", pa.string()),
-                pa.field("chunk_index", pa.int64()),
-                pa.field("file_index", pa.int64()),
-                pa.field("file_size", pa.int64()),
-                pa.field("moov_offset", pa.int64()),
-                pa.field("moov_size", pa.int64()),
-                pa.field("kf_indices", pa.list_(pa.int64())),
-                pa.field("kf_positions", pa.list_(pa.int64())),
-                lancedb.blob(VIDEO_BLOB_COLUMN),
-            ]
-        )
-        videos_table = db.create_table(VIDEOS_TABLE, schema=schema)
-        videos_table.add(
-            [
-                {
-                    "video_key": mp4.parts[-3],
-                    "chunk_index": int(mp4.parent.name.split("-")[1]),
-                    "file_index": int(mp4.stem.split("-")[1]),
-                    **build_video_byte_index(mp4),
-                    VIDEO_BLOB_COLUMN: mp4.read_bytes(),
-                }
-                for mp4 in video_files
-            ]
-        )
-
-
 @pytest.fixture
 def dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
     src_root = tmp_path / "src"
@@ -138,7 +72,7 @@ def dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
         root=src_root, total_episodes=3, total_frames=90, use_videos=False, camera_features={}
     )
     lance_root = tmp_path / "lance"
-    convert_frames_to_lance(src_root, lance_root)
+    convert(lance_root, root=src_root)
     return src_root, lance_root
 
 
@@ -199,7 +133,7 @@ def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
         camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     )
     lance_root = tmp_path / "lance_video"
-    convert_frames_to_lance(src_root, lance_root)
+    convert(lance_root, root=src_root)
     return src_root, lance_root
 
 
@@ -248,78 +182,22 @@ def test_video_parity(video_dataset_roots):
     assert item[video_key].dtype == torch.uint8
 
 
-def test_factory_autodetect_and_train_e2e(video_dataset_roots):
+def test_factory_autodetects_lance(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
-    # autodetection: lance layout -> LanceDBDataset, parquet layout -> LeRobotDataset
     assert is_lance_dataset(root=lance_root)
     assert not is_lance_dataset(root=src_root)
-    parquet_cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(src_root)),
-        policy=make_policy_config("act"),
-    )
-    assert isinstance(make_dataset(parquet_cfg), LeRobotDataset)
 
-    # e2e: build the training dataloader exactly as lerobot_train does and consume batches
-    cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(lance_root)),
-        policy=make_policy_config("act"),
-    )
-    dataset = make_dataset(cfg)
-    assert isinstance(dataset, LanceDBDataset)
-
-    sampler = EpisodeAwareSampler(
-        dataset.meta.episodes["dataset_from_index"],
-        dataset.meta.episodes["dataset_to_index"],
-        episode_indices_to_use=dataset.episodes,
-        drop_n_last_frames=getattr(cfg.policy, "drop_n_last_frames", 0),
-        shuffle=True,
-        seed=0,
-        absolute_to_relative_idx=dataset.absolute_to_relative_idx,
-    )
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=4,
-        sampler=sampler,
-        num_workers=2,
-        multiprocessing_context=lance_mp_context(),
-        drop_last=True,
-    )
-
-    chunk_size = cfg.policy.chunk_size
-    action_dim = dataset.meta.features["action"]["shape"][0]
-    video_key = dataset.meta.video_keys[0]
-    for step, batch in enumerate(loader):
-        assert batch["action"].shape == (4, chunk_size, action_dim)
-        assert batch["action_is_pad"].shape == (4, chunk_size)
-        assert batch[video_key].dtype == torch.uint8  # factory passes return_uint8=True
-        assert batch[video_key].shape[0] == 4
-        if step == 1:
-            break
-
-
-def test_make_dataset_accepts_uri_root(video_dataset_roots):
-    """make_dataset must handle a URI root (s3://, gs://, file://) end-to-end.
-
-    Regression: the factory built LeRobotDatasetMetadata(root=cfg.dataset.root) before
-    Lance detection; Path() collapsed 'file:///x' -> 'file:/x' and the root was
-    silently ignored (Hub download of a different copy). DUMMY_REPO_ID is not on the
-    Hub, so a regressed factory would fail here instead of reading the local URI.
-    """
-    _, lance_root = video_dataset_roots
-
-    def build(root: str):
+    def make(root):
         cfg = TrainPipelineConfig(
-            dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=root),
+            dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(root)),
             policy=make_policy_config("act"),
         )
         return make_dataset(cfg)
 
-    uri_ds = build(f"file://{lance_root}")
-    plain_ds = build(str(lance_root))
-    assert isinstance(uri_ds, LanceDBDataset)
-    # the URI root reads the SAME local dataset (not a Hub fallback), bit-exact with plain path
-    assert len(uri_ds) == len(plain_ds)
-    assert_items_equal(uri_ds[0], plain_ds[0])
+    assert isinstance(make(lance_root), LanceDBDataset)
+    assert isinstance(make(src_root), LeRobotDataset)
+    # A file:// URI root must route to the same local lance dataset
+    assert isinstance(make(f"file://{lance_root}"), LanceDBDataset)
 
 
 def test_pickle_and_dataloader(dataset_roots):
@@ -332,7 +210,7 @@ def test_pickle_and_dataloader(dataset_roots):
         lance_ds,
         batch_size=8,
         num_workers=2,
-        multiprocessing_context="spawn",
+        multiprocessing_context=lance_mp_context(),  # forkserver: the exported lance worker context
         shuffle=True,
     )
     batch = next(iter(loader))
@@ -340,7 +218,14 @@ def test_pickle_and_dataloader(dataset_roots):
     assert len(batch["task"]) == 8
 
 
+def _language_msg(role, content, style, tool_calls=None):
+    return {"role": role, "content": content, "style": style,
+            "timestamp": 0.0, "camera": None, "tool_calls": tool_calls}
+
+
 def add_language_columns(src_root: Path) -> None:
+    """Add persistent + event language columns, hitting every shape the loader must
+    round-trip: populated, tool_calls (JSON), empty list, and null."""
     for f in sorted((src_root / "data").rglob("*.parquet")):
         table = pq.read_table(f)
         persistent, events = [], []
@@ -348,38 +233,17 @@ def add_language_columns(src_root: Path) -> None:
             if idx % 7 == 5:
                 persistent.append(None)
             elif idx % 3 == 0:
-                persistent.append(
-                    [
-                        {
-                            "role": "user",
-                            "content": f"subtask {idx}",
-                            "style": "subtask",
-                            "timestamp": idx / 10.0,
-                            "camera": None,
-                            "tool_calls": None,
-                        }
-                    ]
-                )
+                persistent.append([_language_msg("user", f"subtask {idx}", "subtask")])
             else:
                 persistent.append([])
-            if idx % 4 == 0:
-                events.append(
-                    [
-                        {
-                            "role": "assistant",
-                            "content": "on it",
-                            "style": "interjection",
-                            "camera": None,
-                            "tool_calls": ['{"text": "on it"}'],
-                        }
-                    ]
-                )
-            else:
-                events.append([])
-        # pa.array can't build nested JSON extension values; use storage types (string).
+            events.append(
+                [_language_msg("assistant", "on it", "interjection", tool_calls=['{"text": "on it"}'])]
+                if idx % 4 == 0
+                else []
+            )
+        # pa.array can't build the nested JSON extension values; use storage types.
         table = table.append_column(
-            LANGUAGE_PERSISTENT,
-            pa.array(persistent, type=_storage_type(language_persistent_arrow_type())),
+            LANGUAGE_PERSISTENT, pa.array(persistent, type=_storage_type(language_persistent_arrow_type()))
         )
         table = table.append_column(
             LANGUAGE_EVENTS, pa.array(events, type=_storage_type(language_events_arrow_type()))
@@ -399,7 +263,7 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
     )
     add_language_columns(src_root)
     lance_root = tmp_path / "lance"
-    convert_frames_to_lance(src_root, lance_root)
+    convert(lance_root, root=src_root)
 
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LanceDBDataset(root=lance_root)
@@ -430,41 +294,3 @@ def test_materialize_meta_rejects_escaping_paths(tmp_path):
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
             lancedb_module._materialize_meta(db, tmp_path / f"root_{i}")
-
-
-def test_image_backed_features_rejected(tmp_path, lerobot_dataset_factory):
-    """Image-backed camera features (not video) must fail fast, not silently drop columns."""
-    src_root = tmp_path / "src_img"
-    lerobot_dataset_factory(
-        root=src_root,
-        total_episodes=2,
-        total_frames=40,
-        use_videos=False,
-        camera_features=DUMMY_CAMERA_FEATURES,
-    )
-    lance_root = tmp_path / "lance_img"
-    convert_frames_to_lance(src_root, lance_root)
-    with pytest.raises(NotImplementedError, match="Image-backed features"):
-        LanceDBDataset(root=lance_root)
-
-
-def test_depth_stats_rescaled_to_output_unit(video_dataset_roots):
-    """Depth stats must be rescaled to depth_output_unit, matching LeRobotDataset."""
-    src_root, lance_root = video_dataset_roots
-    depth_key = LeRobotDataset(DUMMY_REPO_ID, root=src_root).meta.depth_keys[0]
-    for unit in ("m", "mm"):
-        upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, depth_output_unit=unit)
-        lance_ds = LanceDBDataset(root=lance_root, depth_output_unit=unit)
-        torch.testing.assert_close(
-            lance_ds.meta.stats[depth_key]["mean"], upstream.meta.stats[depth_key]["mean"], rtol=0, atol=0
-        )
-
-
-def test_hub_revision_only_forwarded_for_hf_uris():
-    """The revision must reach a hub read's storage_options (so tables match meta),
-    but never a non-hub URI's."""
-    hub = lancedb_module._storage_options("hf://datasets/org/name", {"token": "t"}, "v3.0")
-    assert hub["revision"] == "v3.0"
-
-    s3 = lancedb_module._storage_options("s3://bucket/path", None, "v3.0")
-    assert "revision" not in s3

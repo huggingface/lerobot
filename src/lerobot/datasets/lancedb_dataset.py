@@ -449,8 +449,8 @@ class LanceDBDataset(torch.utils.data.Dataset):
         # Episode boundaries (absolute frame index space) for delta clamping + padding.
         self._ep_from = self._episode_numpy("dataset_from_index", np.int64)
         self._ep_to = self._episode_numpy("dataset_to_index", np.int64)
-        # Integrity: episode ranges must tile [0, total_frames) exactly. Public
-        # datasets ship broken meta often (droid orphans, berkeley tails, agibot empties).
+        # Integrity: episode ranges must tile [0, total_frames) exactly — a cheap guard
+        # so broken or incomplete meta fails at open, not as silently wrong samples.
         if len(self._ep_from) and (
             int(self._ep_from[0]) != 0
             or int(self._ep_to[-1]) != self.meta.total_frames
@@ -515,7 +515,6 @@ class LanceDBDataset(torch.utils.data.Dataset):
 
     def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
         # Read straight from the underlying Arrow column, not HF Dataset __getitem__
-        # which row-formats every element (~1M calls at droid scale, ~10s in __init__).
         column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
         return column.astype(dtype, copy=False)
 
@@ -538,7 +537,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         )
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
-            # TODO: for million-file datasets, resolve row ids lazily per batch.
+            # future TODO: resolve row ids lazily per batch.
             index = (
                 self._videos_table.search()
                 .select(["video_key", "chunk_index", "file_index"])
@@ -774,7 +773,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
     ) -> dict[tuple, tuple]:
         """Stage 1 of video decoding: everything that doesn't need timestamps"""
-        # Lazy load torchcodec to avoid platform-conditional dependencies.
+        # Lazy load torchcodec
         from torchcodec.decoders import VideoDecoder
 
         self._load_file_meta([key for key in file_keys if key not in self._file_meta])
@@ -837,18 +836,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
                     window_spans[key] = spans
             self._fetch_spans(window_spans, {key: prepared[key][1] for key in window_spans})
 
-        # Insert/refresh each file in the decoder cache. Runs here because stage 1
-        # has already fetched every byte range the batch needs, so source.buffered
-        # is final; re-putting keeps the LRU byte budget accurate as cached sources
-        # grow across batches.
+        # Insert/refresh each file in the decoder cache.
         for key, (decoder, source) in prepared.items():
-            if decoder is not None:
-                height = decoder.metadata.height or 0
-                width = decoder.metadata.width or 0
-            else:  # depth: no torchcodec decoder; size from the feature shape
-                height, width = (tuple(self.meta.features[key[0]].get("shape") or (0, 0)) + (0, 0))[:2]
-            context_cost = (8 << 20) + 8 * height * width
-            self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered + context_cost)
+            self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered)
         return prepared
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
