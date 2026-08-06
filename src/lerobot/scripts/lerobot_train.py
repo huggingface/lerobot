@@ -602,9 +602,10 @@ def train(cfg: TrainPipelineConfig):
         "lr": AverageMeter("lr", ":0.1e"),
         # Report the slowest rank for bottleneck-style timings so multi-GPU runs surface the
         # true straggler instead of rank 0's view.
-        "update_s": AverageMeter("updt_s", ":.3f", reduction="max"),
         "dataloading_s": AverageMeter("data_s", ":.3f", reduction="max"),
-        # Derived from the post-reduce max step time; set once per log window on the main rank.
+        "preprocessing_s": AverageMeter("prep_s", ":.3f", reduction="max"),
+        "update_s": AverageMeter("updt_s", ":.3f", reduction="max"),
+        "step_s": AverageMeter("step_s", ":.3f", reduction="max"),
         "samples_per_s": AverageMeter("smp/s", ":.0f"),
     }
     if torch.cuda.is_available():
@@ -634,13 +635,15 @@ def train(cfg: TrainPipelineConfig):
         )
 
     for _ in range(step, cfg.steps):
-        start_time = time.perf_counter()
+        step_start = time.perf_counter()
         batch = next(dl_iter)
+        preprocessing_start = time.perf_counter()
+        train_tracker.dataloading_s = preprocessing_start - step_start
         for cam_key in dataset.meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
         batch = preprocessor(batch)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+        train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
         train_tracker, _ = update_policy(
             train_tracker,
@@ -652,6 +655,7 @@ def train(cfg: TrainPipelineConfig):
             lr_scheduler=lr_scheduler,
             sample_weighter=sample_weighter,
         )
+        train_tracker.step_s = time.perf_counter() - step_start
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
@@ -668,11 +672,8 @@ def train(cfg: TrainPipelineConfig):
             # Collective reduce must run on every rank, before the main-process gate below.
             train_tracker.reduce_across_ranks()
             if is_main_process():
-                # Cluster-wide throughput, derived from the already-reduced (max) step time so it
-                # reflects the slowest rank — which is what actually gates the next iteration.
-                step_time = train_tracker.update_s.avg + train_tracker.dataloading_s.avg
-                if step_time > 0:
-                    train_tracker.samples_per_s = samples_per_step / step_time
+                if train_tracker.step_s.avg > 0:
+                    train_tracker.samples_per_s = samples_per_step / train_tracker.step_s.avg
                 logging.info(train_tracker)
                 if wandb_logger:
                     # Policy sub-losses (latent_loss, action_loss, ...) are aggregated into the
