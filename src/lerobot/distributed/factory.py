@@ -33,11 +33,7 @@ if TYPE_CHECKING:
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 # Env vars through which `accelerate launch --config_file` (or a stray shell) would configure
-# accelerate behind the config system's back. Plugin `__post_init__`s read these silently as
-# field fallbacks (ACCELERATE_DYNAMO_* enables torch.compile through the default
-# TorchDynamoPlugin; ACCELERATE_GRADIENT_ACCUMULATION_STEPS overrides the explicitly passed
-# value inside Accelerator.__init__), which would make train_config.json lie about what ran.
-_ACCELERATE_ENV_PREFIXES = ("FSDP_", "PARALLELISM_CONFIG_", "ACCELERATE_DYNAMO_")
+# accelerate behind the config system's back, making train_config.json lie about what ran.
 _ACCELERATE_ENV_VARS = (
     "ACCELERATE_USE_FSDP",
     "ACCELERATE_USE_PARALLELISM_CONFIG",
@@ -59,11 +55,7 @@ def guard_against_env_interference() -> None:
     """
     if os.environ.get(_ENV_OVERRIDE):
         return
-    offending = sorted(
-        name
-        for name in os.environ
-        if name in _ACCELERATE_ENV_VARS or name.startswith(_ACCELERATE_ENV_PREFIXES)
-    )
+    offending = sorted(name for name in _ACCELERATE_ENV_VARS if name in os.environ)
     if offending:
         raise RuntimeError(
             f"Accelerate-configuring environment variables are set: {', '.join(offending)}. "
