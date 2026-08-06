@@ -107,8 +107,10 @@ def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  #
     ZMQ sockets to connect to the robot server bridge instead of DDS.
 
     Args:
-        domain_id: Ignored (for API compatibility with Unitree SDK)
-        config: UnitreeG1Config instance with robot_ip
+        domain_id (`int`, *optional*, defaults to 0):
+            Ignored. Accepted only for API compatibility with the Unitree SDK.
+        config (`Any`, *optional*):
+            A `UnitreeG1Config` supplying `robot_ip`. Defaults to a fresh `UnitreeG1Config` when `None`.
     """
     global _ctx, _lowcmd_sock, _lowstate_sock
 

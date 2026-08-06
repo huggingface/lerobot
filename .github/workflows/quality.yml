@@ -86,5 +86,11 @@ jobs:
       - name: Check the doctest list is sorted and its paths exist
         run: make check-doctest-list
 
+      - name: Check documented arguments match their signatures
+        run: make check-docstrings
+
+      - name: Check docstring coverage has not regressed
+        run: uv run --with interrogate interrogate --config=pyproject.toml
+
       - name: Run doctests
         run: make doctest

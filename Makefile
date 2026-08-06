@@ -198,3 +198,11 @@ check-doctest-list:
 
 fix-doctest-list:
 	uv run python utils/check_doctest_list.py --fix_and_overwrite
+
+check-docstrings:
+	uv run python utils/check_docstrings.py
+	uv run python utils/check_config_docstrings.py
+
+fix-docstrings:
+	uv run python utils/check_docstrings.py --fix_and_overwrite
+	uv run python utils/check_doctest_list.py --fix_and_overwrite
