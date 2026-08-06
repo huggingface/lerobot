@@ -1,0 +1,97 @@
+{
+  "balance": {
+    "coverage_counts": {
+      "added_by_real48": 6,
+      "added_by_real96": 9,
+      "seen_by_real24": 6,
+      "unseen_by_both": 3
+    },
+    "pose_count": 24,
+    "poses_per_cell": 2,
+    "yaw_counts": {
+      "0": 12,
+      "45": 12
+    }
+  },
+  "created_at_utc": "2026-08-06T00:56:49.899171+00:00",
+  "dry_run": {
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1/software_preparation_v1/dry_run.json",
+    "sha256": "739f0981d4694c62a36ff86dbadc4271643119f302ad43358a2f6083532661ed"
+  },
+  "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+  "first_trial": {
+    "artifact_stem": "t001_h01_a",
+    "cell": "r3c2",
+    "column": 2,
+    "coverage_tier": "seen_by_real24",
+    "eval_pose_id": "eval48_r3c2_seen_by_real48_340_m010_yaw45",
+    "manual_pose_is_measurement_truth": false,
+    "model_id": "R24_repeat_200k",
+    "model_key": "A",
+    "nominal_x_forward_m": 0.34,
+    "nominal_y_lateral_m": -0.01,
+    "nominal_yaw_degrees_modulo_90": 45,
+    "operator_placement_prompt_zh": "\u6446\u653e\u65b9\u5757\uff1ar3c2\uff08\u7b2c3\u884c\u7b2c2\u5217\uff09\uff0c\u7ea2\u5757\u4e2d\u5fc3\u653e\u5728X=34 cm\u3001Y=-1 cm\uff1b\u7ed5\u4e2d\u5fc3\u8f6c45\u00b0\u3002",
+    "order": 1,
+    "policy_failure_retry_allowed": false,
+    "pose_order": 1,
+    "quadrant": "Q3",
+    "row": 3,
+    "source_eval48_pose_order": 1,
+    "trial_id": "t001_h01_a",
+    "within_pose_order": 1
+  },
+  "hardware_access": {
+    "camera": false,
+    "robot": false,
+    "rollout": false,
+    "serial": false,
+    "torque": false
+  },
+  "model_order": {
+    "assignment": "repeat the six-permutation sequence four times over the 24 selected poses",
+    "each_model_position_counts": {
+      "first": 8,
+      "second": 8,
+      "third": 8
+    },
+    "models": {
+      "A": "R24_repeat_200k",
+      "B": "R24_real_gap24_200k",
+      "C": "R24_localsim_gap24_200k"
+    },
+    "per_pose_permutations": [
+      "ABC",
+      "BCA",
+      "CAB",
+      "ACB",
+      "CBA",
+      "BAC"
+    ],
+    "planned_valid_rollouts": 72
+  },
+  "models": {
+    "A": "eddb2ef162986ee12f1c08b7437029f46fae9120d364bd36e2504cc401a99785",
+    "B": "44f024a6cfd9e9322178a0d4e0a39899bdc9463feb6fd52418f02fa5fcae25c6",
+    "C": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f"
+  },
+  "plan": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_additive_three_model_200k_v1/evaluation_plan.json",
+    "sha256": "3a30997f38e7ca887652c831aa92963b4a701b283f95965db7c490ad2dd88d3d"
+  },
+  "pose_count": 24,
+  "schema": "task1_additive_three_model_eval24_software_gate_v1",
+  "status": "pass_hardware_not_authorized",
+  "success_early_stop": {
+    "enabled": true,
+    "explicit_opt_in": true,
+    "marker_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1/success_markers",
+    "profile_path": "experiments/task1_picklift_real24_act_v1/real_evaluation_success_early_stop_profile_v1.json",
+    "profile_sha256": "50f4f2a2771cf21f34d333d13f2b413a54c3d183704218c1b0d36abef8e2aa28"
+  },
+  "training_result": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_additive_three_model_200k_v1/training_result_v1.json",
+    "sha256": "e082c94627ca84070877d40c6b2321ca872ecf9d66fe6d68ea000a9d9ec1030f"
+  },
+  "trial_count": 72
+}

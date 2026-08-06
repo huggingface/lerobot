@@ -1,0 +1,450 @@
+{
+  "boundaries": {
+    "hardware_accessed": false,
+    "paper_effect_claim": false,
+    "rollout_started": false
+  },
+  "completed_at_utc": "2026-08-06T00:55:57.105441+00:00",
+  "details": {
+    "A": {
+      "checkpoints": {
+        "100000": "aa3d6845c57a804ef4812cce6fe31b9cdb4332947ac9b5f6e284b81fdf018add",
+        "120000": "f3eeedae88c7b043b8ce05df5942415a953b93bf5fa99753f537673d8b2923e6",
+        "140000": "0fb3d29f7db838030cb2831b659c31051e06bc5db94a64a52cc8965be9d1e51e",
+        "160000": "81ef69b98d0446a47f67cb578278a2577888498011ec57a4ca93411613310771",
+        "180000": "9997629f8678eed73a1a068885ee9a74678bc26ef203a5a41a512a5ef3446700",
+        "20000": "10df6c8ba822bc915e8e647521b20360f662b6063fcd68336dae91d70f1913d9",
+        "200000": "eddb2ef162986ee12f1c08b7437029f46fae9120d364bd36e2504cc401a99785",
+        "40000": "63239013aee840111c975ce2ea7f962782fe1214d642b5ea86b636c78a703ac6",
+        "60000": "6b1ac0a9c707b760ad702c53f9717600810e5ad2fd3c8fb8b36f47c8cc6a569c",
+        "80000": "cef937fee2d522ac66701cd28388d1613eee5469465541fa7811cea6aae3e95b"
+      },
+      "log_sha256": "3aae96a51750df7c0dcaba4e9e1c84270b96ba584fcb17614f59adcb46499c55",
+      "metrics": {
+        "grdn": "1.718",
+        "kld_loss": "0.000",
+        "l1_loss": "0.020",
+        "loss": "0.021",
+        "smp/s": "162",
+        "step": "200K"
+      },
+      "offline_validation": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_repeat/full_200k/checkpoints/200000/pretrained_model",
+        "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+        "cuda_reload": true,
+        "hardware_accessed": false,
+        "model_sha256": "eddb2ef162986ee12f1c08b7437029f46fae9120d364bd36e2504cc401a99785",
+        "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+        "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+        "samples": [
+          {
+            "action": [
+              -1.58793044090271,
+              -83.93193817138672,
+              44.35490798950195,
+              88.79462432861328,
+              -1.6537179946899414,
+              86.64092254638672
+            ],
+            "domain": "real24_stream_a",
+            "finite": true,
+            "index": 0,
+            "output_shape": [
+              1,
+              6
+            ]
+          },
+          {
+            "action": [
+              -1.560692310333252,
+              -84.20588684082031,
+              44.40149688720703,
+              88.82256317138672,
+              -1.6264629364013672,
+              86.59426879882812
+            ],
+            "domain": "real24_stream_b",
+            "finite": true,
+            "index": 1,
+            "output_shape": [
+              1,
+              6
+            ]
+          }
+        ],
+        "status": "pass",
+        "train_config_sha256": "a9782a60355173a785b35b90635b423bf1897b743af893c960f28380c6eac348"
+      },
+      "sampling_counts": {
+        "actual_samples_seen_by_main_process": {
+          "real24": 800000,
+          "source_b": 800000
+        },
+        "batch_size_per_process": 8,
+        "note": "Counts reflect batches consumed by optimizer steps; stream order is fixed within each batch.",
+        "num_processes": 1,
+        "optimizer_steps": 200000,
+        "schema": "lerobot_matched_two_stream_sampling_counts_v1",
+        "seed": 1000,
+        "stream_episode_groups": {
+          "real24": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "source_b": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ]
+        }
+      }
+    },
+    "B": {
+      "checkpoints": {
+        "100000": "e45f9195eec99c5932b88e648f8ed4428a91ef5eee0ab35f3619e9054a3026c8",
+        "120000": "84dfaff75f0208302a311480644bb4f987aa28342e1c3290b8da100bd751cf6f",
+        "140000": "292cf12125a0ab5f24c94ac7b2b0ba9e211b5b0ec7ecf5f83f1dacb113e776df",
+        "160000": "b7d64de8fd92abd013520cbe02b39e03a0208baaebd9a44b4b5c05c7a8f50063",
+        "180000": "f293f6a67c0ec106bae646f958cc3b0f56c275446b7e7bb947d211b77151fe10",
+        "20000": "772903e8b095484d3411fbb44534fe5fe993ebb238d04476fc69b5ad44c8b2c2",
+        "200000": "44f024a6cfd9e9322178a0d4e0a39899bdc9463feb6fd52418f02fa5fcae25c6",
+        "40000": "ab16a5d58890b6e9415d248217701cdacd59cd5df2754dc09b6ecf4df79ff49e",
+        "60000": "065d887286aa9823594bc450f40e40b281ce8ef4973153cae9b5f3c63a5bf1f1",
+        "80000": "a148f180a679f40a95a45a33def3f9e71611d54e007b98e02ec25cb275bf9e2b"
+      },
+      "log_sha256": "516f5bc8337cb477d0c43ee812629680d25aa52aa8deaca31a57cad743e968e3",
+      "metrics": {
+        "grdn": "1.865",
+        "kld_loss": "0.000",
+        "l1_loss": "0.027",
+        "loss": "0.027",
+        "smp/s": "163",
+        "step": "200K"
+      },
+      "offline_validation": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_realgap24/full_200k/checkpoints/200000/pretrained_model",
+        "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+        "cuda_reload": true,
+        "hardware_accessed": false,
+        "model_sha256": "44f024a6cfd9e9322178a0d4e0a39899bdc9463feb6fd52418f02fa5fcae25c6",
+        "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+        "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+        "samples": [
+          {
+            "action": [
+              -1.9956820011138916,
+              -83.72055053710938,
+              44.40807342529297,
+              88.59564971923828,
+              -2.1111230850219727,
+              87.33578491210938
+            ],
+            "domain": "real24",
+            "finite": true,
+            "index": 0,
+            "output_shape": [
+              1,
+              6
+            ]
+          },
+          {
+            "action": [
+              -0.6083657741546631,
+              -107.42483520507812,
+              101.69926452636719,
+              67.29064178466797,
+              0.2853116989135742,
+              92.31230163574219
+            ],
+            "domain": "real_gap24",
+            "finite": true,
+            "index": 4263,
+            "output_shape": [
+              1,
+              6
+            ]
+          }
+        ],
+        "status": "pass",
+        "train_config_sha256": "6271a612fbe6dcaffb5450e6bf09fbc8366458b1983549d798b3cb0ea999db96"
+      },
+      "sampling_counts": {
+        "actual_samples_seen_by_main_process": {
+          "real24": 800000,
+          "source_b": 800000
+        },
+        "batch_size_per_process": 8,
+        "note": "Counts reflect batches consumed by optimizer steps; stream order is fixed within each batch.",
+        "num_processes": 1,
+        "optimizer_steps": 200000,
+        "schema": "lerobot_matched_two_stream_sampling_counts_v1",
+        "seed": 1000,
+        "stream_episode_groups": {
+          "real24": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "source_b": [
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47
+          ]
+        }
+      }
+    },
+    "C": {
+      "checkpoints": {
+        "100000": "3dc3abd7dd1b7cf87966c113a11557318c63f0d6a863af561252829b4b1db312",
+        "120000": "ee932391f08954baa63888bfa84803ec26004128bc2d57825a4b1e9921d01211",
+        "140000": "b8ba6060e192276462f8f96e6231b5cf7655741d6c8261ea5f1c7e9c68638868",
+        "160000": "4801fc086f179eda60f927a20ba327ff9ae4e9417767d49a2bba60cc95b65c38",
+        "180000": "b7adf0651d066c93856321ac6f9f335eea56f625cd422ca21029daafbdf351bf",
+        "20000": "93551edc0cb4d8b67683548155a1eb564a96d8ad4927c847cea875ae5d99ac8f",
+        "200000": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f",
+        "40000": "78a260ac840ddc0ce109a03d9bfba68710e4d2b8b692986bd4a03616de396673",
+        "60000": "3ffe5a571b9e5602cb4161f6ccedc286218847a866c8a1050ecb5929b06fa611",
+        "80000": "16db58556a925e894e27d61b475113e5644f3cc1280ab068fbad45d8803b13b9"
+      },
+      "log_sha256": "43d151946389fe55bef0c63601c38aeb4017b40fa3af07eefc07b9fea149c415",
+      "metrics": {
+        "grdn": "2.121",
+        "kld_loss": "0.000",
+        "l1_loss": "0.028",
+        "loss": "0.028",
+        "smp/s": "159",
+        "step": "200K"
+      },
+      "offline_validation": {
+        "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_localsim24gap/full_200k/checkpoints/200000/pretrained_model",
+        "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+        "cuda_reload": true,
+        "hardware_accessed": false,
+        "model_sha256": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f",
+        "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+        "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+        "samples": [
+          {
+            "action": [
+              -1.9529974460601807,
+              -82.87018585205078,
+              43.741485595703125,
+              88.9320068359375,
+              -1.4065895080566406,
+              85.43763732910156
+            ],
+            "domain": "real24",
+            "finite": true,
+            "index": 0,
+            "output_shape": [
+              1,
+              6
+            ]
+          },
+          {
+            "action": [
+              -3.188974618911743,
+              -84.46263122558594,
+              40.6922721862793,
+              93.56359100341797,
+              -2.1182174682617188,
+              100.14443969726562
+            ],
+            "domain": "localsim_gap24",
+            "finite": true,
+            "index": 4263,
+            "output_shape": [
+              1,
+              6
+            ]
+          }
+        ],
+        "status": "pass",
+        "train_config_sha256": "bf499bb21fca3cd40ea43b25e1c7a2ed37d31b4b5661a94bfce5a77cbe571703"
+      },
+      "sampling_counts": {
+        "actual_samples_seen_by_main_process": {
+          "real24": 800000,
+          "source_b": 800000
+        },
+        "batch_size_per_process": 8,
+        "note": "Counts reflect batches consumed by optimizer steps; stream order is fixed within each batch.",
+        "num_processes": 1,
+        "optimizer_steps": 200000,
+        "schema": "lerobot_matched_two_stream_sampling_counts_v1",
+        "seed": 1000,
+        "stream_episode_groups": {
+          "real24": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "source_b": [
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47
+          ]
+        }
+      }
+    }
+  },
+  "models": {
+    "A": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_repeat/full_200k/checkpoints/200000/pretrained_model",
+      "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+      "model_id": "R24_repeat_200k",
+      "model_sha256": "eddb2ef162986ee12f1c08b7437029f46fae9120d364bd36e2504cc401a99785",
+      "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+      "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+      "train_config_sha256": "a9782a60355173a785b35b90635b423bf1897b743af893c960f28380c6eac348"
+    },
+    "B": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_realgap24/full_200k/checkpoints/200000/pretrained_model",
+      "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+      "model_id": "R24_real_gap24_200k",
+      "model_sha256": "44f024a6cfd9e9322178a0d4e0a39899bdc9463feb6fd52418f02fa5fcae25c6",
+      "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+      "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+      "train_config_sha256": "6271a612fbe6dcaffb5450e6bf09fbc8366458b1983549d798b3cb0ea999db96"
+    },
+    "C": {
+      "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_additive_three_model_200k_v1/r24_localsim24gap/full_200k/checkpoints/200000/pretrained_model",
+      "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+      "model_id": "R24_localsim_gap24_200k",
+      "model_sha256": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f",
+      "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+      "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+      "train_config_sha256": "bf499bb21fca3cd40ea43b25e1c7a2ed37d31b4b5661a94bfce5a77cbe571703"
+    }
+  },
+  "schema": "task1_additive_three_model_act200k_result_v1",
+  "selected_step": 200000,
+  "status": "three_models_offline_training_complete"
+}
