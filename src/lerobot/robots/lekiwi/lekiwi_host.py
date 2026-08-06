@@ -36,7 +36,19 @@ class LeKiwiServerConfig:
 
 
 class LeKiwiHost:
+    """Serves a [`~robots.lekiwi.LeKiwi`] over ZMQ so a client can drive it from another machine.
+
+    Runs on the robot's own computer, receiving actions on one socket and publishing observations on
+    another.
+    """
+
     def __init__(self, config: LeKiwiHostConfig):
+        """Bind the command and observation sockets.
+
+        Args:
+            config (`LeKiwiHostConfig`):
+                Ports, loop frequency and watchdog settings for the host.
+        """
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)
@@ -53,6 +65,11 @@ class LeKiwiHost:
         self.max_loop_freq_hz = config.max_loop_freq_hz
 
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
@@ -60,6 +77,12 @@ class LeKiwiHost:
 
 @draccus.wrap()
 def main(cfg: LeKiwiServerConfig):
+    """Run the LeKiwi host loop until the configured connection time elapses.
+
+    Args:
+        cfg (`LeKiwiServerConfig`):
+            The robot and host configuration to serve.
+    """
     logging.info("Configuring LeKiwi")
     robot = LeKiwi(cfg.robot)
 

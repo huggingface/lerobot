@@ -67,11 +67,27 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class LocomotionController(Protocol):
+    """The interface a lower-body locomotion controller must provide to drive the G1's legs."""
+
     control_dt: float
 
-    def run_step(self, action: dict, lowstate) -> dict: ...
+    def run_step(self, action: dict, lowstate) -> dict:
+        """Compute one step of leg commands.
 
-    def reset(self) -> None: ...
+        Args:
+            action (`dict`):
+                The upper-body action and locomotion command for this step.
+            lowstate:
+                The robot's most recent low-level state.
+
+        Returns:
+            `dict`: Leg joint targets for this step.
+        """
+        ...
+
+    def reset(self) -> None:
+        """Clear any internal state, e.g. an observation history, before a new episode."""
+        ...
 
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -82,6 +98,8 @@ kTopicLowState = "rt/lowstate"
 
 @dataclass
 class MotorState:
+    """One motor's reported position, velocity and torque."""
+
     q: float | None = None  # position
     dq: float | None = None  # velocity
     tau_est: float | None = None  # estimated torque
@@ -90,6 +108,8 @@ class MotorState:
 
 @dataclass
 class IMUState:
+    """The G1's inertial measurements: orientation, angular velocity and acceleration."""
+
     quaternion: np.ndarray | None = None  # [w, x, y, z]
     gyroscope: np.ndarray | None = None  # [x, y, z] angular velocity (rad/s)
     accelerometer: np.ndarray | None = None  # [x, y, z] linear acceleration (m/s²)
@@ -100,6 +120,8 @@ class IMUState:
 # g1 observation class
 @dataclass
 class G1_29_LowState:  # noqa: N801
+    """A full low-level state frame: every motor's state plus the IMU."""
+
     motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in G1_29_JointIndex])
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: bytes | None = None  # Raw wireless remote data
@@ -107,10 +129,29 @@ class G1_29_LowState:  # noqa: N801
 
 
 class UnitreeG1(Robot):
+    """The Unitree G1 humanoid, driven over a ZMQ bridge.
+
+    Upper-body joints are commanded directly. The legs are handled by an optional locomotion controller
+    named in the config, which runs its own loop against the robot's low-level state. Set
+    `is_simulation=True` to drive a MuJoCo model instead of the physical robot.
+
+    See [`~robots.Robot`] for the contract every method here implements.
+    """
+
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
     def __init__(self, config: UnitreeG1Config):
+        """Build the robot and, if one is configured, its locomotion controller.
+
+        Args:
+            config (`UnitreeG1Config`):
+                The robot's configuration, including gains, the ZMQ bridge address and whether to run
+                against MuJoCo instead of hardware.
+
+        Raises:
+            ImportError: If the `unitree_g1` extra is not installed.
+        """
         require_package("unitree-sdk2py", extra="unitree_g1", import_name="unitree_sdk2py")
         super().__init__(config)
 
@@ -204,6 +245,18 @@ class UnitreeG1(Robot):
         kd: np.ndarray | list[float] | None = None,
         tau: np.ndarray | list[float] | None = None,
     ) -> None:  # writes robot command whenever requested
+        """Write a low-level command frame to the robot.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target joint positions for this step.
+            kp (`np.ndarray | list[float]`, *optional*):
+                Per-joint proportional gains. Defaults to the config's `kp`.
+            kd (`np.ndarray | list[float]`, *optional*):
+                Per-joint derivative gains. Defaults to the config's `kd`.
+            tau (`np.ndarray | list[float]`, *optional*):
+                Per-joint feed-forward torques. Defaults to zero.
+        """
         for motor in G1_29_JointIndex:
             key = f"{motor.name}.q"
             if key in action:
@@ -233,10 +286,21 @@ class UnitreeG1(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         if self.controller is None:
             return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
 
@@ -288,13 +352,27 @@ class UnitreeG1(Robot):
 
     def calibrate(self) -> None:
         # TODO: implement g1_29 calibration
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         pass
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
+        """Connect to the robot and its cameras, then apply the configured settings.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the robot is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         if self.config.is_simulation:
             from lerobot.envs import make_env
 
@@ -373,6 +451,11 @@ class UnitreeG1(Robot):
 
     def disconnect(self):
         # Put robot in passive mode before stopping threads
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         if not self.config.is_simulation:
             self._send_zero_torque()
 
@@ -417,6 +500,14 @@ class UnitreeG1(Robot):
             cam.disconnect()
 
     def get_observation(self) -> RobotObservation:
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         with self._lowstate_lock:
             lowstate = self._lowstate
         if lowstate is None:
@@ -471,6 +562,18 @@ class UnitreeG1(Robot):
         return obs
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        """Command the robot to move towards a target configuration.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target values, keyed as in [`~robots.Robot.action_features`].
+
+        Returns:
+            `dict[str, Any]`: The action actually sent, which may be clipped by `max_relative_target`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         action_to_publish = action
         if self.controller is not None:
             # Controller thread owns legs/waist. Here we only update joystick inputs
@@ -511,10 +614,20 @@ class UnitreeG1(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return True
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         with self._lowstate_lock:
             return self._lowstate is not None
 
@@ -525,6 +638,11 @@ class UnitreeG1(Robot):
 
     @property
     def cameras(self) -> dict:
+        """The robot's configured cameras.
+
+        Returns:
+            `dict`: Camera name mapped to its instance.
+        """
         return self._cameras
 
     def reset(
@@ -532,6 +650,18 @@ class UnitreeG1(Robot):
         control_dt: float | None = None,
         default_positions: list[float] | None = None,
     ) -> None:  # move robot to default position
+        """Move the robot smoothly to its default joint positions.
+
+        > [!WARNING]
+        > This drives every joint, legs included. Make sure the robot is supported or in a safe posture
+        > before calling it.
+
+        Args:
+            control_dt (`float`, *optional*):
+                Control loop timestep for the move. Defaults to the config's `control_dt`.
+            default_positions (`list[float]`, *optional*):
+                Target positions, 29 values in joint order. Defaults to the config's `default_positions`.
+        """
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:

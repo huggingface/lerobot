@@ -40,10 +40,10 @@ class DeviceProcessorStep(ProcessorStep):
 
     This is crucial for preparing data for model training or inference on hardware like GPUs.
 
-    Attributes:
-        device: The target device for tensors (e.g., "cpu", "cuda", "cuda:0").
-        float_dtype: The target floating-point dtype as a string (e.g., "float32", "float16", "bfloat16").
-                     If None, the dtype is not changed.
+    **Attributes**:
+        - **device** (`str`) -- The target device for tensors (e.g., "cpu", "cuda", "cuda:0").
+        - **float_dtype** (`str | None`) -- The target floating-point dtype as a string (e.g., "float32",
+          "float16", "bfloat16"). If None, the dtype is not changed.
     """
 
     device: str = "cpu"

@@ -65,15 +65,17 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
     Requires the `transformers` library to be installed.
 
-    Attributes:
-        tokenizer_name: The name of a pretrained tokenizer from the Hugging Face Hub (e.g., "bert-base-uncased").
-        tokenizer: A pre-initialized tokenizer object. If provided, `tokenizer_name` is ignored.
-        max_length: The maximum length to pad or truncate sequences to.
-        task_key: The key in `complementary_data` where the task string is stored.
-        padding_side: The side to pad on ('left' or 'right').
-        padding: The padding strategy ('max_length', 'longest', etc.).
-        truncation: Whether to truncate sequences longer than `max_length`.
-        input_tokenizer: The internal tokenizer instance, loaded during initialization.
+    **Attributes**:
+        - **tokenizer_name** (`str | None`) -- The name of a pretrained tokenizer from the Hugging Face Hub
+          (e.g., "bert-base-uncased").
+        - **tokenizer** (`Any | None`) -- A pre-initialized tokenizer object. If provided, `tokenizer_name` is
+          ignored.
+        - **max_length** (`int`) -- The maximum length to pad or truncate sequences to.
+        - **task_key** (`str`) -- The key in `complementary_data` where the task string is stored.
+        - **padding_side** (`str`) -- The side to pad on ('left' or 'right').
+        - **padding** (`str`) -- The padding strategy ('max_length', 'longest', etc.).
+        - **truncation** (`bool`) -- Whether to truncate sequences longer than `max_length`.
+        - **input_tokenizer** (`Any`) -- The internal tokenizer instance, loaded during initialization.
     """
 
     tokenizer_name: str | None = None
@@ -346,12 +348,17 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
     Requires the `transformers` library to be installed.
 
-    Attributes:
-        tokenizer_name: The name of a pretrained processor from the Hugging Face Hub (e.g., "lerobot/fast-action-tokenizer").
-        tokenizer: A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is ignored.
-        trust_remote_code: Whether to trust remote code when loading the tokenizer (required for some tokenizers).
-        action_tokenizer: The internal tokenizer/processor instance, loaded during initialization.
-        paligemma_tokenizer_name: The name of a pretrained PaliGemma tokenizer from the Hugging Face Hub (e.g., "google/paligemma-3b-pt-224").
+    **Attributes**:
+        - **tokenizer_name** -- The name of a pretrained processor from the Hugging Face Hub (e.g.,
+          "lerobot/fast-action-tokenizer").
+        - **tokenizer** -- A pre-initialized processor/tokenizer object. If provided, `tokenizer_name` is
+          ignored.
+        - **trust_remote_code** (`bool`) -- Whether to trust remote code when loading the tokenizer (required
+          for some tokenizers).
+        - **action_tokenizer** (`Any`) -- The internal tokenizer/processor instance, loaded during
+          initialization.
+        - **paligemma_tokenizer_name** (`str`) -- The name of a pretrained PaliGemma tokenizer from the
+          Hugging Face Hub (e.g., "google/paligemma-3b-pt-224").
     """
 
     action_tokenizer_name: str | None = None

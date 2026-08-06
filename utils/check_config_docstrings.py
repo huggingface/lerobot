@@ -43,23 +43,8 @@ CALIBRATION_PATTERN = re.compile(r"calibrat", re.IGNORECASE)
 
 MODULES_TO_CHECK = ["lerobot.robots"]
 
-# Configs that document their fields with `#` comments above each field, which doc-builder cannot see.
-# Each entry is removed as that config's comments are converted to an `Args:` block.
-OBJECTS_TO_IGNORE: set[str] = {
-    "BiOpenArmFollowerConfig",
-    "BiRebotB601FollowerConfig",
-    "BiSOFollowerConfig",
-    "EarthRoverMiniPlusConfig",
-    "HopeJrArmConfig",
-    "HopeJrHandConfig",
-    "KochFollowerConfig",
-    "LeKiwiConfig",
-    "OmxFollowerConfig",
-    "OpenArmFollowerConfig",
-    "Reachy2RobotConfig",
-    "RebotB601FollowerRobotConfig",
-    "SOFollowerRobotConfig",
-}
+# Configs that do not yet document these. Empty: every registered robot config is documented.
+OBJECTS_TO_IGNORE: set[str] = set()
 
 
 def documented_args(obj: object) -> set[str]:

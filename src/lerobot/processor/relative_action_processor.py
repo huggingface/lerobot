@@ -91,11 +91,11 @@ class RelativeActionsProcessorStep(ProcessorStep):
     Caches the last seen state so a paired AbsoluteActionsProcessorStep can reverse
     the conversion during postprocessing.
 
-    Attributes:
-        enabled: Whether to apply the relative conversion.
-        exclude_joints: Joint names to keep absolute (not converted to relative).
-        action_names: Action dimension names from dataset metadata, used to build
-            the mask from exclude_joints. If None, all dims are converted.
+    **Attributes**:
+        - **enabled** (`bool`) -- Whether to apply the relative conversion.
+        - **exclude_joints** (`list[str]`) -- Joint names to keep absolute (not converted to relative).
+        - **action_names** (`list[str] | None`) -- Action dimension names from dataset metadata, used to build
+          the mask from exclude_joints. If None, all dims are converted.
     """
 
     enabled: bool = False
@@ -168,9 +168,10 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
     predicted relative offsets are converted back to absolute positions for execution.
     Reads the cached state from its paired RelativeActionsProcessorStep.
 
-    Attributes:
-        enabled: Whether to apply the absolute conversion.
-        relative_step: Reference to the paired RelativeActionsProcessorStep that caches state.
+    **Attributes**:
+        - **enabled** (`bool`) -- Whether to apply the absolute conversion.
+        - **relative_step** (`RelativeActionsProcessorStep | None`) -- Reference to the paired
+          RelativeActionsProcessorStep that caches state.
     """
 
     enabled: bool = False
