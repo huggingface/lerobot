@@ -1,0 +1,26 @@
+{
+  "schema": "task1_additive_eval24_video_only_adjudication_v1",
+  "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+  "reviewer_id": "isolated_video_only_adjudicator_v1",
+  "operator_labels_read": false,
+  "blind_review_labels_read": false,
+  "success_definition": "bilateral two-finger grasp, cube unsupported, lift strictly greater than 5 cm continuously for at least 0.5 seconds",
+  "trials": [
+    {
+      "trial_id": "t058_h20_b",
+      "success": true,
+      "failure_category": null,
+      "confidence": "high",
+      "criterion_interval_seconds": [12.0, 14.0],
+      "visible_evidence": "Bilateral grasp established around 9.7-10.0 s. Across 40 contiguous 20 Hz frames from 12.00-14.00 s, the cube remains pinched between opposed fingers, unsupported, and several cube heights above the mat."
+    },
+    {
+      "trial_id": "t070_h24_b",
+      "success": true,
+      "failure_category": null,
+      "confidence": "high",
+      "criterion_interval_seconds": [7.0, 9.0],
+      "visible_evidence": "Bilateral grasp established around 5.2-5.5 s. Across 40 contiguous 20 Hz frames from 7.00-9.00 s, the cube remains centered between opposed fingers, unsupported, and several cube heights above the mat."
+    }
+  ]
+}

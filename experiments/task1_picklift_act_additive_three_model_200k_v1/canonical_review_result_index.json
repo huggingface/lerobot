@@ -1,0 +1,646 @@
+{
+  "adjudication_sha256": "e0da166da5e3a2b805e892ae4ff15356bd5f94eae5e486b0a70562ba2d78fdc3",
+  "blind_frozen_before_operator_join": true,
+  "blind_manifest_sha256": "b311ffd80a261364a040cffb21d2e1d6ab7abd195aa316ada3764b2220d2dd2e",
+  "blind_queue_sha256": "9d1be6eaca335a62b71bf2f471c19a568abe6a996731d9cf00eb6eec0edfaa09",
+  "blind_trials_sha256": "e9feae531092989aaa82ec1b6447468522a201ed259ddb332893d378706b753a",
+  "claim_boundary": "Single training seed and 24-pose real-robot engineering gate; descriptive evidence, not an automatic causal paper conclusion.",
+  "created_at_utc": "2026-08-06T11:00:52.024855+00:00",
+  "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1/canonical_video_review_v1/final_review_v1",
+  "integrity_prejoin_sha256": "a45f2fb3af49fd57742e44a771cd78df937d012a2db6c8494e330932c78bfb94",
+  "operator_join_after_blind_freeze": true,
+  "plan_sha256": "ad711d39df8f2e5334665add1c2fdfee00e4a57e4550fa9960cffaf32728c8c3",
+  "schema": "task1_additive_eval24_canonical_video_review_manifest_v1",
+  "status": "complete",
+  "summary": {
+    "agreement": {
+      "adjudication_count": 2,
+      "disagreement_trial_ids": [
+        "t058_h20_b",
+        "t070_h24_b"
+      ],
+      "final_operator_agree": 71,
+      "final_operator_disagree": 1,
+      "raw_blind_operator_agree": 70,
+      "raw_blind_operator_disagree": 2
+    },
+    "by_cell": {
+      "r1c1": {
+        "rate": 0.6666666666666666,
+        "success": 4,
+        "total": 6
+      },
+      "r1c2": {
+        "rate": 1.0,
+        "success": 6,
+        "total": 6
+      },
+      "r1c3": {
+        "rate": 0.6666666666666666,
+        "success": 4,
+        "total": 6
+      },
+      "r1c4": {
+        "rate": 0.16666666666666666,
+        "success": 1,
+        "total": 6
+      },
+      "r2c1": {
+        "rate": 0.5,
+        "success": 3,
+        "total": 6
+      },
+      "r2c2": {
+        "rate": 0.16666666666666666,
+        "success": 1,
+        "total": 6
+      },
+      "r2c3": {
+        "rate": 0.6666666666666666,
+        "success": 4,
+        "total": 6
+      },
+      "r2c4": {
+        "rate": 0.5,
+        "success": 3,
+        "total": 6
+      },
+      "r3c1": {
+        "rate": 0.3333333333333333,
+        "success": 2,
+        "total": 6
+      },
+      "r3c2": {
+        "rate": 0.6666666666666666,
+        "success": 4,
+        "total": 6
+      },
+      "r3c3": {
+        "rate": 0.16666666666666666,
+        "success": 1,
+        "total": 6
+      },
+      "r3c4": {
+        "rate": 0.8333333333333334,
+        "success": 5,
+        "total": 6
+      }
+    },
+    "by_coverage_tier": {
+      "added_by_real48": {
+        "rate": 0.6666666666666666,
+        "success": 12,
+        "total": 18
+      },
+      "added_by_real96": {
+        "rate": 0.25925925925925924,
+        "success": 7,
+        "total": 27
+      },
+      "seen_by_real24": {
+        "rate": 0.8333333333333334,
+        "success": 15,
+        "total": 18
+      },
+      "unseen_by_both": {
+        "rate": 0.4444444444444444,
+        "success": 4,
+        "total": 9
+      }
+    },
+    "by_model": {
+      "A": {
+        "rate": 0.4583333333333333,
+        "success": 11,
+        "total": 24
+      },
+      "B": {
+        "rate": 0.6666666666666666,
+        "success": 16,
+        "total": 24
+      },
+      "C": {
+        "rate": 0.4583333333333333,
+        "success": 11,
+        "total": 24
+      }
+    },
+    "by_yaw": {
+      "0": {
+        "rate": 0.6111111111111112,
+        "success": 22,
+        "total": 36
+      },
+      "45": {
+        "rate": 0.4444444444444444,
+        "success": 16,
+        "total": 36
+      }
+    },
+    "claim_boundary": "Single training seed and 24-pose real-robot engineering gate; descriptive evidence, not an automatic causal paper conclusion.",
+    "evaluation_id": "task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1",
+    "final_failure_categories": {
+      "missed_grasp": 17,
+      "spatial_offset": 15,
+      "top_contact": 2
+    },
+    "operator_failure_categories": {
+      "operator_unspecified_failure": 35
+    },
+    "overall": {
+      "rate": 0.5277777777777778,
+      "success": 38,
+      "total": 72
+    },
+    "paired_comparisons": {
+      "key_substitution_c_vs_b": {
+        "left_model": "B",
+        "left_success": 16,
+        "outcomes": {
+          "both_failure": 6,
+          "both_success": 9,
+          "left_only": 7,
+          "right_only": 2
+        },
+        "pairs": [
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 1,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 2,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 3,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 4,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 5,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 6,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 7,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 8,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 9,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 10,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 11,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 12,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 13,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 14,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 15,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 16,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 17,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 18,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 19,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 20,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 21,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 22,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 23,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 24,
+            "right_success": false
+          }
+        ],
+        "pose_count": 24,
+        "right_minus_left_rate": -0.20833333333333334,
+        "right_minus_left_success_count": -5,
+        "right_model": "C",
+        "right_success": 11
+      },
+      "primary_c_vs_a": {
+        "left_model": "A",
+        "left_success": 11,
+        "outcomes": {
+          "both_failure": 11,
+          "both_success": 9,
+          "left_only": 2,
+          "right_only": 2
+        },
+        "pairs": [
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 1,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 2,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 3,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 4,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 5,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 6,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 7,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 8,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 9,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 10,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 11,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 12,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 13,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 14,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 15,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 16,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 17,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 18,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 19,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 20,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 21,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 22,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 23,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 24,
+            "right_success": false
+          }
+        ],
+        "pose_count": 24,
+        "right_minus_left_rate": 0.0,
+        "right_minus_left_success_count": 0,
+        "right_model": "C",
+        "right_success": 11
+      },
+      "sanity_b_vs_a": {
+        "left_model": "A",
+        "left_success": 11,
+        "outcomes": {
+          "both_failure": 6,
+          "both_success": 9,
+          "left_only": 2,
+          "right_only": 7
+        },
+        "pairs": [
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 1,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 2,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 3,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 4,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "left_only",
+            "pose_order": 5,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 6,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 7,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 8,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 9,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 10,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 11,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 12,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 13,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 14,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 15,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 16,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 17,
+            "right_success": false
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 18,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 19,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 20,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 21,
+            "right_success": true
+          },
+          {
+            "left_success": true,
+            "outcome": "both_success",
+            "pose_order": 22,
+            "right_success": true
+          },
+          {
+            "left_success": false,
+            "outcome": "both_failure",
+            "pose_order": 23,
+            "right_success": false
+          },
+          {
+            "left_success": false,
+            "outcome": "right_only",
+            "pose_order": 24,
+            "right_success": true
+          }
+        ],
+        "pose_count": 24,
+        "right_minus_left_rate": 0.20833333333333334,
+        "right_minus_left_success_count": 5,
+        "right_model": "B",
+        "right_success": 16
+      }
+    },
+    "plan_sha256": "ad711d39df8f2e5334665add1c2fdfee00e4a57e4550fa9960cffaf32728c8c3",
+    "schema": "task1_additive_eval24_canonical_video_review_summary_v1",
+    "status": "canonical_video_review_complete"
+  },
+  "trial_count": 72
+}
