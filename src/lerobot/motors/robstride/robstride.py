@@ -58,6 +58,16 @@ logger = logging.getLogger(__name__)
 
 
 class MotorState(TypedDict):
+    """A Robstride motor's last-reported feedback frame.
+
+    **Attributes**:
+        - **position** (`float`) -- Position, in radians.
+        - **velocity** (`float`) -- Velocity, in radians per second.
+        - **torque** (`float`) -- Torque, in newton-meters.
+        - **temp_mos** (`float`) -- MOSFET temperature, in degrees Celsius.
+        - **temp_rotor** (`float`) -- Rotor temperature, in degrees Celsius.
+    """
+
     position: float
     velocity: float
     torque: float
@@ -66,8 +76,7 @@ class MotorState(TypedDict):
 
 
 class RobstrideMotorsBus(MotorsBusBase):
-    """
-    The Robstride implementation for a MotorsBus using CAN bus communication.
+    """The Robstride implementation for a MotorsBus using CAN bus communication.
 
     This class uses python-can for CAN bus communication with Robstride motors.
     The motors need to be switched to MIT control mode to be compatible with this implementation.
@@ -95,8 +104,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         bitrate: int = 1000000,
         data_bitrate: int | None = 5000000,
     ):
-        """
-        Initialize the Robstride motors bus.
+        """Initialize the Robstride motors bus.
 
         Args:
             port: CAN interface name (e.g., "can0" for Linux, "/dev/cu.usbmodem*" for macOS)
@@ -174,8 +182,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
     @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
-        """
-        Open the CAN bus and initialize communication.
+        """Open the CAN bus and initialize communication.
 
         Args:
             handshake: If True, ping all motors to verify they're present
@@ -230,8 +237,7 @@ class RobstrideMotorsBus(MotorsBusBase):
     def _recv_status_via_clear_fault(
         self, expected_recv_id: int | None = None, timeout: float = RUNNING_TIMEOUT
     ) -> tuple[bool, can.Message | None]:
-        """
-        Poll the bus for a response to a fault-clear request.
+        """Poll the bus for a response to a fault-clear request.
 
         Args:
             expected_recv_id: Only accept frames from this CAN ID when provided.
@@ -266,6 +272,19 @@ class RobstrideMotorsBus(MotorsBusBase):
         return False, None
 
     def update_motor_state(self, motor: NameOrID) -> bool:
+        """Query one motor's status and refresh its cached `MotorState`.
+
+        Args:
+            motor (`str | int`):
+                Motor name or ID to query.
+
+        Returns:
+            `bool`: `True` once the cached state has been refreshed.
+
+        Raises:
+            ConnectionError: If the motor does not respond.
+            RuntimeError: If the motor reports a fault.
+        """
         has_fault, msg = self._query_status_via_clear_fault(motor)
         if msg is None:
             logger.warning(f"No response received from motor '{motor}' during state update.")
@@ -327,8 +346,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
-        """
-        Close the CAN bus connection.
+        """Close the CAN bus connection.
 
         Args:
             disable_torque: If True, disable torque on all motors before disconnecting
@@ -407,8 +425,7 @@ class RobstrideMotorsBus(MotorsBusBase):
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):
-        """
-        Context manager that guarantees torque is re-enabled.
+        """Context manager that guarantees torque is re-enabled.
 
         This helper is useful to temporarily disable torque when configuring motors.
 
@@ -438,8 +455,7 @@ class RobstrideMotorsBus(MotorsBusBase):
     def _recv_motor_response(
         self, expected_recv_id: int | None = None, timeout: float = 0.001
     ) -> can.Message | None:
-        """
-        Receive a response from a motor.
+        """Receive a response from a motor.
 
         Args:
             expected_recv_id: If provided, only return messages from this CAN ID
@@ -481,8 +497,8 @@ class RobstrideMotorsBus(MotorsBusBase):
     def _recv_all_responses(
         self, expected_recv_ids: list[int], timeout: float = 0.002
     ) -> dict[int, can.Message]:
-        """
-        Efficiently receive responses from multiple motors at once.
+        """Efficiently receive responses from multiple motors at once.
+
         Uses the OpenArms pattern: collect all available messages within timeout.
 
         Args:
@@ -514,8 +530,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         timeout: float = RUNNING_TIMEOUT,
         max_messages: int = 4096,
     ) -> list[can.Message]:
-        """
-        Receive frames until the bus goes quiet.
+        """Receive frames until the bus goes quiet.
 
         Args:
             timeout: Poll timeout used for each recv() call. Collection stops
@@ -538,8 +553,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         return out
 
     def _process_feedback_messages(self, messages: list[can.Message]) -> set[int]:
-        """
-        Decode all received feedback frames and update cached motor states.
+        """Decode all received feedback frames and update cached motor states.
 
         Returns:
             Set of payload recv_ids that were successfully mapped to motors.
@@ -568,8 +582,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         return processed_recv_ids
 
     def flush_rx_queue(self, poll_timeout_s: float = 0.0005, max_messages: int = 4096) -> int:
-        """
-        Drain pending RX frames from the CAN interface.
+        """Drain pending RX frames from the CAN interface.
 
         This is used by higher-level controllers to drop stale feedback before issuing
         a fresh read cycle, so subsequent state reads are based on most recent replies.
@@ -595,12 +608,11 @@ class RobstrideMotorsBus(MotorsBusBase):
         velocity_deg_per_sec: float,
         current_limit_a: float,
     ) -> None:
-        """
-        Send a Velocity Mode Control Command (Command 11) to a single motor.
+        """Send a Velocity Mode Control Command (Command 11) to a single motor.
 
         Args:
             motor: Motor name or CAN ID.
-            velocity_rad_per_sec: Target speed in rad/s (32-bit float).
+            velocity_deg_per_sec: Target speed in degrees/s (converted to rad/s on the wire, 32-bit float).
             current_limit_a: Current limit in A (32-bit float).
         """
         if not self.is_connected:
@@ -651,8 +663,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         *,
         wait_for_response: bool = True,
     ) -> None:
-        """
-        Send MIT control command to a motor.
+        """Send MIT control command to a motor.
 
         Args:
             motor: Motor name or ID
@@ -661,6 +672,7 @@ class RobstrideMotorsBus(MotorsBusBase):
             position_degrees: Target position (degrees)
             velocity_deg_per_sec: Target velocity (degrees/s)
             torque: Target torque (N·m)
+            wait_for_response: Whether to wait for and decode the motor's state response.
         """
         motor_name = self._get_motor_name(motor)
         motor_type = self._motor_types[motor_name]
@@ -751,8 +763,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         return data_norm * span + x_min
 
     def _decode_motor_state(self, data: bytearray | bytes) -> tuple[float, float, float, float]:
-        """
-        Decode motor state from CAN data.
+        """Decode motor state from CAN data.
 
         Returns:
             Tuple of (position_degrees, velocity_deg_per_sec, torque, temp_mos)
@@ -825,7 +836,6 @@ class RobstrideMotorsBus(MotorsBusBase):
         motor: str,
     ) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
-
         # Refresh motor to get latest state
         t_init = time.time()
         if (
@@ -867,10 +877,10 @@ class RobstrideMotorsBus(MotorsBusBase):
         data_name: str,
         motors: str | list[str] | None = None,
     ) -> dict[str, Value]:
-        """
-        Read the same value from multiple motors simultaneously.
-        Uses batched operations: sends all refresh commands, then collects all responses.
-        This is MUCH faster than sequential reads (OpenArms pattern).
+        """Read the same value from multiple motors simultaneously.
+
+        Uses batched operations: sends all refresh commands, then collects all responses. Much faster
+        than sequential reads (the OpenArms pattern).
         """
         target_motors = self._get_motors_list(motors)
         self._batch_refresh(target_motors)
@@ -882,9 +892,10 @@ class RobstrideMotorsBus(MotorsBusBase):
         data_name: str,
         values: dict[str, Value],
     ) -> None:
-        """
-        Write different values to multiple motors simultaneously. Positions are always in degrees.
-        Uses batched operations: sends all commands first, then collects responses when MIT mode is used, otherwise send cmd and wait for response for each motor).
+        """Write different values to multiple motors simultaneously. Positions are always in degrees.
+
+        Uses batched operations: sends all commands first, then collects responses when MIT mode is used;
+        otherwise sends the command and waits for a response for each motor individually.
         """
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
@@ -914,9 +925,7 @@ class RobstrideMotorsBus(MotorsBusBase):
         *,
         num_retry: int = 0,
     ) -> dict[str, MotorState]:
-        """
-        Read ALL motor states (position, velocity, torque) with Robstride TTL refresh policy.
-        """
+        """Read ALL motor states (position, velocity, torque) with Robstride TTL refresh policy."""
         target_motors = self._get_motors_list(motors)
         self._batch_refresh(target_motors)
         return {motor: self._last_known_states[motor].copy() for motor in target_motors}
@@ -962,8 +971,7 @@ class RobstrideMotorsBus(MotorsBusBase):
     def record_ranges_of_motion(
         self, motors: str | list[str] | None = None, display_values: bool = True
     ) -> tuple[dict[str, Value], dict[str, Value]]:
-        """
-        Interactively record the min/max values of each motor in degrees.
+        """Interactively record the min/max values of each motor in degrees.
 
         Move the joints by hand (with torque disabled) while the method streams live positions.
         Press Enter to finish.

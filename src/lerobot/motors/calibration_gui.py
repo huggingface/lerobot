@@ -43,20 +43,43 @@ DD_COLOR, DD_COLOR_HL = (70, 70, 70), (100, 100, 100)
 
 
 def dist(a, b):
+    """Return the Euclidean distance between two `(x, y)` points."""
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
 @dataclass
 class RangeValues:
+    """The min/current/max motor step values read off one `RangeSlider`.
+
+    Args:
+        min_v (`int`):
+            Lower bound of the calibrated range, in raw motor steps.
+        pos_v (`int`):
+            Current position, in raw motor steps.
+        max_v (`int`):
+            Upper bound of the calibrated range, in raw motor steps.
+    """
+
     min_v: int
     pos_v: int
     max_v: int
 
 
 class RangeSlider:
-    """One motor = one slider row"""
+    """A draggable min/current/max slider row for one motor in the range-finder GUI."""
 
     def __init__(self, motor, idx, res, calibration, present, label_pad, base_y):
+        """Lay out one slider row from the motor's current calibration and position.
+
+        Args:
+            motor: Motor name this row controls.
+            idx: Row index, used to compute its vertical position.
+            res: Motor resolution (number of steps), used to convert steps to pixels.
+            calibration: The motor's current `MotorCalibration`, for the initial min/max handles.
+            present: The motor's current position, in raw steps.
+            label_pad: Pixel width reserved for the widest motor name label.
+            base_y: Vertical pixel offset of the first row.
+        """
         import pygame
 
         self.motor = motor
@@ -87,6 +110,7 @@ class RangeSlider:
         return self.x0 + (v / self.res) * BAR_LEN
 
     def set_tick(self, v):
+        """Move the live position tick to `v`, clamped to `[0, res]`."""
         self.tick_val = max(0, min(v, self.res))
 
     def _triangle_hit(self, pos):
@@ -96,6 +120,7 @@ class RangeSlider:
         return pygame.Rect(self.pos_x - TRI_W // 2, tri_top - TRI_H, TRI_W, TRI_H).collidepoint(pos)
 
     def handle_event(self, e):
+        """Update the min/max/position handles in response to one pygame event."""
         import pygame
 
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
@@ -137,6 +162,7 @@ class RangeSlider:
         surf.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
 
     def draw(self, surf):
+        """Render this row's bar, handles, labels, and buttons onto `surf`."""
         import pygame
 
         # motor name above set-min button (right-aligned)
@@ -212,11 +238,25 @@ class RangeSlider:
 
     # external
     def values(self) -> RangeValues:
+        """Return this row's current min/current/max values as a `RangeValues`."""
         return RangeValues(self.min_v, self.pos_v, self.max_v)
 
 
 class RangeFinderGUI:
+    """A pygame window with one slider per motor for finding calibration ranges interactively.
+
+    Drag a motor's handles to set its min/max range, or the triangle to move it to a position. Motors can
+    be split into named groups (shown in a dropdown) when there are too many to fit one screen.
+    """
+
     def __init__(self, bus: MotorsBus, groups: dict[str, list[str]] | None = None):
+        """Connect to the bus if needed, read its current calibration, and lay out one slider per motor.
+
+        Args:
+            bus: The connected (or connectable) `MotorsBus` whose motors to calibrate.
+            groups: Named subsets of `bus.motors` to show one at a time via a dropdown. `None` puts every
+                motor in a single `"all"` group.
+        """
         import pygame
 
         self.bus = bus
@@ -354,6 +394,14 @@ class RangeFinderGUI:
             s.max_x = s._pos_from_val(s.max_v)
 
     def run(self) -> dict[str, MotorCalibration]:
+        """Run the GUI event loop until the window is closed.
+
+        Writes live goal positions to the bus while a handle is being dragged, and writes the new
+        calibration to the bus when "SAVE" is clicked.
+
+        Returns:
+            `dict[str, MotorCalibration]`: The calibration in effect when the window was closed.
+        """
         import pygame
 
         while True:

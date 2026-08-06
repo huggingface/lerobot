@@ -30,6 +30,8 @@ if TYPE_CHECKING or _can_available:
 else:
 
     class can:  # noqa: N801
+        """Fallback stand-in for the `python-can` package when it is not installed."""
+
         Message = object
         interface = None
 
@@ -65,6 +67,16 @@ PRECISE_TIMEOUT_SEC = 0.0001
 
 
 class MotorState(TypedDict):
+    """A Damiao motor's last-reported feedback frame.
+
+    **Attributes**:
+        - **position** (`float`) -- Position, in radians.
+        - **velocity** (`float`) -- Velocity, in radians per second.
+        - **torque** (`float`) -- Torque, in newton-meters.
+        - **temp_mos** (`float`) -- MOSFET temperature, in degrees Celsius.
+        - **temp_rotor** (`float`) -- Rotor temperature, in degrees Celsius.
+    """
+
     position: float
     velocity: float
     torque: float
@@ -73,8 +85,7 @@ class MotorState(TypedDict):
 
 
 class DamiaoMotorsBus(MotorsBusBase):
-    """
-    The Damiao implementation for a MotorsBus using CAN bus communication.
+    """The Damiao implementation for a MotorsBus using CAN bus communication.
 
     This class uses python-can for CAN bus communication with Damiao motors.
     For more info, see:
@@ -98,8 +109,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         bitrate: int = 1000000,
         data_bitrate: int | None = 5000000,
     ):
-        """
-        Initialize the Damiao motors bus.
+        """Initialize the Damiao motors bus.
 
         Args:
             port: CAN interface name (e.g., "can0" for Linux, "/dev/cu.usbmodem*" for macOS)
@@ -157,13 +167,11 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
-        """
-        Open the CAN bus and initialize communication.
+        """Open the CAN bus and initialize communication.
 
         Args:
             handshake: If True, ping all motors to verify they're present
         """
-
         try:
             # Auto-detect interface type based on port name
             if self.can_interface == "auto":
@@ -201,8 +209,8 @@ class DamiaoMotorsBus(MotorsBusBase):
             raise ConnectionError(f"Failed to connect to CAN bus: {e}") from e
 
     def _handshake(self) -> None:
-        """
-        Verify all motors are present and populate initial state cache.
+        """Verify all motors are present and populate initial state cache.
+
         Raises ConnectionError if any motor fails to respond.
         """
         logger.info("Starting handshake with motors...")
@@ -248,13 +256,11 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
-        """
-        Close the CAN bus connection.
+        """Close the CAN bus connection.
 
         Args:
             disable_torque: If True, disable torque on all motors before disconnecting
         """
-
         if disable_torque:
             try:
                 self.disable_torque()
@@ -320,8 +326,7 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     @contextmanager
     def torque_disabled(self, motors: str | list[str] | None = None):
-        """
-        Context manager that guarantees torque is re-enabled.
+        """Context manager that guarantees torque is re-enabled.
 
         This helper is useful to temporarily disable torque when configuring motors.
         """
@@ -354,16 +359,15 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _recv_motor_response(
         self, expected_recv_id: int | None = None, timeout: float = 0.001
     ) -> can.Message | None:
-        """
-        Receive a response from a motor.
+        """Receive a response from a motor.
 
         Args:
             expected_recv_id: If provided, only return messages from this CAN ID
             timeout: Timeout in seconds (default: 1ms for high-speed operation)
+
         Returns:
             CAN message if received, None otherwise
         """
-
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
 
@@ -394,8 +398,8 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _recv_all_responses(
         self, expected_recv_ids: list[int], timeout: float = 0.002
     ) -> dict[int, can.Message]:
-        """
-        Efficiently receive responses from multiple motors at once.
+        """Efficiently receive responses from multiple motors at once.
+
         Uses the OpenArms pattern: collect all available messages within timeout.
 
         Args:
@@ -492,8 +496,8 @@ class DamiaoMotorsBus(MotorsBusBase):
         self,
         commands: dict[NameOrID, tuple[float, float, float, float, float]],
     ) -> None:
-        """
-        Send MIT control commands to multiple motors in batch.
+        """Send MIT control commands to multiple motors in batch.
+
         Sends all commands first, then collects responses.
 
         Args:
@@ -542,9 +546,10 @@ class DamiaoMotorsBus(MotorsBusBase):
     def _decode_motor_state(
         self, data: bytearray | bytes, motor_type: MotorType
     ) -> tuple[float, float, float, int, int]:
-        """
-        Decode motor state from CAN data.
-        Returns: (position_deg, velocity_deg_s, torque, temp_mos, temp_rotor)
+        """Decode motor state from CAN data.
+
+        Returns:
+            `tuple[float, float, float, int, int]`: `(position_deg, velocity_deg_s, torque, temp_mos, temp_rotor)`.
         """
         if len(data) < 8:
             raise ValueError("Invalid motor state data")
@@ -585,7 +590,6 @@ class DamiaoMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def read(self, data_name: str, motor: str) -> Value:
         """Read a value from a single motor. Positions are always in degrees."""
-
         # Refresh motor to get latest state
         msg = self._refresh_motor(motor)
         if msg is None:
@@ -621,11 +625,10 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor: str,
         value: Value,
     ) -> None:
-        """
-        Write a value to a single motor. Positions are always in degrees.
-        Can write 'Goal_Position', 'Kp', or 'Kd'.
-        """
+        """Write a value to a single motor. Positions are always in degrees.
 
+        Can write `'Goal_Position'`, `'Kp'`, or `'Kd'`.
+        """
         if data_name in ("Kp", "Kd"):
             self._gains[motor][data_name.lower()] = float(value)
         elif data_name == "Goal_Position":
@@ -640,9 +643,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         data_name: str,
         motors: str | list[str] | None = None,
     ) -> dict[str, Value]:
-        """
-        Read the same value from multiple motors simultaneously.
-        """
+        """Read the same value from multiple motors simultaneously."""
         target_motors = self._get_motors_list(motors)
         self._batch_refresh(target_motors)
 
@@ -657,8 +658,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         *,
         num_retry: int = 0,
     ) -> dict[str, MotorState]:
-        """
-        Read ALL motor states (position, velocity, torque) from multiple motors in ONE refresh cycle.
+        """Read ALL motor states (position, velocity, torque) from multiple motors in ONE refresh cycle.
 
         Returns:
             Dictionary mapping motor names to state dicts with keys: 'position', 'velocity', 'torque'
@@ -674,7 +674,6 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     def _batch_refresh(self, motors: list[str]) -> None:
         """Internal helper to refresh a list of motors and update cache."""
-
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
 
@@ -702,10 +701,7 @@ class DamiaoMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
-        """
-        Write values to multiple motors simultaneously. Positions are always in degrees.
-        """
-
+        """Write values to multiple motors simultaneously. Positions are always in degrees."""
         if data_name in ("Kp", "Kd"):
             key = data_name.lower()
             for motor, val in values.items():
@@ -761,8 +757,7 @@ class DamiaoMotorsBus(MotorsBusBase):
         motors: str | list[str] | None = None,
         display_values: bool = True,
     ) -> tuple[dict[str, Value], dict[str, Value]]:
-        """
-        Interactively record the min/max values of each motor in degrees.
+        """Interactively record the min/max values of each motor in degrees.
 
         Move the joints by hand (with torque disabled) while the method streams live positions.
         Press Enter to finish.
