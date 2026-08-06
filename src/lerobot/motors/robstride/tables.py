@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration tables for Damiao motors."""
+"""Configuration tables for Robstride motors."""
 
 from enum import IntEnum
 
 
 # Motor type definitions
 class MotorType(IntEnum):
+    """The Robstride motor model, selecting its limit parameters."""
+
     O0 = 0
     O1 = 1
     O2 = 2
@@ -30,6 +32,14 @@ class MotorType(IntEnum):
 
 
 class CommMode(IntEnum):
+    """The CAN communication protocol a Robstride motor speaks.
+
+    **Attributes**:
+        - **PrivateProtocole** -- Robstride's own CAN frame format.
+        - **CANopen** -- The standard CANopen protocol.
+        - **MIT** -- The MIT Cheetah CAN protocol.
+    """
+
     PrivateProtocole = 0
     CANopen = 1
     MIT = 2
@@ -37,6 +47,14 @@ class CommMode(IntEnum):
 
 # Control modes
 class ControlMode(IntEnum):
+    """The Robstride motor's active control mode.
+
+    **Attributes**:
+        - **MIT** -- Combined position/velocity/torque control, following the MIT Cheetah protocol.
+        - **POS_VEL** -- Position and velocity control.
+        - **VEL** -- Velocity-only control.
+    """
+
     MIT = 0
     POS_VEL = 1
     VEL = 2

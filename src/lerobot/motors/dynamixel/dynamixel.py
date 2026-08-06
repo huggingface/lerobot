@@ -51,6 +51,24 @@ logger = logging.getLogger(__name__)
 
 
 class OperatingMode(Enum):
+    """Control mode written to a Dynamixel motor's `Operating_Mode` register.
+
+    **Attributes**:
+        - **CURRENT** -- Torque-only control, ideal for a gripper or a system with its own
+          velocity/position controllers.
+        - **VELOCITY** -- Velocity control, identical to the Wheel Mode (endless) from existing Dynamixel.
+          Ideal for wheel-type robots.
+        - **POSITION** -- Position control, identical to the Joint Mode from existing Dynamixel. Range is
+          limited by the Max/Min Position Limit. Ideal for articulated robots whose joints rotate less
+          than 360 degrees.
+        - **EXTENDED_POSITION** -- Multi-turn position control, supporting up to 512 turns (-256 to 256
+          revolutions). The Max/Min Position Limit is not used in this mode. Ideal for multi-turn wrists,
+          conveyor systems, or a system with an additional reduction gear.
+        - **CURRENT_POSITION** -- Combined position and torque control, up to 512 turns. Ideal for a
+          system that needs both, such as articulated robots or grippers.
+        - **PWM** -- Direct PWM (voltage) control.
+    """
+
     # DYNAMIXEL only controls current(torque) regardless of speed and position. This mode is ideal for a
     # gripper or a system that only uses current(torque) control or a system that has additional
     # velocity/position controllers.
@@ -81,20 +99,34 @@ class OperatingMode(Enum):
 
 
 class DriveMode(Enum):
+    """Whether a Dynamixel motor's rotation direction is inverted.
+
+    **Attributes**:
+        - **NON_INVERTED** -- Positive commands rotate the motor in its default direction.
+        - **INVERTED** -- Positive commands rotate the motor in the opposite direction.
+    """
+
     NON_INVERTED = 0
     INVERTED = 1
 
 
 class TorqueMode(Enum):
+    """Whether a Dynamixel motor's torque is enabled.
+
+    **Attributes**:
+        - **ENABLED** -- The motor holds position/velocity and resists external force.
+        - **DISABLED** -- The motor is free to move by hand.
+    """
+
     ENABLED = 1
     DISABLED = 0
 
 
 class DynamixelMotorsBus(SerialMotorsBus):
-    """
-    The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
-    the motors. For more info, see the Dynamixel SDK Documentation:
-    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
+    """The Dynamixel implementation of [`~motors.motors_bus.MotorsBus`].
+
+    Relies on the [Dynamixel SDK](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20)
+    to talk to the motors over a serial port. Protocol 2.0 only.
     """
 
     apply_drive_mode = False
@@ -114,6 +146,17 @@ class DynamixelMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
+        """Set up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
+
+        Args:
+            port (`str`):
+                Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
+            motors (`dict[str, Motor]`):
+                Motors on this bus, keyed by name, e.g. `{"shoulder_pan": Motor(id=1, model="xl430-w250")}`.
+            calibration (`dict[str, MotorCalibration]`, *optional*):
+                Cached calibration to use instead of reading it from the motors on connect. `None` reads
+                it from the motors instead.
+        """
         require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
         super().__init__(port, motors, calibration)
         self.port_handler = dxl.PortHandler(self.port)
@@ -152,6 +195,12 @@ class DynamixelMotorsBus(SerialMotorsBus):
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
     def configure_motors(self, return_delay_time=0) -> None:
+        """Reduce every motor's `Return_Delay_Time` from its 500µs factory default.
+
+        Args:
+            return_delay_time (`int`, *optional*, defaults to 0):
+                Value written to `Return_Delay_Time`, in units of 2µs.
+        """
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for motor in self.motors:
@@ -159,9 +208,15 @@ class DynamixelMotorsBus(SerialMotorsBus):
 
     @property
     def is_calibrated(self) -> bool:
+        """`bool`: `True` if the cached calibration matches what [`~motors.dynamixel.DynamixelMotorsBus.read_calibration`] returns."""
         return self.calibration == self.read_calibration()
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
+        """Read each motor's homing offset and position limits from its `Homing_Offset`, `Min_Position_Limit`, `Max_Position_Limit`, and `Drive_Mode` registers.
+
+        Returns:
+            `dict[str, MotorCalibration]`: Calibration keyed by motor name.
+        """
         offsets = self.sync_read("Homing_Offset", normalize=False)
         mins = self.sync_read("Min_Position_Limit", normalize=False)
         maxes = self.sync_read("Max_Position_Limit", normalize=False)
@@ -180,6 +235,14 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return calibration
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """Write each motor's homing offset and position limits to the bus.
+
+        Args:
+            calibration_dict (`dict[str, MotorCalibration]`):
+                Calibration to write, keyed by motor name.
+            cache (`bool`, *optional*, defaults to `True`):
+                Whether to also store `calibration_dict` as `self.calibration`.
+        """
         for motor, calibration in calibration_dict.items():
             self.write("Homing_Offset", motor, calibration.homing_offset)
             self.write("Min_Position_Limit", motor, calibration.range_min)
@@ -189,6 +252,15 @@ class DynamixelMotorsBus(SerialMotorsBus):
             self.calibration = calibration_dict
 
     def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Same as [`~motors.motors_bus.MotorsBus.disable_torque`].
+
+        Args:
+            motors (`int | str | list[str]`, *optional*):
+                Target motors. Accepts a motor name, an ID, a list of names, or `None` for every
+                registered motor.
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+        """
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
@@ -197,6 +269,15 @@ class DynamixelMotorsBus(SerialMotorsBus):
         self._write(addr, length, motor, TorqueMode.DISABLED.value, num_retry=num_retry)
 
     def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Same as [`~motors.motors_bus.MotorsBus.enable_torque`].
+
+        Args:
+            motors (`int | str | list[str]`, *optional*):
+                Target motors. Accepts a motor name, an ID, a list of names, or `None` for every
+                registered motor.
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+        """
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
 
@@ -221,9 +302,9 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return ids_values
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
-        """
-        On Dynamixel Motors:
-        Present_Position = Actual_Position + Homing_Offset
+        """Compute the homing offset that centers `positions` at half a turn.
+
+        On Dynamixel motors, `Present_Position = Actual_Position + Homing_Offset`.
         """
         half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
@@ -248,6 +329,20 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return data
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+        """Same as [`~motors.motors_bus.MotorsBus.broadcast_ping`].
+
+        Args:
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+            raise_on_error (`bool`, *optional*, defaults to `False`):
+                Whether a failure raises `ConnectionError` instead of returning `None`.
+
+        Returns:
+            `dict[int, int] | None`: Mapping of found motor ID to model number, or `None` on failure.
+
+        Raises:
+            ConnectionError: If `raise_on_error` is `True` and the ping fails.
+        """
         for n_try in range(1 + num_retry):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):

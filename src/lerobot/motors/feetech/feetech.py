@@ -50,6 +50,16 @@ logger = logging.getLogger(__name__)
 
 
 class OperatingMode(Enum):
+    """Control mode written to a Feetech motor's `Operating_Mode` register.
+
+    **Attributes**:
+        - **POSITION** -- Position servo mode.
+        - **VELOCITY** -- Constant speed mode, controlled by parameter `0x2e`; bit 15 is the direction bit.
+        - **PWM** -- PWM open-loop speed regulation mode, controlled by parameter `0x2c`; bit 11 is the
+          direction bit.
+        - **STEP** -- Step servo mode, with step progress in parameter `0x2a`; bit 15 is the direction bit.
+    """
+
     # position servo mode
     POSITION = 0
     # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
@@ -64,18 +74,31 @@ class OperatingMode(Enum):
 
 
 class DriveMode(Enum):
+    """Whether a Feetech motor's rotation direction is inverted.
+
+    **Attributes**:
+        - **NON_INVERTED** -- Positive commands rotate the motor in its default direction.
+        - **INVERTED** -- Positive commands rotate the motor in the opposite direction.
+    """
+
     NON_INVERTED = 0
     INVERTED = 1
 
 
 class TorqueMode(Enum):
+    """Whether a Feetech motor's torque is enabled.
+
+    **Attributes**:
+        - **ENABLED** -- The motor holds position/velocity and resists external force.
+        - **DISABLED** -- The motor is free to move by hand.
+    """
+
     ENABLED = 1
     DISABLED = 0
 
 
 def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-    """
-    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
+    """HACK: This patches the PortHandler behavior to set the correct packet timeouts.
 
     It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
     The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
@@ -87,9 +110,10 @@ def patch_setPacketTimeout(self, packet_length):  # noqa: N802
 
 
 class FeetechMotorsBus(SerialMotorsBus):
-    """
-    The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
-    python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
+    """The Feetech implementation of [`~motors.motors_bus.MotorsBus`].
+
+    Relies on the Feetech servo SDK (itself based on the Dynamixel SDK) to talk to the motors over a
+    serial port. Supports both Feetech protocol 0 and 1, selected via `protocol_version`.
     """
 
     apply_drive_mode = True
@@ -110,6 +134,22 @@ class FeetechMotorsBus(SerialMotorsBus):
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
+        """Set up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
+
+        Args:
+            port (`str`):
+                Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
+            motors (`dict[str, Motor]`):
+                Motors on this bus, keyed by name, e.g. `{"gripper": Motor(id=1, model="sts3215")}`.
+            calibration (`dict[str, MotorCalibration]`, *optional*):
+                Cached calibration to use instead of reading it from the motors on connect. `None` reads
+                it from the motors instead.
+            protocol_version (`int`, *optional*, defaults to 0):
+                Feetech protocol version. All configured motors must use the same one.
+
+        Raises:
+            ValueError: If a motor's model is incompatible with `protocol_version`.
+        """
         require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
@@ -207,6 +247,19 @@ class FeetechMotorsBus(SerialMotorsBus):
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
     def configure_motors(self, return_delay_time=0, maximum_acceleration=254, acceleration=254) -> None:
+        """Reduce every motor's `Return_Delay_Time` and raise its acceleration limits from factory defaults.
+
+        Also clears the STS3215's angle-feedback bit, which otherwise lets position readings overflow or
+        go negative.
+
+        Args:
+            return_delay_time (`int`, *optional*, defaults to 0):
+                Value written to `Return_Delay_Time`, in units of 2µs.
+            maximum_acceleration (`int`, *optional*, defaults to 254):
+                Value written to `Maximum_Acceleration`. Only applies to protocol 0.
+            acceleration (`int`, *optional*, defaults to 254):
+                Value written to `Acceleration`.
+        """
         for motor in self.motors:
             # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
@@ -226,6 +279,10 @@ class FeetechMotorsBus(SerialMotorsBus):
 
     @property
     def is_calibrated(self) -> bool:
+        """`bool`: `True` if the cached calibration matches what [`~motors.feetech.FeetechMotorsBus.read_calibration`] returns.
+
+        Under protocol 1, only the position range is compared — protocol 1 motors have no homing offset.
+        """
         motors_calibration = self.read_calibration()
         if set(motors_calibration) != set(self.calibration):
             return False
@@ -245,6 +302,12 @@ class FeetechMotorsBus(SerialMotorsBus):
         return same_ranges and same_offsets
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
+        """Read each motor's position limits, and homing offset under protocol 0, from the bus.
+
+        Returns:
+            `dict[str, MotorCalibration]`: Calibration keyed by motor name. `homing_offset` is always `0`
+            under protocol 1, which has no such register.
+        """
         offsets, mins, maxes = {}, {}, {}
         for motor in self.motors:
             mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
@@ -266,6 +329,14 @@ class FeetechMotorsBus(SerialMotorsBus):
         return calibration
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """Write each motor's position limits, and homing offset under protocol 0, to the bus.
+
+        Args:
+            calibration_dict (`dict[str, MotorCalibration]`):
+                Calibration to write, keyed by motor name.
+            cache (`bool`, *optional*, defaults to `True`):
+                Whether to also store `calibration_dict` as `self.calibration`.
+        """
         for motor, calibration in calibration_dict.items():
             if self.protocol_version == 0:
                 self.write("Homing_Offset", motor, calibration.homing_offset)
@@ -276,9 +347,9 @@ class FeetechMotorsBus(SerialMotorsBus):
             self.calibration = calibration_dict
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
-        """
-        On Feetech Motors:
-        Present_Position = Actual_Position - Homing_Offset
+        """Compute the homing offset that centers `positions` at half a turn.
+
+        On Feetech motors, `Present_Position = Actual_Position - Homing_Offset`.
         """
         half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
@@ -289,6 +360,15 @@ class FeetechMotorsBus(SerialMotorsBus):
         return half_turn_homings
 
     def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Same as [`~motors.motors_bus.MotorsBus.disable_torque`]; also clears the `Lock` register so EPROM writes take effect.
+
+        Args:
+            motors (`int | str | list[str]`, *optional*):
+                Target motors. Accepts a motor name, an ID, a list of names, or `None` for every
+                registered motor.
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+        """
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
             self.write("Lock", motor, 0, num_retry=num_retry)
@@ -300,6 +380,15 @@ class FeetechMotorsBus(SerialMotorsBus):
         self._write(addr, length, motor, 0, num_retry=num_retry)
 
     def enable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Same as [`~motors.motors_bus.MotorsBus.enable_torque`]; also sets the `Lock` register to protect EPROM values.
+
+        Args:
+            motors (`int | str | list[str]`, *optional*):
+                Target motors. Accepts a motor name, an ID, a list of names, or `None` for every
+                registered motor.
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+        """
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
             self.write("Lock", motor, 1, num_retry=num_retry)
@@ -408,6 +497,21 @@ class FeetechMotorsBus(SerialMotorsBus):
                 rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+        """Same as [`~motors.motors_bus.MotorsBus.broadcast_ping`]. Only available under protocol 0.
+
+        Args:
+            num_retry (`int`, *optional*, defaults to 0):
+                Number of additional retry attempts on communication failure.
+            raise_on_error (`bool`, *optional*, defaults to `False`):
+                Whether a failure raises `ConnectionError` instead of returning `None`.
+
+        Returns:
+            `dict[int, int] | None`: Mapping of found motor ID to model number, or `None` on failure.
+
+        Raises:
+            NotImplementedError: If the bus is using protocol 1, which has no broadcast ping instruction.
+            ConnectionError: If `raise_on_error` is `True` and the ping fails.
+        """
         self._assert_protocol_is_compatible("broadcast_ping")
         for n_try in range(1 + num_retry):
             ids_status, comm = self._broadcast_ping()
