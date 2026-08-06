@@ -56,18 +56,18 @@ The dataset provides `input_features`, `output_features`, and normalization stat
 
 ### Important configuration
 
-| Parameter | Default | Meaning |
-| --- | ---: | --- |
-| `n_obs_steps` | `2` | Observation history length |
-| `horizon` | `16` | Full action trajectory modeled during training |
-| `n_action_steps` | `8` | Actions executed before replanning |
-| `num_inference_steps` | `10` | Euler integration steps |
-| `hidden_dim` | `256` | Transformer width |
-| `num_layers` | `4` | Transformer layers |
-| `text_encoder_name` | `None` | Optional CLIP model used to encode task descriptions |
-| `freeze_text_encoder` | `true` | Freeze CLIP while training its projection into the policy |
-| `conditioning_dropout_prob` | `0.1` | Unconditional examples used to train guidance |
-| `guidance_scale` | `1.0` | Inference guidance strength; `1.0` disables the extra field evaluation |
+| Parameter                   | Default | Meaning                                                                |
+| --------------------------- | ------: | ---------------------------------------------------------------------- |
+| `n_obs_steps`               |     `2` | Observation history length                                             |
+| `horizon`                   |    `16` | Full action trajectory modeled during training                         |
+| `n_action_steps`            |     `8` | Actions executed before replanning                                     |
+| `num_inference_steps`       |    `10` | Euler integration steps                                                |
+| `hidden_dim`                |   `256` | Transformer width                                                      |
+| `num_layers`                |     `4` | Transformer layers                                                     |
+| `text_encoder_name`         |  `None` | Optional CLIP model used to encode task descriptions                   |
+| `freeze_text_encoder`       |  `true` | Freeze CLIP while training its projection into the policy              |
+| `conditioning_dropout_prob` |   `0.1` | Unconditional examples used to train guidance                          |
+| `guidance_scale`            |   `1.0` | Inference guidance strength; `1.0` disables the extra field evaluation |
 
 For a faster smoke run, reduce the model and integration depth:
 
@@ -151,13 +151,13 @@ The published 100,000-step checkpoint is available at
 trained with seed 1000 on 4 NVIDIA H20 96 GB GPUs using BF16, batch size 64 per GPU, and an effective
 batch size of 256. The command above evaluated 10 episodes for each of the 10 tasks in every suite:
 
-| Suite | Tasks | Episodes per task | Episodes | Success rate |
-| --- | ---: | ---: | ---: | ---: |
-| `libero_spatial` | 10 | 10 | 100 | 13.0% |
-| `libero_object` | 10 | 10 | 100 | 4.0% |
-| `libero_goal` | 10 | 10 | 100 | 18.0% |
-| `libero_10` | 10 | 10 | 100 | 6.0% |
-| **Overall** | **40** | **10** | **400** | **10.25%** |
+| Suite            |  Tasks | Episodes per task | Episodes | Success rate |
+| ---------------- | -----: | ----------------: | -------: | -----------: |
+| `libero_spatial` |     10 |                10 |      100 |        13.0% |
+| `libero_object`  |     10 |                10 |      100 |         4.0% |
+| `libero_goal`    |     10 |                10 |      100 |        18.0% |
+| `libero_10`      |     10 |                10 |      100 |         6.0% |
+| **Overall**      | **40** |            **10** |  **400** |   **10.25%** |
 
 The overall rate is episode-weighted and equals the unweighted mean here because every suite contains
 100 episodes. The Hub model card also includes full machine-readable per-task results. No Arena result is
