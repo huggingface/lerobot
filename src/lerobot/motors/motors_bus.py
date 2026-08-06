@@ -314,11 +314,16 @@ class SerialMotorsBus(MotorsBusBase):
     To find the port, you can run our utility script:
     ```bash
     lerobot-find-port.py
-    >>> Finding all available ports for the MotorsBus.
-    >>> ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
-    >>> Remove the usb cable from your MotorsBus and press Enter when done.
-    >>> The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
-    >>> Reconnect the usb cable.
+    ```
+
+    which prints:
+
+    ```
+    Finding all available ports for the MotorsBus.
+    ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
+    Remove the usb cable from your MotorsBus and press Enter when done.
+    The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
+    Reconnect the usb cable.
     ```
 
     Example of usage for 1 Feetech sts3215 motor connected to the bus:
@@ -679,10 +684,12 @@ class SerialMotorsBus(MotorsBusBase):
 
         This helper is useful to temporarily disable torque when configuring motors.
 
-        Examples:
-            >>> with bus.torque_disabled():
+        Example:
+            ```python
+            >>> with bus.torque_disabled():  # doctest: +SKIP
             ...     # Safe operations here
             ...     pass
+            ```
         """
         self.disable_torque(motors)
         try:

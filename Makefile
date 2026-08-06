@@ -184,3 +184,17 @@ test-smolvla-ete-eval:
 # backend, so it does not require a real model checkpoint or GPU.
 annotation-e2e:
 	uv run python -m tests.annotations.run_e2e_smoke
+
+# Docstring & doctest checks. See docs/source/writing_docstrings.mdx for the standard these enforce.
+
+# Run the examples in the docstrings listed in utils/documentation_tests.txt. Hardware and GPU examples are
+# skipped by content (see src/lerobot/utils/doctest_utils.py); CI sets both flags.
+doctest:
+	SKIP_HARDWARE_DOCTEST=1 uv run pytest --doctest-modules --no-header -q \
+		$$(grep -v '^\s*#' utils/documentation_tests.txt | grep -v '^\s*$$')
+
+check-doctest-list:
+	uv run python utils/check_doctest_list.py
+
+fix-doctest-list:
+	uv run python utils/check_doctest_list.py --fix_and_overwrite

@@ -147,8 +147,8 @@ The `<Tip>` component is legacy per doc-builder; don't add new ones.
 
 ### Examples must be fenced
 
-An example lives inside a fenced ` ```python ` block containing `>>> `. That fence is literally what the
-doctest preprocessor's regex matches:
+An example lives inside a fenced ` ```python ` block containing `>>> `. The fence is what makes it render
+as a code block, and it is what the doctest preprocessor's regex looks for:
 
 ````python
     Example:
@@ -161,8 +161,8 @@ doctest preprocessor's regex matches:
 ````
 
 > [!WARNING]
-> A bare `>>>` outside a fenced block is **never collected**. It silently never runs, and you get no signal
-> that your example is broken.
+> An unfenced `>>>` is still collected — doctest finds prompts anywhere in a docstring. What you lose is the
+> rendering, so it shows up as a wall of prose on the page. Every example needs the fence.
 
 Every example either executes in CI or carries `# doctest: +SKIP`. Anything that touches hardware, a GPU, or
 downloads from the Hub gets `+SKIP`:

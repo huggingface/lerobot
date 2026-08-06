@@ -91,7 +91,35 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 def ensure_safe_goal_position(
     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[str, float]
 ) -> dict[str, float]:
-    """Caps relative action target magnitude for safety."""
+    """Cap the magnitude of a relative action target for safety.
+
+    Used by [`~robots.Robot.send_action`] implementations to stop a large jump between the present and goal
+    positions from being written straight to the motors.
+
+    Args:
+        goal_present_pos (`dict[str, tuple[float, float]]`):
+            Maps motor name to a `(goal_position, present_position)` pair.
+        max_relative_target (`float | dict[str, float]`):
+            The largest change from the present position that may be applied. A float caps every motor
+            equally; a dict gives a per-motor cap and must have exactly the same keys as
+            `goal_present_pos`.
+
+    Returns:
+        `dict[str, float]`: The capped goal position for each motor.
+
+    Raises:
+        ValueError: If `max_relative_target` is a dict whose keys differ from those of `goal_present_pos`.
+        TypeError: If `max_relative_target` is neither a float nor a dict.
+
+    Example:
+        ```python
+        >>> from lerobot.robots.utils import ensure_safe_goal_position
+        >>> ensure_safe_goal_position({"shoulder_pan": (50.0, 10.0)}, 5.0)
+        {'shoulder_pan': 15.0}
+        >>> ensure_safe_goal_position({"shoulder_pan": (12.0, 10.0)}, 5.0)
+        {'shoulder_pan': 12.0}
+        ```
+    """
 
     if isinstance(max_relative_target, float):
         diff_cap = dict.fromkeys(goal_present_pos, max_relative_target)
