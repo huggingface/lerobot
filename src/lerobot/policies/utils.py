@@ -122,15 +122,32 @@ def prepare_observation_for_inference(
         A dictionary where values are PyTorch tensors preprocessed for
         inference, residing on the target device. Image tensors are reshaped
         to (C, H, W) and normalized to a [0, 1] range.
+
+    Performance note (2026-08-05): for image keys, the device transfer happens *before* the
+    uint8->float32 conversion and the channel permute, not after, even though the return value is
+    identical either way (dtype conversion, permute, and device placement all commute freely here
+    -- none of them are order-dependent for the final values). Doing it in this order transfers
+    4x fewer bytes over PCIe (uint8 is 1 byte/pixel vs. float32's 4) and lets the (much faster)
+    GPU do the elementwise divide and the memory copy `.contiguous()` forces, instead of the CPU.
+    Measured live on real SO-101 hardware (`Experiments/engineering/Engineering.md`, 2026-08-05):
+    this function was the single largest cost in the rollout control loop by a wide margin (~67%
+    of total loop time, ~4x the trained model's own forward pass) -- profile before assuming a
+    change like this actually matters for your workload, but it did for this one.
     """
     for name in observation:
-        observation[name] = torch.from_numpy(observation[name])
+        tensor = torch.from_numpy(observation[name])
+        tensor = tensor.unsqueeze(0)
         if "image" in name:
-            if observation[name].dtype == torch.uint8:
-                observation[name] = observation[name].type(torch.float32) / 255
-            observation[name] = observation[name].permute(2, 0, 1).contiguous()
-        observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].to(device)
+            tensor = tensor.to(device, non_blocking=True)
+            if tensor.dtype == torch.uint8:
+                tensor = tensor.type(torch.float32) / 255
+            # Original permuted (H, W, C) -> (C, H, W) before its own unsqueeze; the unsqueeze
+            # above already ran, so the equivalent axis order including the batch dim is
+            # (1, H, W, C) -> (1, C, H, W).
+            tensor = tensor.permute(0, 3, 1, 2).contiguous()
+        else:
+            tensor = tensor.to(device, non_blocking=True)
+        observation[name] = tensor
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
