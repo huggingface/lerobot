@@ -139,8 +139,7 @@ def decode_video_frames_pyav(
     # TODO(rcadene): also load audio stream at the same time
     if isinstance(video_path, (str, Path)):
         video_path = str(video_path)
-    # else: a seekable file-like object (e.g. a buffered remote source) is
-    # handed to av.open unchanged.
+    # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
@@ -186,8 +185,7 @@ def decode_video_frames_pyav(
             f"No frames could be decoded from {video_path} in the timestamp range [{first_ts}, {last_ts}]."
         )
 
-    # float64: float32 quantizes ~0.25 ms at hour-scale timestamps, tripping
-    # tolerance_s spuriously on long aggregated video files.
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
     query_ts = torch.tensor(timestamps, dtype=torch.float64)
     loaded_ts_t = torch.tensor(loaded_ts, dtype=torch.float64)
 
@@ -399,8 +397,7 @@ def decode_video_frames_torchcodec(
         if log_loaded_timestamps:
             logger.info(f"Frame loaded at timestamp={pts:.4f}")
 
-    # float64: float32 quantizes ~0.25 ms at hour-scale timestamps, tripping
-    # tolerance_s spuriously on long aggregated video files.
+    # float64: hour-scale timestamps quantize past tolerance_s in float32.
     query_ts = torch.tensor(timestamps, dtype=torch.float64)
     loaded_ts = torch.tensor(loaded_ts, dtype=torch.float64)
 
