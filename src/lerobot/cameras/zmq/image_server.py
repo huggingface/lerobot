@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Streams camera images over ZMQ.
+"""Streams camera images over ZMQ.
+
 Uses lerobot's OpenCVCamera for capture, encodes images to base64 and sends them over ZMQ.
 """
 
@@ -47,6 +47,12 @@ class CameraCaptureThread:
     """Background thread that continuously captures and encodes frames from a camera."""
 
     def __init__(self, camera: OpenCVCamera, name: str):
+        """Initialize the capture thread for one camera.
+
+        Args:
+            camera: The already-connected camera to read frames from.
+            name: Name used to identify this camera in log messages.
+        """
         self.camera = camera
         self.name = name
         self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
@@ -89,7 +95,21 @@ class CameraCaptureThread:
 
 
 class ImageServer:
+    """Reads from one or more local OpenCV cameras and publishes their frames over a ZMQ `PUB` socket.
+
+    Runs on the machine physically connected to the cameras (e.g. a Raspberry Pi on a robot); pair with
+    [`~cameras.zmq.ZMQCamera`] on the machine that consumes the stream.
+    """
+
     def __init__(self, config: dict, port: int = 5555):
+        """Connect every camera listed in `config` and open the publishing socket.
+
+        Args:
+            config: A mapping with an optional `"fps"` (the publish loop rate, not the camera capture
+                rate) and a `"cameras"` mapping of camera name to a dict with `"device_id"`, `"shape"`
+                (`[height, width]`), and `"fourcc"` keys.
+            port: TCP port to publish on.
+        """
         # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
         self.fps = config.get("fps", 30)
         self.cameras: dict[str, OpenCVCamera] = {}
@@ -124,6 +144,11 @@ class ImageServer:
         logger.info(f"ImageServer running on port {port}")
 
     def run(self):
+        """Start each camera's capture thread and publish frames until interrupted.
+
+        Blocks until `KeyboardInterrupt`, then stops the capture threads, disconnects the cameras, and
+        closes the socket.
+        """
         frame_count = 0
         frame_times = deque(maxlen=60)
         last_published_ts: dict[str, float] = {}

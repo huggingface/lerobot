@@ -23,6 +23,33 @@ from .configs import CameraConfig, Cv2Rotation
 
 
 def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[str, Camera]:
+    """Instantiate one [`~cameras.Camera`] per entry in a mapping of configs.
+
+    Dispatches on each config's registered `type` to build the matching backend class. This only
+    constructs the camera objects; call [`~cameras.Camera.connect`] on each before use.
+
+    Args:
+        camera_configs (`dict[str, CameraConfig]`):
+            Camera configs keyed by the name each camera should be identified by, e.g. in a robot's
+            observation features.
+
+    Returns:
+        `dict[str, Camera]`: A camera instance per key, in the same order as `camera_configs`.
+
+    Raises:
+        ValueError: If a config's type is not a known backend and building it via the generic device
+            factory also fails.
+
+    Example:
+        ```python
+        >>> from lerobot.cameras.opencv import OpenCVCameraConfig
+        >>> from lerobot.cameras.utils import make_cameras_from_configs
+        >>> configs = {"top": OpenCVCameraConfig(index_or_path=0, fps=30, width=640, height=480)}
+        >>> cameras = make_cameras_from_configs(configs)
+        >>> list(cameras.keys())
+        ['top']
+        ```
+    """
     cameras: dict[str, Camera] = {}
 
     for key, cfg in camera_configs.items():
@@ -57,6 +84,15 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 
 
 def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
+    """Map a [`~cameras.Cv2Rotation`] to the OpenCV rotation flag `cv2.rotate` expects.
+
+    Args:
+        rotation (`Cv2Rotation`):
+            The configured rotation.
+
+    Returns:
+        `int | None`: The matching `cv2.ROTATE_*` constant, or `None` for [`~cameras.Cv2Rotation.NO_ROTATION`].
+    """
     import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 
     if rotation == Cv2Rotation.ROTATE_90:

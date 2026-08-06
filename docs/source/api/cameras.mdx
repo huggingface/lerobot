@@ -22,3 +22,52 @@ See the [Cameras guide](../cameras) for choosing and configuring a camera, and
 ## make_cameras_from_configs
 
 [[autodoc]] lerobot.cameras.make_cameras_from_configs
+
+## ColorMode
+
+[[autodoc]] lerobot.cameras.ColorMode
+
+## Cv2Rotation
+
+[[autodoc]] lerobot.cameras.Cv2Rotation
+
+## Cv2Backends
+
+[[autodoc]] lerobot.cameras.Cv2Backends
+
+## OpenCVCamera
+
+The default backend for USB webcams and video files, built on OpenCV.
+
+[[autodoc]] lerobot.cameras.opencv.OpenCVCamera
+    - all
+
+[[autodoc]] lerobot.cameras.opencv.OpenCVCameraConfig
+
+## RealSenseCamera
+
+Intel RealSense cameras, with optional depth sensing.
+
+[[autodoc]] lerobot.cameras.realsense.RealSenseCamera
+    - all
+
+[[autodoc]] lerobot.cameras.realsense.RealSenseCameraConfig
+
+## Reachy2Camera
+
+Cameras exposed by a Reachy 2 robot's own camera manager.
+
+[[autodoc]] lerobot.cameras.reachy2_camera.Reachy2Camera
+    - all
+
+[[autodoc]] lerobot.cameras.reachy2_camera.Reachy2CameraConfig
+
+## ZMQCamera
+
+Reads frames published over a ZeroMQ socket by `ImageServer`, for cameras attached to a different machine
+than the one running the policy.
+
+[[autodoc]] lerobot.cameras.zmq.ZMQCamera
+    - all
+
+[[autodoc]] lerobot.cameras.zmq.ZMQCameraConfig
