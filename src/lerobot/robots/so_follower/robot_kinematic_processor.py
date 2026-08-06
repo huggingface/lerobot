@@ -53,15 +53,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     2.  `use_latched_reference=False`: The reference pose is updated to the robot's current pose at
         every step.
 
-    Attributes:
-        kinematics: The robot's kinematic model for forward kinematics.
-        end_effector_step_sizes: A dictionary scaling the input delta commands.
-        motor_names: A list of motor names required for forward kinematics.
-        use_latched_reference: If True, latch the reference pose on enable; otherwise, always use the
-            current pose as the reference.
-        reference_ee_pose: Internal state storing the latched reference pose.
-        _prev_enabled: Internal state to detect the rising edge of the enable signal.
-        _command_when_disabled: Internal state to hold the last command while disabled.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model for forward kinematics.
+        - **end_effector_step_sizes** (`dict`) -- A dictionary scaling the input delta commands.
+        - **motor_names** (`list[str]`) -- A list of motor names required for forward kinematics.
+        - **use_latched_reference** (`bool`) -- If True, latch the reference pose on enable; otherwise, always
+          use the current pose as the reference.
+        - **reference_ee_pose** (`np.ndarray | None`) -- Internal state storing the latched reference pose.
+        - **_prev_enabled** (`bool`) -- Internal state to detect the rising edge of the enable signal.
+        - **_command_when_disabled** (`np.ndarray | None`) -- Internal state to hold the last command while
+          disabled.
     """
 
     kinematics: RobotKinematics
@@ -196,15 +197,14 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     This step ensures that the target end-effector pose remains within a safe operational workspace.
     It also moderates the command to prevent large, sudden movements between consecutive steps.
 
-    Attributes:
-        end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
-        max_ee_step_m: The maximum allowed change in position (in meters) between steps.
-        raise_on_jump: When ``True`` (default) an over-limit per-frame step raises
-            ``ValueError`` (aborting the control loop). When ``False`` the step is
-            rate-limited to ``max_ee_step_m`` and a warning is logged instead — the
-            safer choice for live teleoperation, where a transient tracking glitch
-            should not crash the loop and leave the robot uncontrolled.
-        _last_pos: Internal state storing the last commanded position.
+    **Attributes**:
+        - **end_effector_bounds** (`dict`) -- A dictionary with "min" and "max" keys for position clipping.
+        - **max_ee_step_m** (`float`) -- The maximum allowed change in position (in meters) between steps.
+        - **raise_on_jump** (`bool`) -- When ``True`` (default) an over-limit per-frame step raises
+          ``ValueError`` (aborting the control loop). When ``False`` the step is rate-limited to
+          ``max_ee_step_m`` and a warning is logged instead — the safer choice for live teleoperation, where a
+          transient tracking glitch should not crash the loop and leave the robot uncontrolled.
+        - **_last_pos** (`np.ndarray | None`) -- Internal state storing the last commanded position.
     """
 
     end_effector_bounds: dict
@@ -280,17 +280,18 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     This step translates a Cartesian command (position and orientation of the end-effector) into
     the corresponding joint-space commands for each motor.
 
-    Attributes:
-        kinematics: The robot's kinematic model for inverse kinematics.
-        motor_names: A list of motor names for which to compute joint positions.
-        q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
-        initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
-            If False, use the solution from the previous step.
-        orientation_weight: Weight for the orientation constraint passed to
-            ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver
-            default, so existing callers are unchanged). Set to ``0.0`` for position-only IK on
-            under-actuated arms; a small nonzero weight gives soft-orientation IK on the 5-DOF
-            SO-101, where the wrist tracks orientation only partially (position dominates).
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model for inverse kinematics.
+        - **motor_names** (`list[str]`) -- A list of motor names for which to compute joint positions.
+        - **q_curr** (`np.ndarray | None`) -- Internal state storing the last joint positions, used as an
+          initial guess for the IK solver.
+        - **initial_guess_current_joints** (`bool`) -- If True, use the robot's current joint state as the IK
+          guess. If False, use the solution from the previous step.
+        - **orientation_weight** (`float`) -- Weight for the orientation constraint passed to
+          ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver default, so
+          existing callers are unchanged). Set to ``0.0`` for position-only IK on under-actuated arms; a small
+          nonzero weight gives soft-orientation IK on the 5-DOF SO-101, where the wrist tracks orientation
+          only partially (position dominates).
     """
 
     kinematics: RobotKinematics
@@ -380,13 +381,14 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     taking the current gripper position as a starting point. It also supports a discrete mode
     where integer actions map to open, close, or no-op.
 
-    Attributes:
-        motor_names: A list of motor names, which must include 'gripper'.
-        speed_factor: A scaling factor to convert the normalized velocity command to a position change.
-        clip_min: The minimum allowed gripper joint position.
-        clip_max: The maximum allowed gripper joint position.
-        discrete_gripper: If True, interpret the input as a discrete class index
-            {0 = close, 1 = stay, 2 = open}, matching `GamepadTeleop.GripperAction`.
+    **Attributes**:
+        - **motor_names** -- A list of motor names, which must include 'gripper'.
+        - **speed_factor** (`float`) -- A scaling factor to convert the normalized velocity command to a
+          position change.
+        - **clip_min** (`float`) -- The minimum allowed gripper joint position.
+        - **clip_max** (`float`) -- The maximum allowed gripper joint position.
+        - **discrete_gripper** (`bool`) -- If True, interpret the input as a discrete class index {0 = close,
+          1 = stay, 2 = open}, matching `GamepadTeleop.GripperAction`.
     """
 
     speed_factor: float = 20.0
@@ -467,8 +469,8 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
     This step is typically used to add the robot's Cartesian pose to the observation space,
     which can be useful for visualization or as an input to a policy.
 
-    Attributes:
-        kinematics: The robot's kinematic model.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model.
     """
 
     kinematics: RobotKinematics
@@ -500,8 +502,8 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
     This step is typically used to add the robot's Cartesian pose to the observation space,
     which can be useful for visualization or as an input to a policy.
 
-    Attributes:
-        kinematics: The robot's kinematic model.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model.
     """
 
     kinematics: RobotKinematics

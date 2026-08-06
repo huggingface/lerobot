@@ -82,9 +82,9 @@ class EarthRoverMiniPlus(Robot):
     - Linear and angular velocity control
     - Battery and orientation telemetry
 
-    Attributes:
-        config: Robot configuration
-        sdk_base_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+    **Attributes**:
+        - **config** -- Robot configuration
+        - **sdk_base_url** -- URL of the Frodobots SDK server (default: http://localhost:8000)
     """
 
     config_class = EarthRoverMiniPlusConfig

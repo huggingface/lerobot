@@ -36,27 +36,28 @@ class RealSenseCameraConfig(CameraConfig):
     RealSenseCameraConfig("0123456789", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
     ```
 
-    Attributes:
-        fps: Requested frames per second for the color stream.
-        width: Requested frame width in pixels for the color stream.
-        height: Requested frame height in pixels for the color stream.
-        serial_number_or_name: Unique serial number or human-readable name to identify the camera.
-        color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        use_rgb: Whether to enable the color stream. Defaults to True.
-        use_depth: Whether to enable depth stream. Defaults to False.
-        rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
-        warmup_s: Time reading frames before returning from connect (in seconds)
-        exposure: Manual exposure value for the color sensor. When set, auto-exposure is
-            disabled and this fixed value is used. Valid ranges are camera-model specific
-            and reported if the value is rejected. Defaults to None (leave unchanged).
-        gain: Manual gain value for the color sensor. When set, auto-exposure is disabled
-            and this fixed gain is used, which also freezes exposure at its current value
-            when no exposure is configured. Valid ranges are camera-model specific and
-            reported if the value is rejected. Defaults to None (leave unchanged).
-        white_balance: Manual white balance value for the color sensor. When set, auto
-            white balance is disabled and this fixed value is used. Valid ranges are
-            camera-model specific and reported if the value is rejected. Defaults to None
-            (leave unchanged).
+    **Attributes**:
+        - **fps** -- Requested frames per second for the color stream.
+        - **width** -- Requested frame width in pixels for the color stream.
+        - **height** -- Requested frame height in pixels for the color stream.
+        - **serial_number_or_name** (`str`) -- Unique serial number or human-readable name to identify the
+          camera.
+        - **color_mode** (`ColorMode`) -- Color mode for image output (RGB or BGR). Defaults to RGB.
+        - **use_rgb** (`bool`) -- Whether to enable the color stream. Defaults to True.
+        - **use_depth** (`bool`) -- Whether to enable depth stream. Defaults to False.
+        - **rotation** (`Cv2Rotation`) -- Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no
+          rotation.
+        - **warmup_s** (`int`) -- Time reading frames before returning from connect (in seconds)
+        - **exposure** (`int | None`) -- Manual exposure value for the color sensor. When set, auto-exposure
+          is disabled and this fixed value is used. Valid ranges are camera-model specific and reported if the
+          value is rejected. Defaults to None (leave unchanged).
+        - **gain** (`int | None`) -- Manual gain value for the color sensor. When set, auto-exposure is
+          disabled and this fixed gain is used, which also freezes exposure at its current value when no
+          exposure is configured. Valid ranges are camera-model specific and reported if the value is
+          rejected. Defaults to None (leave unchanged).
+        - **white_balance** (`int | None`) -- Manual white balance value for the color sensor. When set, auto
+          white balance is disabled and this fixed value is used. Valid ranges are camera-model specific and
+          reported if the value is rejected. Defaults to None (leave unchanged).
 
     Note:
         - Either name or serial_number must be specified.

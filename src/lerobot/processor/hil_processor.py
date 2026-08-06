@@ -101,8 +101,8 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
     be available to downstream processors, for example, to override a policy's action
     during an intervention.
 
-    Attributes:
-        teleop_device: The teleoperator instance to get the action from.
+    **Attributes**:
+        - **teleop_device** (`Teleoperator`) -- The teleoperator instance to get the action from.
     """
 
     teleop_device: "Teleoperator"
@@ -137,9 +137,9 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     This step extracts control events from teleoperators that support event-based
     interaction, making these signals available to other parts of the system.
 
-    Attributes:
-        teleop_device: An instance of a teleoperator that implements the
-                       `HasTeleopEvents` protocol.
+    **Attributes**:
+        - **teleop_device** (`TeleopWithEvents`) -- An instance of a teleoperator that implements the
+          `HasTeleopEvents` protocol.
     """
 
     teleop_device: TeleopWithEvents
@@ -180,10 +180,10 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
     the specified transformations. It handles device placement, moving tensors to the
     CPU if necessary for operations not supported on certain accelerators like MPS.
 
-    Attributes:
-        crop_params_dict: A dictionary mapping image keys to cropping parameters
-                          (top, left, height, width).
-        resize_size: A tuple (height, width) to resize all images to.
+    **Attributes**:
+        - **crop_params_dict** (`dict[str, tuple[int, int, int, int]] | None`) -- A dictionary mapping image
+          keys to cropping parameters (top, left, height, width).
+        - **resize_size** (`tuple[int, int] | None`) -- A tuple (height, width) to resize all images to.
     """
 
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
@@ -267,9 +267,9 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
     """
     Tracks episode steps and enforces a time limit by truncating the episode.
 
-    Attributes:
-        max_episode_steps: The maximum number of steps allowed per episode.
-        current_step: The current step count for the active episode.
+    **Attributes**:
+        - **max_episode_steps** (`int`) -- The maximum number of steps allowed per episode.
+        - **current_step** (`int`) -- The current step count for the active episode.
     """
 
     max_episode_steps: int
@@ -358,11 +358,11 @@ class GripperPenaltyProcessorStep(ProcessorStep):
     This discourages gripper oscillation while leaving "stay" and saturating-further
     commands unpenalized.
 
-    Attributes:
-        penalty: The negative reward value to apply.
-        max_gripper_pos: The maximum position value for the gripper, used for normalization.
-        open_threshold: Normalized state below which the gripper is considered "open".
-        closed_threshold: Normalized state above which the gripper is considered "closed".
+    **Attributes**:
+        - **penalty** (`float`) -- The negative reward value to apply.
+        - **max_gripper_pos** (`float`) -- The maximum position value for the gripper, used for normalization.
+        - **open_threshold** (`float`) -- Normalized state below which the gripper is considered "open".
+        - **closed_threshold** (`float`) -- Normalized state above which the gripper is considered "closed".
     """
 
     penalty: float = -0.02
@@ -456,10 +456,10 @@ class InterventionActionProcessorStep(ProcessorStep):
     this step replaces the policy's action with the human's teleoperated action.
     It also processes signals to terminate the episode or flag success.
 
-    Attributes:
-        use_gripper: Whether to include the gripper in the teleoperated action.
-        terminate_on_success: If True, automatically sets the `done` flag when a
-                              `success` event is received.
+    **Attributes**:
+        - **use_gripper** (`bool`) -- Whether to include the gripper in the teleoperated action.
+        - **terminate_on_success** (`bool`) -- If True, automatically sets the `done` flag when a `success`
+          event is received.
     """
 
     use_gripper: bool = False
@@ -557,13 +557,13 @@ class RewardClassifierProcessorStep(ProcessorStep):
     This step uses a model to determine if the current state is successful, updating
     the reward and potentially terminating the episode.
 
-    Attributes:
-        pretrained_path: Path to the pretrained reward classifier model.
-        device: The device to run the classifier on.
-        success_threshold: The probability threshold to consider a prediction as successful.
-        success_reward: The reward value to assign on success.
-        terminate_on_success: If True, terminates the episode upon successful classification.
-        reward_classifier: The loaded classifier model instance.
+    **Attributes**:
+        - **pretrained_path** (`str | None`) -- Path to the pretrained reward classifier model.
+        - **device** (`str`) -- The device to run the classifier on.
+        - **success_threshold** (`float`) -- The probability threshold to consider a prediction as successful.
+        - **success_reward** (`float`) -- The reward value to assign on success.
+        - **terminate_on_success** (`bool`) -- If True, terminates the episode upon successful classification.
+        - **reward_classifier** (`Any`) -- The loaded classifier model instance.
     """
 
     pretrained_path: str | None = None
