@@ -18,6 +18,7 @@ import dataclasses
 import importlib.resources
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +99,47 @@ VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
 IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"
+
+
+def resolve_episode_indices(
+    episodes: Sequence[int] | None,
+    total_episodes: int,
+    exclude_episodes: Sequence[int] | None = None,
+) -> list[int] | None:
+    """Resolve an optional episode allowlist and exclusion list against dataset bounds.
+
+    ``None`` is preserved when no filtering is requested so callers can retain
+    their native "all episodes" fast path. Invalid indices are ignored with a
+    warning, and the input order is preserved.
+    """
+    if total_episodes < 0:
+        raise ValueError(f"total_episodes must be non-negative, got {total_episodes}")
+
+    if episodes is None and not exclude_episodes:
+        return None
+
+    candidates = list(range(total_episodes)) if episodes is None else list(episodes)
+    invalid = [episode for episode in candidates if not 0 <= episode < total_episodes]
+    if invalid:
+        logger.warning(
+            "Ignoring episode indices outside the dataset range [0, %d): %s",
+            total_episodes,
+            invalid,
+        )
+    candidates = [episode for episode in candidates if 0 <= episode < total_episodes]
+
+    excluded = set(exclude_episodes or [])
+    invalid_excluded = sorted(episode for episode in excluded if not 0 <= episode < total_episodes)
+    if invalid_excluded:
+        logger.warning(
+            "Ignoring excluded episode indices outside the dataset range [0, %d): %s",
+            total_episodes,
+            invalid_excluded,
+        )
+    excluded = {episode for episode in excluded if 0 <= episode < total_episodes}
+    return [episode for episode in candidates if episode not in excluded]
+
+
 DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
