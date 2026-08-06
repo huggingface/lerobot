@@ -24,7 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class WeightedMovingFilter:
+    """A fixed-length weighted moving average over recent samples, used to smooth IK solutions."""
+
     def __init__(self, weights, data_size=14):
+        """Set up the filter.
+
+        Args:
+            weights:
+                Per-sample weights, newest first. Their length sets the window size.
+            data_size (`int`, *optional*, defaults to 14):
+                Number of values in each sample.
+        """
         self._window_size = len(weights)
         self._weights = np.array(weights)
         self._data_size = data_size
@@ -39,6 +49,12 @@ class WeightedMovingFilter:
         return data_array.T @ self._weights
 
     def add_data(self, new_data):
+        """Push a sample into the window and recompute the filtered value.
+
+        Args:
+            new_data:
+                A sample of length `data_size`. Ignored if identical to the newest one already held.
+        """
         assert len(new_data) == self._data_size
 
         if len(self._data_queue) > 0 and np.array_equal(
@@ -51,11 +67,24 @@ class WeightedMovingFilter:
 
     @property
     def filtered_data(self):
+        """The current weighted average.
+
+        Returns:
+            `np.ndarray`: The filtered sample.
+        """
         return self._filtered_data
 
 
 class G1_29_ArmIK:  # noqa: N801
+    """Inverse kinematics for the G1's two arms, solved together as one optimisation problem."""
+
     def __init__(self, unit_test=False):
+        """Build the arm model and the IK solver.
+
+        Args:
+            unit_test (`bool`, *optional*, defaults to `False`):
+                Whether to run in test mode, which visualises the solution instead of driving a robot.
+        """
         import casadi
         import pinocchio as pin
         from huggingface_hub import snapshot_download
@@ -230,6 +259,21 @@ class G1_29_ArmIK:  # noqa: N801
         self.smooth_filter = WeightedMovingFilter(np.array([0.4, 0.3, 0.2, 0.1]), 14)
 
     def solve_ik(self, left_wrist, right_wrist, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
+        """Solve for the arm joint angles that place both wrists at the requested poses.
+
+        Args:
+            left_wrist:
+                Target pose of the left wrist as a 4x4 homogeneous transform.
+            right_wrist:
+                Target pose of the right wrist as a 4x4 homogeneous transform.
+            current_lr_arm_motor_q (*optional*):
+                Present arm joint positions, used as the solver's initial guess.
+            current_lr_arm_motor_dq (*optional*):
+                Present arm joint velocities, used to compute feed-forward torques.
+
+        Returns:
+            `tuple`: The solved joint positions and the corresponding torques.
+        """
         if current_lr_arm_motor_q is not None:
             self.init_data = current_lr_arm_motor_q
         self.opti.set_initial(self.var_q, self.init_data)
@@ -268,6 +312,17 @@ class G1_29_ArmIK:  # noqa: N801
         return sol_q, sol_tauff
 
     def solve_tau(self, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
+        """Compute the gravity-compensating torques for the arms at a given state.
+
+        Args:
+            current_lr_arm_motor_q (*optional*):
+                Present arm joint positions.
+            current_lr_arm_motor_dq (*optional*):
+                Present arm joint velocities.
+
+        Returns:
+            `np.ndarray`: Per-joint torques.
+        """
         try:
             q_g1 = np.array(current_lr_arm_motor_q, dtype=float)
             if q_g1.shape[0] != len(self._arm_joint_names_g1):

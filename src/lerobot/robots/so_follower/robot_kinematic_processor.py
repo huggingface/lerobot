@@ -40,8 +40,7 @@ logger = logging.getLogger(__name__)
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
 class EEReferenceAndDelta(RobotActionProcessorStep):
-    """
-    Computes a target end-effector pose from a relative delta command.
+    """Computes a target end-effector pose from a relative delta command.
 
     This step takes a desired change in position and orientation (`target_*`) and applies it to a
     reference end-effector pose to calculate an absolute target pose. The reference pose is derived
@@ -53,15 +52,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     2.  `use_latched_reference=False`: The reference pose is updated to the robot's current pose at
         every step.
 
-    Attributes:
-        kinematics: The robot's kinematic model for forward kinematics.
-        end_effector_step_sizes: A dictionary scaling the input delta commands.
-        motor_names: A list of motor names required for forward kinematics.
-        use_latched_reference: If True, latch the reference pose on enable; otherwise, always use the
-            current pose as the reference.
-        reference_ee_pose: Internal state storing the latched reference pose.
-        _prev_enabled: Internal state to detect the rising edge of the enable signal.
-        _command_when_disabled: Internal state to hold the last command while disabled.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model for forward kinematics.
+        - **end_effector_step_sizes** (`dict`) -- A dictionary scaling the input delta commands.
+        - **motor_names** (`list[str]`) -- A list of motor names required for forward kinematics.
+        - **use_latched_reference** (`bool`) -- If True, latch the reference pose on enable; otherwise, always
+          use the current pose as the reference.
+        - **reference_ee_pose** (`np.ndarray | None`) -- Internal state storing the latched reference pose.
+        - **_prev_enabled** (`bool`) -- Internal state to detect the rising edge of the enable signal.
+        - **_command_when_disabled** (`np.ndarray | None`) -- Internal state to hold the last command while
+          disabled.
     """
 
     kinematics: RobotKinematics
@@ -77,6 +77,15 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     _command_when_disabled: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Transform the action for this step.
+
+        Args:
+            action (`dict[str, Any]`):
+                The incoming robot action.
+
+        Returns:
+            `dict[str, Any]`: The transformed action.
+        """
         raw_observation = self.transition.get(TransitionKey.OBSERVATION)
 
         if raw_observation is None:
@@ -167,6 +176,16 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         for feat in [
             "enabled",
             "target_x",
@@ -190,21 +209,19 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
 @ProcessorStepRegistry.register("ee_bounds_and_safety")
 @dataclass
 class EEBoundsAndSafety(RobotActionProcessorStep):
-    """
-    Clips the end-effector pose to predefined bounds and checks for unsafe jumps.
+    """Clips the end-effector pose to predefined bounds and checks for unsafe jumps.
 
     This step ensures that the target end-effector pose remains within a safe operational workspace.
     It also moderates the command to prevent large, sudden movements between consecutive steps.
 
-    Attributes:
-        end_effector_bounds: A dictionary with "min" and "max" keys for position clipping.
-        max_ee_step_m: The maximum allowed change in position (in meters) between steps.
-        raise_on_jump: When ``True`` (default) an over-limit per-frame step raises
-            ``ValueError`` (aborting the control loop). When ``False`` the step is
-            rate-limited to ``max_ee_step_m`` and a warning is logged instead — the
-            safer choice for live teleoperation, where a transient tracking glitch
-            should not crash the loop and leave the robot uncontrolled.
-        _last_pos: Internal state storing the last commanded position.
+    **Attributes**:
+        - **end_effector_bounds** (`dict`) -- A dictionary with "min" and "max" keys for position clipping.
+        - **max_ee_step_m** (`float`) -- The maximum allowed change in position (in meters) between steps.
+        - **raise_on_jump** (`bool`) -- When ``True`` (default) an over-limit per-frame step raises
+          ``ValueError`` (aborting the control loop). When ``False`` the step is rate-limited to
+          ``max_ee_step_m`` and a warning is logged instead — the safer choice for live teleoperation, where a
+          transient tracking glitch should not crash the loop and leave the robot uncontrolled.
+        - **_last_pos** (`np.ndarray | None`) -- Internal state storing the last commanded position.
     """
 
     end_effector_bounds: dict
@@ -213,6 +230,15 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     _last_pos: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Transform the action for this step.
+
+        Args:
+            action (`dict[str, Any]`):
+                The incoming robot action.
+
+        Returns:
+            `dict[str, Any]`: The transformed action.
+        """
         x = action["ee.x"]
         y = action["ee.y"]
         z = action["ee.z"]
@@ -268,29 +294,39 @@ class EEBoundsAndSafety(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         return features
 
 
 @ProcessorStepRegistry.register("inverse_kinematics_ee_to_joints")
 @dataclass
 class InverseKinematicsEEToJoints(RobotActionProcessorStep):
-    """
-    Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
+    """Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
 
     This step translates a Cartesian command (position and orientation of the end-effector) into
     the corresponding joint-space commands for each motor.
 
-    Attributes:
-        kinematics: The robot's kinematic model for inverse kinematics.
-        motor_names: A list of motor names for which to compute joint positions.
-        q_curr: Internal state storing the last joint positions, used as an initial guess for the IK solver.
-        initial_guess_current_joints: If True, use the robot's current joint state as the IK guess.
-            If False, use the solution from the previous step.
-        orientation_weight: Weight for the orientation constraint passed to
-            ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver
-            default, so existing callers are unchanged). Set to ``0.0`` for position-only IK on
-            under-actuated arms; a small nonzero weight gives soft-orientation IK on the 5-DOF
-            SO-101, where the wrist tracks orientation only partially (position dominates).
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model for inverse kinematics.
+        - **motor_names** (`list[str]`) -- A list of motor names for which to compute joint positions.
+        - **q_curr** (`np.ndarray | None`) -- Internal state storing the last joint positions, used as an
+          initial guess for the IK solver.
+        - **initial_guess_current_joints** (`bool`) -- If True, use the robot's current joint state as the IK
+          guess. If False, use the solution from the previous step.
+        - **orientation_weight** (`float`) -- Weight for the orientation constraint passed to
+          ``RobotKinematics.inverse_kinematics``. Defaults to ``0.01`` (matching the solver default, so
+          existing callers are unchanged). Set to ``0.0`` for position-only IK on under-actuated arms; a small
+          nonzero weight gives soft-orientation IK on the 5-DOF SO-101, where the wrist tracks orientation
+          only partially (position dominates).
     """
 
     kinematics: RobotKinematics
@@ -300,6 +336,15 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     orientation_weight: float = 0.01
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Transform the action for this step.
+
+        Args:
+            action (`dict[str, Any]`):
+                The incoming robot action.
+
+        Returns:
+            `dict[str, Any]`: The transformed action.
+        """
         x = action.pop("ee.x")
         y = action.pop("ee.y")
         z = action.pop("ee.z")
@@ -355,6 +400,16 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
             features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
 
@@ -373,20 +428,20 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 @ProcessorStepRegistry.register("gripper_velocity_to_joint")
 @dataclass
 class GripperVelocityToJoint(RobotActionProcessorStep):
-    """
-    Converts a gripper velocity command into a target gripper joint position.
+    """Converts a gripper velocity command into a target gripper joint position.
 
     This step integrates a normalized velocity command over time to produce a position command,
     taking the current gripper position as a starting point. It also supports a discrete mode
     where integer actions map to open, close, or no-op.
 
-    Attributes:
-        motor_names: A list of motor names, which must include 'gripper'.
-        speed_factor: A scaling factor to convert the normalized velocity command to a position change.
-        clip_min: The minimum allowed gripper joint position.
-        clip_max: The maximum allowed gripper joint position.
-        discrete_gripper: If True, interpret the input as a discrete class index
-            {0 = close, 1 = stay, 2 = open}, matching `GamepadTeleop.GripperAction`.
+    **Attributes**:
+        - **motor_names** -- A list of motor names, which must include 'gripper'.
+        - **speed_factor** (`float`) -- A scaling factor to convert the normalized velocity command to a
+          position change.
+        - **clip_min** (`float`) -- The minimum allowed gripper joint position.
+        - **clip_max** (`float`) -- The maximum allowed gripper joint position.
+        - **discrete_gripper** (`bool`) -- If True, interpret the input as a discrete class index {0 = close,
+          1 = stay, 2 = open}, matching `GamepadTeleop.GripperAction`.
     """
 
     speed_factor: float = 20.0
@@ -395,6 +450,15 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     discrete_gripper: bool = False
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Transform the action for this step.
+
+        Args:
+            action (`dict[str, Any]`):
+                The incoming robot action.
+
+        Returns:
+            `dict[str, Any]`: The transformed action.
+        """
         raw_observation = self.transition.get(TransitionKey.OBSERVATION)
 
         gripper_vel = action.pop("ee.gripper_vel")
@@ -428,6 +492,16 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         features[PipelineFeatureType.ACTION].pop("ee.gripper_vel", None)
         features[PipelineFeatureType.ACTION]["ee.gripper_pos"] = PolicyFeature(
             type=FeatureType.ACTION, shape=(1,)
@@ -439,6 +513,21 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
 def compute_forward_kinematics_joints_to_ee(
     joints: dict[str, Any], kinematics: RobotKinematics, motor_names: list[str]
 ) -> dict[str, Any]:
+    """Replace joint positions with the end-effector pose they produce.
+
+    Args:
+        joints (`dict[str, Any]`):
+            Joint values keyed `"<motor>.pos"`, including `"gripper.pos"`. Modified in place: the joint
+            keys named in `motor_names` are removed.
+        kinematics (`RobotKinematics`):
+            The arm's kinematic model.
+        motor_names (`list[str]`):
+            The motors, in the order the kinematic model expects them.
+
+    Returns:
+        `dict[str, Any]`: The same dict with `ee.x`, `ee.y`, `ee.z` for position, `ee.wx`, `ee.wy`,
+        `ee.wz` for orientation as a rotation vector, and `ee.gripper_pos` carried through unchanged.
+    """
     motor_joint_values = [joints[f"{n}.pos"] for n in motor_names]
 
     q = np.array(motor_joint_values, dtype=float)
@@ -461,26 +550,44 @@ def compute_forward_kinematics_joints_to_ee(
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee_observation")
 @dataclass
 class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
-    """
-    Computes the end-effector pose from joint positions using forward kinematics (FK).
+    """Computes the end-effector pose from joint positions using forward kinematics (FK).
 
     This step is typically used to add the robot's Cartesian pose to the observation space,
     which can be useful for visualization or as an input to a policy.
 
-    Attributes:
-        kinematics: The robot's kinematic model.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
+        """Replace the observation's joint positions with the end-effector pose.
+
+        Args:
+            observation (`dict[str, Any]`):
+                The incoming observation, containing `"<motor>.pos"` keys.
+
+        Returns:
+            `dict[str, Any]`: The observation with `ee.*` keys in place of the joint positions.
+        """
         return compute_forward_kinematics_joints_to_ee(observation, self.kinematics, self.motor_names)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We only use the ee pose in the dataset, so we don't need the joint positions
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         for n in self.motor_names:
             features[PipelineFeatureType.OBSERVATION].pop(f"{n}.pos", None)
         # We specify the dataset features of this step that we want to be stored in the dataset
@@ -494,26 +601,44 @@ class ForwardKinematicsJointsToEEObservation(ObservationProcessorStep):
 @ProcessorStepRegistry.register("forward_kinematics_joints_to_ee_action")
 @dataclass
 class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
-    """
-    Computes the end-effector pose from joint positions using forward kinematics (FK).
+    """Computes the end-effector pose from joint positions using forward kinematics (FK).
 
     This step is typically used to add the robot's Cartesian pose to the observation space,
     which can be useful for visualization or as an input to a policy.
 
-    Attributes:
-        kinematics: The robot's kinematic model.
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The robot's kinematic model.
     """
 
     kinematics: RobotKinematics
     motor_names: list[str]
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Transform the action for this step.
+
+        Args:
+            action (`dict[str, Any]`):
+                The incoming robot action.
+
+        Returns:
+            `dict[str, Any]`: The transformed action.
+        """
         return compute_forward_kinematics_joints_to_ee(action, self.kinematics, self.motor_names)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         # We only use the ee pose in the dataset, so we don't need the joint positions
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         for n in self.motor_names:
             features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
         # Store end-effector features as actions in the dataset schema
@@ -527,10 +652,21 @@ class ForwardKinematicsJointsToEEAction(RobotActionProcessorStep):
 @ProcessorStepRegistry.register(name="forward_kinematics_joints_to_ee")
 @dataclass
 class ForwardKinematicsJointsToEE(ProcessorStep):
+    """Applies forward kinematics to whichever of the action and observation are present.
+
+    A convenience wrapper over [`ForwardKinematicsJointsToEEAction`] and
+    [`ForwardKinematicsJointsToEEObservation`], so a pipeline needs one step instead of two.
+
+    **Attributes**:
+        - **kinematics** (`RobotKinematics`) -- The arm's kinematic model.
+        - **motor_names** (`list[str]`) -- The motors, in the order the kinematic model expects them.
+    """
+
     kinematics: RobotKinematics
     motor_names: list[str]
 
     def __post_init__(self):
+        """Build the action and observation sub-steps this step delegates to."""
         self.joints_to_ee_action_processor = ForwardKinematicsJointsToEEAction(
             kinematics=self.kinematics, motor_names=self.motor_names
         )
@@ -539,6 +675,15 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Apply forward kinematics to whichever of the action and observation are present.
+
+        Args:
+            transition (`EnvTransition`):
+                The transition to transform.
+
+        Returns:
+            `EnvTransition`: The transition with `ee.*` keys in place of joint positions.
+        """
         if transition.get(TransitionKey.ACTION) is not None:
             transition = self.joints_to_ee_action_processor(transition)
         if transition.get(TransitionKey.OBSERVATION) is not None:
@@ -548,6 +693,16 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         if features[PipelineFeatureType.ACTION] is not None:
             features = self.joints_to_ee_action_processor.transform_features(features)
         if features[PipelineFeatureType.OBSERVATION] is not None:
@@ -558,8 +713,7 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
 @ProcessorStepRegistry.register("inverse_kinematics_rl_step")
 @dataclass
 class InverseKinematicsRLStep(ProcessorStep):
-    """
-    Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
+    """Computes desired joint positions from a target end-effector pose using inverse kinematics (IK).
 
     This is modified from the InverseKinematicsEEToJoints step to be used in the RL pipeline.
     """
@@ -570,6 +724,15 @@ class InverseKinematicsRLStep(ProcessorStep):
     initial_guess_current_joints: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Solve inverse kinematics for the transition's end-effector action.
+
+        Args:
+            transition (`EnvTransition`):
+                The transition to transform.
+
+        Returns:
+            `EnvTransition`: The transition with joint targets in place of the `ee.*` action.
+        """
         new_transition = dict(transition)
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
@@ -633,6 +796,16 @@ class InverseKinematicsRLStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Update the feature contract to match what this step does to the data.
+
+        Args:
+            features (`dict[PipelineFeatureType, dict[str, PolicyFeature]]`):
+                The pipeline's feature contract so far.
+
+        Returns:
+            `dict[PipelineFeatureType, dict[str, PolicyFeature]]`: The contract with this step's key changes
+            applied.
+        """
         for feat in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
             features[PipelineFeatureType.ACTION].pop(f"ee.{feat}", None)
 

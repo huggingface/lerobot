@@ -408,6 +408,11 @@ ignore = [
     "T201", # Print statement found
     "T203", # Pprint statement found
     "B008", # Perform function call in argument defaults
+    # D100/D104: module- and package-level docstrings. The API reference is generated from class and
+    # function docstrings; a banner at the top of every file and every __init__.py would not appear on any
+    # rendered page. Coverage of the things that do get rendered is enforced by interrogate instead.
+    "D100",
+    "D104",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -447,7 +452,6 @@ ignore = [
 "src/lerobot/processor/**" = ["D"]
 "src/lerobot/rewards/**" = ["D"]
 "src/lerobot/rl/**" = ["D"]
-"src/lerobot/robots/**" = ["D"]
 "src/lerobot/rollout/**" = ["D"]
 "src/lerobot/scripts/**" = ["D"]
 "src/lerobot/teleoperators/**" = ["D"]
@@ -455,9 +459,6 @@ ignore = [
 "src/lerobot/transport/**" = ["D"]
 "src/lerobot/utils/**" = ["D"]
 "src/lerobot/lerobot_types.py" = ["D"]
-# Package root: two one-line docstring fixes land with the docstring PR.
-"src/lerobot/__init__.py" = ["D"]
-"src/lerobot/__version__.py" = ["D"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]
@@ -514,7 +515,7 @@ ignore-private = false
 ignore-property-decorators = false
 ignore-module = false
 ignore-setters = false
-fail-under = 52
+fail-under = 55
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]

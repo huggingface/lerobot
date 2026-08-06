@@ -217,10 +217,12 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
     This step combines individual processors for actions, observations, and complementary data
     to create a batched transition (batch size 1) from a single-instance transition.
 
-    Attributes:
-        to_batch_action_processor: Processor for the action component.
-        to_batch_observation_processor: Processor for the observation component.
-        to_batch_complementary_data_processor: Processor for the complementary data component.
+    **Attributes**:
+        - **to_batch_action_processor** (`AddBatchDimensionActionStep`) -- Processor for the action component.
+        - **to_batch_observation_processor** (`AddBatchDimensionObservationStep`) -- Processor for the
+          observation component.
+        - **to_batch_complementary_data_processor** (`AddBatchDimensionComplementaryDataStep`) -- Processor
+          for the complementary data component.
     """
 
     to_batch_action_processor: AddBatchDimensionActionStep = field(

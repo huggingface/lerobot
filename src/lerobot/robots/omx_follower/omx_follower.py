@@ -36,15 +36,21 @@ logger = logging.getLogger(__name__)
 
 
 class OmxFollower(Robot):
-    """
-    - [OMX](https://github.com/ROBOTIS-GIT/open_manipulator),
-        expansion, developed by Woojin Wie and Junha Cha from [ROBOTIS](https://ai.robotis.com/)
+    """The [OpenMANIPULATOR-X](https://github.com/ROBOTIS-GIT/open_manipulator) follower arm.
+
+    Developed by Woojin Wie and Junha Cha at [ROBOTIS](https://ai.robotis.com/).
     """
 
     config_class = OmxFollowerConfig
     name = "omx_follower"
 
     def __init__(self, config: OmxFollowerConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`OmxFollowerConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
@@ -79,25 +85,50 @@ class OmxFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        For OMX robots that come pre-calibrated:
-        - If default calibration from package doesn't match motors, read from motors and save
-        - This allows using pre-calibrated robots without manual calibration
-        - If no calibration file exists, use factory default values (homing_offset=0, range_min=0, range_max=4095)
-        """
+        """Connect the motor bus and cameras, handling the pre-calibrated case.
 
+        OMX arms ship calibrated, so this avoids asking for a manual calibration where possible:
+
+        - if the packaged default calibration does not match the motors, the motors' own values are read
+          and saved;
+        - if no calibration file exists, factory defaults are used (`homing_offset=0`, `range_min=0`,
+          `range_max=4095`).
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to calibrate if the arm is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -113,9 +144,18 @@ class OmxFollower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
         logger.info(f"\nWriting default configuration of {self} to the motors")
@@ -140,6 +180,7 @@ class OmxFollower(Robot):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
@@ -164,6 +205,11 @@ class OmxFollower(Robot):
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -172,6 +218,14 @@ class OmxFollower(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         # Read arm position
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
@@ -208,7 +262,6 @@ class OmxFollower(Robot):
         Returns:
             RobotAction: The action sent to the motors, potentially clipped.
         """
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -224,6 +277,11 @@ class OmxFollower(Robot):
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

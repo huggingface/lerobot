@@ -25,7 +25,28 @@ from ..openarm_follower import OpenArmFollowerConfigBase
 @RobotConfig.register_subclass("bi_openarm_follower")
 @dataclass(kw_only=True)
 class BiOpenArmFollowerConfig(RobotConfig):
-    """Configuration class for Bi OpenArm Follower robots."""
+    """Configuration for a bimanual pair of OpenArm follower arms.
+
+    The two arms are configured independently, then driven as one robot: observation and action keys from
+    each arm are prefixed with `left_` and `right_`.
+
+    Calibration is per arm, taken from each arm config's own settings.
+
+    Args:
+        id (`str`, *optional*, defaults to `"bi_openarm_follower"`):
+            Identifier for the pair as a whole.
+        calibration_dir (`Path`, *optional*):
+            Unused at this level; each arm calibrates through its own config.
+        left_arm_config (`OpenArmFollowerConfigBase`):
+            Configuration for the left arm, including its own CAN interface. Set its `side` to `"left"` so
+            the correct joint limits apply.
+        right_arm_config (`OpenArmFollowerConfigBase`):
+            Configuration for the right arm, including its own CAN interface. Set its `side` to `"right"`.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras not attached to either arm, such as an overhead view. These keys appear in
+            observations unchanged, whereas cameras declared on an arm config are prefixed with that
+            arm's side.
+    """
 
     id: str | None = "bi_openarm_follower"
 

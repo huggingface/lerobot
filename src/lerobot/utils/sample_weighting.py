@@ -82,13 +82,13 @@ class SampleWeightingConfig:
     The `type` field determines which implementation to use, and `extra_params`
     contains additional type-specific parameters.
 
-    Attributes:
-        type: Weighting strategy type ("rabc", "uniform", etc.)
-        progress_path: Path to precomputed progress values (for RABC)
-        head_mode: Which model head to use for progress ("sparse" or "dense")
-        kappa: Hard threshold for high-quality samples (RABC-specific)
-        epsilon: Small constant for numerical stability
-        extra_params: Additional type-specific parameters passed to the weighter
+    **Attributes**:
+        - **type** (`str`) -- Weighting strategy type ("rabc", "uniform", etc.)
+        - **progress_path** (`str | None`) -- Path to precomputed progress values (for RABC)
+        - **head_mode** (`str`) -- Which model head to use for progress ("sparse" or "dense")
+        - **kappa** (`float`) -- Hard threshold for high-quality samples (RABC-specific)
+        - **epsilon** (`float`) -- Small constant for numerical stability
+        - **extra_params** (`dict`) -- Additional type-specific parameters passed to the weighter
     """
 
     type: str = "rabc"

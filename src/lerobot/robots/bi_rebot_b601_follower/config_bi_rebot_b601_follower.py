@@ -25,7 +25,27 @@ from ..rebot_b601_follower import RebotB601FollowerConfig
 @RobotConfig.register_subclass("bi_rebot_b601_follower")
 @dataclass
 class BiRebotB601FollowerConfig(RobotConfig):
-    """Configuration class for the bimanual reBot B601-DM follower robot."""
+    """Configuration for a bimanual pair of reBot B601-DM follower arms.
+
+    The two arms are configured independently, then driven as one robot: observation and action keys from
+    each arm are prefixed with `left_` and `right_`.
+
+    Calibration is per arm, taken from each arm config's own `id` and `calibration_dir`.
+
+    Args:
+        left_arm_config (`RebotB601FollowerConfig`):
+            Configuration for the left arm, including its own `port` and CAN settings.
+        right_arm_config (`RebotB601FollowerConfig`):
+            Configuration for the right arm, including its own `port` and CAN settings.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras not attached to either arm, such as an overhead view. These keys appear in
+            observations unchanged, whereas cameras declared on an arm config are prefixed with that
+            arm's side.
+        id (`str`, *optional*):
+            Identifier for the pair as a whole.
+        calibration_dir (`Path`, *optional*):
+            Unused at this level; each arm calibrates through its own config.
+    """
 
     left_arm_config: RebotB601FollowerConfig
     right_arm_config: RebotB601FollowerConfig

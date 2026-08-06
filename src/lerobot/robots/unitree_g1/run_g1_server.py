@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-DDS-to-ZMQ bridge server for Unitree G1 robot.
+"""DDS-to-ZMQ bridge server for Unitree G1 robot.
 
 This server runs on the robot and forwards:
 - Robot state (LowState) from DDS to ZMQ (for remote clients)
