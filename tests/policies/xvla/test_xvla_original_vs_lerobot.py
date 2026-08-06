@@ -336,7 +336,7 @@ def test_reconcile_xvla_processors():
 
     # Case 1: Incomplete pre/post processors missing XVLAImageNetNormalizeProcessorStep and XVLARotation6DToAxisAngleProcessorStep
     incomplete_pre = PolicyProcessorPipeline(steps=[DeviceProcessorStep()])
-    incomplete_post = PolicyProcessorPipeline(steps=[])
+    incomplete_post = PolicyProcessorPipeline(steps=[DeviceProcessorStep()])
 
     reconciled_pre, reconciled_post = reconcile_xvla_processors(
         config, incomplete_pre, incomplete_post
@@ -348,10 +348,15 @@ def test_reconcile_xvla_processors():
     assert XVLAImageNetNormalizeProcessorStep in pre_step_types
     # Verify XVLAImageNetNormalizeProcessorStep is placed before DeviceProcessorStep
     imagenet_idx = pre_step_types.index(XVLAImageNetNormalizeProcessorStep)
-    device_idx = pre_step_types.index(DeviceProcessorStep)
-    assert imagenet_idx < device_idx
+    pre_device_idx = pre_step_types.index(DeviceProcessorStep)
+    assert imagenet_idx < pre_device_idx
 
     assert XVLARotation6DToAxisAngleProcessorStep in post_step_types
+    # Verify XVLARotation6DToAxisAngleProcessorStep is placed before DeviceProcessorStep
+    rot_idx = post_step_types.index(XVLARotation6DToAxisAngleProcessorStep)
+    post_device_idx = post_step_types.index(DeviceProcessorStep)
+    assert rot_idx < post_device_idx
+
 
     # Case 2: Idempotency check - calling reconcile twice should not duplicate steps
     reconciled_pre, reconciled_post = reconcile_xvla_processors(
