@@ -1163,6 +1163,21 @@ def test_continuous_generation_forwards_explicit_positions_to_prefill():
     assert actions.shape == (2, 3, 2)
     assert torch.equal(captured_prefill_kwargs["position_ids"], position_ids)
 
+    explicit_encoder_mask = attention_mask.bool()
+
+    def reject_implicit_mask(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("explicit encoder mask was overwritten")
+
+    model._get_encoder_attention_mask = reject_implicit_mask
+    model.generate_actions_from_inputs(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        encoder_attention_mask=explicit_encoder_mask,
+        generator=torch.Generator().manual_seed(0),
+    )
+
 
 def test_cached_ar_fallback_separates_physical_cache_and_logical_rope_positions():
     captured = {}
@@ -2858,6 +2873,56 @@ def test_continuous_action_expert_mask_does_not_inherit_both_checkpoint_masking(
 
     assert torch.equal(mask, attention_mask.bool())
     assert policy.model.model.calls == 0
+
+
+def test_saved_continuous_checkpoint_forwards_outer_mask_to_hf_generation():
+    class DummyBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(1.0))
+            self.calls = []
+
+        def generate_actions_from_inputs(self, **kwargs):
+            self.calls.append(kwargs)
+            batch_size = int(kwargs["input_ids"].shape[0])
+            return torch.zeros(batch_size, 2, 32)
+
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    backbone = DummyBackbone()
+    policy.model = backbone
+    policy._backbone = lambda: backbone
+    policy.config = MolmoAct2Config(
+        action_mode="continuous",
+        inference_action_mode="continuous",
+        dtype="float32",
+        chunk_size=2,
+        n_action_steps=2,
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
+    )
+    policy._checkpoint_action_mode = "continuous"
+    policy._rollout_action_generator = None
+    policy._rollout_task_key = None
+    policy._rollout_index_for_task = -1
+    policy.rtc_processor = None
+    batch = {
+        "input_ids": torch.tensor([[2, 3, 9, 4, 7]]),
+        "attention_mask": torch.tensor([[0, 1, 1, 1, 1]], dtype=torch.long),
+    }
+
+    actions = policy.predict_action_chunk(batch, generator=torch.Generator().manual_seed(0))
+
+    assert actions.shape == (1, 2, 7)
+    assert torch.equal(
+        backbone.calls[0]["encoder_attention_mask"],
+        batch["attention_mask"].bool(),
+    )
+
+    # An original HF checkpoint has no saved outer LeRobot action mode and
+    # must retain the checkpoint's own BOTH-mode inference behavior.
+    policy._checkpoint_action_mode = None
+    policy.predict_action_chunk(batch, generator=torch.Generator().manual_seed(0))
+    assert "encoder_attention_mask" not in backbone.calls[1]
 
 
 def test_both_action_expert_mask_retains_checkpoint_span_masking():

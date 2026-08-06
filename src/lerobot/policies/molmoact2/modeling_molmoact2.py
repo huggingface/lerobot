@@ -2013,12 +2013,27 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     execution_horizon=kwargs.get("execution_horizon"),
                 )
             else:
+                generation_kwargs: dict[str, Tensor] = {}
+                # LeRobot checkpoints record their actual training action mode
+                # in the outer policy config, while their immutable HF base can
+                # still say ``both``.  Reuse the continuous training mask at
+                # inference for saved LeRobot checkpoints.  Original HF
+                # checkpoints have no saved outer mode and retain their native
+                # BOTH-mode inference behavior.
+                if self._checkpoint_action_mode is not None:
+                    generation_kwargs["encoder_attention_mask"] = (
+                        self._encoder_attention_mask_for_action_expert(
+                            input_ids=model_inputs.get("input_ids"),
+                            attention_mask=model_inputs.get("attention_mask"),
+                        )
+                    )
                 actions = self._backbone().generate_actions_from_inputs(
                     **model_inputs,
                     action_dim_is_pad=batch.get("action_dim_is_pad"),
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
+                    **generation_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 

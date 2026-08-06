@@ -3104,7 +3104,13 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
                 use_cache=True,
             )
             encoder_kv_states = self._extract_kv_states(outputs.past_key_values)
-            encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
+            # A policy wrapper may supply the action-mode mask recorded by a
+            # fine-tuned checkpoint.  The released base can retain
+            # ``action_mode='both'`` even when the outer LeRobot checkpoint was
+            # trained continuous-only, so do not overwrite an explicit mask
+            # after the VLM prefill.
+            if encoder_attention_mask is None:
+                encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
         elif encoder_attention_mask is None:
             encoder_attention_mask = self._get_encoder_attention_mask(input_ids, attention_mask)
 
