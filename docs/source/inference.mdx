@@ -45,6 +45,30 @@ lerobot-rollout \
 | `--task`         | Task description passed to the policy                  |
 | `--display_data` | Stream observations/actions to Rerun for visualization |
 
+### Interactive (`--strategy.type=interactive`)
+
+Autonomous policy execution with no data recording, like Base, but the language instruction can be changed while the rollout is running. A background thread reads full lines typed at the terminal; whenever you type a new instruction and press Enter, it is forwarded to the policy on the next control tick — no restart needed. Works with any VLA-capable policy (Pi0, Pi0.5, SmolVLA, etc.); non-language policies simply ignore the instruction.
+
+```bash
+lerobot-rollout \
+    --strategy.type=interactive \
+    --policy.path=${HF_USER}/my_policy \
+    --inference.type=rtc \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the box" \
+    --duration=300
+```
+
+| Flag                       | Description                                                  |
+| --------------------------- | -------------------------------------------------------------- |
+| `--task`                    | Initial task description; type a new one at the prompt to override it |
+| `--strategy.prompt`         | Text shown before the current instruction at the input prompt  |
+| `--strategy.echo_on_change` | Log a message whenever the instruction changes (default: true) |
+
+With `--inference.type=sync` (default) the new instruction takes effect on the very next tick. With `--inference.type=rtc`, it takes effect once the currently in-flight action chunk drains — a bounded lag of roughly `execution_horizon / fps` seconds, not a bug. If stdin is not a TTY (e.g. piped input, some CI/headless setups), dynamic updates are disabled and the rollout runs with the fixed `--task` instruction only.
+
 ### Sentry (`--strategy.type=sentry`)
 
 Continuous autonomous recording with periodic upload to the Hugging Face Hub. Episode boundaries are auto-computed from camera resolution and FPS so each saved episode produces a complete video file, keeping uploads efficient.

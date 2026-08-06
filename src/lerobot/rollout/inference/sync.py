@@ -65,12 +65,12 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
+        super().__init__(task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._dataset_features = dataset_features
         self._ordered_action_keys = ordered_action_keys
-        self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
         logger.info(
@@ -109,7 +109,7 @@ class SyncInferenceEngine(InferenceEngine):
         )
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
+                observation, self._device, self.get_task(), self._robot_type
             )
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)

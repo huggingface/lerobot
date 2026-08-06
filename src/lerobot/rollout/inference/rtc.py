@@ -124,13 +124,13 @@ class RTCInferenceEngine(InferenceEngine):
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
     ) -> None:
+        super().__init__(task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
         self._hw_features = hw_features
-        self._task = task
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -294,11 +294,12 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
+                        current_task = self.get_task()
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, self._task, self._robot.robot_type
+                            obs_batch, policy_device, current_task, self._robot.robot_type
                         )
-                        obs_batch["task"] = [self._task]
+                        obs_batch["task"] = [current_task]
 
                         preprocessed = self._preprocessor(obs_batch)
 

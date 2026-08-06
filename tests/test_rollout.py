@@ -63,6 +63,7 @@ def test_strategy_config_types():
         DAggerStrategyConfig,
         EpisodicStrategyConfig,
         HighlightStrategyConfig,
+        InteractiveStrategyConfig,
         SentryStrategyConfig,
     )
 
@@ -71,6 +72,15 @@ def test_strategy_config_types():
     assert HighlightStrategyConfig().type == "highlight"
     assert DAggerStrategyConfig().type == "dagger"
     assert EpisodicStrategyConfig().type == "episodic"
+    assert InteractiveStrategyConfig().type == "interactive"
+
+
+def test_interactive_config_defaults():
+    from lerobot.rollout import InteractiveStrategyConfig
+
+    cfg = InteractiveStrategyConfig()
+    assert cfg.prompt == "New instruction (Enter to keep current): "
+    assert cfg.echo_on_change is True
 
 
 def test_dagger_config_invalid_input_device():
@@ -319,6 +329,8 @@ def test_create_strategy_dispatches():
         DAggerStrategyConfig,
         EpisodicStrategy,
         EpisodicStrategyConfig,
+        InteractiveStrategy,
+        InteractiveStrategyConfig,
         SentryStrategy,
         SentryStrategyConfig,
         create_strategy,
@@ -328,6 +340,7 @@ def test_create_strategy_dispatches():
     assert isinstance(create_strategy(SentryStrategyConfig()), SentryStrategy)
     assert isinstance(create_strategy(DAggerStrategyConfig()), DAggerStrategy)
     assert isinstance(create_strategy(EpisodicStrategyConfig()), EpisodicStrategy)
+    assert isinstance(create_strategy(InteractiveStrategyConfig()), InteractiveStrategy)
 
 
 def test_create_strategy_unknown_raises():
@@ -363,6 +376,27 @@ def test_create_inference_engine_sync():
     assert isinstance(engine, SyncInferenceEngine)
 
 
+def test_inference_engine_update_task_is_thread_safe_read_write():
+    from lerobot.rollout import SyncInferenceConfig, create_inference_engine
+
+    engine = create_inference_engine(
+        SyncInferenceConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(),
+        postprocessor=MagicMock(),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features={},
+        ordered_action_keys=["k"],
+        task="initial",
+        fps=30.0,
+        device="cpu",
+    )
+    assert engine.get_task() == "initial"
+    engine.update_task("new instruction")
+    assert engine.get_task() == "new instruction"
+
+
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
@@ -395,6 +429,32 @@ def test_safe_push_to_hub():
     ds.num_episodes = 5
     assert safe_push_to_hub(ds, tags=["test"]) is True
     ds.push_to_hub.assert_called_once_with(tags=["test"], private=False)
+
+
+# ---------------------------------------------------------------------------
+# Interactive strategy: instruction draining
+# ---------------------------------------------------------------------------
+
+
+def test_drain_latest_instruction_returns_none_when_empty():
+    import queue
+
+    from lerobot.rollout.strategies.interactive import _drain_latest_instruction
+
+    assert _drain_latest_instruction(queue.Queue()) is None
+
+
+def test_drain_latest_instruction_returns_last_writer_wins():
+    import queue
+
+    from lerobot.rollout.strategies.interactive import _drain_latest_instruction
+
+    q = queue.Queue()
+    q.put("first")
+    q.put("second")
+    q.put("third")
+    assert _drain_latest_instruction(q) == "third"
+    assert q.empty()
 
 
 # ---------------------------------------------------------------------------

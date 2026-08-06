@@ -21,11 +21,12 @@ real robots.
 
 Strategies
 ----------
-    --strategy.type=base       Autonomous rollout, no recording
-    --strategy.type=sentry     Continuous recording with auto-upload
-    --strategy.type=highlight  Ring buffer + keystroke save
-    --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
-    --strategy.type=episodic   Episode-oriented recording with reset phases
+    --strategy.type=base         Autonomous rollout, no recording
+    --strategy.type=sentry       Continuous recording with auto-upload
+    --strategy.type=highlight    Ring buffer + keystroke save
+    --strategy.type=dagger       Human-in-the-loop (DAgger / RaC)
+    --strategy.type=episodic     Episode-oriented recording with reset phases
+    --strategy.type=interactive  Autonomous rollout, live-editable instruction
 
 Inference backends
 ------------------
@@ -55,6 +56,16 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \\
         --task="pick up cube" --duration=60
+
+    # Interactive mode — type a new instruction + Enter while it runs
+    lerobot-rollout \\
+        --strategy.type=interactive \\
+        --policy.path=lerobot/pi0_base \\
+        --inference.type=rtc \\
+        --robot.type=so100_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \\
+        --task="pick up the red cube" --duration=300
 
     # Sentry mode — continuous recording with periodic upload
     lerobot-rollout \\

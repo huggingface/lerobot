@@ -22,6 +22,7 @@ or asynchronously in a background thread (RTC).
 from __future__ import annotations
 
 import abc
+from threading import Lock
 
 import torch
 
@@ -51,7 +52,27 @@ class InferenceEngine(abc.ABC):
     --------------
     ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
     so rollout strategies can invoke them unconditionally.
+
+    Instruction updates
+    --------------------
+    ``update_task`` / ``get_task`` give strategies a thread-safe way to
+    change the language instruction while a rollout is running (e.g. from
+    a background input thread), without restarting the episode.
     """
+
+    def __init__(self, task: str = "") -> None:
+        self._task = task
+        self._task_lock = Lock()
+
+    def update_task(self, task: str) -> None:
+        """Atomically replace the language instruction used on the next tick."""
+        with self._task_lock:
+            self._task = task
+
+    def get_task(self) -> str:
+        """Thread-safe read of the current language instruction."""
+        with self._task_lock:
+            return self._task
 
     @abc.abstractmethod
     def start(self) -> None:

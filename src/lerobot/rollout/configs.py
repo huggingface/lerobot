@@ -95,6 +95,23 @@ class HighlightStrategyConfig(RolloutStrategyConfig):
     push_key: str = "h"
 
 
+@RolloutStrategyConfig.register_subclass("interactive")
+@dataclass
+class InteractiveStrategyConfig(RolloutStrategyConfig):
+    """Autonomous rollout with a live-editable language instruction.
+
+    Identical control loop to Base (no data recording), but a background
+    thread reads new instructions typed at the terminal (stdin) and
+    forwards them to the inference engine between ticks, without
+    interrupting the control loop or restarting the rollout.
+
+    The initial instruction is the top-level ``--task`` flag, same as Base.
+    """
+
+    prompt: str = "New instruction (Enter to keep current): "
+    echo_on_change: bool = True
+
+
 @dataclass
 class DAggerKeyboardConfig:
     """Keyboard key bindings for DAgger controls.
@@ -289,9 +306,13 @@ class RolloutConfig:
         if needs_dataset and (self.dataset is None or not self.dataset.repo_id):
             raise ValueError(f"{self.strategy.type} strategy requires --dataset.repo_id to be set")
 
-        if isinstance(self.strategy, BaseStrategyConfig) and self.dataset is not None:
+        if (
+            isinstance(self.strategy, (BaseStrategyConfig, InteractiveStrategyConfig))
+            and self.dataset is not None
+        ):
             raise ValueError(
-                "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
+                f"{self.strategy.type} strategy does not record data. "
+                "Use sentry, highlight, or dagger for recording."
             )
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop
