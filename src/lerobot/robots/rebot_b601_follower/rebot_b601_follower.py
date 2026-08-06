@@ -66,6 +66,12 @@ class RebotB601Follower(Robot):
     name = "rebot_b601_follower"
 
     def __init__(self, config: RebotB601FollowerRobotConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`RebotB601FollowerRobotConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         require_package("motorbridge", extra="rebot")
         super().__init__(config)
         self.config = config
@@ -91,18 +97,43 @@ class RebotB601Follower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus is not None and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect to the robot and its cameras, then apply the configured settings.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the robot is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         logger.info(f"Connecting {self} on {self.config.port} (adapter={self.config.can_adapter})...")
         if self.config.can_adapter == "damiao":
             self.bus = MotorBridgeController.from_dm_serial(
@@ -133,9 +164,18 @@ class RebotB601Follower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return bool(self.calibration)
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         if self.calibration:
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, "
@@ -174,6 +214,7 @@ class RebotB601Follower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         if self.config.control_mode not in ("pos_vel", "mit"):
             raise ValueError(
                 f"Unsupported control_mode '{self.config.control_mode}'. Use 'pos_vel' or 'mit'."
@@ -226,6 +267,14 @@ class RebotB601Follower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         start = time.perf_counter()
         obs_dict = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
         dt_ms = (time.perf_counter() - start) * 1e3
@@ -311,6 +360,11 @@ class RebotB601Follower(Robot):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         for motor in self.motors.values():
             if self.config.disable_torque_on_disconnect:
                 motor.disable()

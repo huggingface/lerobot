@@ -101,6 +101,7 @@ class HolosomaLocomotionController:
     control_dt = CONTROL_DT  # Expose for unitree_g1.py
 
     def __init__(self):
+        """Load the HoloSoma locomotion policy and set up its observation history."""
         # Load policy and gains
         self.policy, self.kp, self.kd = load_policy()
 

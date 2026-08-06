@@ -59,10 +59,22 @@ LEFT_HAND_INVERSIONS = [
 
 
 class HopeJrHand(Robot):
+    """One hand of the Hope Jr humanoid.
+
+    Each hand is its own robot, so a two-handed setup uses two of these with different `side` values. See
+    [`~robots.Robot`] for the contract every method here implements.
+    """
+
     config_class = HopeJrHandConfig
     name = "hope_jr_hand"
 
     def __init__(self, config: HopeJrHandConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`HopeJrHandConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         super().__init__(config)
         self.config = config
         self.bus = FeetechMotorsBus(
@@ -113,18 +125,43 @@ class HopeJrHand(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect to the robot and its cameras, then apply the configured settings.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the robot is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             self.calibrate()
@@ -138,9 +175,18 @@ class HopeJrHand(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         fingers = {}
         for finger in ["thumb", "index", "middle", "ring", "pinky"]:
             fingers[finger] = [motor for motor in self.bus.motors if motor.startswith(finger)]
@@ -152,11 +198,17 @@ class HopeJrHand(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         with self.bus.torque_disabled():
             self.bus.configure_motors()
 
     def setup_motors(self) -> None:
         # TODO: add docstring
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         for motor in self.bus.motors:
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -164,6 +216,14 @@ class HopeJrHand(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         obs_dict = {}
 
         # Read hand position
@@ -191,12 +251,29 @@ class HopeJrHand(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        """Command the robot to move towards a target configuration.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target values, keyed as in [`~robots.Robot.action_features`].
+
+        Returns:
+            `dict[str, Any]`: The action actually sent, which may be clipped by `max_relative_target`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
         return action
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

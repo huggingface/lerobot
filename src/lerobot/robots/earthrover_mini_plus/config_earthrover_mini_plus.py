@@ -23,13 +23,18 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("earthrover_mini_plus")
 @dataclass
 class EarthRoverMiniPlusConfig(RobotConfig):
-    """Configuration for EarthRover Mini Plus robot using Frodobots SDK.
+    """Configuration for the EarthRover Mini Plus rover.
 
-    This robot uses cloud-based control via the Frodobots SDK HTTP API.
-    Camera frames are accessed directly through SDK HTTP endpoints.
+    This robot is driven over the cloud through the Frodobots SDK's HTTP API rather than a local bus, so
+    there is no serial port and no LeRobot calibration file. Camera frames come from SDK HTTP endpoints.
 
-    Attributes:
-        sdk_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+    Args:
+        sdk_url (`str`, *optional*, defaults to `"http://localhost:8000"`):
+            Base URL of the Frodobots SDK server. Commands and camera frames both go through it.
+        id (`str`, *optional*):
+            Identifier for this particular rover.
+        calibration_dir (`Path`, *optional*):
+            Unused: the rover exposes no calibration.
     """
 
     sdk_url: str = "http://localhost:8000"

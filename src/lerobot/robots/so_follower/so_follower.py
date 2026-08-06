@@ -35,15 +35,35 @@ logger = logging.getLogger(__name__)
 
 
 class SOFollower(Robot):
-    """
-    Generic SO follower base implementing common functionality for SO-100/101/10X.
-    Designed to be subclassed with a per-hardware-model `config_class` and `name`.
+    """The SO-family follower arm: a 5-DOF arm plus gripper on a Feetech bus.
+
+    `SO100Follower` and `SO101Follower` are aliases of this class. The two arms differ in calibration and
+    gearing, not control code, so both are driven through the same implementation with a different
+    `config_class` and `name`.
+
+    Actions and observations are keyed `"<motor>.pos"`; cameras named in the config appear in observations
+    under their own keys. See [`~robots.Robot`] for the contract every method here implements.
+
+    Example:
+        ```python
+        >>> from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+        >>> robot = SO101Follower(SO101FollowerConfig(port="/dev/ttyACM0"))  # doctest: +SKIP
+        >>> with robot:  # doctest: +SKIP
+        ...     observation = robot.get_observation()
+        ...     robot.send_action({"shoulder_pan.pos": 0.0})
+        ```
     """
 
     config_class = SOFollowerRobotConfig
     name = "so_follower"
 
     def __init__(self, config: SOFollowerRobotConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`SOFollowerRobotConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available
@@ -78,23 +98,48 @@ class SOFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The arm's joint positions plus one entry per configured camera.
+
+        Returns:
+            `dict[str, type | tuple]`: `"<motor>.pos"` keys mapped to `float`, and one key per camera
+            mapped to its `(height, width, channels)` shape.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The arm's goal joint positions.
+
+        Returns:
+            `dict[str, type]`: `"<motor>.pos"` keys mapped to `float`.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether the motor bus and every configured camera are connected.
+
+        Returns:
+            `bool`: `True` only when all of them are.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
+        """Connect the motor bus and cameras, calibrating and configuring the arm.
 
+        > [!WARNING]
+        > The arm is assumed to be at rest when this is called, because torque is disabled to run
+        > calibration. Do not call it with the arm holding a load.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration when the motors disagree with the calibration file, or no file
+                exists yet. Calibration is interactive and prompts on stdin.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -110,9 +155,19 @@ class SOFollower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the motors' stored calibration matches the calibration file.
+
+        Returns:
+            `bool`: `True` when the arm needs no recalibration.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the arm, writing the result to the motors and the calibration file.
+
+        This is interactive: it prompts on stdin to reuse an existing calibration file, and otherwise asks
+        you to move the arm to its middle position and then through each joint's full range.
+        """
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -157,6 +212,11 @@ class SOFollower(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
+        """Write the position-mode operating mode and the configured PID gains to every motor.
+
+        The gripper additionally gets reduced torque, current and overload limits so that gripping a rigid
+        object does not burn out its motor.
+        """
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
@@ -171,6 +231,11 @@ class SOFollower(Robot):
                     self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building an arm. It is interactive: it prompts you to connect the controller
+        board to a single motor at a time, working from the gripper back to the base.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -178,6 +243,14 @@ class SOFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Read the arm's joint positions and one frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
@@ -215,7 +288,6 @@ class SOFollower(Robot):
         Returns:
             RobotAction: the action sent to the motors, potentially clipped.
         """
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -231,6 +303,13 @@ class SOFollower(Robot):
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect the motor bus and every camera.
+
+        Torque is released first unless `disable_torque_on_disconnect` is `False`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

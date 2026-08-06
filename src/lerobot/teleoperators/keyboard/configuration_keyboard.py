@@ -35,8 +35,8 @@ class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
 
     Used for controlling robot end-effectors with keyboard inputs.
 
-    Attributes:
-        use_gripper: Whether to include gripper control in actions
+    **Attributes**:
+        - **use_gripper** (`bool`) -- Whether to include gripper control in actions
     """
 
     use_gripper: bool = True
@@ -49,14 +49,14 @@ class KeyboardRoverTeleopConfig(TeleoperatorConfig):
 
     Used for controlling mobile robots like EarthRover Mini Plus with WASD controls.
 
-    Attributes:
-        linear_speed: Default linear velocity magnitude (-1 to 1 range for SDK robots)
-        angular_speed: Default angular velocity magnitude (-1 to 1 range for SDK robots)
-        speed_increment: Amount to increase/decrease speed with +/- keys
-        turn_assist_ratio: Forward motion multiplier when turning with A/D keys (0.0-1.0)
-        angular_speed_ratio: Ratio of angular to linear speed for synchronized adjustments
-        min_linear_speed: Minimum linear speed when decreasing (prevents zero speed)
-        min_angular_speed: Minimum angular speed when decreasing (prevents zero speed)
+    **Attributes**:
+        - **linear_speed** (`float`) -- Default linear velocity magnitude (-1 to 1 range for SDK robots)
+        - **angular_speed** (`float`) -- Default angular velocity magnitude (-1 to 1 range for SDK robots)
+        - **speed_increment** (`float`) -- Amount to increase/decrease speed with +/- keys
+        - **turn_assist_ratio** (`float`) -- Forward motion multiplier when turning with A/D keys (0.0-1.0)
+        - **angular_speed_ratio** (`float`) -- Ratio of angular to linear speed for synchronized adjustments
+        - **min_linear_speed** (`float`) -- Minimum linear speed when decreasing (prevents zero speed)
+        - **min_angular_speed** (`float`) -- Minimum angular speed when decreasing (prevents zero speed)
     """
 
     linear_speed: float = 1.0

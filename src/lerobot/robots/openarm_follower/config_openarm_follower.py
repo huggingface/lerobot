@@ -45,7 +45,13 @@ RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
 
 @dataclass
 class OpenArmFollowerConfigBase:
-    """Base configuration for the OpenArms follower robot with Damiao motors."""
+    """Field definitions for the OpenArm follower, a 7-DOF arm plus gripper on Damiao CAN motors.
+
+    This class only carries the fields. The registered configuration users instantiate is
+    [`OpenArmFollowerConfig`], which documents them all in one place — doc-builder renders only a class's
+    own docstring, never its bases'. It is also used directly as the per-arm config of
+    [`~robots.bi_openarm_follower.BiOpenArmFollowerConfig`].
+    """
 
     # CAN interfaces - one per arm
     # arm CAN interface (e.g., "can1")
@@ -123,4 +129,57 @@ class OpenArmFollowerConfigBase:
 @RobotConfig.register_subclass("openarm_follower")
 @dataclass
 class OpenArmFollowerConfig(RobotConfig, OpenArmFollowerConfigBase):
+    """Configuration for a single OpenArm follower arm.
+
+    OpenArm is a 7-DOF arm plus gripper on Damiao CAN motors, so `port` names a CAN interface rather than a
+    serial device. Calibration follows the usual LeRobot flow and is stored per `id`.
+
+    > [!WARNING]
+    > `joint_limits` defaults to a deliberately tiny range so an uncalibrated arm cannot swing. Set `side`
+    > to `"left"` or `"right"` to get the real limits for that arm, or pass your own.
+
+    The per-joint lists — `position_kp`, `position_kd` — hold 8 values in motor order: `joint_1` through
+    `joint_7`, then `gripper`.
+
+    Args:
+        port (`str`):
+            CAN interface the arm is on, e.g. `"can0"` on Linux.
+        side (`str`, *optional*):
+            Which arm this is, `"left"` or `"right"`. Selects that side's joint limits. Leaving it `None`
+            keeps the small safety defaults.
+        can_interface (`str`, *optional*, defaults to `"socketcan"`):
+            CAN backend: `"socketcan"` on Linux, `"slcan"` for a serial adapter, or `"auto"` to detect.
+        use_can_fd (`bool`, *optional*, defaults to `True`):
+            Whether to use CAN FD. OpenArm uses it by default.
+        can_bitrate (`int`, *optional*, defaults to 1000000):
+            Nominal CAN bitrate, 1 Mbps.
+        can_data_bitrate (`int`, *optional*, defaults to 5000000):
+            CAN FD data bitrate, 5 Mbps. Only used when `use_can_fd` is `True`.
+        disable_torque_on_disconnect (`bool`, *optional*, defaults to `True`):
+            Whether to release the motors on disconnect. Leave `True` unless the arm is holding a load it
+            must not drop.
+        use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
+            Whether to expose `.vel` and `.torque` per motor in the observation features. Kept `False` by
+            default for compatibility with the position-only `openarm_mini` teleoperator.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps how far a single action may move the arm from its present position, as a safety limit. A
+            scalar applies to every motor; a dict maps motor name to a per-motor cap. `None` disables
+            clipping.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras to read alongside the arm's joint positions.
+        motor_config (`dict[str, tuple[int, int, str]]`, *optional*):
+            Maps motor name to `(send_can_id, recv_can_id, motor_type)`. Defaults to the stock OpenArm
+            layout; change it only if you have rewired or re-addressed the motors.
+        position_kp (`list[float]`, *optional*):
+            MIT-mode proportional gains used by `send_action`, 8 values in motor order.
+        position_kd (`list[float]`, *optional*):
+            MIT-mode derivative gains used by `send_action`, 8 values in motor order.
+        joint_limits (`dict[str, tuple[float, float]]`, *optional*):
+            Soft `(min, max)` limits in degrees per joint, clipped against on every action.
+        id (`str`, *optional*):
+            Identifier for this particular arm; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
+
     pass

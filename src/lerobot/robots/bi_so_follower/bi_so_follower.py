@@ -29,14 +29,18 @@ logger = logging.getLogger(__name__)
 
 
 class BiSOFollower(BimanualMixin, Robot):
-    """
-    [Bimanual SO Follower Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
-    """
+    """A bimanual pair of [SO follower arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio."""
 
     config_class = BiSOFollowerConfig
     name = "bi_so_follower"
 
     def __init__(self, config: BiSOFollowerConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`BiSOFollowerConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         super().__init__(config)
         self.config = config
 
@@ -107,18 +111,42 @@ class BiSOFollower(BimanualMixin, Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         obs_dict: RobotObservation = {}
 
         # Add "left_" prefix to per-arm keys; keep top-level camera keys unprefixed.
@@ -134,6 +162,18 @@ class BiSOFollower(BimanualMixin, Robot):
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         # Remove "left_" prefix
+        """Command the robot to move towards a target configuration.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target values, keyed as in [`~robots.Robot.action_features`].
+
+        Returns:
+            `dict[str, Any]`: The action actually sent, which may be clipped by `max_relative_target`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         left_action = {
             key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
         }

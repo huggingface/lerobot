@@ -27,19 +27,19 @@ from torch import Tensor
 class DebugStep:
     """Container for debug information from a single denoising step.
 
-    Attributes:
-        step_idx (int): Step index/counter.
-        x_t (Tensor | None): Current latent/state tensor.
-        v_t (Tensor | None): Velocity from denoiser.
-        x1_t (Tensor | None): Denoised prediction (x_t - time * v_t).
-        correction (Tensor | None): Correction gradient tensor.
-        err (Tensor | None): Weighted error term.
-        weights (Tensor | None): Prefix attention weights.
-        guidance_weight (float | Tensor | None): Applied guidance weight.
-        time (float | Tensor | None): Time parameter.
-        inference_delay (int | None): Inference delay parameter.
-        execution_horizon (int | None): Execution horizon parameter.
-        metadata (dict[str, Any]): Additional metadata.
+    **Attributes**:
+        - **step_idx** (`int`) -- Step index/counter.
+        - **x_t** (`Tensor | None`) -- Current latent/state tensor.
+        - **v_t** (`Tensor | None`) -- Velocity from denoiser.
+        - **x1_t** (`Tensor | None`) -- Denoised prediction (x_t - time * v_t).
+        - **correction** (`Tensor | None`) -- Correction gradient tensor.
+        - **err** (`Tensor | None`) -- Weighted error term.
+        - **weights** (`Tensor | None`) -- Prefix attention weights.
+        - **guidance_weight** (`float | Tensor | None`) -- Applied guidance weight.
+        - **time** (`float | Tensor | None`) -- Time parameter.
+        - **inference_delay** (`int | None`) -- Inference delay parameter.
+        - **execution_horizon** (`int | None`) -- Execution horizon parameter.
+        - **metadata** (`dict[str, Any]`) -- Additional metadata.
     """
 
     step_idx: int = 0
