@@ -46,13 +46,32 @@ GRIPPER_TELEOP_TO_DEGREES = -0.65
 class OpenArmMini(Teleoperator):
     """OpenArm Mini single-arm teleoperator (Feetech STS3215, 7DOF + gripper).
 
-    For the bimanual setup, see :class:`BiOpenArmMini` which composes two of these.
+    For the bimanual setup, see [`~teleoperators.bi_openarm_mini.BiOpenArmMini`], which composes two of these.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.openarm_mini import OpenArmMini, OpenArmMiniConfig
+        >>> config = OpenArmMiniConfig(port="/dev/ttyUSB0")
+        >>> teleop = OpenArmMini(config)  # doctest: +SKIP
+        >>> teleop.connect()  # doctest: +SKIP
+        >>> action = teleop.get_action()  # doctest: +SKIP
+        ```
     """
 
     config_class = OpenArmMiniConfig
     name = "openarm_mini"
 
     def __init__(self, config: OpenArmMiniConfig):
+        """Build the teleoperator from its configuration.
+
+        Args:
+            config (`OpenArmMiniConfig`):
+                The teleoperator's configuration. Its `port` and `side` determine what is connected and
+                which per-joint direction flips are applied.
+
+        Raises:
+            ValueError: If `config.side` is not `"left"`, `"right"`, or `None`.
+        """
         super().__init__(config)
         self.config = config
 
@@ -80,18 +99,25 @@ class OpenArmMini(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.action_features`]. One `.pos` entry per motor."""
         return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.feedback_features`].
+
+        Same shape as [`~teleoperators.Teleoperator.action_features`]: one `.pos` entry per motor.
+        """
         return self.action_features
 
     @property
     def is_connected(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_connected`]."""
         return self.bus.is_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """See [`~teleoperators.Teleoperator.connect`]."""
         logger.info(f"Connecting arm on {self.config.port}...")
         self.bus.connect()
 
@@ -103,11 +129,11 @@ class OpenArmMini(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_calibrated`]."""
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        """
-        Run calibration procedure for a single OpenArm Mini arm.
+        """See [`~teleoperators.Teleoperator.calibrate`].
 
         1. Disable torque
         2. Ask user to position arm in hanging position with gripper closed
@@ -201,12 +227,23 @@ class OpenArmMini(Teleoperator):
         print(f"\nCalibration complete and saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """See [`~teleoperators.Teleoperator.configure`].
+
+        Disables torque, applies bus-level motor configuration, then sets every motor to position
+        operating mode.
+        """
         self.bus.disable_torque()
         self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the teleoperator. Interactive: prompts you to connect the controller
+        board to a single motor at a time, in reverse order so downstream motors on the daisy chain don't
+        interfere.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -214,7 +251,11 @@ class OpenArmMini(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """Get current action (read positions from all motors)."""
+        """See [`~teleoperators.Teleoperator.get_action`].
+
+        Applies the `joint_6`/`joint_7` remap, the per-side direction flip configured by `config.side`,
+        and the gripper teleop-to-degrees conversion before returning.
+        """
         start = time.perf_counter()
 
         positions = self.bus.sync_read("Present_Position")
@@ -235,13 +276,24 @@ class OpenArmMini(Teleoperator):
         return action
 
     def enable_torque(self) -> None:
+        """Enable torque on all motors, e.g. to hold position instead of being freely moved by hand."""
         self.bus.enable_torque()
 
     def disable_torque(self) -> None:
+        """Disable torque on all motors so the arm can be moved by hand."""
         self.bus.disable_torque()
 
     def write_goal_positions(self, positions: dict[str, float]) -> None:
-        """Write goal positions to motors (inverse of get_action flip/gripper/remap logic)."""
+        """Write goal positions to the motors.
+
+        Applies the inverse of [`~teleoperators.openarm_mini.OpenArmMini.get_action`]'s remap, direction flip, and
+        gripper unit conversion before writing.
+
+        Args:
+            positions (`dict[str, float]`):
+                Target positions keyed by `{motor}.pos`, in the same units [`~teleoperators.openarm_mini.OpenArmMini.get_action`]
+                returns.
+        """
         goals: dict[str, float] = {}
         for key, val in positions.items():
             if not key.endswith(".pos"):
@@ -261,9 +313,15 @@ class OpenArmMini(Teleoperator):
 
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """See [`~teleoperators.Teleoperator.send_feedback`].
+
+        Delegates to [`~teleoperators.openarm_mini.OpenArmMini.write_goal_positions`], moving the arm's motors to the
+        given positions.
+        """
         self.write_goal_positions(feedback)
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """See [`~teleoperators.Teleoperator.disconnect`]."""
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")

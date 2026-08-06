@@ -19,14 +19,67 @@ PINKY_SPLAY = 0.5
 
 
 def get_ulnar_flexion(flexion: float, abduction: float, splay: float):
+    """Derive the ulnar-side tendon command for a HopeJR finger from its glove-sensed MCP angles.
+
+    The HopeJR hand flexes a finger with a pair of opposing tendons (radial and ulnar) rather than
+    independent flexion and abduction joints. This blends the glove's flexion and abduction readings for
+    one MCP joint into the ulnar tendon's share of the motion: an abduction toward the ulnar side pulls
+    this tendon further, while `splay` sets how much of the abduction reading leaks into it versus pure
+    flexion.
+
+    Args:
+        flexion (`float`):
+            MCP flexion reading for the finger, as reported by the glove.
+        abduction (`float`):
+            MCP abduction reading for the finger, as reported by the glove. Positive values pull toward
+            the radial side and are subtracted here.
+        splay (`float`):
+            Fraction, in `[0, 1]`, of the tendon command driven by abduction rather than flexion.
+
+    Returns:
+        `float`: The ulnar tendon's target position.
+    """
     return -abduction * splay + flexion * (1 - splay)
 
 
 def get_radial_flexion(flexion: float, abduction: float, splay: float):
+    """Derive the radial-side tendon command for a HopeJR finger from its glove-sensed MCP angles.
+
+    The counterpart to [`get_ulnar_flexion`]: same blend of flexion and abduction, but abduction toward
+    the radial side adds to this tendon's target instead of subtracting from it.
+
+    Args:
+        flexion (`float`):
+            MCP flexion reading for the finger, as reported by the glove.
+        abduction (`float`):
+            MCP abduction reading for the finger, as reported by the glove. Positive values pull toward
+            the radial side and are added here.
+        splay (`float`):
+            Fraction, in `[0, 1]`, of the tendon command driven by abduction rather than flexion.
+
+    Returns:
+        `float`: The radial tendon's target position.
+    """
     return abduction * splay + flexion * (1 - splay)
 
 
 def homunculus_glove_to_hope_jr_hand(glove_action: dict[str, float]) -> dict[str, float]:
+    """Translate a Homunculus Glove action into a HopeJR hand action.
+
+    The glove reports one flexion and one abduction value per finger's MCP joint, plus a DIP/PIP reading,
+    while the HopeJR hand is driven by a pair of tendons (radial and ulnar flexors) per finger and a
+    coupled PIP/DIP joint. This remaps and blends the glove's per-joint keys into the hand's per-tendon
+    keys via [`get_radial_flexion`] and [`get_ulnar_flexion`]; the thumb, whose joints map one-to-one, is
+    passed through unchanged.
+
+    Args:
+        glove_action (`dict[str, float]`):
+            Action produced by [`~teleoperators.homunculus.HomunculusGlove.get_action`], keyed by glove
+            joint name.
+
+    Returns:
+        `dict[str, float]`: The equivalent action keyed by HopeJR hand joint name.
+    """
     return {
         "thumb_cmc.pos": glove_action["thumb_cmc.pos"],
         "thumb_mcp.pos": glove_action["thumb_mcp.pos"],

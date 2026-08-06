@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This module handles calibration of hall effect sensors used in the exoskeleton.
+"""This module handles calibration of hall effect sensors used in the exoskeleton.
+
 Each joint has a pair of ADC channels outputting sin and cos values that trace an ellipse
 as the joint rotates due to imprecision in magnet/sensor placement. We fit this ellipse to a unit circle,
 and calculate arctan2 of the unit circle to get the joint angle.
@@ -59,6 +59,21 @@ JOINTS = {
 
 @dataclass
 class ExoskeletonJointCalibration:
+    """Per-joint calibration mapping raw sin/cos ADC pairs to an angle in radians.
+
+    Args:
+        name (`str`):
+            Joint name, matching a key in `JOINTS`.
+        center_fit (`list[float]`):
+            The `[x, y]` center of the ellipse fitted to this joint's raw sin/cos ADC readings.
+        T (`list[list[float]]`):
+            2x2 transformation matrix mapping a centered raw reading onto the unit circle, correcting for
+            the fitted ellipse's scale and rotation.
+        zero_offset (`float`, *optional*, defaults to 0.0):
+            Angle, in radians, measured while the joint was held at its neutral pose. Subtracted from the
+            raw angle so the neutral pose reads as zero.
+    """
+
     name: str  # joint name
     center_fit: list[float]  # center of the ellipse
     T: list[list[float]]  # 2x2 transformation matrix
@@ -75,6 +90,11 @@ class ExoskeletonCalibration:
     joints: list[ExoskeletonJointCalibration] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """Serialize this calibration to a plain dict suitable for JSON storage.
+
+        Returns:
+            `dict`: The calibration with nested joint calibrations flattened to plain dicts.
+        """
         return {
             "version": self.version,
             "side": self.side,
@@ -92,6 +112,15 @@ class ExoskeletonCalibration:
 
     @classmethod
     def from_dict(cls, data: dict) -> ExoskeletonCalibration:
+        """Reconstruct a calibration from the dict produced by `to_dict`.
+
+        Args:
+            data (`dict`):
+                Parsed JSON calibration data. Missing optional keys fall back to their defaults.
+
+        Returns:
+            `ExoskeletonCalibration`: The reconstructed calibration.
+        """
         joints = [
             ExoskeletonJointCalibration(
                 name=j["name"],
@@ -111,6 +140,32 @@ class ExoskeletonCalibration:
 
 @dataclass(frozen=True)
 class CalibParams:
+    """Tuning knobs for the interactive ellipse-fitting calibration UI.
+
+    Args:
+        fit_every (`float`, *optional*, defaults to 0.15):
+            Minimum time, in seconds, between successive ellipse re-fits while mapping a joint's range.
+        min_fit_points (`int`, *optional*, defaults to 60):
+            Minimum number of buffered samples required before attempting an ellipse fit.
+        fit_window (`int`, *optional*, defaults to 900):
+            Number of most recent raw samples considered for each ellipse fit.
+        max_fit_points (`int`, *optional*, defaults to 300):
+            Maximum number of points passed to the ellipse fitter; the fit window is downsampled evenly
+            above this count.
+        trim_low (`float`, *optional*, defaults to 0.05):
+            Lower radius quantile below which points are treated as outliers and discarded before fitting.
+        trim_high (`float`, *optional*, defaults to 0.95):
+            Upper radius quantile above which points are treated as outliers and discarded before fitting.
+        median_window (`int`, *optional*, defaults to 5):
+            Number of raw samples averaged (median) to smooth each sin/cos reading before it is buffered.
+        history (`int`, *optional*, defaults to 3500):
+            Maximum number of samples retained per plot, for visualization only.
+        draw_hz (`float`, *optional*, defaults to 120.0):
+            Maximum refresh rate of the calibration plot.
+        sample_count (`int`, *optional*, defaults to 50):
+            Number of samples averaged to compute a joint's zero-pose offset.
+    """
+
     fit_every: float = 0.15
     min_fit_points: int = 60
     fit_window: int = 900
@@ -129,9 +184,7 @@ def normalize_angle(angle: float) -> float:
 
 
 def joint_z_and_angle(raw16: list[int], j: ExoskeletonJointCalibration) -> tuple[np.ndarray, float]:
-    """
-    Applies calibration to each joint: raw → centered → ellipse-to-circle → angle.
-    """
+    """Applies calibration to each joint: raw → centered → ellipse-to-circle → angle."""
     pair = JOINTS[j.name]
     s, c = raw16[pair[0]], raw16[pair[1]]  # get sin and cos
     p = np.array([float(c) - ADC_HALF, float(s) - ADC_HALF])  # center the raw values
@@ -153,9 +206,7 @@ def run_exo_calibration(
     save_path: Path,
     params: CalibParams | None = None,
 ) -> ExoskeletonCalibration:
-    """
-    Run interactive calibration for an exoskeleton arm.
-    """
+    """Run interactive calibration for an exoskeleton arm."""
     require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
@@ -173,9 +224,11 @@ def run_exo_calibration(
     logger.info(f"Starting calibration for {side} exoskeleton arm")
 
     def running_median(win: deque) -> float:
+        """Return the median of a buffered window of raw ADC samples, used to smooth sensor noise."""
         return float(np.median(np.fromiter(win, dtype=float)))
 
     def read_joint_point(raw16: list[int], pair: tuple[int, int]):
+        """Extract one joint's centered (x, y) sin/cos point, plus its raw sin/cos values."""
         s, c = raw16[pair[0]], raw16[pair[1]]
         return float(c) - ADC_HALF, float(s) - ADC_HALF, float(s), float(c)
 
@@ -259,6 +312,7 @@ def run_exo_calibration(
     zero_samples = []
 
     def on_key(event):
+        """Matplotlib key-press handler that requests advancing to the calibration's next phase."""
         nonlocal advance_requested
         if event.key in ("n", "N", "enter", " "):
             advance_requested = True
@@ -266,6 +320,7 @@ def run_exo_calibration(
     fig.canvas.mpl_connect("key_press_event", on_key)
 
     def reset_state():
+        """Build a fresh mutable state dict for tracking one joint's in-progress ellipse fit."""
         return {
             "xs": deque(maxlen=params.history),
             "ys": deque(maxlen=params.history),

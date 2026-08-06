@@ -40,6 +40,14 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
     name = "bi_openarm_mini"
 
     def __init__(self, config: BiOpenArmMiniConfig):
+        """Build the teleoperator from its configuration.
+
+        Args:
+            config (`BiOpenArmMiniConfig`):
+                The teleoperator's configuration. Its `left_arm_config` and `right_arm_config` determine
+                what is connected on each side; each arm's `side` is forced to `"left"`/`"right"`
+                regardless of what was set on the per-arm config.
+        """
         super().__init__(config)
         self.config = config
 
@@ -66,6 +74,10 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Merges both arms' features, each key prefixed with `left_` or `right_`.
+        """
         return {
             **{f"left_{k}": v for k, v in self.left_arm.action_features.items()},
             **{f"right_{k}": v for k, v in self.right_arm.action_features.items()},
@@ -73,17 +85,30 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.feedback_features`].
+
+        Merges both arms' features, each key prefixed with `left_` or `right_`.
+        """
         return {
             **{f"left_{k}": v for k, v in self.left_arm.feedback_features.items()},
             **{f"right_{k}": v for k, v in self.right_arm.feedback_features.items()},
         }
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one arm at a time.
+
+        Run this once when building the teleoperator. Interactive: prompts you to connect the controller
+        board to a single motor at a time, left arm first.
+        """
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """See [`~teleoperators.Teleoperator.get_action`].
+
+        Merges both arms' actions, each key prefixed with `left_` or `right_`.
+        """
         action: RobotAction = {}
         for k, v in self.left_arm.get_action().items():
             action[f"left_{k}"] = v
@@ -93,6 +118,14 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
 
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """See [`~teleoperators.Teleoperator.send_feedback`].
+
+        Args:
+            feedback (`dict[str, float]`):
+                Feedback values keyed with `left_`/`right_` prefixes, as produced by
+                [`~teleoperators.bi_openarm_mini.BiOpenArmMini.get_action`]. Each arm only receives the entries for its
+                own side.
+        """
         left_fb = {k.removeprefix("left_"): v for k, v in feedback.items() if k.startswith("left_")}
         right_fb = {k.removeprefix("right_"): v for k, v in feedback.items() if k.startswith("right_")}
         if left_fb:

@@ -29,14 +29,19 @@ logger = logging.getLogger(__name__)
 
 
 class BiSOLeader(BimanualMixin, Teleoperator):
-    """
-    [Bimanual SO Leader Arms](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
-    """
+    """A bimanual pair of [SO leader arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio."""
 
     config_class = BiSOLeaderConfig
     name = "bi_so_leader"
 
     def __init__(self, config: BiSOLeaderConfig):
+        """Build the teleoperator from its configuration.
+
+        Args:
+            config (`BiSOLeaderConfig`):
+                The teleoperator's configuration. Its `left_arm_config` and `right_arm_config` determine
+                what is connected.
+        """
         super().__init__(config)
         self.config = config
 
@@ -61,6 +66,12 @@ class BiSOLeader(BimanualMixin, Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this teleoperator produces, and their types.
+
+        Returns:
+            `dict[str, type]`: Each arm's [`~teleoperators.so_leader.SOLeader.action_features`] keys,
+            prefixed with `left_` or `right_`.
+        """
         left_arm_features = self.left_arm.action_features
         right_arm_features = self.right_arm.action_features
 
@@ -71,6 +82,12 @@ class BiSOLeader(BimanualMixin, Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
+        """The values this teleoperator accepts as feedback, and their types.
+
+        Returns:
+            `dict[str, type]`: Each arm's [`~teleoperators.so_leader.SOLeader.feedback_features`] keys,
+            prefixed with `left_` or `right_`.
+        """
         # Bimanual teleop has feedback (can be actuated for handover).
         # Return the same structure as action_features for consistency with left/right arms.
         left_arm_features = self.left_arm.feedback_features
@@ -82,11 +99,25 @@ class BiSOLeader(BimanualMixin, Teleoperator):
         }
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID on both arms, one at a time.
+
+        Run this once when building the teleoperator. Interactive: prompts you to connect the controller
+        board to a single motor at a time, left arm first.
+        """
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Retrieve the current action from both leader arms.
+
+        Returns:
+            `dict[str, Any]`: Each arm's action, keyed as described by
+            [`~teleoperators.bi_so_leader.BiSOLeader.action_features`].
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
+        """
         action_dict = {}
 
         # Add "left_" prefix

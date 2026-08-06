@@ -49,6 +49,12 @@ class RebotArm102Leader(Teleoperator):
     name = "rebot_102_leader"
 
     def __init__(self, config: RebotArm102LeaderTeleopConfig):
+        """Build the teleoperator from its configuration.
+
+        Args:
+            config (`RebotArm102LeaderTeleopConfig`):
+                The teleoperator's configuration. Its `port` determines what is connected.
+        """
         require_package("motorbridge-smart-servo", extra="rebot", import_name="motorbridge_smart_servo")
         super().__init__(config)
         self.config = config
@@ -58,18 +64,39 @@ class RebotArm102Leader(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        """The arm's joint positions, in degrees.
+
+        Returns:
+            `dict[str, type]`: `"<motor>.pos"` keys mapped to `float`.
+        """
         return {f"{motor}.pos": float for motor in self.motor_names}
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """This arm accepts no feedback.
+
+        Returns:
+            `dict[str, type]`: Always empty.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_connected`]: the servo bus has been opened."""
         return self.bus is not None
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Open the UART servo bus, ping every configured joint, then calibrate and configure the arm.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration when the arm is not already calibrated. Calibration is
+                interactive and prompts on stdin.
+
+        Raises:
+            RuntimeError: If a configured servo does not respond to a ping.
+        """
         logger.info(f"Connecting {self} on {self.config.port}...")
         bus = FashionStarServo(self.config.port, baudrate=self.config.baudrate)
         try:
@@ -95,9 +122,20 @@ class RebotArm102Leader(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether every configured joint has a saved calibration entry.
+
+        Returns:
+            `bool`: `True` if `self.calibration` has an entry for each of `self.motor_names`.
+        """
         return bool(self.calibration) and set(self.calibration) == set(self.motor_names)
 
     def calibrate(self) -> None:
+        """Set the zero position of every joint from the arm's current pose.
+
+        If a calibration file already exists, prompts the operator to reuse it or to redo calibration. To
+        redo it, the operator manually moves the arm to its zero pose (gripper closed); each servo's
+        origin point is then reset to that pose and the result is saved to the calibration file.
+        """
         if self.calibration:
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, "
@@ -132,6 +170,10 @@ class RebotArm102Leader(Teleoperator):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """Unlock every servo's torque and reset each one's multi-turn counter.
+
+        Run once after connecting so subsequent readings start from a known turn count.
+        """
         for motor_id in self.config.joint_ids.values():
             self.bus.unlock(motor_id)
             time.sleep(_SETTLE_SEC)
@@ -165,6 +207,16 @@ class RebotArm102Leader(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Read, unwrap, and sign-correct the current joint positions.
+
+        Each joint's raw multi-turn angle is unwrapped into its configured range (see
+        `_round_to_valid_range`), then flipped and clipped according to `joint_directions` and
+        `joint_ranges` so the result matches the follower's convention. If reading the servos fails, the
+        last successfully read positions are reused and the caller is expected to stop teleoperation.
+
+        Returns:
+            `dict[str, float]`: `"<motor>.pos"` keys mapped to the joint's position in degrees.
+        """
         start = time.perf_counter()
         try:
             raw_positions = self._read_raw_positions()
@@ -198,10 +250,16 @@ class RebotArm102Leader(Teleoperator):
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: the leader arm has no actuators to receive feedback.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Close the UART servo bus."""
         self.bus.close()
         self.bus = None
         logger.info(f"{self} disconnected.")

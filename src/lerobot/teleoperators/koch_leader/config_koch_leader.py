@@ -22,6 +22,28 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("koch_leader")
 @dataclass
 class KochLeaderConfig(TeleoperatorConfig):
+    """Configuration for the Koch leader arm.
+
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0` on Linux or `COM3` on Windows. Run
+            `lerobot-find-port` to identify it.
+        gripper_open_pos (`float`, *optional*, defaults to 50.0):
+            Goal position written to the gripper motor, held under current-based position control so the
+            gripper springs back to this position when released, letting it be used as a physical trigger.
+        id (`str`, *optional*):
+            Identifier for this particular arm; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+        >>> config = KochLeaderConfig(port="/dev/ttyACM0")  # doctest: +SKIP
+        >>> teleop = KochLeader(config)  # doctest: +SKIP
+        ```
+    """
+
     # Port to connect to the arm
     port: str
 
