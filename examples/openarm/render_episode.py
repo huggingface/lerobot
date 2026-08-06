@@ -16,26 +16,45 @@
 
 """Replay a recorded bimanual-OpenArm episode into an mp4, in simulation.
 
-This drives the official OpenArm MuJoCo model (``enactic/openarm_mujoco``, v1) directly
-from a LeRobot dataset's recorded ``observation.state`` and renders a headless video. It is
-a visual sanity check that a recorded/commanded joint trajectory is what you think it is --
-the same forward-kinematics path used to expose end-effector poses (see the OpenArm
-end-effector kinematics helper ``OpenArmFollower.make_kinematics``).
+This drives the official OpenArm MuJoCo model (``enactic/openarm_mujoco``, v1) from a
+LeRobot dataset's recorded ``observation.state`` and renders a headless video.
+
+By default the replay goes *through end-effector (Cartesian) space* rather than pushing the
+recorded joint angles straight into the simulator: for every frame and every arm it runs
+forward kinematics (recorded joints -> EE pose) and then inverse kinematics (EE pose ->
+joints), and drives MuJoCo with the IK-recovered joints. This exercises the exact
+``lerobot.model.RobotKinematics`` solver that ``OpenArmFollower.make_kinematics()`` builds,
+so the rendered video is a visual sanity check of the OpenArm end-effector kinematics -- not
+just of the raw recording. Pass ``--joint-space`` to bypass kinematics and replay the raw
+recorded joints directly (the previous behaviour).
 
 The ``observation.state`` is expected in the 16-D bimanual layout (degrees):
     right_joint_1..7, right_gripper, left_joint_1..7, left_gripper
 
-Model (Apache-2.0): https://github.com/enactic/openarm_mujoco  (use the **v1** revision;
-v2 is a different wrist hardware revision and will look sign-flipped on v1 recordings).
+The single published OpenArm URDF is *bimanual*, so end-effector kinematics build one solver
+per arm (right/left), each keyed to that arm's joints (``openarm_<side>_joint1..7``) and
+tool-center frame (``openarm_<side>_hand_tcp``). Solving in the full bimanual frame is what
+keeps both arms at their correct, matching heights.
+
+Assets (both Apache-2.0, nothing vendored into LeRobot):
+    MuJoCo MJCF: https://github.com/enactic/openarm_mujoco  (use the **v1** revision; v2 is a
+        different wrist hardware revision and will look sign-flipped on v1 recordings).
+    URDF (for RobotKinematics): https://github.com/enactic/openarm_description
 
 Examples:
-    # replay episode 1 of a local LeRobot v3.0 dataset
+    # replay episode 1 of a local LeRobot v3.0 dataset through EE kinematics (bimanual URDF)
     LD_LIBRARY_PATH=$CONDA_PREFIX/lib MUJOCO_GL=egl python -m examples.openarm.render_episode \
-        --dataset data/folding_src_meta --episode 1 --out openarm_ep1.mp4
+        --dataset data/folding_src_meta --episode 1 \
+        --urdf /path/to/openarm_bimanual.urdf \
+        --out openarm_ep1.mp4
 
-    # smoke test with a synthetic wave (no dataset / model joints only)
+    # smoke test with a synthetic wave (no dataset; add --urdf to also exercise the kinematics)
     LD_LIBRARY_PATH=$CONDA_PREFIX/lib MUJOCO_GL=egl python -m examples.openarm.render_episode \
         --demo --out openarm_demo.mp4
+
+    # bypass kinematics and replay the raw recorded joints directly
+    LD_LIBRARY_PATH=$CONDA_PREFIX/lib MUJOCO_GL=egl python -m examples.openarm.render_episode \
+        --dataset data/folding_src_meta --episode 1 --joint-space --out openarm_ep1_raw.mp4
 """
 
 from __future__ import annotations
@@ -64,6 +83,17 @@ ARM_MAP = {
 RIGHT_GRIPPER_IDX, LEFT_GRIPPER_IDX = 7, 15
 GRIP_FULL_DEG = 65.0  # follower gripper limit magnitude -> fully open
 
+# Per-arm slices into the 16-D state (7 arm joints each; grippers handled separately).
+ARM_JOINT_SLICES = {"right": slice(0, 7), "left": slice(8, 15)}
+# The only published OpenArm URDF is *bimanual*, so each arm has its own joint names and
+# end-effector (tool-center-point) frame. Using the bimanual URDF -- rather than a single
+# arm placed at the origin -- is what makes FK/IK return correct world poses for each arm
+# (it encodes the shoulder-mount transform), so the two arms land at the right heights.
+ARM_SIDE_JOINTS = {
+    side: [f"openarm_{side}_joint{i}" for i in range(1, 8)] for side in ("right", "left")
+}
+DEFAULT_EE_FRAMES = {side: f"openarm_{side}_hand_tcp" for side in ("right", "left")}
+
 
 def locate_mjcf(explicit: str | None) -> str:
     """Resolve the OpenArm v1 bimanual MJCF path.
@@ -85,6 +115,63 @@ def locate_mjcf(explicit: str | None) -> str:
         "Could not find the OpenArm v1 MJCF. Pass --mjcf /path/to/v1/openarm_bimanual.xml, "
         "set $OPENARM_MJCF, or clone https://github.com/enactic/openarm_mujoco."
     )
+
+
+def locate_urdf(explicit: str | None) -> str | None:
+    """Resolve the single-arm OpenArm URDF path for ``RobotKinematics`` (may be None)."""
+    if explicit:
+        return explicit
+    if os.environ.get("OPENARM_URDF"):
+        return os.environ["OPENARM_URDF"]
+    return None
+
+
+def make_kinematics(urdf_path: str, ee_frames: dict[str, str]) -> dict:
+    """Build one ``RobotKinematics`` EE solver per arm from the bimanual OpenArm URDF.
+
+    This mirrors what ``OpenArmFollower.make_kinematics()`` does per arm, but we construct
+    ``RobotKinematics`` directly (instead of instantiating an ``OpenArmFollower``) so this
+    render-only example does not pull in the CAN/motor hardware stack. Each side gets its own
+    solver keyed to that arm's URDF joint names (``openarm_<side>_joint1..7``) and tool-center
+    frame, so forward/inverse kinematics resolve in the full bimanual (world) frame -- that is
+    what keeps the two arms at their correct, matching heights.
+    """
+    from lerobot.model import RobotKinematics
+
+    return {
+        side: RobotKinematics(
+            urdf_path=urdf_path,
+            target_frame_name=ee_frames[side],
+            joint_names=ARM_SIDE_JOINTS[side],
+        )
+        for side in ("right", "left")
+    }
+
+
+def ee_roundtrip(kins: dict, traj: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Route a recorded joint trajectory through end-effector space, per arm.
+
+    For each frame and each arm, run forward kinematics (recorded joints -> EE pose) then
+    inverse kinematics (EE pose -> joints) with that arm's own solver, replacing the arm joints
+    with the IK-recovered ones. Grippers pass through unchanged. Returns the new trajectory plus
+    the mean joint and EE-position round-trip errors (a sanity check that the solver tracks the
+    recording).
+    """
+    out = traj.copy()
+    joint_err = []
+    pos_err = []
+    n_arm = len(ARM_SIDE_JOINTS["right"])
+    for t in range(traj.shape[0]):
+        for side, sl in ARM_JOINT_SLICES.items():
+            kin = kins[side]
+            recorded = traj[t, sl].astype(np.float64)
+            ee_pose = kin.forward_kinematics(recorded)
+            recovered = kin.inverse_kinematics(recorded, ee_pose)[:n_arm]
+            out[t, sl] = recovered
+            joint_err.append(np.abs(recovered - recorded).mean())
+            # EE position after IK vs. the FK target, to catch non-converged solves.
+            pos_err.append(np.linalg.norm(kin.forward_kinematics(recovered)[:3, 3] - ee_pose[:3, 3]))
+    return out, float(np.mean(joint_err)), float(np.mean(pos_err))
 
 
 def load_state_from_dataset(root: str, ep: int) -> np.ndarray:
@@ -123,6 +210,26 @@ def main() -> None:
     ap.add_argument("--episode", type=int, default=0)
     ap.add_argument("--demo", action="store_true", help="drive a synthetic wave (no dataset)")
     ap.add_argument("--mjcf", default=None, help="path to v1/openarm_bimanual.xml (see locate_mjcf)")
+    ap.add_argument(
+        "--urdf",
+        default=None,
+        help="bimanual OpenArm URDF for end-effector kinematics (or set $OPENARM_URDF)",
+    )
+    ap.add_argument(
+        "--right-ee-frame",
+        default=os.environ.get("OPENARM_RIGHT_EE_FRAME", DEFAULT_EE_FRAMES["right"]),
+        help="right-arm end-effector link name in the URDF (or set $OPENARM_RIGHT_EE_FRAME)",
+    )
+    ap.add_argument(
+        "--left-ee-frame",
+        default=os.environ.get("OPENARM_LEFT_EE_FRAME", DEFAULT_EE_FRAMES["left"]),
+        help="left-arm end-effector link name in the URDF (or set $OPENARM_LEFT_EE_FRAME)",
+    )
+    ap.add_argument(
+        "--joint-space",
+        action="store_true",
+        help="bypass kinematics and replay the raw recorded joints directly",
+    )
     ap.add_argument("--out", default="openarm_episode.mp4")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--width", type=int, default=960)
@@ -172,7 +279,27 @@ def main() -> None:
     else:
         raise SystemExit("provide --dataset <root> (with --episode) or --demo")
     n_frames = traj.shape[0]
-    print(f"driving {n_frames} frames")
+
+    # Route the recorded joints through end-effector (Cartesian) space via the same solver
+    # OpenArmFollower.make_kinematics() builds, unless the user opted for raw joint replay.
+    urdf_path = None if args.joint_space else locate_urdf(args.urdf)
+    if args.joint_space:
+        print(f"driving {n_frames} frames (raw joint space)")
+    elif urdf_path is None:
+        raise SystemExit(
+            "End-effector replay needs the OpenArm URDF: pass --urdf /path/to/openarm.urdf "
+            "(and --ee-frame if the tip link differs), set $OPENARM_URDF, or use --joint-space "
+            "to replay the raw recorded joints. URDF: https://github.com/enactic/openarm_description"
+        )
+    else:
+        ee_frames = {"right": args.right_ee_frame, "left": args.left_ee_frame}
+        kins = make_kinematics(urdf_path, ee_frames)
+        traj, joint_err, pos_err = ee_roundtrip(kins, traj)
+        print(
+            f"driving {n_frames} frames (end-effector kinematics via frames "
+            f"right='{ee_frames['right']}', left='{ee_frames['left']}'; "
+            f"FK->IK round-trip: {joint_err:.3f}° mean joint error, {pos_err * 1e3:.2f} mm mean EE error)"
+        )
 
     # Auto-frame the arms (exclude pedestal/world) from body positions at the mid pose.
     mid = n_frames // 2
