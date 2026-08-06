@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import types
 from collections import deque
 from collections.abc import Iterator
@@ -2081,6 +2082,59 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         return LoraConfig(**self._get_inner_peft_targets())
 
+    @staticmethod
+    def _official_lora_initialization_sort_key(module_name: str) -> tuple[int, int, int]:
+        """Return the native MolmoAct2 module traversal order for a HF LoRA layer.
+
+        Official training injects PEFT into the native text transformer and
+        vision backbone separately, then initializes adapters by iterating the
+        resulting native module tree.  The converted HF model registers the
+        same 303 linear targets in a different order.  Sorting by the native
+        structural order makes seed 6198 select the same Gaussian LoRA-A
+        matrix for each mapped module instead of merely the same distribution.
+        """
+
+        text_match = re.search(
+            r"(?:^|\.)transformer\.blocks\.(\d+)\.(?:self_attn|mlp)\."
+            r"(attn_out|ff_out|att_proj|ff_proj)$",
+            module_name,
+        )
+        if text_match is not None:
+            native_leaf_order = {"attn_out": 0, "ff_out": 1, "att_proj": 2, "ff_proj": 3}
+            return (0, int(text_match.group(1)), native_leaf_order[text_match.group(2)])
+
+        if re.search(r"(?:^|\.)lm_head$", module_name) is not None:
+            return (1, 0, 0)
+
+        pooling_match = re.search(r"(?:^|\.)image_pooling_2d\.(wq|wk|wv|wo)$", module_name)
+        if pooling_match is not None:
+            return (2, 0, {"wq": 0, "wk": 1, "wv": 2, "wo": 3}[pooling_match.group(1)])
+
+        projector_match = re.search(r"(?:^|\.)image_projector\.(w1|w2|w3)$", module_name)
+        if projector_match is not None:
+            return (3, 0, {"w1": 0, "w2": 1, "w3": 2}[projector_match.group(1)])
+
+        if re.search(r"(?:^|\.)image_vit\.patch_embedding$", module_name) is not None:
+            return (4, 0, 0)
+
+        vit_match = re.search(
+            r"(?:^|\.)image_vit\.transformer\.resblocks\.(\d+)\."
+            r"(attention|feed_forward)\.(wq|wk|wv|wo|w1|w2)$",
+            module_name,
+        )
+        if vit_match is not None:
+            branch, leaf = vit_match.group(2), vit_match.group(3)
+            if branch == "attention":
+                leaf_order = {"wq": 0, "wk": 1, "wv": 2, "wo": 3}[leaf]
+            else:
+                leaf_order = {"w1": 4, "w2": 5}[leaf]
+            return (5, int(vit_match.group(1)), leaf_order)
+
+        raise RuntimeError(
+            "MolmoAct2 cannot map a LoRA target into the official initialization order: "
+            f"{module_name!r}."
+        )
+
     def _apply_lora_adapters(self) -> None:
         require_package("peft", extra="molmoact2")
 
@@ -2102,13 +2156,18 @@ class MolmoAct2Policy(PreTrainedPolicy):
         # the training/data RNG stream.
         from peft.tuners.lora.layer import LoraLayer
 
+        lora_layers = [
+            (name, module)
+            for name, module in self.model.named_modules()
+            if isinstance(module, LoraLayer)
+        ]
+        lora_layers.sort(key=lambda item: self._official_lora_initialization_sort_key(item[0]))
         devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
         with torch.random.fork_rng(devices=devices):
             torch.manual_seed(6198)
-            for module in self.model.modules():
-                if isinstance(module, LoraLayer):
-                    for adapter_name in module.lora_A:
-                        module.reset_lora_parameters(adapter_name, "gaussian")
+            for _, module in lora_layers:
+                for adapter_name in module.lora_A:
+                    module.reset_lora_parameters(adapter_name, "gaussian")
         self._unfreeze_action_expert_parameters()
         self.train(self.training)
 

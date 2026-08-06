@@ -1688,6 +1688,37 @@ def test_lora_targets_exclude_action_expert():
     assert "kv_proj" not in targets
 
 
+def test_lora_initialization_order_matches_native_module_registration():
+    names = [
+        "base_model.model.model.vision_backbone.image_vit.transformer.resblocks.1.feed_forward.w2",
+        "base_model.model.lm_head",
+        "base_model.model.model.transformer.blocks.1.self_attn.att_proj",
+        "base_model.model.model.image_projector.w3",
+        "base_model.model.model.transformer.blocks.0.mlp.ff_proj",
+        "base_model.model.model.vision_backbone.image_vit.patch_embedding",
+        "base_model.model.model.image_pooling_2d.wk",
+        "base_model.model.model.transformer.blocks.0.self_attn.attn_out",
+        "base_model.model.model.vision_backbone.image_vit.transformer.resblocks.1.attention.wo",
+    ]
+
+    ordered = sorted(names, key=MolmoAct2Policy._official_lora_initialization_sort_key)
+
+    assert ordered == [
+        "base_model.model.model.transformer.blocks.0.self_attn.attn_out",
+        "base_model.model.model.transformer.blocks.0.mlp.ff_proj",
+        "base_model.model.model.transformer.blocks.1.self_attn.att_proj",
+        "base_model.model.lm_head",
+        "base_model.model.model.image_pooling_2d.wk",
+        "base_model.model.model.image_projector.w3",
+        "base_model.model.model.vision_backbone.image_vit.patch_embedding",
+        "base_model.model.model.vision_backbone.image_vit.transformer.resblocks.1.attention.wo",
+        "base_model.model.model.vision_backbone.image_vit.transformer.resblocks.1.feed_forward.w2",
+    ]
+
+    with pytest.raises(RuntimeError, match="official initialization order"):
+        MolmoAct2Policy._official_lora_initialization_sort_key("model.transformer.unknown")
+
+
 def test_train_mode_vlm_lora_wraps_loaded_hf_model_locally():
     pytest.importorskip("peft")
 
@@ -1695,7 +1726,10 @@ def test_train_mode_vlm_lora_wraps_loaded_hf_model_locally():
         def __init__(self):
             super().__init__()
             self.transformer = torch.nn.Module()
-            self.transformer.wq = torch.nn.Linear(2, 2)
+            block = torch.nn.Module()
+            block.self_attn = torch.nn.Module()
+            block.self_attn.att_proj = torch.nn.Linear(2, 2)
+            self.transformer.blocks = torch.nn.ModuleList([block])
             # Native MolmoAct2 stores these connector linears inside
             # vision_backbone; the HF conversion moves them to these top-level
             # backbone paths. They must still receive LoRA adapters.
@@ -1714,7 +1748,7 @@ def test_train_mode_vlm_lora_wraps_loaded_hf_model_locally():
             self.lm_head = torch.nn.Linear(2, 2)
 
         def forward(self, x):
-            return self.model.transformer.wq(x)
+            return self.model.transformer.blocks[0].self_attn.att_proj(x)
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
