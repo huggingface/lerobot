@@ -90,9 +90,7 @@ def _find_moov(read_at, file_size: int) -> tuple[int, int]:
 
 
 def build_video_byte_index(path: str | Path) -> dict:
-    """Compute the byte-index columns for one video file.
-    Works for any container/codec pyav can demux; frame indices assume constant frame rate. mp4-only.
-    """
+    """Compute the byte-index columns for one video file. mp4-only"""
     path = Path(path)
     file_size = path.stat().st_size
     kf_entries = []
@@ -205,7 +203,7 @@ class _SparseBlobSource(io.RawIOBase):
 
 class _VideoDecoderLRU:
     """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
-    eviction is bounded by ``byte_budget`` too, not just entry count.
+    eviction is bounded by ``byte_budget`` too, not just count.
     """
 
     def __init__(self, capacity: int, byte_budget: int | None = None):
@@ -244,10 +242,6 @@ def _is_remote_uri(path) -> bool:
 
 
 def _storage_options(db_uri: str, storage_options: dict | None, revision: str | None) -> dict:
-    """Build the storage_options for a connect. For hf:// URIs, inject the token
-    and read tables from the same revision the metadata resolved to (lance honors
-    'revision' in storage_options, not an '@rev' URI suffix). Non-hub URIs are
-    left untouched."""
     options = dict(storage_options or {})
     if db_uri.startswith("hf://"):
         if "token" not in options:
@@ -293,7 +287,7 @@ def _materialize_meta(db, local_root: Path) -> None:
         try:
             tmp_dir.rename(meta_dir)
         except OSError:
-            if not meta_dir.exists(): 
+            if not meta_dir.exists():
                 raise
     finally:
         if tmp_dir.exists():
@@ -329,13 +323,7 @@ def is_lance_dataset(
 def resolve_lance_root(
     repo_id: str | None, root: str | Path | None, storage_options: dict | None = None
 ) -> tuple[str, Path]:
-    """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``.
-
-    For an object-store URI (``s3://``, ``gs://``, ``hf://`` ...) the ``meta/``
-    directory is materialized once into a local cache. Shared by LanceDBDataset and
-    the training factory so both agree on remote roots (a bare ``Path(root)`` would
-    collapse ``s3://b/k`` to ``s3:/b/k`` and silently fall back to a Hub download).
-    """
+    """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
     if root is not None and _is_remote_uri(root):
         db_uri = str(root).rstrip("/")
         local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", db_uri)
@@ -354,11 +342,6 @@ def lance_metadata(
     repo_id: str | None, root: str | Path | None, revision: str | None = None,
     storage_options: dict | None = None,
 ) -> LeRobotDatasetMetadata:
-    """LeRobotDatasetMetadata for a Lance dataset, materializing remote-URI ``meta/``.
-
-    Lets the training factory resolve metadata (for delta-timestamp resolution)
-    without tripping over a remote-URI root.
-    """
     _, local_root = resolve_lance_root(repo_id, root, storage_options)
     return LeRobotDatasetMetadata(
         repo_id if repo_id is not None else str(local_root), root=local_root, revision=revision
@@ -369,9 +352,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
     """Map-style dataset over a Lance-backed LeRobot dataset.
 
     Returns the same item dict as :class:`LeRobotDataset` and satisfies the same
-    duck-typed contract, so the training pipeline consumes it unchanged. Implements
-    batched ``__getitems__``: a batch's rows (including delta-timestamp windows)
-    are fetched from the frames table in one deduplicated read.
+    duck-typed contract.
 
     Args:
         repo_id: Hub dataset repo; tables stream over ``hf://``, only ``meta/`` downloads.
@@ -426,8 +407,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
                 f"Image-backed features are not supported by LanceDBDataset: {self.meta.image_keys}. "
                 "Re-encode them as video."
             )
-        # Depth videos carry 16-bit planes torchcodec cannot emit; they decode
-        # through pyav over the same prefetched sources.
+        # Depth videos decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
         if self.meta.depth_keys:
             self.meta.rescale_depth_stats(self._depth_output_unit)
@@ -446,11 +426,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
             check_delta_timestamps(delta_timestamps, self.meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, self.meta.fps)
 
-        # Episode boundaries (absolute frame index space) for delta clamping + padding.
         self._ep_from = self._episode_numpy("dataset_from_index", np.int64)
         self._ep_to = self._episode_numpy("dataset_to_index", np.int64)
-        # Integrity: episode ranges must tile [0, total_frames) exactly — a cheap guard
-        # so broken or incomplete meta fails at open, not as silently wrong samples.
+        # episode ranges must tile [0, total_frames) exactly
         if len(self._ep_from) and (
             int(self._ep_from[0]) != 0
             or int(self._ep_to[-1]) != self.meta.total_frames
