@@ -317,3 +317,69 @@ def test_xvla_inference_reproducibility(policy, preprocessor):
     assert torch.allclose(actions_1, actions_2, atol=1e-6), "Inference should be reproducible!"
 
     print("\nInference is reproducible!")
+
+
+def test_reconcile_xvla_processors():
+    """Test that reconcile_xvla_processors injects missing pre/post processor steps."""
+    from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+    from lerobot.policies.xvla.processor_xvla import (
+        XVLAImageNetNormalizeProcessorStep,
+        XVLARotation6DToAxisAngleProcessorStep,
+        reconcile_xvla_processors,
+    )
+    from lerobot.processor import (
+        DeviceProcessorStep,
+        PolicyProcessorPipeline,
+    )
+
+    config = XVLAConfig()
+
+    # Case 1: Incomplete pre/post processors missing XVLAImageNetNormalizeProcessorStep and XVLARotation6DToAxisAngleProcessorStep
+    incomplete_pre = PolicyProcessorPipeline(steps=[DeviceProcessorStep()])
+    incomplete_post = PolicyProcessorPipeline(steps=[])
+
+    reconciled_pre, reconciled_post = reconcile_xvla_processors(
+        config, incomplete_pre, incomplete_post
+    )
+
+    pre_step_types = [type(s) for s in reconciled_pre.steps]
+    post_step_types = [type(s) for s in reconciled_post.steps]
+
+    assert XVLAImageNetNormalizeProcessorStep in pre_step_types
+    # Verify XVLAImageNetNormalizeProcessorStep is placed before DeviceProcessorStep
+    imagenet_idx = pre_step_types.index(XVLAImageNetNormalizeProcessorStep)
+    device_idx = pre_step_types.index(DeviceProcessorStep)
+    assert imagenet_idx < device_idx
+
+    assert XVLARotation6DToAxisAngleProcessorStep in post_step_types
+
+    # Case 2: Idempotency check - calling reconcile twice should not duplicate steps
+    reconciled_pre, reconciled_post = reconcile_xvla_processors(
+        config, reconciled_pre, reconciled_post
+    )
+
+    assert [type(s) for s in reconciled_pre.steps].count(XVLAImageNetNormalizeProcessorStep) == 1
+    assert [type(s) for s in reconciled_post.steps].count(XVLARotation6DToAxisAngleProcessorStep) == 1
+
+
+def test_make_pre_post_processors_xvla_reconciliation():
+    """Test make_pre_post_processors automatically reconciles XVLA processors when loading pretrained config."""
+    from lerobot.configs import PreTrainedConfig
+    from lerobot.policies.factory import make_pre_post_processors
+
+    cfg = PreTrainedConfig.from_pretrained(
+        "lerobot/xvla-libero",
+        revision="12e8783e996944f5c97e490d37d4c145484ed70a",
+    )
+    pre, post = make_pre_post_processors(
+        cfg,
+        pretrained_path="lerobot/xvla-libero",
+        preprocessor_overrides={"device_processor": {"device": "cpu"}},
+    )
+
+    pre_step_names = [type(s).__name__ for s in pre.steps]
+    post_step_names = [type(s).__name__ for s in post.steps]
+
+    assert "XVLAImageNetNormalizeProcessorStep" in pre_step_names
+    assert "XVLARotation6DToAxisAngleProcessorStep" in post_step_names
+

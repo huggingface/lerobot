@@ -533,3 +533,27 @@ def make_xvla_libero_pre_post_processors() -> tuple[
             steps=post_processor_steps,
         ),
     )
+
+
+def reconcile_xvla_processors(
+    config: XVLAConfig,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Reconcile XVLA pre/post-processors loaded from HuggingFace Hub with required pipeline steps."""
+    step_types_pre = {type(s) for s in preprocessor.steps}
+    step_types_post = {type(s) for s in postprocessor.steps}
+
+    if XVLAImageNetNormalizeProcessorStep not in step_types_pre:
+        idx = len(preprocessor.steps)
+        for i, step in enumerate(preprocessor.steps):
+            if step.__class__.__name__ == "DeviceProcessorStep":
+                idx = i
+                break
+        preprocessor.steps.insert(idx, XVLAImageNetNormalizeProcessorStep())
+
+    if XVLARotation6DToAxisAngleProcessorStep not in step_types_post:
+        postprocessor.steps.append(XVLARotation6DToAxisAngleProcessorStep())
+
+    return preprocessor, postprocessor
+
