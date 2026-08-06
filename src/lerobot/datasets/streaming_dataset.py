@@ -16,8 +16,7 @@
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
-from typing import Literal
-from typing import TypeVar, Generic
+from typing import TypeVar, Generic, Literal
 
 import datasets
 import numpy as np
