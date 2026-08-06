@@ -43,16 +43,24 @@ class Reachy2CameraConfig(CameraConfig):
     )  # Left teleop camera, 640x480 @ 30FPS
     ```
 
-    **Attributes**:
-        - **name** (`str`) -- Name of the camera device. Can be "teleop" or "depth".
-        - **image_type** (`str`) -- Type of image stream. For "teleop" camera, can be "left" or "right". For
-          "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
-        - **fps** -- Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
-        - **width** -- Requested frame width in pixels for the color stream.
-        - **height** -- Requested frame height in pixels for the color stream.
-        - **color_mode** (`ColorMode`) -- Color mode for image output (RGB or BGR). Defaults to RGB.
-        - **ip_address** (`str | None`) -- IP address of the robot. Defaults to "localhost".
-        - **port** (`int`) -- Port number for the camera server. Defaults to 50065.
+    Args:
+        name (`str`):
+            Name of the camera device. Either `"teleop"` or `"depth"`.
+        image_type (`str`):
+            Type of image stream. For the `"teleop"` camera, either `"left"` or `"right"`. For the
+            `"depth"` camera, either `"rgb"` or `"depth"` (depth is not supported yet).
+        color_mode (`ColorMode`, *optional*, defaults to `ColorMode.RGB`):
+            Color mode for image output.
+        ip_address (`str`, *optional*, defaults to `"localhost"`):
+            IP address of the robot.
+        port (`int`, *optional*, defaults to 50065):
+            Port number for the camera server.
+        fps (`int`, *optional*):
+            Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
+        width (`int`, *optional*):
+            Requested frame width in pixels for the color stream.
+        height (`int`, *optional*):
+            Requested frame height in pixels for the color stream.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -65,6 +73,11 @@ class Reachy2CameraConfig(CameraConfig):
     port: int = 50065
 
     def __post_init__(self) -> None:
+        """Normalize `color_mode` and validate `name`/`image_type`.
+
+        Raises:
+            ValueError: If `name` is not `"teleop"`/`"depth"`, or `image_type` is not valid for `name`.
+        """
         if self.name not in ["teleop", "depth"]:
             raise ValueError(f"`name` is expected to be 'teleop' or 'depth', but {self.name} is provided.")
         if (self.name == "teleop" and self.image_type not in ["left", "right"]) or (

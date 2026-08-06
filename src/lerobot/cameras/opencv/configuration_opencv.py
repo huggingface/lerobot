@@ -40,20 +40,28 @@ class OpenCVCameraConfig(CameraConfig):
     OpenCVCameraConfig(0, 30, 1280, 720, fourcc="YUYV")     # With YUYV format
     ```
 
-    **Attributes**:
-        - **index_or_path** (`int | Path`) -- Either an integer representing the camera device index, or a
-          Path object pointing to a video file.
-        - **fps** -- Requested frames per second for the color stream.
-        - **width** -- Requested frame width in pixels for the color stream.
-        - **height** -- Requested frame height in pixels for the color stream.
-        - **color_mode** (`ColorMode`) -- Color mode for image output (RGB or BGR). Defaults to RGB.
-        - **rotation** (`Cv2Rotation`) -- Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no
-          rotation.
-        - **warmup_s** (`int`) -- Time reading frames before returning from connect (in seconds)
-        - **fourcc** (`str | None`) -- FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults
-          to None (auto-detect).
-        - **backend** (`Cv2Backends`) -- OpenCV backend identifier
-          (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
+    Args:
+        index_or_path (`int | Path`):
+            Either an integer representing the camera device index, or a Path object pointing to a video
+            file.
+        color_mode (`ColorMode`, *optional*, defaults to `ColorMode.RGB`):
+            Color mode for image output.
+        rotation (`Cv2Rotation`, *optional*, defaults to `Cv2Rotation.NO_ROTATION`):
+            Image rotation setting (0°, 90°, 180°, or 270°).
+        warmup_s (`int`, *optional*, defaults to 1):
+            Time reading frames before returning from connect (in seconds).
+        fourcc (`str`, *optional*):
+            FOURCC code for video format (e.g., `"MJPG"`, `"YUYV"`, `"I420"`). `None` auto-detects.
+        backend (`Cv2Backends`, *optional*, defaults to `Cv2Backends.ANY`):
+            OpenCV backend identifier. See [`~cameras.Cv2Backends`] for the supported values.
+        fps (`int`, *optional*):
+            Requested frames per second for the color stream. `None` leaves it at the backend's default.
+        width (`int`, *optional*):
+            Requested frame width in pixels for the color stream. `None` leaves it at the backend's
+            default.
+        height (`int`, *optional*):
+            Requested frame height in pixels for the color stream. `None` leaves it at the backend's
+            default.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -69,6 +77,11 @@ class OpenCVCameraConfig(CameraConfig):
     backend: Cv2Backends = Cv2Backends.ANY
 
     def __post_init__(self) -> None:
+        """Normalize `color_mode`, `rotation`, and `backend`, and validate `fourcc`.
+
+        Raises:
+            ValueError: If `fourcc` is set and is not a 4-character string.
+        """
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
         self.backend = Cv2Backends(self.backend)

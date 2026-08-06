@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Provides the RealSenseCamera class for capturing frames from Intel RealSense cameras.
-"""
+"""Provides the RealSenseCamera class for capturing frames from Intel RealSense cameras."""
 
 import logging
 import sys
@@ -46,8 +44,7 @@ pkg_name = "pyrealsense2-macosx" if sys.platform == "darwin" else "pyrealsense2"
 
 
 class RealSenseCamera(Camera):
-    """
-    Manages interactions with Intel RealSense cameras for frame and depth recording.
+    """Manages interactions with Intel RealSense cameras for frame and depth recording.
 
     This class provides an interface similar to `OpenCVCamera` but tailored for
     RealSense devices, leveraging the `pyrealsense2` library. It uses the camera's
@@ -115,8 +112,7 @@ class RealSenseCamera(Camera):
     _MAX_CONNECT_ATTEMPTS = 3
 
     def __init__(self, config: RealSenseCameraConfig):
-        """
-        Initializes the RealSenseCamera instance.
+        """Initializes the RealSenseCamera instance.
 
         Args:
             config: The configuration settings for the camera.
@@ -161,6 +157,7 @@ class RealSenseCamera(Camera):
         self._reset_connection_settings()
 
     def __str__(self) -> str:
+        """Return a short representation naming the class and its `serial_number`."""
         return f"{self.__class__.__name__}({self.serial_number})"
 
     def _reset_connection_settings(self) -> None:
@@ -250,8 +247,7 @@ class RealSenseCamera(Camera):
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
-        """
-        Connects to the RealSense camera specified in the configuration.
+        """Connects to the RealSense camera specified in the configuration.
 
         Initializes the RealSense pipeline, configures the required streams (color
         and optionally depth), starts the pipeline, and validates the actual stream settings.
@@ -270,7 +266,6 @@ class RealSenseCamera(Camera):
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
-
         if not warmup:
             self._open_pipeline()
             logger.info(f"{self} connected.")
@@ -306,8 +301,7 @@ class RealSenseCamera(Camera):
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
-        """
-        Detects available Intel RealSense cameras connected to the system.
+        """Detects available Intel RealSense cameras connected to the system.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
@@ -406,7 +400,6 @@ class RealSenseCamera(Camera):
         Raises:
             DeviceNotConnectedError: If device is not connected.
         """
-
         if self.rs_profile is None:
             raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
 
@@ -544,8 +537,7 @@ class RealSenseCamera(Camera):
 
     @check_if_not_connected
     def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
-        """
-        Reads a single frame (depth) synchronously from the camera.
+        """Reads a single frame (depth) synchronously from the camera.
 
         This is a blocking call. It waits for a coherent set of frames (depth)
         from the camera hardware via the RealSense pipeline.
@@ -583,8 +575,7 @@ class RealSenseCamera(Camera):
 
     @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 0) -> NDArray[Any]:
-        """
-        Reads a single frame (color) synchronously from the camera.
+        """Reads a single frame (color) synchronously from the camera.
 
         This is a blocking call. It waits for a coherent set of frames (color)
         from the camera hardware via the RealSense pipeline.
@@ -598,7 +589,6 @@ class RealSenseCamera(Camera):
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
             ValueError: If an invalid `color_mode` is requested.
         """
-
         start_time = time.perf_counter()
 
         if color_mode is not None:
@@ -622,11 +612,12 @@ class RealSenseCamera(Camera):
         return frame
 
     def _postprocess_image(self, image: NDArray[Any], depth_frame: bool = False) -> NDArray[Any]:
-        """
-        Applies color conversion, dimension validation, and rotation to a raw color frame.
+        """Applies color conversion, dimension validation, and rotation to a raw color frame.
 
         Args:
             image (np.ndarray): The raw image frame (expected RGB format from RealSense).
+            depth_frame (bool): Whether `image` is a single-channel depth frame rather than a 3-channel
+                color frame.
 
         Returns:
             np.ndarray: The processed image frame according to `self.color_mode` and `self.rotation`.
@@ -636,7 +627,6 @@ class RealSenseCamera(Camera):
             RuntimeError: If the raw frame dimensions do not match the configured
                           `width` and `height`.
         """
-
         if self.color_mode and self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
                 f"Invalid requested color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
@@ -665,8 +655,7 @@ class RealSenseCamera(Camera):
         return processed_image
 
     def _read_loop(self) -> None:
-        """
-        Internal loop run by the background thread for asynchronous reading.
+        """Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
         1. Reads a color/depth frame (blocking call with 10s timeout)
@@ -790,8 +779,7 @@ class RealSenseCamera(Camera):
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """
-        Reads the latest available frame data (color) asynchronously.
+        """Reads the latest available frame data (color) asynchronously.
 
         This method retrieves the most recent color frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
@@ -811,7 +799,6 @@ class RealSenseCamera(Camera):
             TimeoutError: If no frame data becomes available within the specified timeout.
             RuntimeError: If the background thread died unexpectedly or another error occurs.
         """
-
         if not self.use_rgb:
             raise RuntimeError(f"{self}: cannot read color — camera was configured with use_rgb=False.")
 
@@ -897,15 +884,13 @@ class RealSenseCamera(Camera):
         return self._read_latest(max_age_ms=max_age_ms, read_depth=True)
 
     def disconnect(self) -> None:
-        """
-        Disconnects from the camera, stops the pipeline, and cleans up resources.
+        """Disconnects from the camera, stops the pipeline, and cleans up resources.
 
         Stops the background read thread (if running) and stops the RealSense pipeline.
 
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected (pipeline not running).
         """
-
         if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(
                 f"Attempted to disconnect {self}, but it appears already disconnected."
