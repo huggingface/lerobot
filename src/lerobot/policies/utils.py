@@ -131,6 +131,12 @@ def prepare_observation_for_inference(
         A dictionary where values are PyTorch tensors preprocessed for
         inference, residing on the target device. Image tensors are reshaped
         to (C, H, W) and normalized to a [0, 1] range.
+
+    Performance note: independently measured live on real SO-101 hardware
+    (`Experiments/engineering/Engineering.md`, 2026-08-05, prior to this ordering fix): this
+    function was the single largest cost in the rollout control loop by a wide margin (~67% of
+    total loop time, ~4x the trained model's own forward pass) -- profile before assuming a
+    change like this actually matters for your workload, but it did for this one.
     """
     for name in observation:
         tensor = torch.from_numpy(observation[name]).to(device)
