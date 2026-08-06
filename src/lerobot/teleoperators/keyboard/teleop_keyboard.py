@@ -312,10 +312,10 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         System:
             - ESC: Disconnect teleoperator
 
-    Attributes:
-        config: Teleoperator configuration
-        current_linear_speed: Current linear velocity magnitude
-        current_angular_speed: Current angular velocity magnitude
+    **Attributes**:
+        - **config** -- Teleoperator configuration
+        - **current_linear_speed** -- Current linear velocity magnitude
+        - **current_angular_speed** -- Current angular velocity magnitude
 
     Example:
         ```python

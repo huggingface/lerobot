@@ -43,16 +43,16 @@ class Reachy2CameraConfig(CameraConfig):
     )  # Left teleop camera, 640x480 @ 30FPS
     ```
 
-    Attributes:
-        name: Name of the camera device. Can be "teleop" or "depth".
-        image_type: Type of image stream. For "teleop" camera, can be "left" or "right".
-                    For "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
-        fps: Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
-        width: Requested frame width in pixels for the color stream.
-        height: Requested frame height in pixels for the color stream.
-        color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        ip_address: IP address of the robot. Defaults to "localhost".
-        port: Port number for the camera server. Defaults to 50065.
+    **Attributes**:
+        - **name** (`str`) -- Name of the camera device. Can be "teleop" or "depth".
+        - **image_type** (`str`) -- Type of image stream. For "teleop" camera, can be "left" or "right". For
+          "depth" camera, can be "rgb" or "depth". (depth is not supported yet)
+        - **fps** -- Requested frames per second for the color stream. Not configurable for Reachy 2 cameras.
+        - **width** -- Requested frame width in pixels for the color stream.
+        - **height** -- Requested frame height in pixels for the color stream.
+        - **color_mode** (`ColorMode`) -- Color mode for image output (RGB or BGR). Defaults to RGB.
+        - **ip_address** (`str | None`) -- IP address of the robot. Defaults to "localhost".
+        - **port** (`int`) -- Port number for the camera server. Defaults to 50065.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.

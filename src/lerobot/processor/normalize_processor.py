@@ -71,22 +71,23 @@ class _NormalizationMixin:
         )
         ```
 
-    Attributes:
-        features: A dictionary mapping feature names to `PolicyFeature` objects, defining
-            the data structure to be processed.
-        norm_map: A dictionary mapping `FeatureType` to `NormalizationMode`, specifying
-            which normalization method to use for each type of feature.
-        stats: A dictionary containing the normalization statistics (e.g., mean, std,
-            min, max) for each feature.
-        device: The PyTorch device on which to store and perform tensor operations.
-        eps: A small epsilon value to prevent division by zero in normalization
-            calculations.
-        normalize_observation_keys: An optional set of keys to selectively apply
-            normalization to specific observation features.
-        _tensor_stats: An internal dictionary holding the normalization statistics as
-            PyTorch tensors.
-        _stats_explicitly_provided: Internal flag tracking whether stats were explicitly
-            provided during construction (used for override preservation).
+    **Attributes**:
+        - **features** (`dict[str, PolicyFeature]`) -- A dictionary mapping feature names to `PolicyFeature`
+          objects, defining the data structure to be processed.
+        - **norm_map** (`dict[FeatureType, NormalizationMode]`) -- A dictionary mapping `FeatureType` to
+          `NormalizationMode`, specifying which normalization method to use for each type of feature.
+        - **stats** (`dict[str, dict[str, Any]] | None`) -- A dictionary containing the normalization
+          statistics (e.g., mean, std, min, max) for each feature.
+        - **device** (`torch.device | str | None`) -- The PyTorch device on which to store and perform tensor
+          operations.
+        - **eps** (`float`) -- A small epsilon value to prevent division by zero in normalization
+          calculations.
+        - **normalize_observation_keys** (`set[str] | None`) -- An optional set of keys to selectively apply
+          normalization to specific observation features.
+        - **_tensor_stats** (`dict[str, dict[str, Tensor]]`) -- An internal dictionary holding the
+          normalization statistics as PyTorch tensors.
+        - **_stats_explicitly_provided** (`bool`) -- Internal flag tracking whether stats were explicitly
+          provided during construction (used for override preservation).
     """
 
     features: dict[str, PolicyFeature]

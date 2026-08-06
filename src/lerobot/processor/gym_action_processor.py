@@ -33,10 +33,9 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     This step is useful when the output of a policy (typically a torch.Tensor)
     needs to be passed to an environment or component that expects a NumPy array.
 
-    Attributes:
-        squeeze_batch_dim: If True, removes the first dimension of the array
-                           if it is of size 1. This is useful for converting a
-                           batched action of size (1, D) to a single action of size (D,).
+    **Attributes**:
+        - **squeeze_batch_dim** (`bool`) -- If True, removes the first dimension of the array if it is of size
+          1. This is useful for converting a batched action of size (1, D) to a single action of size (D,).
     """
 
     squeeze_batch_dim: bool = True

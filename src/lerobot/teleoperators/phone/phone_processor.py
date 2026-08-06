@@ -35,9 +35,9 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
     necessary axis inversions and swaps. It also interprets platform-specific
     button presses to generate a gripper command.
 
-    Attributes:
-        platform: The operating system of the phone (iOS or Android), used
-            to determine the correct button mappings for the gripper.
+    **Attributes**:
+        - **platform** (`PhoneOS`) -- The operating system of the phone (iOS or Android), used to determine
+          the correct button mappings for the gripper.
     """
 
     # TODO(Steven): Gripper vel could be output of phone_teleop directly

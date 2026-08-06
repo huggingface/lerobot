@@ -32,9 +32,8 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     It decomposes the vector into named components for delta movements of the
     end-effector (x, y, z) and optionally the gripper.
 
-    Attributes:
-        use_gripper: If True, assumes the 4th element of the tensor is the
-                     gripper action.
+    **Attributes**:
+        - **use_gripper** (`bool`) -- If True, assumes the 4th element of the tensor is the gripper action.
     """
 
     use_gripper: bool = True
@@ -81,10 +80,10 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     into a target action format that includes an "enabled" flag and target
     end-effector positions. It also handles scaling and noise filtering.
 
-    Attributes:
-        position_scale: A factor to scale the delta position inputs.
-        noise_threshold: The magnitude below which delta inputs are considered noise
-                         and do not trigger an "enabled" state.
+    **Attributes**:
+        - **position_scale** (`float`) -- A factor to scale the delta position inputs.
+        - **noise_threshold** (`float`) -- The magnitude below which delta inputs are considered noise and do
+          not trigger an "enabled" state.
     """
 
     # Scale factors for delta movements

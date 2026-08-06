@@ -23,6 +23,58 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("reachy2")
 @dataclass
 class Reachy2RobotConfig(RobotConfig):
+    """Configuration for the Reachy 2 humanoid.
+
+    Reachy 2 is driven over the network rather than a serial bus, so `port` is a TCP port on the robot's
+    gRPC service rather than a device path. Calibration is handled by the robot itself and there is no
+    LeRobot calibration file.
+
+    Which joints appear in observations and actions is selected by the `with_*` flags: turning a part off
+    removes its joints entirely. At least one part must stay enabled.
+
+    Args:
+        max_relative_target (`float`, *optional*):
+            Caps how far a single action may move a joint from its present position, as a safety limit.
+            `None` disables clipping.
+        ip_address (`str`, *optional*, defaults to `"localhost"`):
+            Address of the Reachy 2 robot.
+        port (`int`, *optional*, defaults to 50065):
+            TCP port of the robot's service. Not a serial port.
+        disable_torque_on_disconnect (`bool`, *optional*, defaults to `False`):
+            Whether to call `turn_off_smoothly()` before disconnecting.
+        use_external_commands (`bool`, *optional*, defaults to `False`):
+            Set `True` when another system drives the robot, such as the official
+            [teleoperation app](https://github.com/pollen-robotics/Reachy2Teleoperation). In that mode
+            [`~robots.Robot.send_action`] does not send anything to the robot.
+        with_mobile_base (`bool`, *optional*, defaults to `True`):
+            Whether to include the mobile base's joints.
+        with_l_arm (`bool`, *optional*, defaults to `True`):
+            Whether to include the left arm's joints.
+        with_r_arm (`bool`, *optional*, defaults to `True`):
+            Whether to include the right arm's joints.
+        with_neck (`bool`, *optional*, defaults to `True`):
+            Whether to include the neck's joints.
+        with_antennas (`bool`, *optional*, defaults to `True`):
+            Whether to include the antennas' joints.
+        with_left_teleop_camera (`bool`, *optional*, defaults to `False`):
+            Whether to add the left teleoperation camera to observations.
+        with_right_teleop_camera (`bool`, *optional*, defaults to `False`):
+            Whether to add the right teleoperation camera to observations.
+        with_torso_camera (`bool`, *optional*, defaults to `False`):
+            Whether to add the torso RGB camera to observations.
+        camera_width (`int`, *optional*, defaults to 640):
+            Frame width for the built-in cameras. Their frame rate is fixed at 30 and is not configurable.
+        camera_height (`int`, *optional*, defaults to 480):
+            Frame height for the built-in cameras.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Additional cameras beyond the three built-in ones. The `with_*_camera` flags populate this
+            field, so anything set here is merged with them.
+        id (`str`, *optional*):
+            Identifier for this particular robot.
+        calibration_dir (`Path`, *optional*):
+            Unused: Reachy 2 manages its own calibration.
+    """
+
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors.
     max_relative_target: float | None = None
@@ -65,6 +117,11 @@ class Reachy2RobotConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Add the built-in cameras selected by the `with_*_camera` flags and validate the part selection.
+
+        Raises:
+            ValueError: If every robot part is disabled, which would leave no joints to control.
+        """
         # Add cameras with same ip_address as the robot
         if self.with_left_teleop_camera:
             self.cameras["teleop_left"] = Reachy2CameraConfig(

@@ -37,15 +37,22 @@ logger = logging.getLogger(__name__)
 
 
 class OpenArmFollower(Robot):
-    """
-    OpenArms Follower Robot which uses CAN bus communication to control 7 DOF arm with a gripper.
-    The arm uses Damiao motors in MIT control mode.
+    """The OpenArm follower: a 7-DOF arm plus gripper on a CAN bus.
+
+    Uses Damiao motors in MIT control mode. See [`~robots.Robot`] for the contract every method here
+    implements.
     """
 
     config_class = OpenArmFollowerConfig
     name = "openarm_follower"
 
     def __init__(self, config: OpenArmFollowerConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`OpenArmFollowerConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         super().__init__(config)
         self.config = config
 
@@ -127,13 +134,11 @@ class OpenArmFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        Connect to the robot and optionally calibrate.
+        """Connect to the robot and optionally calibrate.
 
         We assume that at connection time, the arms are in a safe rest position,
         and torque can be safely disabled to run calibration if needed.
         """
-
         # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
         self.bus.connect()
@@ -160,8 +165,7 @@ class OpenArmFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        """
-        Run calibration procedure for OpenArms robot.
+        """Run calibration procedure for OpenArms robot.
 
         The calibration procedure:
         1. Disable torque
@@ -217,14 +221,18 @@ class OpenArmFollower(Robot):
             self.bus.configure_motors()
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        """
-        Get current observation from robot including position, velocity, and torque.
+        """Get current observation from robot including position, velocity, and torque.
 
         Reads all motor states (pos/vel/torque) in one CAN refresh cycle
         instead of 3 separate reads.
@@ -268,8 +276,7 @@ class OpenArmFollower(Robot):
         custom_kp: dict[str, float] | None = None,
         custom_kd: dict[str, float] | None = None,
     ) -> RobotAction:
-        """
-        Send action command to robot.
+        """Send action command to robot.
 
         The action magnitude may be clipped based on safety limits.
 
@@ -281,7 +288,6 @@ class OpenArmFollower(Robot):
         Returns:
             The action actually sent (potentially clipped)
         """
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Apply joint limit clipping to arm
@@ -343,7 +349,6 @@ class OpenArmFollower(Robot):
     @check_if_not_connected
     def disconnect(self):
         """Disconnect from robot."""
-
         # Disconnect CAN bus
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
 
