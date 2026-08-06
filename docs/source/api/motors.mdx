@@ -21,3 +21,56 @@ See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 ## MotorNormMode
 
 [[autodoc]] lerobot.motors.MotorNormMode
+
+## DynamixelMotorsBus
+
+[[autodoc]] lerobot.motors.dynamixel.DynamixelMotorsBus
+    - all
+    - is_calibrated
+
+## Dynamixel OperatingMode
+
+[[autodoc]] lerobot.motors.dynamixel.OperatingMode
+
+## Dynamixel DriveMode
+
+[[autodoc]] lerobot.motors.dynamixel.DriveMode
+
+## Dynamixel TorqueMode
+
+[[autodoc]] lerobot.motors.dynamixel.TorqueMode
+
+## FeetechMotorsBus
+
+[[autodoc]] lerobot.motors.feetech.FeetechMotorsBus
+    - all
+    - is_calibrated
+
+## Feetech OperatingMode
+
+[[autodoc]] lerobot.motors.feetech.OperatingMode
+
+## Feetech DriveMode
+
+[[autodoc]] lerobot.motors.feetech.DriveMode
+
+## Feetech TorqueMode
+
+[[autodoc]] lerobot.motors.feetech.TorqueMode
+
+## DamiaoMotorsBus
+
+CAN-based bus for Damiao arms. Motors must be switched to MIT control mode to be compatible.
+
+[[autodoc]] lerobot.motors.damiao.DamiaoMotorsBus
+    - all
+    - is_connected
+    - is_calibrated
+
+## RobstrideMotorsBus
+
+CAN-based bus for Robstride motors. Motors must be switched to MIT control mode to be compatible.
+
+[[autodoc]] lerobot.motors.robstride.RobstrideMotorsBus
+    - all
+    - is_connected
