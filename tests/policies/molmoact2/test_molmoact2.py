@@ -271,6 +271,35 @@ def test_molmoact2_policy_optimizer_groups_keep_legacy_checkpoint_schema():
     assert all("group_name" not in group for group in groups)
 
 
+def test_molmoact2_additional_vocabulary_uses_official_connector_optimizer_group():
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(
+        train_mode_vlm="fft",
+        optimizer_lr=1e-5,
+        optimizer_vit_lr=2e-5,
+        optimizer_connector_lr=3e-5,
+        optimizer_action_expert_lr=4e-5,
+    )
+    policy.llm = torch.nn.Linear(2, 2)
+    policy.transformer = torch.nn.Module()
+    policy.transformer.wte = torch.nn.Module()
+    policy.transformer.wte.register_parameter(
+        "new_embedding",
+        torch.nn.Parameter(torch.zeros(128, 2)),
+    )
+    policy.vision = torch.nn.Linear(2, 2)
+    policy.image_projector = torch.nn.Linear(2, 2)
+    policy.action_expert = torch.nn.Linear(2, 2)
+
+    groups = policy.get_optim_params()
+    new_embedding = policy.transformer.wte.new_embedding
+    memberships = [any(param is new_embedding for param in group["params"]) for group in groups]
+
+    assert memberships == [False, False, True, False]
+    assert groups[2]["lr"] == pytest.approx(policy.config.optimizer_connector_lr)
+
+
 def test_molmoact2_lora_uses_published_uniform_adapter_learning_rate():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)

@@ -915,6 +915,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 continue
             if "action_expert" in name:
                 action_expert_params.append(param)
+            # Native MolmoAct2 explicitly owns the checkpoint's additional
+            # vocabulary table under get_connector_parameters().  It remains
+            # trainable for the published ft_embedding="lm_head" FFT recipe,
+            # so route it to the connector LR and independent clip group even
+            # though it is structurally nested below the text embedding.
+            elif ".wte.new_embedding" in name:
+                connector_params.append(param)
             elif any(part in name for part in ("image_pooling_2d", "image_projector")):
                 connector_params.append(param)
             elif any(part in name for part in ("vision", "image_encoder", "vit")):
