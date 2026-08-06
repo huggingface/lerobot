@@ -191,6 +191,8 @@
 - sections:
   - local: contributing
     title: Contribute to LeRobot
+  - local: writing_docstrings
+    title: Writing docstrings
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
