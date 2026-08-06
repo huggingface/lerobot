@@ -23,7 +23,23 @@ from ..rebot_102_leader import RebotArm102LeaderConfig
 @TeleoperatorConfig.register_subclass("bi_rebot_102_leader")
 @dataclass
 class BiRebot102LeaderConfig(TeleoperatorConfig):
-    """Configuration class for the bimanual reBot Arm 102 leader teleoperator."""
+    """Configuration class for the bimanual reBot Arm 102 leader teleoperator.
+
+    Args:
+        left_arm_config (`RebotArm102LeaderConfig`):
+            Configuration of the left [`~teleoperators.rebot_102_leader.RebotArm102Leader`] arm. Its
+            `id` and `calibration_dir` are ignored; the bimanual `id` and `calibration_dir` below are
+            used for both arms instead.
+        right_arm_config (`RebotArm102LeaderConfig`):
+            Configuration of the right [`~teleoperators.rebot_102_leader.RebotArm102Leader`] arm. Same
+            caveat as `left_arm_config`.
+        id (`str`, *optional*):
+            Identifier for this particular unit; also names the calibration files for both arms
+            (suffixed `_left` / `_right`).
+        calibration_dir (`Path`, *optional*):
+            Where to read and write both arms' calibration files. Defaults to the LeRobot calibration
+            home.
+    """
 
     left_arm_config: RebotArm102LeaderConfig
     right_arm_config: RebotArm102LeaderConfig

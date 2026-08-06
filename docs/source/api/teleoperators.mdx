@@ -28,3 +28,231 @@ See [Phone teleoperation](../phone_teleop) and [Isaac Teleop](../isaac_teleop) f
 ## make_teleoperator_from_config
 
 [[autodoc]] lerobot.teleoperators.make_teleoperator_from_config
+
+## SO-100 and SO-101 leaders
+
+`SO100Leader` and `SO101Leader` are aliases of the same `SOLeader` class; the two arms differ in their
+configuration, not their control code. `SO100LeaderConfig` and `SO101LeaderConfig` are likewise aliases of
+`SOLeaderTeleopConfig`.
+
+[[autodoc]] lerobot.teleoperators.so_leader.SOLeader
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.so_leader.SOLeaderTeleopConfig
+
+## KochLeader
+
+[[autodoc]] lerobot.teleoperators.koch_leader.KochLeader
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.koch_leader.KochLeaderConfig
+
+## OmxLeader
+
+[[autodoc]] lerobot.teleoperators.omx_leader.OmxLeader
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.omx_leader.OmxLeaderConfig
+
+## OpenArmLeader
+
+CAN-based leader arm using Damiao motors.
+
+[[autodoc]] lerobot.teleoperators.openarm_leader.OpenArmLeader
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.openarm_leader.OpenArmLeaderConfig
+
+## BiOpenArmLeader
+
+A bimanual pair of `OpenArmLeader` arms.
+
+[[autodoc]] lerobot.teleoperators.bi_openarm_leader.BiOpenArmLeader
+    - all
+
+[[autodoc]] lerobot.teleoperators.bi_openarm_leader.BiOpenArmLeaderConfig
+
+## OpenArmMini
+
+CAN-based leader arm using Damiao motors, a smaller/simpler OpenArm variant.
+
+[[autodoc]] lerobot.teleoperators.openarm_mini.OpenArmMini
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.openarm_mini.OpenArmMiniConfig
+
+## BiOpenArmMini
+
+A bimanual pair of `OpenArmMini` arms.
+
+[[autodoc]] lerobot.teleoperators.bi_openarm_mini.BiOpenArmMini
+    - all
+
+[[autodoc]] lerobot.teleoperators.bi_openarm_mini.BiOpenArmMiniConfig
+
+## HomunculusArm
+
+A wearable exoskeleton arm read over a serial link.
+
+[[autodoc]] lerobot.teleoperators.homunculus.HomunculusArm
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.homunculus.HomunculusArmConfig
+
+## HomunculusGlove
+
+A wearable exoskeleton glove read over a serial link, remapped to HopeJR hand joints via
+`homunculus_glove_to_hope_jr_hand`.
+
+[[autodoc]] lerobot.teleoperators.homunculus.HomunculusGlove
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.homunculus.HomunculusGloveConfig
+
+[[autodoc]] lerobot.teleoperators.homunculus.homunculus_glove_to_hope_jr_hand
+
+## RebotArm102Leader
+
+[[autodoc]] lerobot.teleoperators.rebot_102_leader.RebotArm102Leader
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.rebot_102_leader.RebotArm102LeaderTeleopConfig
+
+## BiRebot102Leader
+
+A bimanual pair of `RebotArm102Leader` arms.
+
+[[autodoc]] lerobot.teleoperators.bi_rebot_102_leader.BiRebot102Leader
+    - all
+
+[[autodoc]] lerobot.teleoperators.bi_rebot_102_leader.BiRebot102LeaderConfig
+
+## BiSOLeader
+
+A bimanual pair of `SOLeader` arms.
+
+[[autodoc]] lerobot.teleoperators.bi_so_leader.BiSOLeader
+    - all
+
+[[autodoc]] lerobot.teleoperators.bi_so_leader.BiSOLeaderConfig
+
+## Phone
+
+Reads pose and touch input from a phone app (iOS or Android).
+
+[[autodoc]] lerobot.teleoperators.phone.Phone
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.phone.PhoneConfig
+
+## Keyboard
+
+`KeyboardTeleop`, `KeyboardEndEffectorTeleop`, and `KeyboardRoverTeleop` read key-press events for manual
+control, targeting joint-space, end-effector, or mobile-base actions respectively.
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardTeleop
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardTeleopConfig
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardEndEffectorTeleop
+    - all
+    - action_features
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardEndEffectorTeleopConfig
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardRoverTeleop
+    - all
+    - action_features
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.keyboard.KeyboardRoverTeleopConfig
+
+## GamepadTeleop
+
+Reads joystick/button input from a gamepad via pygame.
+
+[[autodoc]] lerobot.teleoperators.gamepad.GamepadTeleop
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+
+[[autodoc]] lerobot.teleoperators.gamepad.GamepadTeleopConfig
+
+## UnitreeG1Teleoperator
+
+A wearable exoskeleton for teleoperating the Unitree G1 humanoid's arms, mapping exoskeleton joint angles to
+G1 end-effector poses via forward/inverse kinematics.
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.UnitreeG1Teleoperator
+    - all
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.UnitreeG1TeleoperatorConfig
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.ExoskeletonArm
+    - all
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.ExoskeletonArmPortConfig
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.ExoskeletonIKHelper
+    - all
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.ExoskeletonCalibration
+
+[[autodoc]] lerobot.teleoperators.unitree_g1.ExoskeletonJointCalibration
+
+## Reachy2Teleoperator
+
+[[autodoc]] lerobot.teleoperators.reachy2_teleoperator.Reachy2Teleoperator
+    - all
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+[[autodoc]] lerobot.teleoperators.reachy2_teleoperator.Reachy2TeleoperatorConfig

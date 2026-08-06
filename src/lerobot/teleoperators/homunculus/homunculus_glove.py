@@ -63,14 +63,27 @@ RIGHT_HAND_INVERSIONS = [
 
 
 class HomunculusGlove(Teleoperator):
-    """
-    Homunculus Glove designed by NepYope & Hugging Face.
+    """Homunculus Glove designed by NepYope & Hugging Face: a wearable exoskeleton glove read over a serial link.
+
+    The glove streams raw encoder values for each finger joint continuously over a background thread;
+    readings are smoothed with an exponential moving average, normalized, then remapped from glove joint
+    names to HopeJR hand joint names via [`~teleoperators.homunculus.homunculus_glove_to_hope_jr_hand`]. It
+    only produces actions and accepts no feedback.
+
+    See [`~teleoperators.Teleoperator`] for the contract every method here implements.
     """
 
     config_class = HomunculusGloveConfig
     name = "homunculus_glove"
 
     def __init__(self, config: HomunculusGloveConfig):
+        """Open the serial connection and set up the background reader thread.
+
+        Args:
+            config (`HomunculusGloveConfig`):
+                The teleoperator's configuration. Its `port` determines what is connected and `side`
+                selects which joints are inverted for the left vs. right hand.
+        """
         require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config
@@ -114,19 +127,43 @@ class HomunculusGlove(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        """The glove's raw per-joint positions, before remapping to HopeJR hand joint names.
+
+        Returns:
+            `dict`: `"<joint>.pos"` keys mapped to `float`, one per entry in `self.joints`.
+        """
         return {f"{joint}.pos": float for joint in self.joints}
 
     @property
     def feedback_features(self) -> dict:
+        """This glove accepts no feedback.
+
+        Returns:
+            `dict`: Always empty.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_connected`].
+
+        The serial port is open and the background reader thread is alive.
+        """
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Open the serial port, start the background reader thread, and wait for the first reading.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration when no calibration file exists yet. Calibration is
+                interactive and prompts on stdin.
+
+        Raises:
+            TimeoutError: If no state is received from the glove within 2 seconds of starting.
+        """
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()
@@ -142,9 +179,19 @@ class HomunculusGlove(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether a calibration file has been saved for this glove.
+
+        Returns:
+            `bool`: `True` if the calibration file exists on disk.
+        """
         return self.calibration_fpath.is_file()
 
     def calibrate(self) -> None:
+        """Interactively record each finger's range of motion and save it as the glove's calibration.
+
+        Prompts the operator to move each finger through its full range, one finger at a time, then
+        persists the observed min/max encoder values to the calibration file.
+        """
         range_mins, range_maxes = {}, {}
         for finger in ["thumb", "index", "middle", "ring", "pinky"]:
             print(
@@ -228,6 +275,7 @@ class HomunculusGlove(Teleoperator):
         return mins, maxes
 
     def configure(self) -> None:
+        """No-op: the glove requires no runtime configuration beyond calibration."""
         pass
 
     # TODO(Steven): This function is copy/paste from the `HomunculusArm` class. Consider moving it to an utility to reduce duplicated code.
@@ -271,9 +319,9 @@ class HomunculusGlove(Teleoperator):
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
     ) -> dict[str, int | float]:
-        """
-        Return the most recent (single) values from self.last_d,
-        optionally applying calibration.
+        """Return the most recent values from the reader thread.
+
+        Optionally applies calibration.
         """
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
@@ -299,9 +347,9 @@ class HomunculusGlove(Teleoperator):
         return state
 
     def _read_loop(self):
-        """
-        Continuously read from the serial buffer in its own thread and sends values to the main thread through
-        a queue.
+        """Continuously read from the serial buffer in its own thread.
+
+        Sends values to the main thread through a queue.
         """
         while not self.stop_event.is_set():
             try:
@@ -331,16 +379,32 @@ class HomunculusGlove(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
+        """Read the most recent EMA-smoothed, normalized joint positions, remapped to HopeJR hand joints.
+
+        Returns:
+            `dict[str, float]`: `"<joint>.pos"` keys, named after the HopeJR hand's joints, mapped to
+            their normalized position. See
+            [`~teleoperators.homunculus.homunculus_glove_to_hope_jr_hand`] for the remapping.
+
+        Raises:
+            TimeoutError: If no new reading arrives from the background thread within 1 second.
+        """
         joint_positions = self._read()
         return homunculus_glove_to_hope_jr_hand(
             {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
         )
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: the glove has no actuators to receive feedback.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Stop the background reader thread and close the serial port."""
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()

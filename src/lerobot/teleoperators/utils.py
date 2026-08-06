@@ -34,6 +34,19 @@ class TeleopEvents(Enum):
 
 
 def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
+    """Instantiate the [`~teleoperators.Teleoperator`] matching a config's registered [`~teleoperators.TeleoperatorConfig.type`].
+
+    Args:
+        config (`TeleoperatorConfig`):
+            Configuration of the teleoperator to build.
+
+    Returns:
+        `Teleoperator`: The instantiated teleoperator, not yet connected.
+
+    Raises:
+        ValueError: If the config's type is not a known teleoperator and building it via the generic
+            device factory also fails.
+    """
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "keyboard":
         from .keyboard import KeyboardTeleop

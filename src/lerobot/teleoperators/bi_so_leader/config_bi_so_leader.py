@@ -23,7 +23,18 @@ from ..so_leader import SOLeaderConfig
 @TeleoperatorConfig.register_subclass("bi_so_leader")
 @dataclass
 class BiSOLeaderConfig(TeleoperatorConfig):
-    """Configuration class for Bi SO Leader teleoperators."""
+    """Configuration for a bimanual pair of SO-family leader arms.
+
+    Args:
+        left_arm_config (`SOLeaderConfig`):
+            Configuration for the left arm.
+        right_arm_config (`SOLeaderConfig`):
+            Configuration for the right arm.
+        id (`str`, *optional*):
+            Identifier for this particular unit; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
 
     left_arm_config: SOLeaderConfig
     right_arm_config: SOLeaderConfig

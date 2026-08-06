@@ -23,7 +23,16 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("keyboard")
 @dataclass
 class KeyboardTeleopConfig(TeleoperatorConfig):
-    """KeyboardTeleopConfig"""
+    """Configuration for the plain keyboard teleoperator.
+
+    Args:
+        id (`str`, *optional*):
+            Identifier for this particular unit, used to tell apart several teleoperators of the same
+            type. It also names the calibration file, so keep it stable for a given piece of hardware.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to a per-teleoperator directory under
+            the LeRobot calibration home.
+    """
 
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
 
@@ -31,12 +40,17 @@ class KeyboardTeleopConfig(TeleoperatorConfig):
 @TeleoperatorConfig.register_subclass("keyboard_ee")
 @dataclass
 class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
-    """Configuration for keyboard end-effector teleoperator.
+    """Configuration for controlling a robot end-effector with keyboard inputs.
 
-    Used for controlling robot end-effectors with keyboard inputs.
-
-    **Attributes**:
-        - **use_gripper** (`bool`) -- Whether to include gripper control in actions
+    Args:
+        use_gripper (`bool`, *optional*, defaults to `True`):
+            Whether to include a `gripper` entry in the produced actions.
+        id (`str`, *optional*):
+            Identifier for this particular unit, used to tell apart several teleoperators of the same
+            type. It also names the calibration file, so keep it stable for a given piece of hardware.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to a per-teleoperator directory under
+            the LeRobot calibration home.
     """
 
     use_gripper: bool = True
@@ -45,18 +59,29 @@ class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
 @TeleoperatorConfig.register_subclass("keyboard_rover")
 @dataclass
 class KeyboardRoverTeleopConfig(TeleoperatorConfig):
-    """Configuration for keyboard rover teleoperator.
+    """Configuration for the WASD-style keyboard teleoperator for mobile robots like EarthRover Mini Plus.
 
-    Used for controlling mobile robots like EarthRover Mini Plus with WASD controls.
-
-    **Attributes**:
-        - **linear_speed** (`float`) -- Default linear velocity magnitude (-1 to 1 range for SDK robots)
-        - **angular_speed** (`float`) -- Default angular velocity magnitude (-1 to 1 range for SDK robots)
-        - **speed_increment** (`float`) -- Amount to increase/decrease speed with +/- keys
-        - **turn_assist_ratio** (`float`) -- Forward motion multiplier when turning with A/D keys (0.0-1.0)
-        - **angular_speed_ratio** (`float`) -- Ratio of angular to linear speed for synchronized adjustments
-        - **min_linear_speed** (`float`) -- Minimum linear speed when decreasing (prevents zero speed)
-        - **min_angular_speed** (`float`) -- Minimum angular speed when decreasing (prevents zero speed)
+    Args:
+        linear_speed (`float`, *optional*, defaults to 1.0):
+            Initial linear velocity magnitude (-1 to 1 range for SDK robots).
+        angular_speed (`float`, *optional*, defaults to 1.0):
+            Initial angular velocity magnitude (-1 to 1 range for SDK robots).
+        speed_increment (`float`, *optional*, defaults to 0.1):
+            Amount `current_linear_speed` changes by on each `+`/`-` key press.
+        turn_assist_ratio (`float`, *optional*, defaults to 0.3):
+            Forward-motion multiplier applied when turning with `a`/`d` while otherwise stationary.
+        angular_speed_ratio (`float`, *optional*, defaults to 0.6):
+            Ratio of angular to linear speed increment, so both scale together on `+`/`-`.
+        min_linear_speed (`float`, *optional*, defaults to 0.1):
+            Floor for `current_linear_speed` when decreasing it.
+        min_angular_speed (`float`, *optional*, defaults to 0.05):
+            Floor for `current_angular_speed` when decreasing it.
+        id (`str`, *optional*):
+            Identifier for this particular unit, used to tell apart several teleoperators of the same
+            type. It also names the calibration file, so keep it stable for a given piece of hardware.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to a per-teleoperator directory under
+            the LeRobot calibration home.
     """
 
     linear_speed: float = 1.0
