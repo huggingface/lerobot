@@ -361,7 +361,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.episodes = resolved
 
         # RGB video decodes with torchcodec when available, otherwise pyav (local paths only).
+        # Remote streaming (hf://) needs torchcodec's fsspec-backed reader and can't decode depth
+        # at all (pyav can't read hf:// URLs).
+        is_remote_stream = self.streaming and not self.streaming_from_local
         self._video_backend = get_safe_default_video_backend()
+        rgb_video_keys = [key for key in self.meta.video_keys if key not in self.meta.depth_keys]
+        if rgb_video_keys and is_remote_stream and self._video_backend != "torchcodec":
+            raise RuntimeError(
+                "Remote StreamingLeRobotDataset requires the 'torchcodec' backend to decode RGB video, "
+                f"but it is not available on this platform (affected keys: {rgb_video_keys}). "
+                "Stream from a local root or use the non-streaming LeRobotDataset instead."
+            )
+        if self.meta.depth_keys and is_remote_stream:
+            raise NotImplementedError(
+                f"Remote streaming of depth video ({self.meta.depth_keys}) is not supported: depth is "
+                "decoded with pyav, which cannot read hf:// URLs. Stream from a local root or use the "
+                "non-streaming LeRobotDataset."
+            )
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
