@@ -16,6 +16,7 @@
 import logging
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +27,7 @@ from datasets import load_dataset
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
@@ -358,6 +360,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             logger.info(f"The episode filter matched {len(resolved)} episode(s).")
             self.episodes = resolved
 
+        # RGB video decodes with torchcodec when available, otherwise pyav (local paths only).
+        self._video_backend = get_safe_default_video_backend()
+
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
             for vid_key in self.meta.depth_keys
@@ -604,27 +609,27 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
 
         ep = self.meta.episodes[ep_idx]
-        item = {}
-        for video_key, ep_local_ts in query_timestamps.items():
+        root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
+
+        def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:
             # Episode-local timestamps restart from 0 each episode; shift by the per-key
             # `from_timestamp` to reach the episode's segment within its video file, matching
             # `DatasetReader._decode_single`.
-            from_timestamp = ep[f"videos/{video_key}/from_timestamp"]
-            query_ts = [from_timestamp + ts for ts in ep_local_ts]
-            root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
-            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
-            if video_key in self.meta.depth_keys:
+            from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
+            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, vid_key)}"
+            if vid_key in self.meta.depth_keys:
                 # Depth maps are 12-bit quantized and only decodable via pyav; dequantize back
                 # to physical units to match the non-streaming reader.
                 frames = decode_video_frames(
                     video_path,
-                    query_ts,
+                    shifted_query_ts,
                     self.tolerance_s,
                     backend="pyav",
                     return_uint8=False,
                     is_depth=True,
                 )
-                depth_encoder = self._depth_encoder_configs[video_key]
+                depth_encoder = self._depth_encoder_configs[vid_key]
                 frames = dequantize_depth(
                     frames,
                     depth_min=depth_encoder.depth_min,
@@ -633,18 +638,36 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     use_log=depth_encoder.use_log,
                     output_unit=self._depth_output_unit,
                 )
-            else:
+            elif self._video_backend == "torchcodec":
                 frames = decode_video_frames_torchcodec(
                     video_path,
-                    query_ts,
+                    shifted_query_ts,
                     self.tolerance_s,
                     decoder_cache=self.video_decoder_cache,
                     return_uint8=self._return_uint8,
                 )
+            else:
+                # torchcodec unavailable: only reachable for local streaming
+                frames = decode_video_frames(
+                    video_path,
+                    shifted_query_ts,
+                    self.tolerance_s,
+                    backend="pyav",
+                    return_uint8=self._return_uint8,
+                )
 
-            item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
+            return vid_key, frames.squeeze(0) if len(shifted_query_ts) == 1 else frames
 
-        return item
+        items = list(query_timestamps.items())
+
+        # Single camera: no threading overhead
+        if len(items) <= 1:
+            return {vid_key: _decode_single(vid_key, query_ts)[1] for vid_key, query_ts in items}
+
+        # Multi-camera: decode in parallel (video decoding releases the GIL)
+        with ThreadPoolExecutor(max_workers=len(items)) as pool:
+            futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
+            return dict(f.result() for f in futures)
 
     def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
         # TODO(fracapuano): Modularize this function, refactor the code
