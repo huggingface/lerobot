@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
-"""
+"""Provides the OpenCVCamera class for capturing frames from cameras using OpenCV."""
 
 import logging
 import math
@@ -50,8 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 class OpenCVCamera(Camera):
-    """
-    Manages camera interactions using OpenCV for efficient frame recording.
+    """Manages camera interactions using OpenCV for efficient frame recording.
 
     This class provides a high-level interface to connect to, configure, and read
     frames from cameras compatible with OpenCV's VideoCapture. It supports both
@@ -93,8 +90,7 @@ class OpenCVCamera(Camera):
     """
 
     def __init__(self, config: OpenCVCameraConfig):
-        """
-        Initializes the OpenCVCamera instance.
+        """Initializes the OpenCVCamera instance.
 
         Args:
             config: The configuration settings for the camera.
@@ -125,6 +121,7 @@ class OpenCVCamera(Camera):
         self._reset_connection_settings()
 
     def __str__(self) -> str:
+        """Return a short representation naming the class and its `index_or_path`."""
         return f"{self.__class__.__name__}({self.index_or_path})"
 
     def _reset_connection_settings(self) -> None:
@@ -143,8 +140,7 @@ class OpenCVCamera(Camera):
 
     @check_if_already_connected
     def connect(self, warmup: bool = True) -> None:
-        """
-        Connects to the OpenCV camera specified in the configuration.
+        """Connects to the OpenCV camera specified in the configuration.
 
         Initializes the OpenCV VideoCapture object, sets desired camera properties
         (FPS, width, height), starts the background reading thread and performs initial checks.
@@ -158,7 +154,6 @@ class OpenCVCamera(Camera):
             ConnectionError: If the specified camera index/path is not found or fails to open.
             RuntimeError: If the camera opens but fails to apply requested settings.
         """
-
         # Use 1 thread for OpenCV operations to avoid potential conflicts or
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
@@ -196,8 +191,7 @@ class OpenCVCamera(Camera):
 
     @check_if_not_connected
     def _configure_capture_settings(self) -> None:
-        """
-        Applies the specified FOURCC, FPS, width, and height settings to the connected camera.
+        """Applies the specified FOURCC, FPS, width, and height settings to the connected camera.
 
         This method attempts to set the camera properties via OpenCV. It checks if
         the camera successfully applied the settings and raises an error if not.
@@ -214,7 +208,6 @@ class OpenCVCamera(Camera):
                           to the requested value.
             DeviceNotConnectedError: If the camera is not connected.
         """
-
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
@@ -246,7 +239,6 @@ class OpenCVCamera(Camera):
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
-
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
@@ -261,7 +253,6 @@ class OpenCVCamera(Camera):
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
-
         fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
 
         if self.videocapture is None:
@@ -282,7 +273,6 @@ class OpenCVCamera(Camera):
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
-
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
@@ -306,8 +296,7 @@ class OpenCVCamera(Camera):
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
-        """
-        Detects available OpenCV cameras connected to the system.
+        """Detects available OpenCV cameras connected to the system.
 
         On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
         it checks indices from 0 up to `MAX_OPENCV_INDEX`.
@@ -375,8 +364,7 @@ class OpenCVCamera(Camera):
 
     @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
-        """
-        Reads a single frame synchronously from the camera.
+        """Reads a single frame synchronously from the camera.
 
         This is a blocking call. It waits for the next available frame from the
         camera hardware via OpenCV.
@@ -392,7 +380,6 @@ class OpenCVCamera(Camera):
                           received frame dimensions don't match expectations before rotation.
             ValueError: If an invalid `color_mode` is requested.
         """
-
         start_time = time.perf_counter()
 
         if color_mode is not None:
@@ -412,8 +399,7 @@ class OpenCVCamera(Camera):
         return frame
 
     def _postprocess_image(self, image: NDArray[Any]) -> NDArray[Any]:
-        """
-        Applies color conversion, dimension validation, and rotation to a raw frame.
+        """Applies color conversion, dimension validation, and rotation to a raw frame.
 
         Args:
             image (np.ndarray): The raw image frame (expected BGR format from OpenCV).
@@ -426,7 +412,6 @@ class OpenCVCamera(Camera):
             RuntimeError: If the raw frame dimensions do not match the configured
                           `width` and `height`.
         """
-
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
                 f"Invalid color mode '{self.color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
@@ -452,8 +437,7 @@ class OpenCVCamera(Camera):
         return processed_image
 
     def _read_loop(self) -> None:
-        """
-        Internal loop run by the background thread for asynchronous reading.
+        """Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
         1. Reads a color frame (blocking call)
@@ -538,8 +522,7 @@ class OpenCVCamera(Camera):
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """
-        Reads the latest available frame asynchronously.
+        """Reads the latest available frame asynchronously.
 
         This method retrieves the most recent frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
@@ -559,7 +542,6 @@ class OpenCVCamera(Camera):
             TimeoutError: If no frame becomes available within the specified timeout.
             RuntimeError: If an unexpected error occurs.
         """
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -594,7 +576,6 @@ class OpenCVCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -614,8 +595,7 @@ class OpenCVCamera(Camera):
         return frame
 
     def disconnect(self) -> None:
-        """
-        Disconnects from the camera and cleans up resources.
+        """Disconnects from the camera and cleans up resources.
 
         Stops the background read thread (if running) and releases the OpenCV
         VideoCapture object.
