@@ -14,6 +14,7 @@
 import builtins
 import datetime as dt
 import json
+import multiprocessing
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -102,6 +103,12 @@ class TrainPipelineConfig(HubMixin):
     gradient_accumulation_steps: int = 1
     prefetch_factor: int = 4
     persistent_workers: bool = True
+    # DataLoader worker start method. "spawn" is safer than "fork" with
+    # non-fork-safe libs (PyAV / torchcodec / ffmpeg), but adds some
+    # worker-startup time per run since workers re-import modules instead
+    # of inheriting parent state. Override with `--dataloader_multiprocessing_context=fork`
+    # when appropriate, or set it to `null` to use Python's platform default.
+    dataloader_multiprocessing_context: str | None = "spawn"
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
@@ -113,6 +120,7 @@ class TrainPipelineConfig(HubMixin):
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
+    # A non-positive value disables periodic saving, keeping only the final checkpoint.
     save_freq: int = 20_000
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
@@ -188,7 +196,11 @@ class TrainPipelineConfig(HubMixin):
             )
 
         if Path(config_path).resolve().exists():
-            policy_dir = Path(config_path).parent
+            # `config_path` may point at the checkpoint's train_config.json or at its
+            # pretrained_model/ directory (both documented above) — resolve either to
+            # the pretrained_model/ directory.
+            config_path_obj = Path(config_path)
+            policy_dir = config_path_obj.parent if config_path_obj.is_file() else config_path_obj
             self.checkpoint_path = policy_dir.parent
         elif self.job.is_remote:
             return
@@ -213,6 +225,17 @@ class TrainPipelineConfig(HubMixin):
             self.reward_model.pretrained_path = str(policy_dir)
 
     def validate(self) -> None:
+        available_contexts = multiprocessing.get_all_start_methods()
+        if (
+            self.dataloader_multiprocessing_context is not None
+            and self.dataloader_multiprocessing_context not in available_contexts
+        ):
+            raise ValueError(
+                "`dataloader_multiprocessing_context` must be None or one of "
+                f"{available_contexts} on this platform, got "
+                f"{self.dataloader_multiprocessing_context!r}."
+            )
+
         self._resolve_pretrained_from_cli()
 
         if self.policy is None and self.reward_model is None:

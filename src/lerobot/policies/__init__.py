@@ -34,6 +34,7 @@ from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla_rmoe.configuration_smolvla_rmoe import SmolVLARMoEConfig as SmolVLARMoEConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
+from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
@@ -62,6 +63,7 @@ __all__ = [
     "SmolVLAConfig",
     "SmolVLARMoEConfig",
     "TDMPCConfig",
+    "VLAJEPAConfig",
     "VQBeTConfig",
     "WallXConfig",
     "XVLAConfig",

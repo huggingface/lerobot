@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import math
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +30,8 @@ from torch import Tensor
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
 
@@ -44,17 +45,6 @@ else:
     torch_compilable_check = None
 
 logger = logging.getLogger(__name__)
-
-
-def pad_vector(vector, new_dim):
-    """Pad the last dimension of a vector to new_dim with zeros.
-
-    Can be (batch_size x sequence_length x features_dimension)
-    or (batch_size x features_dimension)
-    """
-    if vector.shape[-1] >= new_dim:
-        return vector
-    return F.pad(vector, (0, new_dim - vector.shape[-1]))
 
 
 class EO1Policy(PreTrainedPolicy):
@@ -134,47 +124,6 @@ class EO1Policy(PreTrainedPolicy):
 
     def get_optim_params(self) -> dict:
         return self.parameters()
-
-
-def get_safe_dtype(target_dtype, device_type):
-    """Get a safe dtype for the given device type."""
-    if device_type == "mps" and target_dtype == torch.float64:
-        return torch.float32
-    if device_type == "cpu":
-        # CPU doesn't support bfloat16, use float32 instead
-        if target_dtype == torch.bfloat16:
-            return torch.float32
-        if target_dtype == torch.float64:
-            return torch.float64
-    return target_dtype
-
-
-def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
-    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
-) -> Tensor:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
-    if dimension % 2 != 0:
-        raise ValueError(f"dimension ({dimension}) must be divisible by 2")
-
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
-
-    dtype = get_safe_dtype(torch.float64, device.type)
-    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
-    period = min_period * (max_period / min_period) ** fraction
-
-    # Compute the outer product
-    scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-
-
-def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
-    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
-    alpha_t = torch.tensor(alpha, dtype=torch.float32)
-    beta_t = torch.tensor(beta, dtype=torch.float32)
-    dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,)).to(device)
 
 
 class EO1VisionActionProjector(torch.nn.Sequential):
@@ -267,21 +216,17 @@ class EO1VisionFlowMatchingModel(nn.Module):
         return func(*args, **kwargs)
 
     def sample_noise(self, shape, device):
-        noise = torch.normal(
-            mean=0.0,
-            std=1.0,
-            size=shape,
-            dtype=torch.float32,
-            device=device,
-        )
-        return noise
+        return sample_noise(shape, device)
 
     def sample_time(self, bsize, device):
-        time_beta = sample_beta(
-            self.config.time_sampling_beta_alpha, self.config.time_sampling_beta_beta, bsize, device
+        return sample_time_beta(
+            bsize,
+            device,
+            alpha=self.config.time_sampling_beta_alpha,
+            beta=self.config.time_sampling_beta_beta,
+            scale=self.config.time_sampling_scale,
+            offset=self.config.time_sampling_offset,
         )
-        time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
-        return time.to(dtype=torch.float32, device=device)
 
     def get_placeholder_mask(
         self,
@@ -587,18 +532,11 @@ class EO1VisionFlowMatchingModel(nn.Module):
             (batch_size, chunk_size, self.config.max_action_dim),
             device,
         ).to(dtype=self.action_in_proj.weight.dtype)
-        dt = -1.0 / self.config.num_denoise_steps
         past_key_values = outputs.past_key_values
 
         # 3. Denoise only the action chunk while keeping the prefix cache invariant.
-        for step in range(self.config.num_denoise_steps):
-            time = torch.full(
-                (batch_size,),
-                1.0 + step * dt,
-                device=device,
-                dtype=torch.float32,
-            )
-            action_time_embs = self.embed_suffix(time, x_t)
+        def denoise_fn(input_x_t, current_timestep):
+            action_time_embs = self.embed_suffix(current_timestep, input_x_t)
             inputs_embeds[:, act_slice] = action_time_embs.to(inputs_embeds.dtype)
 
             # Keep the prefix KV cache invariant across denoising steps.
@@ -615,7 +553,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
                 hidden_states = outputs.last_hidden_state[:, :chunk_size]
                 hidden_states = hidden_states.to(dtype=self.action_out_proj.dtype)
                 v_t = self.action_out_proj(hidden_states)
+            return v_t.reshape(input_x_t.shape).to(input_x_t.dtype)
 
-            x_t += dt * v_t.reshape(x_t.shape)
-
+        x_t = euler_integrate(denoise_fn, x_t, self.config.num_denoise_steps)
         return x_t

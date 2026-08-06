@@ -16,6 +16,7 @@
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
+from typing import Literal
 
 import datasets
 import numpy as np
@@ -56,6 +57,10 @@ class LookAheadError(Exception):
     """
 
     pass
+
+
+class _ShardExhaustedError(Exception):
+    """Raised when a streaming dataset shard has no more items."""
 
 
 class Backtrackable[T]:
@@ -178,7 +183,7 @@ class Backtrackable[T]:
         """
         Check if we can go back `steps` items without raising an IndexError.
         """
-        return steps <= len(self._back_buf) + self._cursor
+        return steps < len(self._back_buf) + self._cursor
 
     def can_peek_ahead(self, steps: int = 1) -> bool:
         """
@@ -256,14 +261,17 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         shuffle: bool = True,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        *,
+        repo_type: Literal["dataset", "bucket"] = "dataset",
+        token: str | bool | None = None,
     ):
         """Initialize a StreamingLeRobotDataset.
 
         Args:
             repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory to use for local datasets. When omitted, Hub
-                metadata is resolved through a revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
+            root (Path | None, optional): Local directory to use for local datasets. In bucket mode,
+                this is an optional local metadata-cache directory; parquet and video data remain remote.
+                When omitted, Hub metadata is resolved through the cache under ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
             image_transforms (Callable | None, optional): Transform to apply to image data.
@@ -278,12 +286,23 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
             depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
                 Defaults to "mm".
+            repo_type: "dataset" (default) or "bucket" to stream from an HF Storage Bucket
+                over ``hf://buckets/``.
+            token: Authentication token used while streaming this dataset from
+                the Hub. Pass a string token, ``True`` to require the locally
+                stored token, ``False`` to disable authentication, or ``None``
+                to use the Hugging Face Hub default. The token is not retained
+                on the dataset instance after initialization.
         """
         super().__init__()
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+
         self.repo_id = repo_id
-        self._requested_root = Path(root) if root else None
+        self.repo_type = repo_type
+        self._requested_root = Path(root) if root is not None else None
         self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
-        self.streaming_from_local = root is not None
+        self.streaming_from_local = root is not None and self.repo_type == "dataset"
 
         self.image_transforms = image_transforms
         self.episodes = episodes
@@ -306,7 +325,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            repo_type=self.repo_type,
+            token=token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
@@ -334,13 +358,26 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             self.delta_timestamps = delta_timestamps
             self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
-        self.hf_dataset: datasets.IterableDataset = load_dataset(
-            self.repo_id if not self.streaming_from_local else str(self.root),
-            split="train",
-            streaming=self.streaming,
-            data_files="data/*/*.parquet",
-            revision=self.revision,
-        )
+        token_kwargs = {} if token is None else {"token": token}
+        if self.repo_type == "bucket":
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                "parquet",
+                data_files=f"hf://buckets/{self.repo_id}/data/*/*.parquet",
+                split="train",
+                streaming=self.streaming,
+                **token_kwargs,
+            )
+        else:
+            if self.streaming_from_local:
+                token_kwargs = {}
+            self.hf_dataset: datasets.IterableDataset = load_dataset(
+                self.repo_id if not self.streaming_from_local else str(self.root),
+                split="train",
+                streaming=self.streaming,
+                data_files="data/*/*.parquet",
+                revision=self.revision,
+                **token_kwargs,
+            )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
@@ -409,10 +446,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                     else:
                         frames_buffer.append(frame)
                     break  # random shard sampled, switch shard
-            except (
-                RuntimeError,
-                StopIteration,
-            ):  # NOTE: StopIteration inside a generator throws a RuntimeError since python 3.7
+            except _ShardExhaustedError:
                 del idx_to_backtrack_dataset[shard_key]  # Remove exhausted shard, onto another shard
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
@@ -490,7 +524,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
         """Makes a frame starting from a dataset iterator"""
-        item = next(dataset_iterator)
+        try:
+            item = next(dataset_iterator)
+        except StopIteration as e:
+            # Translate exhaustion here, before PEP 479 turns it into an indistinguishable RuntimeError.
+            raise _ShardExhaustedError from e
         item = item_to_torch(item)
 
         updates = []  # list of "updates" to apply to the item retrieved from hf_dataset (w/o camera features)

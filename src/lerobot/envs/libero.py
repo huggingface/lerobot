@@ -30,8 +30,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.envs.adapters.libero_adapter import LiberoGeometryAdapter
-from lerobot.types import RobotObservation
+from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
@@ -126,18 +125,16 @@ class LiberoEnv(gym.Env):
         n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
-        expose_geometry_labels: bool = False,
+        hard_reset: bool = True,
     ):
         super().__init__()
-        # Additive, opt-in only: when False (the default), `_format_raw_obs`'s output is
-        # byte-for-byte identical to before this flag existed. CIG-VLA (or any other
-        # geometry-supervised policy) turns this on to also get `geometry.*` training
-        # labels (see `lerobot.envs.adapters.libero_adapter`) -- never required for
-        # standard eval/rollout.
-        self.expose_geometry_labels = expose_geometry_labels
-        self._geometry_adapter = LiberoGeometryAdapter() if expose_geometry_labels else None
+        if control_freq <= 0:
+            raise ValueError(f"control_freq must be positive, got {control_freq}")
+        if not hard_reset and not init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -163,6 +160,8 @@ class LiberoEnv(gym.Env):
             }
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
+        self.control_freq = control_freq
+        self.hard_reset = hard_reset
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
@@ -251,25 +250,6 @@ class LiberoEnv(gym.Env):
                     ),
                 }
             )
-            if self.expose_geometry_labels:
-                # Vectorized envs (gym.vector.{Sync,Async}VectorEnv) batch observations by
-                # walking `observation_space`'s declared structure -- any key returned by
-                # `_format_raw_obs` that ISN'T declared here gets silently dropped during
-                # vectorization, so these flat `geometry.*` keys must be declared explicitly
-                # (they intentionally live at the top level, not nested under "robot_state",
-                # matching how `_format_raw_obs` emits them).
-                for key, shape in (
-                    ("geometry.source_point", (3,)),
-                    ("geometry.source_valid", (1,)),
-                    ("geometry.destination_point", (3,)),
-                    ("geometry.destination_valid", (1,)),
-                    ("geometry.approach_direction", (3,)),
-                    ("geometry.approach_valid", (1,)),
-                    ("geometry.confidence_target", (1,)),
-                ):
-                    self.observation_space[key] = spaces.Box(
-                        low=-np.inf, high=np.inf, shape=shape, dtype=np.float32
-                    )
 
         self.action_space = spaces.Box(
             low=ACTION_LOW, high=ACTION_HIGH, shape=(ACTION_DIM,), dtype=np.float32
@@ -288,6 +268,10 @@ class LiberoEnv(gym.Env):
             bddl_file_name=self._task_bddl_file,
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
+            control_freq=self.control_freq,
+            # Soft resets skip LIBERO's model and renderer rebuild. They are opt-in
+            # because settle steps can make their observations differ from hard resets.
+            hard_reset=self.hard_reset,
         )
         env.reset()
         self._env = env
@@ -345,13 +329,6 @@ class LiberoEnv(gym.Env):
                     f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
                     f"gripper_qpos={gripper_qpos is not None}"
                 )
-            if self.expose_geometry_labels:
-                geometry = self._geometry_adapter.extract_geometry(
-                    raw_observation=raw_obs, task_metadata={"task_name": self.task}
-                )
-                geometry = self._geometry_adapter.to_canonical_frame(geometry, raw_observation=raw_obs)
-                for key, value in geometry.items():
-                    obs[f"geometry.{key}"] = value
             return obs
 
         raise NotImplementedError(
@@ -407,8 +384,9 @@ class LiberoEnv(gym.Env):
             }
         )
         observation = self._format_raw_obs(raw_obs)
-        if terminated:
-            self.reset()
+        # Return the terminal observation unchanged. The caller owns resetting after
+        # termination; vector envs created below use NEXT_STEP autoreset. Resetting here
+        # would therefore reset twice and skip an initial state.
         truncated = False
         return observation, reward, terminated, truncated, info
 
@@ -508,6 +486,7 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     is_async = env_cls is gym.vector.AsyncVectorEnv
+    is_sync = env_cls is gym.vector.SyncVectorEnv
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
@@ -544,6 +523,10 @@ def create_libero_envs(
                     cached_act_space = lazy.action_space
                     cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
+            elif is_sync:
+                out[suite_name][tid] = gym.vector.SyncVectorEnv(
+                    fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP
+                )
             else:
                 out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
