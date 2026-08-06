@@ -131,12 +131,16 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     This provides type hints for the optional arguments passed to `make_pre_post_processors`,
     improving code clarity and enabling static analysis.
 
-    Attributes:
-        preprocessor_config_filename: The filename for the preprocessor configuration.
-        postprocessor_config_filename: The filename for the postprocessor configuration.
-        preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
-        postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
-        dataset_stats: Dataset statistics for normalization.
+    **Attributes**:
+        - **preprocessor_config_filename** (`str | None`) -- The filename for the preprocessor configuration.
+        - **postprocessor_config_filename** (`str | None`) -- The filename for the postprocessor
+          configuration.
+        - **preprocessor_overrides** (`dict[str, Any] | None`) -- A dictionary of overrides for the
+          preprocessor configuration.
+        - **postprocessor_overrides** (`dict[str, Any] | None`) -- A dictionary of overrides for the
+          postprocessor configuration.
+        - **dataset_stats** (`dict[str, dict[str, torch.Tensor]] | None`) -- Dataset statistics for
+          normalization.
     """
 
     preprocessor_config_filename: str | None

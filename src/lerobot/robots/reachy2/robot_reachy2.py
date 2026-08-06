@@ -73,14 +73,18 @@ REACHY2_VEL = {
 
 
 class Reachy2Robot(Robot):
-    """
-    [Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
-    """
+    """[Reachy 2](https://www.pollen-robotics.com/reachy/), the humanoid by Pollen Robotics."""
 
     config_class = Reachy2RobotConfig
     name = "reachy2"
 
     def __init__(self, config: Reachy2RobotConfig):
+        """Build the robot from its configuration.
+
+        Args:
+            config (`Reachy2RobotConfig`):
+                The robot's configuration. Its `port` and `cameras` determine what is connected.
+        """
         require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 
@@ -97,18 +101,41 @@ class Reachy2Robot(Robot):
 
     @property
     def observation_features(self) -> dict[str, Any]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self.motors_features, **self.camera_features}
 
     @property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self.motors_features
 
     @property
     def camera_features(self) -> dict[str, tuple[int | None, int | None, int]]:
+        """The shape of each configured camera's frames.
+
+        Returns:
+            `dict[str, tuple[int | None, int | None, int]]`: Camera name mapped to
+            `(height, width, channels)`.
+        """
         return {cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras}
 
     @property
     def motors_features(self) -> dict[str, type]:
+        """The joints this robot exposes, given which parts are enabled in the config.
+
+        Returns:
+            `dict[str, type]`: Joint name mapped to `float`, including the mobile base's velocity
+            components when `with_mobile_base` is set.
+        """
         if self.config.with_mobile_base:
             return {
                 **dict.fromkeys(
@@ -125,9 +152,23 @@ class Reachy2Robot(Robot):
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.reachy.is_connected() if self.reachy is not None else False
 
     def connect(self, calibrate: bool = False) -> None:
+        """Connect to the robot and its cameras, then apply the configured settings.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `False`):
+                Accepted for interface compatibility and ignored: Reachy 2 manages its own calibration.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.reachy = ReachySDK(self.config.ip_address)
         if not self.is_connected:
             raise ConnectionError()
@@ -138,15 +179,25 @@ class Reachy2Robot(Robot):
         self.configure()
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         if self.reachy is not None:
             self.reachy.turn_on()
             self.reachy.reset_default_limits()
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return True
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         pass
 
     def _generate_joints_dict(self) -> dict[str, str]:
@@ -172,6 +223,14 @@ class Reachy2Robot(Robot):
             return {}
 
     def get_observation(self) -> RobotObservation:
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         obs_dict: RobotObservation = {}
 
         # Read Reachy 2 state
@@ -186,6 +245,18 @@ class Reachy2Robot(Robot):
         return obs_dict
 
     def send_action(self, action: RobotAction) -> RobotAction:
+        """Command the robot to move towards a target configuration.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target values, keyed as in [`~robots.Robot.action_features`].
+
+        Returns:
+            `dict[str, Any]`: The action actually sent, which may be clipped by `max_relative_target`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         if self.reachy is not None:
             if not self.is_connected:
                 raise ConnectionError()
@@ -228,6 +299,11 @@ class Reachy2Robot(Robot):
         return action
 
     def disconnect(self) -> None:
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         if self.reachy is not None:
             for cam in self.cameras.values():
                 cam.disconnect()

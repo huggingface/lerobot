@@ -314,11 +314,16 @@ class SerialMotorsBus(MotorsBusBase):
     To find the port, you can run our utility script:
     ```bash
     lerobot-find-port.py
-    >>> Finding all available ports for the MotorsBus.
-    >>> ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
-    >>> Remove the usb cable from your MotorsBus and press Enter when done.
-    >>> The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
-    >>> Reconnect the usb cable.
+    ```
+
+    which prints:
+
+    ```
+    Finding all available ports for the MotorsBus.
+    ["/dev/tty.usbmodem575E0032081", "/dev/tty.usbmodem575E0031751"]
+    Remove the usb cable from your MotorsBus and press Enter when done.
+    The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
+    Reconnect the usb cable.
     ```
 
     Example of usage for 1 Feetech sts3215 motor connected to the bus:
@@ -595,7 +600,7 @@ class SerialMotorsBus(MotorsBusBase):
         ID, and finally programs the bus' default baud-rate.
 
         Args:
-            motor (str): Key of the motor in :pyattr:`motors`.
+            motor (str): Key of the motor in `motors`.
             initial_baudrate (int | None, optional): Current baud-rate (skips scanning when provided).
                 Defaults to None.
             initial_id (int | None, optional): Current ID (skips scanning when provided). Defaults to None.
@@ -666,7 +671,7 @@ class SerialMotorsBus(MotorsBusBase):
         """Enable torque on selected motors.
 
         Args:
-            motors (int | str | list[str] | None, optional): Same semantics as :pymeth:`disable_torque`.
+            motors (int | str | list[str] | None, optional): Same semantics as [`~motors.motors_bus.MotorsBus.disable_torque`].
                 Defaults to `None`.
             num_retry (int, optional): Number of additional retry attempts on communication failure.
                 Defaults to 0.
@@ -679,10 +684,12 @@ class SerialMotorsBus(MotorsBusBase):
 
         This helper is useful to temporarily disable torque when configuring motors.
 
-        Examples:
-            >>> with bus.torque_disabled():
+        Example:
+            ```python
+            >>> with bus.torque_disabled():  # doctest: +SKIP
             ...     # Safe operations here
             ...     pass
+            ```
         """
         self.disable_torque(motors)
         try:
@@ -695,7 +702,7 @@ class SerialMotorsBus(MotorsBusBase):
 
         Args:
             timeout_ms (int | None, optional): Timeout in *milliseconds*. If `None` (default) the method falls
-                back to :pyattr:`default_timeout`.
+                back to `default_timeout`.
         """
         timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
         self.port_handler.setPacketTimeoutMillis(timeout_ms)
@@ -746,8 +753,8 @@ class SerialMotorsBus(MotorsBusBase):
 
         Args:
             calibration_dict (dict[str, MotorCalibration]): Calibration obtained from
-                :pymeth:`read_calibration` or crafted by the user.
-            cache (bool, optional): Save the calibration to :pyattr:`calibration`. Defaults to True.
+                [`~motors.motors_bus.MotorsBus.read_calibration`] or crafted by the user.
+            cache (bool, optional): Save the calibration to `calibration`. Defaults to True.
         """
         pass
 
@@ -755,7 +762,7 @@ class SerialMotorsBus(MotorsBusBase):
         """Restore factory calibration for the selected motors.
 
         Homing offset is set to ``0`` and min/max position limits are set to the full usable range.
-        The in-memory :pyattr:`calibration` is cleared.
+        The in-memory `calibration` is cleared.
 
         Args:
             motors (NameOrID | Sequence[NameOrID] | None, optional): Selection of motors. `None` (default)
@@ -1069,9 +1076,9 @@ class SerialMotorsBus(MotorsBusBase):
     ) -> None:
         """Write a value to a single motor's register.
 
-        Contrary to :pymeth:`sync_write`, this expects a response status packet emitted by the motor, which
+        Contrary to [`~motors.motors_bus.MotorsBus.sync_write`], this expects a response status packet emitted by the motor, which
         provides a guarantee that the value was written to the register successfully. In consequence, it is
-        slower than :pymeth:`sync_write` but it is more reliable. It should typically be used when configuring
+        slower than [`~motors.motors_bus.MotorsBus.sync_write`] but it is more reliable. It should typically be used when configuring
         motors.
 
         Args:
@@ -1228,8 +1235,8 @@ class SerialMotorsBus(MotorsBusBase):
     ) -> None:
         """Write the same register on multiple motors.
 
-        Contrary to :pymeth:`write`, this *does not* expects a response status packet emitted by the motor, which
-        can allow for lost packets. It is faster than :pymeth:`write` and should typically be used when
+        Contrary to [`~motors.motors_bus.MotorsBus.write`], this *does not* expects a response status packet emitted by the motor, which
+        can allow for lost packets. It is faster than [`~motors.motors_bus.MotorsBus.write`] and should typically be used when
         frequency matters and losing some packets is acceptable (e.g. teleoperation loops).
 
         Args:

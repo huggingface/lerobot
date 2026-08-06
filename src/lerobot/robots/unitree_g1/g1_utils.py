@@ -44,6 +44,8 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
 
 
 class G1_29_JointArmIndex(IntEnum):
+    """Indices of the G1's arm and wrist joints within its 29-joint state vector."""
+
     # Left arm
     kLeftShoulderPitch = 15
     kLeftShoulderRoll = 16
@@ -79,6 +81,8 @@ def make_locomotion_controller(name: str | None):
 
 
 class G1_29_JointIndex(IntEnum):
+    """Indices of all 29 G1 joints, in the order the robot reports and accepts them."""
+
     # Left leg
     kLeftHipPitch = 0
     kLeftHipRoll = 1

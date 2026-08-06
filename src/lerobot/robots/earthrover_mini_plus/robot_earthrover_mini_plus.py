@@ -70,8 +70,7 @@ OBS_WHEEL_RPM_3 = "wheel_rpm_3"
 
 
 class EarthRoverMiniPlus(Robot):
-    """
-    EarthRover Mini Plus robot controlled via Frodobots SDK HTTP API.
+    """EarthRover Mini Plus robot controlled via Frodobots SDK HTTP API.
 
     This robot uses cloud-based control through the Frodobots SDK instead of direct
     hardware connection. Cameras stream via WebRTC through Agora cloud, and control
@@ -82,9 +81,9 @@ class EarthRoverMiniPlus(Robot):
     - Linear and angular velocity control
     - Battery and orientation telemetry
 
-    Attributes:
-        config: Robot configuration
-        sdk_base_url: URL of the Frodobots SDK server (default: http://localhost:8000)
+    **Attributes**:
+        - **config** -- Robot configuration
+        - **sdk_base_url** -- URL of the Frodobots SDK server (default: http://localhost:8000)
     """
 
     config_class = EarthRoverMiniPlusConfig
@@ -130,7 +129,6 @@ class EarthRoverMiniPlus(Robot):
             DeviceAlreadyConnectedError: If robot is already connected
             DeviceNotConnectedError: If cannot connect to SDK server
         """
-
         # Verify SDK is running and accessible
         try:
             response = requests.get(f"{self.sdk_base_url}/data", timeout=10.0)
@@ -280,7 +278,6 @@ class EarthRoverMiniPlus(Robot):
             Robot telemetry is retrieved from /data endpoint.
             All SDK values are normalized to appropriate ranges for dataset recording.
         """
-
         observation = {}
 
         # Get camera images from SDK
@@ -370,7 +367,6 @@ class EarthRoverMiniPlus(Robot):
         Raises:
             DeviceNotConnectedError: If robot is not connected
         """
-
         # Stop the robot before disconnecting
         try:
             self._send_command_to_sdk(0.0, 0.0)

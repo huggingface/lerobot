@@ -38,11 +38,11 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
     difference between the current and the last observed joint positions. The
     resulting velocity vector is then concatenated to the original state vector.
 
-    Attributes:
-        dt: The time step (delta time) in seconds between observations, used for
-            calculating velocity.
-        last_joint_positions: Stores the joint positions from the previous step
-                              to enable velocity calculation.
+    **Attributes**:
+        - **dt** (`float`) -- The time step (delta time) in seconds between observations, used for calculating
+          velocity.
+        - **last_joint_positions** (`torch.Tensor | None`) -- Stores the joint positions from the previous
+          step to enable velocity calculation.
     """
 
     dt: float = 0.1
@@ -138,9 +138,9 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
     This step queries the robot's hardware interface to get the present current
     for each motor and concatenates this information to the existing state vector.
 
-    Attributes:
-        robot: An instance of a `lerobot` Robot class that provides access to
-               the hardware bus.
+    **Attributes**:
+        - **robot** (`Robot | None`) -- An instance of a `lerobot` Robot class that provides access to the
+          hardware bus.
     """
 
     robot: Robot | None = None
