@@ -44,7 +44,7 @@ lerobot-record \
   --dataset.num_episodes=5 \
   --dataset.single_task="Grab the black cube" \
   --dataset.streaming_encoding=true \
-  # --dataset.camera_encoder.vcodec=auto \
+  # --dataset.rgb_encoder.vcodec=auto \
   --dataset.encoder_threads=2
 ```
 
@@ -140,6 +140,22 @@ from lerobot.datasets import StreamingLeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
+```
+
+Datasets stored in an [HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets) (`hf://buckets/`) can be streamed the same way by passing `repo_type="bucket"`:
+
+```python
+dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
+```
+
+Both options are available in `lerobot-train` through `--dataset.streaming=true`, and `--dataset.repo_type=bucket` to stream from a bucket instead of a Hub dataset repo:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/my-bucket \
+  --dataset.repo_type=bucket \
+  --dataset.streaming=true \
+  ...
 ```
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">

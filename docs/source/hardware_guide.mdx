@@ -62,7 +62,10 @@ Reference data points on a 4×H100 80 GB cluster (`accelerate launch --num_proce
 | `smolvla`   | 27m 49s    |      0.312 |           0.011 | ~80%     | `--policy.path=lerobot/smolvla_base`, `freeze_vision_encoder=false`, `train_expert_only=false`                                 |
 | `pi05`      | 3h 41m     |      2.548 |           0.014 | ~95%     | `--policy.pretrained_path=lerobot/pi05_base`, `gradient_checkpointing=true`, `dtype=bfloat16`, vision encoder + expert trained |
 
-The `dataloading_s` vs. `update_s` ratio is the diagnostic that matters: when `dataloading_s` approaches `update_s`, more GPUs stop helping — your dataloader is the bottleneck and you should look at `--num_workers`, image resolution, and disk speed before adding compute.
+Training logs separate the full iteration into `dataloading_s` (`next(dl_iter)`), `preprocessing_s`
+(image conversion and the policy pipeline), and `update_s` (the optimizer update). `step_s` covers all
+three and drives `samples_per_s`. The benchmark above predates this split, so its `dataloading_s` includes
+preprocessing.
 
 ### Schedule and checkpoints
 
@@ -82,17 +85,18 @@ VRAM is the first filter. Within a tier, pick by budget and availability — the
 
 ### Hugging Face Jobs
 
-[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) lets you run training on managed HF infrastructure, billed by the second. The repo publishes a ready-to-use image: **`huggingface/lerobot-gpu:latest`**, rebuilt **every night at 02:00 UTC from `main`** ([`docker_publish.yml`](https://github.com/huggingface/lerobot/blob/main/.github/workflows/docker_publish.yml)) — so it tracks the current state of the repo, not a tagged release.
+[Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) lets you run training on managed HF infrastructure, billed by the second, without owning a GPU. `lerobot-train` submits and streams the job for you — just add `--job.target=<flavor>` to a normal training command:
 
 ```bash
-hf jobs run --flavor a10g-large huggingface/lerobot-gpu:latest \
-  bash -c "nvidia-smi && lerobot-train \
-    --policy.type=act --dataset.repo_id=<USER>/<DATASET> \
-    --policy.repo_id=<USER>/act_<task> --batch_size=8 --steps=50000"
+lerobot-train \
+  --policy.type=act --dataset.repo_id=<USER>/<DATASET> \
+  --policy.repo_id=<USER>/act_<task> \
+  --job.target=a10g-large
 ```
 
 Notes:
 
-- The leading `nvidia-smi` is a quick sanity check that CUDA is visible inside the container — useful to fail fast if the flavor or driver mismatched.
-- The default Job timeout is 30 minutes; pass `--timeout 4h` (or longer) for real training.
-- `--flavor` maps onto the table above: `t4-small`/`t4-medium` (T4, ACT only), `l4x1`/`l4x4` (L4 24 GB), `a10g-small/large/largex2/largex4` (A10G 24 GB scaled out), `a100-large` (A100). For the current full catalogue + pricing see [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs).
+- Run `hf auth login` once before submitting, the job runs under your token.
+- `--job.target` maps onto the table above: `t4-small`/`t4-medium` (T4, ACT only), `l4x1`/`l4x4` (L4 24 GB), `a10g-small/large/largex2/largex4` (A10G 24 GB scaled out), `a100-large` (A100). List the current catalogue with pricing via `hf jobs hardware`, or see [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs).
+- The job defaults to a `2d` (48h) timeout. Override it with `--job.timeout=4h` (or any other valid duration string) to shorten or extend the timeout. The job automatically stops when the command completes.
+- For the full walkthrough — dataset upload, checkpoint streaming, resuming a run on a job — see the [imitation-learning training guide](./il_robots#train-using-hugging-face-jobs).

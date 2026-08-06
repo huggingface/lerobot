@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +48,7 @@ else:
     Faker = None  # type: ignore[assignment, misc]
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, PolicyAction, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -58,7 +60,6 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, PolicyAction, TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_sarm import SARMConfig
@@ -68,6 +69,8 @@ from .sarm_utils import (
     find_stage_and_tau,
     pad_state_to_max_dim,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SARMEncodingProcessorStep(ProcessorStep):
@@ -108,6 +111,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
             else None
         )
 
+        self._validate_annotation_columns()
+
         self.device = torch.device(
             self.config.device if self.config.device else "cuda" if torch.cuda.is_available() else "cpu"
         )
@@ -119,6 +124,78 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
         self.verbs = ["move", "grasp", "rotate", "push", "pull", "slide", "lift", "place"]
         self.fake = Faker()
+
+    @staticmethod
+    def _resolve_annotation_column(episodes_df: pd.DataFrame, annotation_type: str, suffix: str) -> str:
+        """Resolve a mode-specific annotation column, falling back to the legacy unprefixed name."""
+        prefixed = f"{annotation_type}_{suffix}"
+        return prefixed if prefixed in episodes_df.columns else suffix
+
+    @staticmethod
+    def _annotations_are_usable(names: Any, starts: Any, ends: Any) -> bool:
+        """Return whether an episode has non-empty, aligned annotation arrays."""
+        values = (names, starts, ends)
+        if not all(isinstance(value, (list, tuple, np.ndarray)) for value in values):
+            return False
+
+        lengths = {len(value) for value in values}
+        return len(lengths) == 1 and next(iter(lengths)) > 0
+
+    def _validate_annotation_columns(self) -> None:
+        """Validate annotation coverage before loading models or generating training targets.
+
+        A multi-stage head with no usable episode annotations would otherwise train entirely
+        against all-zero targets. Reject that configuration and warn when only part of the
+        dataset is usable.
+        """
+        if self.dataset_meta is None:
+            return
+        episodes_df = self.dataset_meta.episodes.to_pandas()
+        num_episodes = len(episodes_df)
+
+        modes = []
+        if self.dense_subtask_names and len(self.dense_subtask_names) > 1:
+            modes.append(("dense", self.dense_subtask_names))
+        if self.sparse_subtask_names and len(self.sparse_subtask_names) > 1:
+            modes.append(("sparse", self.sparse_subtask_names))
+
+        for annotation_type, names in modes:
+            columns = [
+                self._resolve_annotation_column(episodes_df, annotation_type, suffix)
+                for suffix in ("subtask_names", "subtask_start_frames", "subtask_end_frames")
+            ]
+            missing_columns = [column for column in columns if column not in episodes_df.columns]
+            if missing_columns:
+                num_usable = 0
+            else:
+                num_usable = sum(
+                    self._annotations_are_usable(*(episodes_df.loc[ep_idx, column] for column in columns))
+                    for ep_idx in episodes_df.index
+                )
+
+            if num_usable == 0:
+                missing_columns_message = (
+                    f" Missing required columns: {', '.join(missing_columns)}." if missing_columns else ""
+                )
+                raise ValueError(
+                    f"SARM {annotation_type} head is configured with {len(names)} stages, but none of "
+                    f"the {num_episodes} episodes have usable annotations in meta/episodes/*.parquet. "
+                    f"Required columns: {', '.join(columns)}.{missing_columns_message} "
+                    "Training would produce all-zero "
+                    "targets. Materialize the annotations into the episodes metadata before training."
+                )
+
+            num_unusable = num_episodes - num_usable
+            if num_unusable:
+                logger.warning(
+                    "SARM %s head: %d/%d episodes have unusable annotations in columns %s; "
+                    "their targets will be 0 and only the %d annotated episodes will train the head.",
+                    annotation_type,
+                    num_unusable,
+                    num_episodes,
+                    ", ".join(columns),
+                    num_usable,
+                )
 
     def _find_episode_for_frame(self, frame_idx: int) -> int:
         """Find the episode index for a given frame index."""
@@ -167,24 +244,18 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if episodes_df is None or len(global_names) == 1:
             return None, None, None
 
-        # Resolve column name with fallback
-        def col(suffix):
-            prefixed = f"{annotation_type}_{suffix}"
-            return prefixed if prefixed in episodes_df.columns else suffix
-
-        col_names = col("subtask_names")
-        if col_names not in episodes_df.columns or ep_idx >= len(episodes_df):
+        columns = [
+            self._resolve_annotation_column(episodes_df, annotation_type, suffix)
+            for suffix in ("subtask_names", "subtask_start_frames", "subtask_end_frames")
+        ]
+        if any(column not in episodes_df.columns for column in columns) or ep_idx >= len(episodes_df):
             return None, None, None
 
-        subtask_names = episodes_df.loc[ep_idx, col_names]
-        if subtask_names is None or (isinstance(subtask_names, float) and pd.isna(subtask_names)):
+        annotations = tuple(episodes_df.loc[ep_idx, column] for column in columns)
+        if not self._annotations_are_usable(*annotations):
             return None, None, None
 
-        return (
-            subtask_names,
-            episodes_df.loc[ep_idx, col("subtask_start_frames")],
-            episodes_df.loc[ep_idx, col("subtask_end_frames")],
-        )
+        return annotations
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """

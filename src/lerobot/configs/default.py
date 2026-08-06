@@ -14,10 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
+
+from .video import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,20 +32,46 @@ class DatasetConfig:
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
     repo_id: str
+    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket streamed over
+    # hf://buckets/. Buckets are streaming-only, so "bucket" requires streaming=true.
+    repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
     episodes: list[int] | None = None
+    # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
+    exclude_episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_video_backend)
-    # When True, video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
+    # When True, RGB video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
+    # Physical unit depth maps are dequantized to at load time: "mm" (millimeters) or "m" (metres).
+    # Has no effect on datasets without depth cameras.
+    depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
+    eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        if self.repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
+        if self.repo_type == "bucket" and not self.streaming:
+            raise ValueError(
+                "repo_type='bucket' is streaming-only: set streaming=true to train from an HF Storage Bucket."
+            )
+        if self.repo_type == "bucket" and self.eval_split != 0.0:
+            raise ValueError(
+                "eval_split requires map-style datasets and is not supported with repo_type='bucket'."
+            )
+        if self.depth_output_unit not in (DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT):
+            raise ValueError(
+                f"depth_output_unit must be '{DEPTH_METER_UNIT}' or '{DEPTH_MILLIMETER_UNIT}', got {self.depth_output_unit!r}"
+            )
+        if not (0.0 <= self.eval_split < 1.0):
+            raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(
@@ -49,6 +80,14 @@ class DatasetConfig:
             if len(self.episodes) != len(set(self.episodes)):
                 duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
                 raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+        if self.exclude_episodes is not None:
+            negative_episodes = [episode for episode in self.exclude_episodes if episode < 0]
+            if negative_episodes:
+                logger.warning(
+                    "Ignoring negative exclude_episodes entries: %s",
+                    negative_episodes,
+                )
+                self.exclude_episodes = [episode for episode in self.exclude_episodes if episode >= 0]
 
 
 @dataclass
@@ -73,8 +112,17 @@ class EvalConfig:
     # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
     # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
+    # Whether to record eval rollouts as a LeRobot dataset on disk.
+    recording: bool = False
+    # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
+    # suffixed by task and env index). Requires recording=true.
+    recording_repo_id: str | None = None
+    # Whether the pushed recording repositories should be private.
+    recording_private: bool = False
 
     def __post_init__(self) -> None:
+        if self.recording_repo_id is not None and not self.recording:
+            raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
@@ -123,3 +171,35 @@ class PeftConfig:
     # If None, the PEFT library defaults to alpha=8, which may dampen high-rank adapters.
     # Common values are r (alpha == rank) or 2*r.
     lora_alpha: int | None = None
+
+
+@dataclass
+class JobConfig:
+    # Where training runs. None (omitted) or "local" runs on this machine.
+    # Any other value is an HF Jobs flavor and submits the run to HF Jobs.
+    # List available flavors + pricing with `hf jobs hardware` command.
+    target: str | None = None
+    # Runtime image for the remote job (ignored for local runs).
+    image: str = "huggingface/lerobot-gpu:latest"
+    # Max wall-clock for the remote job as an HF Jobs duration string (e.g. "2h").
+    # Defaults to "2d": We pass an explicit, generous cap instead. Set a smaller
+    # value to fail fast, or a larger one for long runs.
+    timeout: str | None = "2d"
+    # Submit and exit instead of streaming the job logs in the foreground.
+    detach: bool = False
+    # Extra tags attached to the HF job and to any dataset this run pushes to the
+    # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
+    tags: list[str] = field(default_factory=list)
+
+    # Two entry points to the same predicate: the staticmethod tests a raw target string
+    # straight from argv (before any JobConfig exists, to decide dispatch early), while the
+    # property is the ergonomic accessor for code that already holds a config instance.
+    @staticmethod
+    def is_remote_target(target: str | None) -> bool:
+        """True when `target` names an HF Jobs flavor rather than a local run."""
+        return target not in (None, "local")
+
+    @property
+    def is_remote(self) -> bool:
+        """True when training should run on HF Jobs rather than this machine."""
+        return self.is_remote_target(self.target)
