@@ -1,0 +1,318 @@
+{
+  "by_model_and_cell": {
+    "A": {
+      "r1c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r1c2": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r1c3": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r1c4": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r2c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c2": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r2c3": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c4": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c1": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r3c2": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c3": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c4": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      }
+    },
+    "B": {
+      "r1c1": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r1c2": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r1c3": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r1c4": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c2": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c3": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c4": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c2": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r3c3": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r3c4": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      }
+    },
+    "C": {
+      "r1c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r1c2": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r1c3": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r1c4": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r2c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r2c2": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r2c3": {
+        "rate": 1.0,
+        "success": 2,
+        "total": 2
+      },
+      "r2c4": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c1": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c2": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      },
+      "r3c3": {
+        "rate": 0.0,
+        "success": 0,
+        "total": 2
+      },
+      "r3c4": {
+        "rate": 0.5,
+        "success": 1,
+        "total": 2
+      }
+    }
+  },
+  "by_model_and_coverage_tier": {
+    "A": {
+      "added_by_real48": {
+        "rate": 0.5,
+        "success": 3,
+        "total": 6
+      },
+      "added_by_real96": {
+        "rate": 0.1111111111111111,
+        "success": 1,
+        "total": 9
+      },
+      "seen_by_real24": {
+        "rate": 0.8333333333333334,
+        "success": 5,
+        "total": 6
+      },
+      "unseen_by_both": {
+        "rate": 0.6666666666666666,
+        "success": 2,
+        "total": 3
+      }
+    },
+    "B": {
+      "added_by_real48": {
+        "rate": 1.0,
+        "success": 6,
+        "total": 6
+      },
+      "added_by_real96": {
+        "rate": 0.4444444444444444,
+        "success": 4,
+        "total": 9
+      },
+      "seen_by_real24": {
+        "rate": 0.8333333333333334,
+        "success": 5,
+        "total": 6
+      },
+      "unseen_by_both": {
+        "rate": 0.3333333333333333,
+        "success": 1,
+        "total": 3
+      }
+    },
+    "C": {
+      "added_by_real48": {
+        "rate": 0.5,
+        "success": 3,
+        "total": 6
+      },
+      "added_by_real96": {
+        "rate": 0.2222222222222222,
+        "success": 2,
+        "total": 9
+      },
+      "seen_by_real24": {
+        "rate": 0.8333333333333334,
+        "success": 5,
+        "total": 6
+      },
+      "unseen_by_both": {
+        "rate": 0.3333333333333333,
+        "success": 1,
+        "total": 3
+      }
+    }
+  },
+  "by_model_and_yaw": {
+    "A": {
+      "0": {
+        "rate": 0.5833333333333334,
+        "success": 7,
+        "total": 12
+      },
+      "45": {
+        "rate": 0.3333333333333333,
+        "success": 4,
+        "total": 12
+      }
+    },
+    "B": {
+      "0": {
+        "rate": 0.8333333333333334,
+        "success": 10,
+        "total": 12
+      },
+      "45": {
+        "rate": 0.5,
+        "success": 6,
+        "total": 12
+      }
+    },
+    "C": {
+      "0": {
+        "rate": 0.4166666666666667,
+        "success": 5,
+        "total": 12
+      },
+      "45": {
+        "rate": 0.5,
+        "success": 6,
+        "total": 12
+      }
+    }
+  },
+  "evidence_path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_real24_repeat_realgap24_localsim24gap_act200k_eval24_v1/canonical_video_review_v1/final_review_v1/stratified_addendum_v1.json",
+  "failure_categories_by_model": {
+    "A": {
+      "missed_grasp": 6,
+      "spatial_offset": 6,
+      "top_contact": 1
+    },
+    "B": {
+      "missed_grasp": 6,
+      "spatial_offset": 1,
+      "top_contact": 1
+    },
+    "C": {
+      "missed_grasp": 5,
+      "spatial_offset": 8
+    }
+  },
+  "hashes_v3_sha256": "a664aa6b5f608d0acb3a030941b436692b799aa6fdef869371d2f5b1b32a8fe0",
+  "schema": "task1_additive_eval24_canonical_review_stratified_addendum_v1",
+  "sha256": "6ef78a8dc82c48d0dd71f7098ae22718bb52af0350c295a9ca2b7edd70952998",
+  "source_final_trials_sha256": "3837c6cd3e25021b29a4978b669549afb6e1849af560b3543800163183b7a935",
+  "status": "pass"
+}
