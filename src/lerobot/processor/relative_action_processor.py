@@ -102,6 +102,9 @@ class RelativeActionsProcessorStep(ProcessorStep):
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
+    # When True, keep ``_last_state`` fixed so a sync chunk is not re-anchored
+    # to later robot states while queued relative actions are consumed.
+    _reference_frozen: bool = field(default=False, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -126,8 +129,9 @@ class RelativeActionsProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
-        # Always cache state for the paired AbsoluteActionsProcessorStep
-        if state is not None:
+        # Cache state for the paired AbsoluteActionsProcessorStep unless a sync
+        # consumer has frozen the chunk reference.
+        if state is not None and not self._reference_frozen:
             self._last_state = state
 
         if not self.enabled:
@@ -145,6 +149,18 @@ class RelativeActionsProcessorStep(ProcessorStep):
     def get_cached_state(self) -> torch.Tensor | None:
         """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
         return self._last_state
+
+    def freeze_reference_state(self) -> None:
+        """Keep the current cached state fixed across subsequent preprocessor calls."""
+        self._reference_frozen = True
+
+    def unfreeze_reference_state(self) -> None:
+        """Allow the next preprocessor call to refresh the cached reference state."""
+        self._reference_frozen = False
+
+    def reset(self) -> None:
+        self._last_state = None
+        self._reference_frozen = False
 
     def get_config(self) -> dict[str, Any]:
         return {

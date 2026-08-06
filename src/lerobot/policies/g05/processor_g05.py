@@ -85,7 +85,8 @@ def _copy_feature_tree(
 class G05BBoxImageSizeStep(ProcessorStep):
     """Preserve the annotated camera's source size before checkpoint resizing."""
 
-    camera_key: str
+    # Default matches so100/chatton exterior; older Hub JSONs omitted camera_key.
+    camera_key: str = "observation.images.exterior"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION) or {}
@@ -105,6 +106,9 @@ class G05BBoxImageSizeStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"camera_key": self.camera_key}
 
 
 @dataclass
@@ -398,7 +402,7 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
             and state.shape[-2] == self.num_obs_steps
         ):
             state = state[-1]
-        if state is not None:
+        if state is not None and not self._reference_frozen:
             self._last_state = state
         if not self.enabled:
             return transition
@@ -711,6 +715,21 @@ def _project_stats(
             projected_stats[stat_name] = projected
         result[feature_name] = projected_stats
     return result
+
+
+def reconcile_g05_processors(
+    config: G05Config,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Fill bbox camera_key on Hub pipelines that saved an empty step config."""
+    camera_key = config.cot_bbox_camera or (config.camera_order[0] if config.camera_order else None)
+    if camera_key is None:
+        return preprocessor, postprocessor
+    for step in preprocessor.steps:
+        if isinstance(step, G05BBoxImageSizeStep):
+            step.camera_key = camera_key
+    return preprocessor, postprocessor
 
 
 def make_g05_pre_post_processors(
