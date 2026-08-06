@@ -16,23 +16,30 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
+import torch
+
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature, recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
+    NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    UnnormalizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_wall_oss_05 import WallOSS05Config
 
@@ -57,6 +64,121 @@ class WallOSS05TaskPassthrough(ComplementaryDataProcessorStep):
         return features
 
 
+@dataclass
+@ProcessorStepRegistry.register(name="wall_oss_05_pad_state")
+class WallOSS05PadStateProcessorStep(ObservationProcessorStep):
+    """Zero-pad state to the fixed 26D Wall-OSS contract before normalization."""
+
+    max_state_dim: int = 26
+    # Shared with the crop step so OMX 6D→26D auto-crops actions back to 6D.
+    native_dim_holder: dict[str, int] | None = None
+
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if OBS_STATE not in observation:
+            return observation
+        state = observation[OBS_STATE]
+        state_dim = state.shape[-1]
+        if state_dim > self.max_state_dim:
+            raise ValueError(
+                f"Wall-OSS-0.5 state has {state_dim} dims, which exceeds max_state_dim={self.max_state_dim}."
+            )
+        if self.native_dim_holder is not None:
+            self.native_dim_holder["dim"] = state_dim
+        if state_dim < self.max_state_dim:
+            observation = dict(observation)
+            observation[OBS_STATE] = torch.nn.functional.pad(state, (0, self.max_state_dim - state_dim))
+        return observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        obs_feats = new_features.setdefault(PipelineFeatureType.OBSERVATION, {})
+        if OBS_STATE in obs_feats:
+            obs_feats[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(self.max_state_dim,))
+        return new_features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"max_state_dim": self.max_state_dim}
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="wall_oss_05_pad_action")
+class WallOSS05PadActionProcessorStep(ProcessorStep):
+    """Zero-pad training actions to the fixed 26D Wall-OSS contract before normalization."""
+
+    max_action_dim: int = 26
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Wall-OSS-0.5 action should be a PolicyAction tensor, got {type(action)}.")
+        action_dim = action.shape[-1]
+        if action_dim > self.max_action_dim:
+            raise ValueError(
+                f"Wall-OSS-0.5 action has {action_dim} dims, which exceeds max_action_dim={self.max_action_dim}."
+            )
+        if action_dim == self.max_action_dim:
+            return transition
+        new_transition = transition.copy()
+        new_transition[TransitionKey.ACTION] = torch.nn.functional.pad(
+            action, (0, self.max_action_dim - action_dim)
+        )
+        return new_transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        action_feats = new_features.setdefault(PipelineFeatureType.ACTION, {})
+        action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.max_action_dim,))
+        return new_features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"max_action_dim": self.max_action_dim}
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="wall_oss_05_crop_action")
+class WallOSS05CropActionProcessorStep(PolicyActionProcessorStep):
+    """Crop padded actions back to the robot/env action width after unnormalization.
+
+    ``action_dim`` overrides the auto width tracked by the paired pad step.
+    """
+
+    action_dim: int | None = None
+    native_dim_holder: dict[str, int] | None = None
+
+    def _resolved_dim(self, action: PolicyAction) -> int | None:
+        if self.action_dim is not None:
+            return self.action_dim
+        if self.native_dim_holder is not None:
+            return self.native_dim_holder.get("dim")
+        return None
+
+    def action(self, action: PolicyAction) -> PolicyAction:
+        dim = self._resolved_dim(action)
+        if dim is None or action.shape[-1] <= dim:
+            return action
+        return action[..., :dim]
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        dim = self.action_dim
+        if dim is None:
+            return features
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
+        action_feats = new_features.setdefault(PipelineFeatureType.ACTION, {})
+        action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(dim,))
+        return new_features
+
+    def get_config(self) -> dict[str, Any]:
+        return {"action_dim": self.action_dim}
+
+
 @ProcessorStepRegistry.register(name="wall_oss_05_clamp_normalized")
 class WallOSS05ClampNormalizedProcessorStep(ProcessorStep):
     """Match Wall's clipped q01/q99 normalization after the standard LeRobot normalizer."""
@@ -77,6 +199,58 @@ class WallOSS05ClampNormalizedProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+def reconcile_wall_oss_05_processors(
+    config: WallOSS05Config,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Insert pad/crop steps into Hub pipelines that predate auto-padding.
+
+    Pad/crop share a holder so a 6D robot state is zero-padded to 26D for the
+    model, then actions are cropped back to 6D automatically.
+    """
+    native_dim_holder: dict[str, int] = {}
+    pre_steps = list(preprocessor.steps)
+    if not any(isinstance(step, WallOSS05PadStateProcessorStep) for step in pre_steps):
+        insert_idx = next(
+            (idx for idx, step in enumerate(pre_steps) if isinstance(step, NormalizerProcessorStep)),
+            len(pre_steps),
+        )
+        pre_steps[insert_idx:insert_idx] = [
+            WallOSS05PadStateProcessorStep(
+                max_state_dim=config.max_state_dim, native_dim_holder=native_dim_holder
+            ),
+            WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
+        ]
+        preprocessor.steps = pre_steps
+    else:
+        for step in pre_steps:
+            if isinstance(step, WallOSS05PadStateProcessorStep):
+                step.native_dim_holder = native_dim_holder
+                break
+
+    post_steps = list(postprocessor.steps)
+    crop_step = WallOSS05CropActionProcessorStep(
+        action_dim=config.postprocess_action_dim,
+        native_dim_holder=native_dim_holder,
+    )
+    crop_idx = next(
+        (idx for idx, step in enumerate(post_steps) if isinstance(step, WallOSS05CropActionProcessorStep)),
+        None,
+    )
+    if crop_idx is None:
+        insert_idx = next(
+            (idx + 1 for idx, step in enumerate(post_steps) if isinstance(step, UnnormalizerProcessorStep)),
+            0,
+        )
+        post_steps.insert(insert_idx, crop_step)
+    else:
+        post_steps[crop_idx] = crop_step
+    postprocessor.steps = post_steps
+
+    return preprocessor, postprocessor
 
 
 def _load_recipe(path_str: str) -> TrainingRecipe:
@@ -101,15 +275,27 @@ def make_wall_oss_05_pre_post_processors(
     language_steps = []
     if config.recipe_path:
         language_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+    native_dim_holder: dict[str, int] = {}
     return make_policy_processor_pipelines(
         input_steps=[
             steps.rename_observations,
             steps.add_batch_dim,
             WallOSS05TaskPassthrough(),
+            WallOSS05PadStateProcessorStep(
+                max_state_dim=config.max_state_dim, native_dim_holder=native_dim_holder
+            ),
+            WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
             steps.normalize,
             WallOSS05ClampNormalizedProcessorStep(),
             *language_steps,
             steps.to_device,
         ],
-        output_steps=[steps.unnormalize, steps.to_cpu],
+        output_steps=[
+            steps.unnormalize,
+            WallOSS05CropActionProcessorStep(
+                action_dim=config.postprocess_action_dim,
+                native_dim_holder=native_dim_holder,
+            ),
+            steps.to_cpu,
+        ],
     )

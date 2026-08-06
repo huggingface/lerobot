@@ -47,6 +47,10 @@ class WallOSS05Config(PreTrainedConfig):
     n_action_steps: int = 32
     max_action_dim: int = 26
     max_state_dim: int = 26
+    # When set, crop unnormalized actions to this width. When None, the
+    # postprocessor auto-crops to the native state width seen before padding
+    # (so a 6D OMX robot gets 6D actions back without a CLI override).
+    postprocess_action_dim: int | None = None
     num_inference_timesteps: int = 10
     action_branch: str = "flow"
     recipe_path: str | None = None
@@ -120,10 +124,17 @@ class WallOSS05Config(PreTrainedConfig):
 
         state_dim = self.input_features[OBS_STATE].shape[-1]
         action_dim = self.output_features[ACTION].shape[-1]
-        if state_dim != self.max_state_dim or action_dim != self.max_action_dim:
+        if state_dim > self.max_state_dim or action_dim > self.max_action_dim:
             raise ValueError(
-                "Wall-OSS-0.5 currently requires canonical 26D state and action features; "
+                "Wall-OSS-0.5 state/action features cannot exceed the fixed 26D contract; "
                 f"got {state_dim}D state and {action_dim}D action."
+            )
+        if self.postprocess_action_dim is not None and (
+            self.postprocess_action_dim < 1 or self.postprocess_action_dim > self.max_action_dim
+        ):
+            raise ValueError(
+                f"postprocess_action_dim must be in [1, {self.max_action_dim}], "
+                f"got {self.postprocess_action_dim}."
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:
