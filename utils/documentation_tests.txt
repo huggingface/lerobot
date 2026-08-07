@@ -1,0 +1,12 @@
+# Files whose docstring examples are executed by `make doctest`.
+#
+# This is an ALLOWLIST: only the paths below are collected. transformers started the same way and has since
+# inverted to a denylist (`utils/not_doctested.txt`), which is the better end state — it makes a new file
+# tested by default. LeRobot cannot start there: at the time of writing, public docstring coverage is under
+# 50% and only a handful of files carry any example at all, so a denylist would need hundreds of entries on
+# day one and would say nothing about what is actually verified.
+#
+# Invert once coverage is high enough that the exclusions are the short list.
+# `utils/check_doctest_list.py` does not care which way round it is.
+#
+# Keep alphabetically sorted: `make check-doctest-list` enforces it, `make fix-docstrings` sorts it.
