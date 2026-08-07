@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.6.1"
+version = "0.6.2"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -87,7 +87,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<81.0.0",
+    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
 ]
 
 # Optional dependencies
@@ -261,7 +261,7 @@ annotations = [
 # Development
 dev = ["pre-commit>=3.7.0,<5.0.0", "debugpy>=1.8.1,<1.9.0", "lerobot[grpcio-dep]", "grpcio-tools>=1.73.1,<2.0.0", "mypy>=1.19.1", "ruff>=0.14.1", "lerobot[notebook]"]
 notebook = ["jupyter>=1.0.0,<2.0.0", "ipykernel>=6.0.0,<7.0.0"]
-test = ["pytest>=8.1.0,<9.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
+test = ["pytest>=8.1.0,<10.0.0", "pytest-timeout>=2.4.0,<3.0.0", "pytest-cov>=5.0.0,<8.0.0", "mock-serial>=0.0.1,<0.1.0 ; sys_platform != 'win32'"]
 video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
@@ -346,6 +346,7 @@ lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"
 lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-convert-dcp="lerobot.scripts.lerobot_convert_dcp:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
 lerobot-train-tokenizer="lerobot.scripts.lerobot_train_tokenizer:main"
@@ -475,6 +476,12 @@ default.extend-ignore-identifiers-re = [
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
 
+[tool.pytest.ini_options]
+markers = [
+    "multigpu: distributed tests needing 2-4 GPUs (CI: docker_publish.yml lane)",
+    "multigpu_heavy: 8-GPU sweeps and soak tests; never run in CI",
+]
+
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
@@ -517,6 +524,15 @@ module = "lerobot.configs.*"
 ignore_errors = false
 
 # extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.distributed.*"
+ignore_errors = false
+
+# extra strictness for the distributed engine
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

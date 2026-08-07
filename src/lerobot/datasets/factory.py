@@ -30,6 +30,7 @@ from .lancedb_dataset import LanceDBDataset, is_lance_dataset, lance_metadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
+from .utils import resolve_episode_indices
 
 
 def resolve_delta_timestamps(
@@ -93,6 +94,10 @@ def _make_map_dataset(
             tolerance_s=cfg.tolerance_s,
             **kwargs,
         )
+    if cfg.dataset.repo_type == "bucket":
+        raise ValueError(
+            "repo_type='bucket' is streaming-only: set dataset.streaming=true to train from an HF Storage Bucket."
+        )
     return LeRobotDataset(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
@@ -137,14 +142,20 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | LanceDBDataset | 
             lance_metadata(cfg.dataset.repo_id, cfg.dataset.root, cfg.dataset.revision)
             if lance
             else LeRobotDatasetMetadata(
-                cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+                cfg.dataset.repo_id,
+                root=cfg.dataset.root,
+                revision=cfg.dataset.revision,
+                repo_type=cfg.dataset.repo_type,
             )
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
+        episodes = resolve_episode_indices(
+            cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
+        )
         if not cfg.dataset.streaming:
             dataset = _make_map_dataset(
                 cfg,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 depth_output_unit=cfg.dataset.depth_output_unit,
@@ -153,13 +164,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | LanceDBDataset | 
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
-                episodes=cfg.dataset.episodes,
+                episodes=episodes,
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 max_num_shards=cfg.num_workers,
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
+                repo_type=cfg.dataset.repo_type,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")

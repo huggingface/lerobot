@@ -107,6 +107,54 @@ def test_load_config_nonexistent_path_tries_hub():
         DataProcessorPipeline._load_config("nonexistent/path", "processor.json", {})
 
 
+def test_load_config_legacy_hub_policy_suggests_revision_aware_migration(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "type": "diffusion",
+                "input_features": {"observation.state": {"type": "STATE", "shape": [2]}},
+                "output_features": {"action": {"type": "ACTION", "shape": [2]}},
+            }
+        )
+    )
+
+    def fake_hf_hub_download(*, filename, **kwargs):  # noqa: ARG001
+        if filename == "config.json":
+            return str(config_path)
+        raise FileNotFoundError(filename)
+
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_hf_hub_download)
+
+    with pytest.raises(ProcessorMigrationError) as exc_info:
+        DataProcessorPipeline._load_config(
+            "lerobot/diffusion_pusht", "policy_preprocessor.json", {"revision": "legacy"}
+        )
+
+    assert "--revision legacy" in exc_info.value.migration_command
+
+
+def test_hub_migration_detection_is_conservative(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "type": "diffusion",
+                "input_features": {},
+                "output_features": {"action": {"type": "ACTION", "shape": [2]}},
+            }
+        )
+    )
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", lambda **kwargs: str(config_path))
+    assert not DataProcessorPipeline._hub_model_requires_migration("someone/model", {})
+
+    def fail_lookup(**kwargs):  # noqa: ARG001
+        raise ValueError("invalid repository")
+
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fail_lookup)
+    assert not DataProcessorPipeline._hub_model_requires_migration("invalid", {})
+
+
 def test_from_pretrained_local_directory_missing_state_does_not_call_hub(monkeypatch):
     """Local processor dirs must fail locally when a state file is missing."""
 

@@ -328,6 +328,7 @@ class LiberoEnv(EnvConfig):
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
+    hard_reset: bool = True
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
@@ -356,6 +357,8 @@ class LiberoEnv(EnvConfig):
     def __post_init__(self):
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
+        if not self.hard_reset and not self.init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
 
         if self.obs_type == "pixels":
             self.features[LIBERO_KEY_PIXELS_AGENTVIEW] = PolicyFeature(
@@ -416,6 +419,7 @@ class LiberoEnv(EnvConfig):
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
             "control_freq": self.fps,
+            "hard_reset": self.hard_reset,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
