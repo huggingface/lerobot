@@ -58,12 +58,38 @@ type ChunkFile = tuple[int, int]
 
 
 class IndexState(TypedDict):
+    """The current write cursor for a non-video (parquet) output stream during aggregation.
+
+    **Attributes**:
+        - **chunk** (`int`) -- The chunk index currently being written to.
+        - **file** (`int`) -- The file index, within `chunk`, currently being written to.
+        - **src_to_dst** (`dict[ChunkFile, ChunkFile]`, *optional*) -- Maps each source dataset's
+          `(chunk, file)` to the destination `(chunk, file)` its rows were merged into.
+    """
+
     chunk: int
     file: int
     src_to_dst: NotRequired[dict[ChunkFile, ChunkFile]]
 
 
 class VideoIndex(TypedDict):
+    """The current write cursor for a video output stream during aggregation.
+
+    **Attributes**:
+        - **chunk** (`int`) -- The chunk index currently being written to.
+        - **file** (`int`) -- The file index, within `chunk`, currently being written to.
+        - **latest_duration** (`float`) -- The duration, in seconds, appended to the current destination
+          file so far.
+        - **episode_duration** (`float`) -- The duration, in seconds, of the episode currently being
+          concatenated.
+        - **src_to_offset** (`dict[ChunkFile, float]`, *optional*) -- Maps each source `(chunk, file)` to
+          the time offset, in seconds, at which it was appended into its destination file.
+        - **src_to_dst** (`dict[ChunkFile, ChunkFile]`, *optional*) -- Maps each source `(chunk, file)` to
+          the destination `(chunk, file)` its video was concatenated into.
+        - **dst_file_durations** (`dict[ChunkFile, float]`, *optional*) -- The final total duration, in
+          seconds, of each completed destination file.
+    """
+
     chunk: int
     file: int
     latest_duration: float
@@ -80,7 +106,7 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
     """Create a merged video feature info dictionary for aggregation. The video encoder info is merged field-by-field: each key is kept only when every source agrees; otherwise that key is set to ``null`` (or ``{}`` for ``video.extra_options``) and a warning is logged.
 
     Args:
-        all_metadata: List of LeRobotDatasetMetadata objects to merge.
+        all_metadata (`list`): List of `LeRobotDatasetMetadata` objects to merge.
 
     Returns:
         dict: A dictionary of merged video feature info.
@@ -126,7 +152,7 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[i
     Video encoder info is not considered for validation but is merged during aggregation in ``merge_video_feature_info_for_aggregate``.
 
     Args:
-        all_metadata: List of LeRobotDatasetMetadata objects to validate.
+        all_metadata (`list`): List of `LeRobotDatasetMetadata` objects to validate.
 
     Returns:
         tuple: A tuple containing (fps, robot_type, features) from the first metadata.
@@ -135,7 +161,6 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]) -> tuple[i
         ValueError: If any metadata has different fps, robot_type, or features
                    than the first metadata in the list.
     """
-
     fps = all_metadata[0].fps
     robot_type = all_metadata[0].robot_type
     features = all_metadata[0].features
@@ -164,14 +189,13 @@ def update_data_df(
     previously aggregated data in the destination dataset.
 
     Args:
-        df: DataFrame containing the data to be updated.
-        src_meta: Source dataset metadata.
-        dst_meta: Destination dataset metadata.
+        df (`DataFrame`): DataFrame containing the data to be updated.
+        src_meta (`LeRobotDatasetMetadata`): Source dataset metadata.
+        dst_meta (`LeRobotDatasetMetadata`): Destination dataset metadata.
 
     Returns:
         pd.DataFrame: Updated DataFrame with adjusted indices.
     """
-
     df["episode_index"] = df["episode_index"] + dst_meta.info.total_episodes
     df["index"] = df["index"] + dst_meta.info.total_frames
 
@@ -197,16 +221,15 @@ def update_meta_data(
     to correctly map source file indices to their destination locations.
 
     Args:
-        df: DataFrame containing the metadata to be updated.
-        dst_meta: Destination dataset metadata.
-        meta_idx: Dictionary containing current metadata chunk and file indices.
-        data_idx: Dictionary containing current data chunk and file indices.
-        videos_idx: Dictionary containing current video indices and timestamps.
+        df (`DataFrame`): DataFrame containing the metadata to be updated.
+        dst_meta (`LeRobotDatasetMetadata`): Destination dataset metadata.
+        meta_idx (`IndexState`): Dictionary containing current metadata chunk and file indices.
+        data_idx (`IndexState`): Dictionary containing current data chunk and file indices.
+        videos_idx (`VideoIndexState`): Dictionary containing current video indices and timestamps.
 
     Returns:
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
-
     df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
     df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]
 
@@ -367,15 +390,21 @@ def aggregate_datasets(
     4. Finalizing the aggregated dataset with proper statistics
 
     Args:
-        repo_ids: List of repository IDs for the datasets to aggregate.
-        aggr_repo_id: Repository ID for the aggregated output dataset.
-        roots: Optional list of root paths for the source datasets.
-        aggr_root: Optional root path for the aggregated dataset.
-        data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
-        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
-        chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
-        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
+        repo_ids (`list`): List of repository IDs for the datasets to aggregate.
+        aggr_repo_id (`str`): Repository ID for the aggregated output dataset.
+        roots (`list[pathlib.Path] | None`, *optional*): List of root paths for the source
+            datasets.
+        aggr_root (`pathlib.Path | None`, *optional*): Root path for the aggregated dataset.
+        data_files_size_in_mb (`int | None`, *optional*): Maximum size for data files in MB. Falls
+            back to `DEFAULT_DATA_FILE_SIZE_IN_MB` when not set.
+        video_files_size_in_mb (`int | None`, *optional*): Maximum size for video files in MB. Falls
+            back to `DEFAULT_VIDEO_FILE_SIZE_IN_MB` when not set.
+        chunk_size (`int | None`, *optional*): Maximum number of files per chunk. Falls back to
+            `DEFAULT_CHUNK_SIZE` when not set.
+        concatenate_videos (`bool`, *optional*, defaults to `True`): When `False`, keep one mp4 per
+            source file instead of packing into shards.
+        concatenate_data (`bool`, *optional*, defaults to `True`): When `False`, keep one parquet per
+            source file instead of packing into shards.
     """
     logger.info("Start aggregate_datasets")
 
@@ -458,12 +487,14 @@ def aggregate_videos(
     Creates new video files when size limits are exceeded.
 
     Args:
-        src_meta: Source dataset metadata.
-        dst_meta: Destination dataset metadata.
-        videos_idx: Dictionary tracking video chunk and file indices.
-        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
-        chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
+        src_meta (`LeRobotDatasetMetadata`): Source dataset metadata.
+        dst_meta (`LeRobotDatasetMetadata`): Destination dataset metadata.
+        videos_idx (`VideoIndexState`): Dictionary tracking video chunk and file indices.
+        video_files_size_in_mb (`float`): Maximum size for video files in MB.
+        chunk_size (`int`): Maximum number of files per chunk.
+        concatenate_videos (`bool`, *optional*, defaults to `True`): When `False`, keep one mp4 per
+            source file instead of packing into shards.
+
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
     """
@@ -581,12 +612,13 @@ def aggregate_data(
     have multiple data files (e.g., from a previous merge operation).
 
     Args:
-        src_meta: Source dataset metadata.
-        dst_meta: Destination dataset metadata.
-        data_idx: Dictionary tracking data chunk and file indices.
-        data_files_size_in_mb: Maximum size for data files in MB.
-        chunk_size: Maximum number of files per chunk.
-        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
+        src_meta (`LeRobotDatasetMetadata`): Source dataset metadata.
+        dst_meta (`LeRobotDatasetMetadata`): Destination dataset metadata.
+        data_idx (`IndexState`): Dictionary tracking data chunk and file indices.
+        data_files_size_in_mb (`float`): Maximum size for data files in MB.
+        chunk_size (`int`): Maximum number of files per chunk.
+        concatenate_data (`bool`, *optional*, defaults to `True`): When `False`, keep one parquet per
+            source file instead of packing into shards.
 
     Returns:
         dict: Updated data_idx with current chunk and file indices.
@@ -660,11 +692,11 @@ def aggregate_metadata(
     and writes them to the destination with proper file rotation.
 
     Args:
-        src_meta: Source dataset metadata.
-        dst_meta: Destination dataset metadata.
-        meta_idx: Dictionary tracking metadata chunk and file indices.
-        data_idx: Dictionary tracking data chunk and file indices.
-        videos_idx: Dictionary tracking video indices and timestamps.
+        src_meta (`LeRobotDatasetMetadata`): Source dataset metadata.
+        dst_meta (`LeRobotDatasetMetadata`): Destination dataset metadata.
+        meta_idx (`IndexState`): Dictionary tracking metadata chunk and file indices.
+        data_idx (`IndexState`): Dictionary tracking data chunk and file indices.
+        videos_idx (`VideoIndexState`): Dictionary tracking video indices and timestamps.
 
     Returns:
         dict: Updated meta_idx with current chunk and file indices.
@@ -727,18 +759,22 @@ def append_or_create_parquet_file(
     from becoming too large. Handles both regular parquet files and those containing images.
 
     Args:
-        df: DataFrame to write to the parquet file.
-        src_path: Path to the source file (used for size estimation).
-        idx: Dictionary containing current 'chunk' and 'file' indices.
-        max_mb: Maximum allowed file size in MB before rotation.
-        chunk_size: Maximum number of files per chunk before incrementing chunk index.
-        default_path: Format string for generating file paths.
-        contains_images: Whether the data contains images requiring special handling.
-        aggr_root: Root path for the aggregated dataset.
-        hf_features: Optional HuggingFace Features schema for proper image typing.
-        concatenate: When False, always rotate to a new file instead of appending to the current one.
-        one_row_group_per_episode: True for DATA parquet (emit one row group per episode); False for
-            the episodes-metadata parquet (already one row per episode).
+        df (`DataFrame`): DataFrame to write to the parquet file.
+        src_path (`Path`): Path to the source file, used for size estimation.
+        idx (`IndexState`): Dictionary containing current `chunk` and `file` indices.
+        max_mb (`float`): Maximum allowed file size in MB before rotation.
+        chunk_size (`int`): Maximum number of files per chunk before incrementing the chunk index.
+        default_path (`str`): Format string for generating file paths.
+        contains_images (`bool`, *optional*, defaults to `False`): Whether the data contains images
+            requiring special handling.
+        aggr_root (`pathlib.Path | None`, *optional*): Root path for the aggregated dataset.
+        hf_features (`datasets.features.features.Features | None`, *optional*): HuggingFace Features
+            schema used for proper image typing.
+        concatenate (`bool`, *optional*, defaults to `True`): When `False`, always rotate to a new
+            file instead of appending to the current one.
+        one_row_group_per_episode (`bool`, *optional*, defaults to `False`): Whether to emit one
+            parquet row group per episode. Set to `True` for data parquet files; left `False` for the
+            episodes-metadata parquet, which already has one row per episode.
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -802,8 +838,8 @@ def finalize_aggregation(
     aggregated statistics from all source datasets.
 
     Args:
-        aggr_meta: Aggregated dataset metadata.
-        all_metadata: List of all source dataset metadata objects.
+        aggr_meta (`LeRobotDatasetMetadata`): Aggregated dataset metadata.
+        all_metadata (`list`): List of all source dataset metadata objects.
     """
     logger.info("write tasks")
     write_tasks(aggr_meta.tasks, aggr_meta.root)

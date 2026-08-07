@@ -44,17 +44,13 @@ from .video_utils import (
 
 
 class LookBackError(Exception):
-    """
-    Exception raised when trying to look back in the history of a Backtrackable object.
-    """
+    """Exception raised when trying to look back in the history of a Backtrackable object."""
 
     pass
 
 
 class LookAheadError(Exception):
-    """
-    Exception raised when trying to look ahead in the future of a Backtrackable object.
-    """
+    """Exception raised when trying to look ahead in the future of a Backtrackable object."""
 
     pass
 
@@ -64,11 +60,10 @@ class _ShardExhaustedError(Exception):
 
 
 class Backtrackable[T]:
-    """
-    Wrap any iterator/iterable so you can step back up to `history` items
-    and look ahead up to `lookahead` items.
+    """Wrap any iterator/iterable so you can step back up to `history` items and look ahead.
 
-    This is useful for streaming datasets where you need to access previous and future items
+    Looking ahead is bounded by `lookahead` items. This is useful for streaming datasets where you need
+    to access previous and future items
     but can't load the entire dataset into memory.
 
     Example:
@@ -98,6 +93,16 @@ class Backtrackable[T]:
     __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
 
     def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
+        """Wrap `iterable`, buffering up to `history` past items and `lookahead` future items.
+
+        Args:
+            iterable: The iterable to wrap.
+            history: How many past items `prev()`/`peek_back()` can reach. Must be `>= 1`.
+            lookahead: How many future items `peek_ahead()` can reach. Must be `> 0`.
+
+        Raises:
+            ValueError: If `history < 1` or `lookahead <= 0`.
+        """
         if history < 1:
             raise ValueError("history must be >= 1")
         if lookahead <= 0:
@@ -111,9 +116,11 @@ class Backtrackable[T]:
         self._lookahead = lookahead
 
     def __iter__(self) -> "Backtrackable[T]":
+        """Return `self`; `Backtrackable` is its own iterator."""
         return self
 
     def __next__(self) -> T:
+        """Return the next item, consuming from the back buffer first if `prev()` stepped back."""
         # If we've stepped back, consume from back buffer first
         if self._cursor < 0:  # -1 means "last item", etc.
             self._cursor += 1
@@ -128,9 +135,9 @@ class Backtrackable[T]:
         return item
 
     def prev(self) -> T:
-        """
-        Step one item back in history and return it.
-        Raises IndexError if already at the oldest buffered item.
+        """Step one item back in history and return it.
+
+        Raises `LookBackError` if already at the oldest buffered item.
         """
         if len(self._back_buf) + self._cursor <= 1:
             raise LookBackError("At start of history")
@@ -139,17 +146,15 @@ class Backtrackable[T]:
         return self._back_buf[self._cursor]
 
     def peek_back(self, n: int = 1) -> T:
-        """
-        Look `n` items back (n=1 == previous item) without moving the cursor.
-        """
+        """Look `n` items back (n=1 == previous item) without moving the cursor."""
         if n < 0 or n + 1 > len(self._back_buf) + self._cursor:
             raise LookBackError("peek_back distance out of range")
 
         return self._back_buf[self._cursor - (n + 1)]
 
     def peek_ahead(self, n: int = 1) -> T:
-        """
-        Look `n` items ahead (n=1 == next item) without moving the cursor.
+        """Look `n` items ahead (n=1 == next item) without moving the cursor.
+
         Fills the ahead buffer if necessary.
         """
         if n < 1:
@@ -169,9 +174,9 @@ class Backtrackable[T]:
         return self._ahead_buf[n - 1]
 
     def history(self) -> list[T]:
-        """
-        Return a copy of the buffered history (most recent last).
-        The list length ≤ `history` argument passed at construction.
+        """Return a copy of the buffered history (most recent last).
+
+        The list length is at most the `history` argument passed at construction.
         """
         if self._cursor == 0:
             return list(self._back_buf)
@@ -180,14 +185,12 @@ class Backtrackable[T]:
         return list(self._back_buf)[: self._cursor or None]
 
     def can_peek_back(self, steps: int = 1) -> bool:
-        """
-        Check if we can go back `steps` items without raising an IndexError.
-        """
+        """Check if we can go back `steps` items without raising a `LookBackError`."""
         return steps < len(self._back_buf) + self._cursor
 
     def can_peek_ahead(self, steps: int = 1) -> bool:
-        """
-        Check if we can peek ahead `steps` items.
+        """Check if we can peek ahead `steps` items.
+
         This may involve trying to fill the ahead buffer.
         """
         if self._lookahead > 0 and steps > self._lookahead:
@@ -275,6 +278,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
             image_transforms (Callable | None, optional): Transform to apply to image data.
+            delta_timestamps (dict[list[float]] | None, optional): Per-feature timestamp offsets (in
+                seconds, relative to a frame's own timestamp) of additional frames to return alongside it.
             tolerance_s (float, optional): Tolerance in seconds for timestamp matching.
             revision (str, optional): Git revision id (branch name, tag, or commit hash).
             force_cache_sync (bool, optional): Flag to sync and refresh local files first.
@@ -284,6 +289,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
             shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
+            return_uint8 (bool, optional): For RGB videos, whether to return raw uint8 frames instead of
+                the default float32 frames normalized to [0, 1].
             depth_output_unit (str, optional): Physical unit depth maps are dequantized to ("m" or "mm").
                 Defaults to "mm".
             repo_type: "dataset" (default) or "bucket" to stream from an HF Storage Bucket
@@ -383,14 +390,17 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
     @property
     def num_frames(self):
+        """The total number of frames in the dataset."""
         return self.meta.total_frames
 
     @property
     def num_episodes(self):
+        """The total number of episodes in the dataset."""
         return self.meta.total_episodes
 
     @property
     def fps(self):
+        """The dataset's recording frame rate."""
         return self.meta.fps
 
     @property
@@ -415,6 +425,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
     # in parallel, feeding a queue from which this iterator will yield processed items.
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
+        """Yield frames via reservoir-buffered random sampling across shards, streaming indefinitely.
+
+        Samples a random shard, then a random frame from a fixed-size buffer refilled from that shard, so
+        no full shuffle or shard is ever fully materialized in memory.
+        """
         if self.video_decoder_cache is None:
             self.video_decoder_cache = VideoDecoderCache()
 
@@ -492,7 +507,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             return dict.fromkeys(self.meta.video_keys, [start_ts])
 
     def _make_padding_camera_frame(self, camera_key: str):
-        """Variable-shape padding frame for given camera keys, given in (H, W, C)"""
+        """Variable-shape padding frame for the given camera key, shaped (H, W, C)."""
         return torch.zeros(self.meta.info.features[camera_key]["shape"]).permute(-1, 0, 1)
 
     def _get_video_frame_padding_mask(
@@ -523,7 +538,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return padding_mask
 
     def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
-        """Makes a frame starting from a dataset iterator"""
+        """Makes a frame starting from a dataset iterator."""
         try:
             item = next(dataset_iterator)
         except StopIteration as e:
@@ -616,12 +631,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return query_timestamps
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict:
-        """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
+        """Decode the requested per-camera frame timestamps from `ep_idx`'s videos.
+
+        Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
         in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
         Segmentation Fault. This probably happens because a memory reference to the video loader is created in
         the main process and a subprocess fails to access it.
         """
-
         item = {}
         for video_key, query_ts in query_timestamps.items():
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
@@ -664,8 +680,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """Get frames with delta offsets using the backtrackable iterator.
 
         Args:
+            dataset_iterator (Backtrackable): The backtrackable iterator to peek/step through for delta
+                frames.
             current_item (dict): Current item from the iterator.
-            ep_idx (int): Episode index.
 
         Returns:
             tuple: (query_result, padding) - frames at delta offsets and padding info.
@@ -770,8 +787,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return query_result, padding
 
     def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
-        """
-        Validate that all keys in delta_timestamps correspond to actual features in the dataset.
+        """Validate that all keys in delta_timestamps correspond to actual features in the dataset.
 
         Raises:
             ValueError: If any delta timestamp key doesn't correspond to a dataset feature.

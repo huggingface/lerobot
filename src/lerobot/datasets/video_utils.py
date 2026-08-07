@@ -61,19 +61,18 @@ def decode_video_frames(
     return_uint8: bool = False,
     is_depth: bool = False,
 ) -> torch.Tensor:
-    """
-    Decodes video frames using the specified backend.
+    """Decodes video frames using the specified backend.
 
     Args:
         video_path (Path): Path to the video file.
         timestamps (list[float]): List of timestamps to extract frames.
         tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec" when available
+        backend (str, optional, *optional*): Backend to use for decoding. Defaults to "torchcodec" when available
             in the platform; otherwise, defaults to "pyav". The legacy value "video_reader" is
             accepted for one release as an alias for "pyav" and will be removed in a future version.
-        return_uint8 (bool): For RGB videos, if True return raw uint8 frames without float32 normalization.
+        return_uint8 (bool, *optional*, defaults to `False`): For RGB videos, if True return raw uint8 frames without float32 normalization.
             This reduces memory for DataLoader IPC; normalization can be done on GPU afterward.
-        is_depth (bool): Set to True if the video is a depth map (1 channel, uint12).
+        is_depth (bool, *optional*, defaults to `False`): Set to True if the video is a depth map (1 channel, uint12).
 
     Returns:
         torch.Tensor: Decoded frames (RGB: float32 in [0,1] by default, or uint8 if return_uint8=True, Depth: uint12).
@@ -124,14 +123,16 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file.
-        timestamps: List of timestamps (in seconds) to extract frames for.
-        tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
-            decoded frame.
-        log_loaded_timestamps: When True, log every decoded frame's timestamp at INFO level.
-        return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W).
-            Otherwise, return float32 in [0, 1] range.
-        is_depth: Set to True if the video is a depth map (1 channel, uint12).
+        video_path (`pathlib.Path | str`): Path to the video file.
+        timestamps (`list`): List of timestamps, in seconds, to extract frames for.
+        tolerance_s (`float`): Allowed deviation in seconds between a queried timestamp
+            and the closest decoded frame.
+        log_loaded_timestamps (`bool`, *optional*, defaults to `False`): Whether to log
+            every decoded frame's timestamp at INFO level.
+        return_uint8 (`bool`, *optional*, defaults to `False`): For RGB videos, whether to
+            return raw uint8 frames instead of the default float32 frames normalized to [0, 1].
+        is_depth (`bool`, *optional*, defaults to `False`): Whether the video is a depth map
+            (1 channel, uint12).
 
     Returns:
         torch.Tensor of shape (len(timestamps), C, H, W).
@@ -265,15 +266,31 @@ class VideoDecoderCache:
     ever opened until the process exits).
 
     Args:
-        max_size: Maximum number of decoders to retain. ``None`` disables
-            eviction and restores legacy unbounded behaviour. Defaults to the
-            value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if set, otherwise
-            :data:`DEFAULT_DECODER_CACHE_SIZE`.
+        max_size (`int | None | object`, *optional*, defaults to `<unset>`): Maximum
+            number of decoders to retain. `None` disables eviction and restores legacy unbounded
+            behaviour. The sentinel default defers to the value of `LEROBOT_VIDEO_DECODER_CACHE_SIZE`
+            if set, otherwise `DEFAULT_DECODER_CACHE_SIZE`.
     """
 
-    _SENTINEL: ClassVar[object] = object()
+    class _UnsetSentinel:
+        """Singleton marker distinguishing "not passed" from an explicit `None` `max_size`.
+
+        Has a fixed `__repr__` (unlike a bare `object()`) so it renders identically across
+        processes, which keeps the class docstring's `defaults to` clause stable.
+        """
+
+        def __repr__(self) -> str:
+            """Return `"<unset>"`, a stable placeholder for docstrings/logging."""
+            return "<unset>"
+
+    _SENTINEL: ClassVar[object] = _UnsetSentinel()
 
     def __init__(self, max_size: int | None | object = _SENTINEL):
+        """Create the cache. See the class docstring for `max_size`.
+
+        Raises:
+            ValueError: If `max_size` is neither `None` nor a positive integer.
+        """
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:
@@ -283,6 +300,7 @@ class VideoDecoderCache:
         self._lock = Lock()
 
     def __contains__(self, video_path: object) -> bool:
+        """Return `True` if `video_path` (as `str`) has a cached decoder."""
         with self._lock:
             return str(video_path) in self._cache
 
@@ -338,7 +356,7 @@ class VideoDecoderCache:
 
 
 class FrameTimestampError(ValueError):
-    """Helper error to indicate the retrieved timestamps exceed the queried ones"""
+    """Helper error to indicate the retrieved timestamps exceed the queried ones."""
 
     pass
 
@@ -357,11 +375,16 @@ def decode_video_frames_torchcodec(
     """Loads frames associated with the requested timestamps of a video using torchcodec.
 
     Args:
-        video_path: Path to the video file.
-        timestamps: List of timestamps to extract frames.
-        tolerance_s: Allowed deviation in seconds for frame retrieval.
-        log_loaded_timestamps: Whether to log loaded timestamps.
-        decoder_cache: Optional decoder cache instance. Uses default if None.
+        video_path (`pathlib.Path | str`): Path to the video file.
+        timestamps (`list`): List of timestamps, in seconds, to extract frames for.
+        tolerance_s (`float`): Allowed deviation in seconds between a queried timestamp
+            and the closest decoded frame.
+        log_loaded_timestamps (`bool`, *optional*, defaults to `False`): Whether to log
+            every decoded frame's timestamp at INFO level.
+        decoder_cache (`lerobot.datasets.video_utils.VideoDecoderCache | None`, *optional*): Decoder
+            cache to fetch the `VideoDecoder` from. Uses the module-level default cache if `None`.
+        return_uint8 (`bool`, *optional*, defaults to `False`): For RGB videos, whether to
+            return raw uint8 frames instead of the default float32 frames normalized to [0, 1].
 
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
@@ -451,19 +474,19 @@ def encode_video_frames(
     RGB frames are encoded directly.
 
     Args:
-        imgs_dir: Directory containing the frames to encode, named ``frame-000000``
-            onwards (``.png`` for RGB, ``.tiff`` for depth).
-        video_path: Output path for the encoded ``.mp4`` file.
-        fps: Frame rate of the output video.
-        video_encoder: Encoder settings (codec, pixel format, quality, ...). When
-            ``None``, :func:`rgb_encoder_defaults` is used. Pass a
-            :class:`~lerobot.configs.video.DepthEncoderConfig` to encode depth frames.
-        encoder_threads: Per-encoder thread count forwarded to the codec. ``None``
-            lets the codec decide.
-        log_level: libav log level to set while encoding, or ``None`` to leave the
-            current logging configuration unchanged.
-        overwrite: When ``False`` and ``video_path`` already exists, skip encoding and
-            log a warning. When ``True``, re-encode and replace the existing file.
+        imgs_dir (`pathlib.Path | str`): Directory containing the frames to encode, named
+            `frame-000000` onwards (`.png` for RGB, `.tiff` for depth).
+        video_path (`pathlib.Path | str`): Output path for the encoded `.mp4` file.
+        fps (`int`): Frame rate of the output video.
+        video_encoder (`lerobot.configs.video.VideoEncoderConfig | None`, *optional*): Encoder settings
+            (codec, pixel format, quality, ...). When `None`, `rgb_encoder_defaults` is used. Pass a
+            `DepthEncoderConfig` to encode depth frames.
+        encoder_threads (`int | None`, *optional*): Per-encoder thread count forwarded to the codec.
+            `None` lets the codec decide.
+        log_level (`int | None`, *optional*, defaults to 24): libav log level to set while encoding,
+            or `None` to leave the current logging configuration unchanged.
+        overwrite (`bool`, *optional*, defaults to `False`): When `False` and `video_path` already
+            exists, skip encoding and log a warning. When `True`, re-encode and replace the existing file.
     """
     if video_encoder is None:
         video_encoder = rgb_encoder_defaults()
@@ -552,16 +575,21 @@ def reencode_video(
     """Re-encode a video file, optionally trimming it to ``[start_time_s, end_time_s)``.
 
     Args:
-        input_video_path: Existing video file to read.
-        output_video_path: Path for the re-encoded file.
-        video_encoder: Encoder configuration. Defaults to :func:`rgb_encoder_defaults`.
-        encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
-        log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
-        overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
-        start_time_s: When set, trim the output to start at this timestamp (seconds).
-        end_time_s: When set, trim the output to end at this timestamp (seconds, exclusive).
+        input_video_path (`pathlib.Path | str`): Existing video file to read.
+        output_video_path (`pathlib.Path | str`): Path for the re-encoded file.
+        video_encoder (`lerobot.configs.video.VideoEncoderConfig | None`, *optional*): Encoder
+            configuration. Defaults to `rgb_encoder_defaults`.
+        encoder_threads (`int | None`, *optional*): Optional thread count forwarded to
+            `VideoEncoderConfig.get_codec_options`.
+        log_level (`int | None`, *optional*, defaults to 24): libav log level while encoding,
+            or `None` to leave logging unchanged.
+        overwrite (`bool`, *optional*, defaults to `False`): When `False` and `output_video_path`
+            already exists, skip and log a warning.
+        start_time_s (`float | None`, *optional*): When set, trim the output to start at this
+            timestamp, in seconds.
+        end_time_s (`float | None`, *optional*): When set, trim the output to end at this
+            timestamp, in seconds, exclusive.
     """
-
     video_encoder = video_encoder or rgb_encoder_defaults()
 
     if (start_time_s is not None and start_time_s < 0) or (end_time_s is not None and end_time_s < 0):
@@ -651,25 +679,26 @@ def concatenate_video_files(
     overwrite: bool = True,
     compatibility_check: bool = False,
 ):
-    """
-    Concatenate multiple video files into a single video file using pyav.
+    """Concatenate multiple video files into a single video file using pyav.
 
     This function takes a list of video input file paths and concatenates them into a single
     output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
     concatenation without re-encoding.
 
     Args:
-        input_video_paths: Ordered list of input video file paths to concatenate.
-        output_video_path: Path to the output video file.
-        overwrite: Whether to overwrite the output video file if it already exists. Default is True.
-        compatibility_check: Whether to check if the input videos are compatible. Default is False.
+        input_video_paths (`list`): Ordered list of input video file paths to concatenate.
+        output_video_path (`Path`): Path to the output video file.
+        overwrite (`bool`, *optional*, defaults to `True`): Whether to overwrite the output
+            video file if it already exists.
+        compatibility_check (`bool`, *optional*, defaults to `False`): Whether to check that
+            the input videos share the same height, width, fps, codec, and pixel format
+            before concatenating.
 
     Note:
         - Creates a temporary directory for intermediate files that is cleaned up after use.
         - Uses ffmpeg's concat demuxer which requires all input videos to have the same
           codec, resolution, and frame rate for proper concatenation.
     """
-
     output_video_path = Path(output_video_path)
 
     if output_video_path.exists() and not overwrite:
@@ -767,6 +796,17 @@ class _CameraEncoderThread(threading.Thread):
         stop_event: threading.Event,
         encoder_threads: int | None = None,
     ):
+        """Set up the thread; frames are only consumed once `start()` is called.
+
+        Args:
+            video_path: Output MP4 path.
+            fps: Output frame rate.
+            video_encoder: Codec/quality settings; `DepthEncoderConfig` selects depth-map encoding.
+            frame_queue: Queue this thread reads `(frame, ...)` items from.
+            result_queue: Queue the final stats are pushed to once encoding finishes.
+            stop_event: Set by the caller to signal this thread to stop early.
+            encoder_threads: Number of threads passed to the codec, if it supports one.
+        """
         super().__init__(daemon=True)
         self.video_path = video_path
         self.fps = fps
@@ -778,6 +818,10 @@ class _CameraEncoderThread(threading.Thread):
         self.encoder_threads = encoder_threads
 
     def run(self) -> None:
+        """Encode frames from `frame_queue` to `video_path` until a stop sentinel or `stop_event`.
+
+        Pushes the accumulated `RunningQuantileStats` to `result_queue` once encoding finishes.
+        """
         from .compute_stats import RunningQuantileStats, auto_downsample_height_width
 
         container = None
@@ -898,7 +942,8 @@ class StreamingVideoEncoder:
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
     ):
-        """
+        """Create the manager; per-camera encoder threads are started lazily on first frame.
+
         Args:
             fps: Frames per second for the output videos.
             rgb_encoder: Video encoder settings applied to all RGB cameras.
@@ -1105,11 +1150,9 @@ class StreamingVideoEncoder:
 @dataclass
 class VideoFrame:
     # TODO(rcadene, lhoestq): move to Hugging Face `datasets` repo
-    """
-    Provides a type for a dataset containing video frames.
+    """Provides a type for a dataset containing video frames.
 
     Example:
-
     ```python
     data_dict = [{"image": {"path": "videos/episode_0.mp4", "timestamp": 0.3}}]
     features = {"image": VideoFrame()}
@@ -1121,6 +1164,7 @@ class VideoFrame:
     _type: str = field(default="VideoFrame", init=False, repr=False)
 
     def __call__(self):
+        """Return the pyarrow struct type backing this feature, as required by `datasets.Features`."""
         return self.pa_type
 
 
@@ -1135,6 +1179,11 @@ with warnings.catch_warnings():
 
 
 def get_audio_info(video_path: Path | str) -> dict:
+    """Read audio-stream metadata (channels, codec, bit rate, sample rate, etc.) from a video file.
+
+    Returns:
+        A dict of `"audio.*"` keys, or `{"has_audio": False}` if `video_path` has no audio stream.
+    """
     # Set logging level
     logging.getLogger("libav").setLevel(av.logging.WARNING)
 
@@ -1173,13 +1222,13 @@ def get_video_info(
     """Build the ``video.*`` / ``audio.*`` info dict persisted in ``info.json``.
 
     Args:
-        video_path: Path to the encoded video file to probe.
-        video_encoder: If provided, record the exact encoder settings used to encode this
-            video. Stream-derived values take precedence — encoder fields are only written for keys
-            not already populated from the video file itself. When a
-            :class:`~lerobot.configs.video.DepthEncoderConfig` is passed, the depth
-            quantization parameters (``depth_min`` / ``depth_max`` / ``shift`` /
-            ``use_log``) are recorded so frames can be dequantized on read.
+        video_path (`pathlib.Path | str`): Path to the encoded video file to probe.
+        video_encoder (`lerobot.configs.video.VideoEncoderConfig | None`, *optional*): If provided,
+            record the exact encoder settings used to encode this video. Stream-derived values take
+            precedence — encoder fields are only written for keys not already populated from the
+            video file itself. When a `DepthEncoderConfig` is passed, the depth quantization
+            parameters (`depth_min` / `depth_max` / `shift` / `use_log`) are recorded so frames can
+            be dequantized on read.
 
     Returns:
         The ``video.*`` / ``audio.*`` info dict, including ``is_depth_map`` which is
@@ -1227,11 +1276,10 @@ def get_video_info(
 
 
 def get_video_duration_in_s(video_path: Path | str) -> float:
-    """
-    Get the duration of a video file in seconds using PyAV.
+    """Get the duration of a video file in seconds using PyAV.
 
     Args:
-        video_path: Path to the video file.
+        video_path (`pathlib.Path | str`): Path to the video file.
 
     Returns:
         Duration of the video in seconds.
@@ -1249,8 +1297,7 @@ def get_video_duration_in_s(video_path: Path | str) -> float:
 
 
 class VideoEncodingManager:
-    """
-    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
+    """Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
 
     This manager handles:
     - Batch encoding for any remaining episodes when recording interrupted
@@ -1258,16 +1305,23 @@ class VideoEncodingManager:
     - Removing empty image directories
 
     Args:
-        dataset: The LeRobotDataset instance
+        dataset (`LeRobotDataset`): The LeRobotDataset instance.
     """
 
     def __init__(self, dataset):
+        """Store the `LeRobotDataset` this manager will finalize/clean up on exit."""
         self.dataset = dataset
 
     def __enter__(self):
+        """Return `self`; no setup is needed on entry."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Finalize the dataset, cancelling pending videos and cleaning up interrupted-episode files.
+
+        Runs unconditionally (even if `exc_type` is set), so partial/interrupted recordings still leave
+        a consistent dataset on disk.
+        """
         writer = self.dataset.writer
         if writer is not None:
             if exc_type is not None and writer._streaming_encoder is not None:

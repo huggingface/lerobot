@@ -529,9 +529,9 @@ class LeRobotDatasetMetadata:
         return self.info.video_files_size_in_mb
 
     def get_task_index(self, task: str) -> int | None:
-        """
-        Given a task in natural language, returns its task_index if the task already exists in the dataset,
-        otherwise return None.
+        """Given a task in natural language, returns its task_index if the task already exists in the dataset.
+
+        Otherwise return None.
         """
         if task in self.tasks.index:
             return int(self.tasks.loc[task].task_index)
@@ -774,6 +774,7 @@ class LeRobotDatasetMetadata:
         }
 
     def __repr__(self):
+        """A short summary: repo ID, total episode/frame counts, and feature keys."""
         feature_keys = list(self.features)
         return (
             f"{self.__class__.__name__}({{\n"

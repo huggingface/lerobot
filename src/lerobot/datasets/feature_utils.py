@@ -101,10 +101,10 @@ def create_empty_dataset_info(
         fps (int): The frames per second of the data.
         features (dict): The LeRobot features dictionary for the dataset.
         use_videos (bool): Whether the dataset will store videos.
-        robot_type (str | None): The type of robot used, if any.
-        chunks_size (int | None): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
-        data_files_size_in_mb (int | None): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
-        video_files_size_in_mb (int | None): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
+        robot_type (str | None, *optional*): The type of robot used, if any.
+        chunks_size (int | None, *optional*): Max files per chunk directory. Defaults to ``DEFAULT_CHUNK_SIZE``.
+        data_files_size_in_mb (int | None, *optional*): Max parquet file size in MB. Defaults to ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
+        video_files_size_in_mb (int | None, *optional*): Max video file size in MB. Defaults to ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
 
     Returns:
         DatasetInfo: A typed dataset information object with initial metadata.
@@ -170,7 +170,7 @@ def check_delta_timestamps(
             deltas in seconds.
         fps (int): The frames per second of the dataset.
         tolerance_s (float): The allowed tolerance in seconds.
-        raise_value_error (bool): If True, raises an error on failure.
+        raise_value_error (bool, *optional*, defaults to `True`): If True, raises an error on failure.
 
     Returns:
         bool: True if all deltas are valid, False otherwise.
@@ -219,6 +219,18 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
 
 
 def validate_frame(frame: dict, features: dict) -> None:
+    """Check that `frame` has a `"task"` key and matches `features` (minus auto-populated defaults).
+
+    Args:
+        frame (`dict`): The frame to validate, mapping feature names to their values, as passed by the
+            caller to `add_frame`.
+        features (`dict`): The dataset's feature specification, mapping feature names to their dtype and
+            shape metadata.
+
+    Raises:
+        ValueError: If `frame` is missing `"task"`, or has missing/extra features, or a feature's dtype
+            or shape doesn't match its definition in `features`.
+    """
     # DEFAULT_FEATURES (timestamp, frame_index, episode_index, index, task_index) are
     # auto-populated by the recording pipeline (add_frame / save_episode) and must not
     # be supplied by the caller. Excluding them here means any frame dict that contains
@@ -275,7 +287,7 @@ def validate_feature_dtype_and_shape(
     Args:
         name (str): The name of the feature.
         feature (dict): The feature specification from the LeRobot features dictionary.
-        value: The value of the feature to validate.
+        value (`numpy.ndarray | PIL.Image.Image | str`): The value of the feature to validate.
 
     Returns:
         str: An error message if validation fails, otherwise an empty string.
@@ -337,7 +349,7 @@ def validate_feature_image_or_video(
     Args:
         name (str): The name of the feature.
         expected_shape (list[str]): The expected shape, e.g. (C, H, W) or (H, W, C).
-        value: The image data to validate.
+        value (`numpy.ndarray | PIL.Image.Image`): The image or video frame data to validate.
 
     Returns:
         str: An error message if validation fails, otherwise an empty string.
@@ -383,7 +395,8 @@ def validate_feature_language(name: str, value) -> str:
 
     Args:
         name (str): The name of the feature.
-        value: The value to validate.
+        value (`Any`): The value supplied for the language feature. Only checked for being `None`; any
+            other value is dropped with a warning.
 
     Returns:
         str: Always an empty string — language values are non-fatal.
