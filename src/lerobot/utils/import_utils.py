@@ -104,13 +104,32 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
         )
 
 
+def _try_import(module_name: str) -> bool:
+    """Return True only if the module actually imports.
+
+    A find_spec-based check passes for installed-but-broken packages (e.g. a
+    transformers whose own dependency pins are violated by the environment), and
+    the ImportError raised at import time then escapes the optional-dependency
+    guard in tokenizer_processor and takes down lerobot.datasets with it.
+    """
+    try:
+        importlib.import_module(module_name)
+        return True
+    except Exception as e:
+        logging.warning(
+            f"'{module_name}' is installed but failed to import and will be "
+            f"treated as unavailable: {type(e).__name__}: {e}"
+        )
+        return False
+
+
 # ── Centralised availability flags ────────────────────────────────────────
 # Every optional-dependency check lives here so that the rest of the codebase
 # can simply ``from lerobot.utils.import_utils import _foo_available``.
 # Do NOT define ad-hoc ``is_package_available(...)`` calls in other modules.
 
 # ML / training
-_transformers_available = is_package_available("transformers")
+_transformers_available = is_package_available("transformers") and _try_import("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
