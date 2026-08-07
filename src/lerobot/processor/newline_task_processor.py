@@ -23,8 +23,7 @@ from .pipeline import ComplementaryDataProcessorStep, ProcessorStepRegistry
 # with serialized processor configs that reference this name.
 @ProcessorStepRegistry.register(name="smolvla_new_line_processor")
 class NewLineTaskProcessorStep(ComplementaryDataProcessorStep):
-    """
-    A processor step that ensures the 'task' description ends with a newline character.
+    """A processor step that ensures the 'task' description ends with a newline character.
 
     This step is necessary for certain tokenizers (e.g., PaliGemma) that expect a
     newline at the end of the prompt. It handles both single string tasks and lists
@@ -32,6 +31,7 @@ class NewLineTaskProcessorStep(ComplementaryDataProcessorStep):
     """
 
     def complementary_data(self, complementary_data):
+        """Append a trailing newline to the `"task"` entry, if present, leaving other keys untouched."""
         if "task" not in complementary_data:
             return complementary_data
 
@@ -56,4 +56,5 @@ class NewLineTaskProcessorStep(ComplementaryDataProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Only complementary data is touched; features are unchanged."""
         return features

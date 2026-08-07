@@ -48,10 +48,12 @@ class RenderMessagesStep(ProcessorStep):
     dataset_ctx: Any | None = None
 
     def __post_init__(self) -> None:
+        """Deserialize `recipe` from a plain dict, if it was passed as one (e.g. loaded from JSON config)."""
         if isinstance(self.recipe, dict):
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"recipe": ...}`, with `recipe` serialized to a plain dict."""
         return {"recipe": asdict(self.recipe)}
 
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:

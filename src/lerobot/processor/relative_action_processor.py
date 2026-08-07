@@ -41,9 +41,9 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     """Convert absolute actions to relative: relative = action - state (for masked dims).
 
     Args:
-        actions: (B, T, action_dim) or (B, action_dim).
-        state: (B, state_dim). Broadcast across time dimension.
-        mask: Which dims to convert. Can be shorter than action_dim.
+        actions (`Tensor`): `(B, T, action_dim)` or `(B, action_dim)`.
+        state (`Tensor`): `(B, state_dim)`. Broadcast across the time dimension.
+        mask (`Sequence[bool]`): Which dims to convert. Can be shorter than `action_dim`.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -63,9 +63,9 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
 
     Args:
-        actions: (B, T, action_dim) or (B, action_dim).
-        state: (B, state_dim). Broadcast across time dimension.
-        mask: Which dims to convert. Can be shorter than action_dim.
+        actions (`Tensor`): `(B, T, action_dim)` or `(B, action_dim)`.
+        state (`Tensor`): `(B, state_dim)`. Broadcast across the time dimension.
+        mask (`Sequence[bool]`): Which dims to convert. Can be shorter than `action_dim`.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -123,6 +123,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
         return mask
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Cache `observation.state` for the paired postprocessing step, and convert `action` to relative if `enabled`."""
         observation = transition.get(TransitionKey.OBSERVATION, {})
         state = observation.get(OBS_STATE) if observation else None
 
@@ -147,6 +148,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
         return self._last_state
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"enabled": ..., "exclude_joints": ..., "action_names": ...}`."""
         return {
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
@@ -156,6 +158,7 @@ class RelativeActionsProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A value transformation; features are unchanged."""
         return features
 
 
@@ -178,6 +181,11 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
     relative_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert `action` back to absolute using the paired step's cached state, if `enabled`.
+
+        Raises:
+            RuntimeError: If `relative_step` is unset, or no state has been cached yet.
+        """
         if not self.enabled:
             return transition
 
@@ -204,9 +212,11 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"enabled": ...}`."""
         return {"enabled": self.enabled}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A value transformation; features are unchanged."""
         return features

@@ -25,8 +25,7 @@ from .pipeline import ActionProcessorStep, ProcessorStepRegistry, RobotActionPro
 @ProcessorStepRegistry.register("map_tensor_to_delta_action_dict")
 @dataclass
 class MapTensorToDeltaActionDictStep(ActionProcessorStep):
-    """
-    Maps a flat action tensor from a policy to a structured delta action dictionary.
+    """Maps a flat action tensor from a policy to a structured delta action dictionary.
 
     This step is typically used after a policy outputs a continuous action vector.
     It decomposes the vector into named components for delta movements of the
@@ -39,6 +38,18 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     use_gripper: bool = True
 
     def action(self, action: PolicyAction) -> RobotAction:
+        """Split a flat policy action tensor into a named delta-movement dict.
+
+        Args:
+            action: A `PolicyAction` tensor of at least 3 elements (x, y, z), plus a 4th gripper
+                element if `use_gripper` is `True`.
+
+        Returns:
+            A dict with `delta_x`/`delta_y`/`delta_z` (and `gripper`, if enabled).
+
+        Raises:
+            ValueError: If `action` is not a `PolicyAction`.
+        """
         if not isinstance(action, PolicyAction):
             raise ValueError("Only PolicyAction is supported for this processor")
 
@@ -58,6 +69,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Adds the `delta_x`/`delta_y`/`delta_z` (and `gripper`) action features."""
         for axis in ["x", "y", "z"]:
             features[PipelineFeatureType.ACTION][f"delta_{axis}"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)
@@ -73,8 +85,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
 @ProcessorStepRegistry.register("map_delta_action_to_robot_action")
 @dataclass
 class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
-    """
-    Maps delta actions from teleoperators to robot target actions for inverse kinematics.
+    """Maps delta actions from teleoperators to robot target actions for inverse kinematics.
 
     This step converts a dictionary of delta movements (e.g., from a gamepad)
     into a target action format that includes an "enabled" flag and target
@@ -91,6 +102,15 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     noise_threshold: float = 1e-3  # 1 mm threshold to filter out noise
 
     def action(self, action: RobotAction) -> RobotAction:
+        """Convert a delta-movement dict into a robot target-action dict for inverse kinematics.
+
+        Args:
+            action: A dict with `delta_x`/`delta_y`/`delta_z` and `gripper` keys.
+
+        Returns:
+            A dict with `enabled`, scaled `target_x`/`target_y`/`target_z`, zeroed `target_wx`/`target_wy`/
+            `target_wz` (rotation isn't supported by delta teleoperators), and `gripper_vel`.
+        """
         # NOTE (maractingi): Action can be a dict from the teleop_devices or a tensor from the policy
         # TODO (maractingi): changing this target_xyz naming convention from the teleop_devices
         delta_x = action.pop("delta_x")
@@ -131,6 +151,7 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Replaces the delta-action features with robot target-action features."""
         for axis in ["x", "y", "z"]:
             features[PipelineFeatureType.ACTION].pop(f"delta_{axis}", None)
         features[PipelineFeatureType.ACTION].pop("gripper", None)
