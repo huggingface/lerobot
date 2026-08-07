@@ -26,13 +26,11 @@ from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConf
 from .policies import PreTrainedConfig
 from .recipe import MessageTurn, TrainingRecipe, load_recipe
 from .types import (
-    ActionChunkPrediction,
     FeatureType,
     NormalizationMode,
     PipelineFeatureType,
     PolicyFeature,
     RTCAttentionSchedule,
-    TextKind,
 )
 from .video import (
     DEFAULT_DEPTH_UNIT,
@@ -51,13 +49,11 @@ from .video import (
 
 __all__ = [
     # Types
-    "ActionChunkPrediction",
     "FeatureType",
     "NormalizationMode",
     "PipelineFeatureType",
     "PolicyFeature",
     "RTCAttentionSchedule",
-    "TextKind",
     # Config classes
     "DatasetRecordConfig",
     "DatasetConfig",
