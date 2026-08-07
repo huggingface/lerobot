@@ -63,6 +63,49 @@ class _ShardExhaustedError(Exception):
     """Raised when a streaming dataset shard has no more items."""
 
 
+def get_streaming_consumer_shards(
+    *,
+    num_source_shards: int,
+    rank: int,
+    world_size: int,
+    worker_id: int,
+    num_workers: int,
+) -> list[int]:
+    """Return source shards owned by one distributed rank and DataLoader worker."""
+    if num_source_shards < 0:
+        raise ValueError("num_source_shards must be non-negative.")
+    if world_size <= 0:
+        raise ValueError("world_size must be positive.")
+    if not 0 <= rank < world_size:
+        raise ValueError(f"rank must be in [0, {world_size}), got {rank}.")
+    if num_workers <= 0:
+        raise ValueError("num_workers must be positive.")
+    if not 0 <= worker_id < num_workers:
+        raise ValueError(f"worker_id must be in [0, {num_workers}), got {worker_id}.")
+
+    consumer_count = world_size * num_workers
+    consumer_id = rank * num_workers + worker_id
+    return [
+        source_shard
+        for source_shard in range(num_source_shards)
+        if source_shard % consumer_count == consumer_id
+    ]
+
+
+def get_streaming_consumer_identity() -> tuple[int, int, int, int]:
+    """Return ``(rank, world_size, worker_id, num_workers)`` for this iterator."""
+    worker_info = torch.utils.data.get_worker_info()
+    worker_id = worker_info.id if worker_info is not None else 0
+    num_workers = worker_info.num_workers if worker_info is not None else 1
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+    else:
+        rank = 0
+        world_size = 1
+    return rank, world_size, worker_id, num_workers
+
+
 class Backtrackable[T]:
     """
     Wrap any iterator/iterable so you can step back up to `history` items
@@ -423,9 +466,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
 
+        rank, world_size, worker_id, num_workers = get_streaming_consumer_identity()
+        assigned_shards = get_streaming_consumer_shards(
+            num_source_shards=self.num_shards,
+            rank=rank,
+            world_size=world_size,
+            worker_id=worker_id,
+            num_workers=num_workers,
+        )
         idx_to_backtrack_dataset = {
-            idx: self._make_backtrackable_dataset(safe_shard(self.hf_dataset, idx, self.num_shards))
-            for idx in range(self.num_shards)
+            shard_index: self._make_backtrackable_dataset(
+                safe_shard(self.hf_dataset, shard_index, self.num_shards)
+            )
+            for shard_index in assigned_shards
         }
 
         # This buffer is populated while iterating on the dataset's shards

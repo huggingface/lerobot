@@ -37,6 +37,8 @@
 - sections:
   - local: lerobot-dataset-v3
     title: Using LeRobotDataset
+  - local: distributed_dataset
+    title: Distributed Datasets
   - local: porting_datasets_v3
     title: Porting Large Datasets
   - local: using_dataset_tools
