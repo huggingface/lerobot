@@ -234,19 +234,23 @@ class MyPolicy(PreTrainedPolicy):
 
 That one method covers everything: VQA and `/ask`, captioning, grounding, and subtask prediction. Subtask prediction is not a separate method — the runtime composes the prompt itself, by filling your `subtask_prompt_template` with the operator's high-level goal and calling `generate_text` with the result.
 
-The base class ships a generic default, so a policy with a text head can predict subtasks with no extra code:
+The base class ships a default, so a policy with a text head can predict subtasks with no extra code:
 
 ```python
-"predict next subtask, given this high level goal: {task}"
+"{task}\nPredict the next action in language."
 ```
 
-Override it whenever your checkpoint was trained on specific wording. That phrasing will beat the generic one, and for a model that declares its mode in this turn — WALL-OSS answers "Predict the next action in language." differently from anything else — it is the difference between an in-distribution answer and a guess:
+That is the wording the WALL-OSS and EO-1 family were trained on, which more released checkpoints recognise than a generic English sentence would.
+
+Override it whenever your checkpoint was trained differently. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess — down to the trailing newline:
 
 ```python
 @property
 def subtask_prompt_template(self) -> str:
-    return "Instruction: {task}\nPredict the next action in language.\n"
+    return "{task}\nPredict the next action in language.\n"  # note the trailing newline
 ```
+
+Override it explicitly even when your wording matches the default. The default may be retuned later, and a policy that pins its own template will not silently follow.
 
 The runtime substitutes with `str.replace`, not `str.format`, so a template may contain chat-control tokens and an operator's task may contain braces.
 
