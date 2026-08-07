@@ -1855,6 +1855,8 @@ class WallXPolicy(PreTrainedPolicy):
 
     config_class = WallXConfig
     name = "wall_x"
+    #: WALL-OSS's trained subtask wording; the runtime fills it with the operator's goal.
+    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language.\n"}  # noqa: RUF012
 
     def __init__(self, config: WallXConfig, **kwargs):
         require_package("transformers", extra="wallx")
@@ -2336,11 +2338,6 @@ class WallXPolicy(PreTrainedPolicy):
             if isinstance(value, torch.Tensor):
                 inputs[key] = value.to(batch[OBS_STATE].device)
         return inputs
-
-    @property
-    def subtask_prompt_template(self) -> str:
-        """WALL-OSS's trained subtask wording, filled with the operator's goal by the runtime."""
-        return "{task}\nPredict the next action in language.\n"
 
     def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
         """Answer `prompt` about the current observation with WALL-OSS's own text head."""

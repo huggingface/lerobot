@@ -195,7 +195,7 @@ def test_policy_exposes_text_generation(monkeypatch):
     assert policy.generate_text(batch, "pick up the cup") == "move toward the cup"
     assert policy.supports_text_generation()
     # Token-exact with the trained subtask wording, trailing newline included.
-    assert policy.subtask_prompt_template.replace("{task}", "clear the table") == (
+    assert policy.build_prompt("subtask", task="clear the table") == (
         "clear the table\nPredict the next action in language.\n"
     )
 
