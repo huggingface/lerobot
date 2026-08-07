@@ -109,15 +109,18 @@ class RuntimeState:
 class LanguageConditionedPolicy(Protocol):
     """The policy surface the runtime drives.
 
-    ``predict_subtask`` and ``generate_text`` are optional: a policy without a text head
-    runs on the operator's own instruction instead of a generated subtask.
+    ``subtask_prompt_template`` and ``generate_text`` are optional: a policy without a
+    text head runs on the operator's own instruction instead of a generated subtask.
     """
 
-    def predict_action_chunk_with_text(self, batch: dict[str, Any]) -> tuple[Any, str | None]: ...
+    def predict_action_chunk(
+        self, batch: dict[str, Any], *, with_text: bool = False
+    ) -> Any | tuple[Any, str | None]: ...
 
     def supports_text_generation(self) -> bool: ...
 
-    def predict_subtask(self, batch: dict[str, Any]) -> str: ...
+    @property
+    def subtask_prompt_template(self) -> str: ...
 
     def generate_text(self, batch: dict[str, Any], prompt: str) -> str: ...
 
@@ -174,7 +177,11 @@ class SubtaskController:
         self._chunks_until_regen = max(1, self.chunks_per_regen) - 1
 
         batch = build_language_batch(observation, state)
-        subtask = self.policy.predict_subtask(batch)
+        # The checkpoint owns the wording it was trained to answer; the operator owns the
+        # goal. `replace` rather than `format`: a task may contain braces, and a template
+        # may contain chat-control tokens.
+        prompt = self.policy.subtask_prompt_template.replace("{task}", state.task)
+        subtask = self.policy.generate_text(batch, prompt)
         self.diagnostics.last_raw = subtask or ""
         if not subtask:
             self.diagnostics.empty += 1
@@ -345,14 +352,15 @@ class LanguageConditionedRuntime:
         try:
             # The observation provider already conditions the batch on the active
             # subtask, so the policy needs nothing beyond its usual inference call.
-            chunk, chunk_text = self.policy.predict_action_chunk_with_text(observation)
+            result = self.policy.predict_action_chunk(observation, with_text=True)
+            # A policy whose text head runs its own prefill ignores the flag and returns
+            # the bare chunk, so both shapes are expected here.
+            chunk, chunk_text = result if isinstance(result, tuple) else (result, None)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "predict_action_chunk_with_text failed: %s",
-                exc,
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                "predict_action_chunk failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG)
             )
-            self.state.log(f"  [warn] predict_action_chunk_with_text failed: {type(exc).__name__}: {exc}")
+            self.state.log(f"  [warn] predict_action_chunk failed: {type(exc).__name__}: {exc}")
             return
         with self.state.lock:
             if (
