@@ -300,8 +300,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         This is the whole contract the interactive language runtime needs from a policy:
         it owns scheduling, the action loop, and the conversation state, and calls here
-        only to turn the current observation into text. Sampling settings come from
-        `self.config.generation`, so a checkpoint decodes the way it was trained.
+        only to turn the current observation into text. Decode with
+        `self.config.text_temperature` and `self.config.text_top_p`, so a checkpoint
+        decodes the way it was trained.
 
         Args:
             batch: A preprocessed observation batch. The runtime puts the operator's
@@ -318,6 +319,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             f"{type(self).__name__} has no text head. Implement `generate_text` to use it with "
             "the interactive language runtime."
         )
+
+    def last_reasoning(self) -> str | None:
+        """Text this policy emitted in-stream during its last action prediction.
+
+        For policies that produce reasoning and actions from one inference pass, so the
+        runtime can display it. This is read-only telemetry: unlike a generated subtask
+        it never re-enters the observation batch, so it cannot replace the operator's
+        task. Returns `None` for policies that emit nothing.
+        """
+        return None
 
     def push_model_to_hub(
         self,
