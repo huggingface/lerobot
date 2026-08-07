@@ -197,7 +197,7 @@ def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
     tracker.reduce_across_ranks()
 
     assert captured["op"] == logging_utils.dist.ReduceOp.MAX
-    assert torch.allclose(captured["values"], torch.tensor([0.4]))
+    assert torch.allclose(captured["values"], torch.tensor([0.4], device=captured["values"].device))
     assert tracker.update_s.avg == pytest.approx(0.9)
     # Metrics without a reduction stay untouched.
     assert tracker.loss.avg == 1.0

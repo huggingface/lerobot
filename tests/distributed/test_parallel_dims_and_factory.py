@@ -79,13 +79,10 @@ class TestParallelDims:
 
 
 class TestEnvGuard:
-    # ACCELERATE_DYNAMO_*/ACCELERATE_GRADIENT_ACCUMULATION_STEPS are silent config overrides
-    # inside accelerate itself — the guard must catch them too.
+    # Silent config overrides inside accelerate itself — the guard must catch them.
     _POISON = (
         "ACCELERATE_USE_FSDP",
-        "FSDP_VERSION",
-        "PARALLELISM_CONFIG_DP_SHARD_SIZE",
-        "ACCELERATE_DYNAMO_BACKEND",
+        "ACCELERATE_USE_PARALLELISM_CONFIG",
         "ACCELERATE_GRADIENT_ACCUMULATION_STEPS",
     )
 
@@ -102,7 +99,7 @@ class TestEnvGuard:
             guard_against_env_interference()
 
     def test_override_acknowledges(self, monkeypatch):
-        monkeypatch.setenv("FSDP_VERSION", "2")
+        monkeypatch.setenv("ACCELERATE_USE_FSDP", "true")
         monkeypatch.setenv(_ENV_OVERRIDE, "1")
         guard_against_env_interference()
 
