@@ -36,7 +36,7 @@ N_EPISODES = 2
 EPISODE_LENGTH = 12
 
 
-def test_ema_config_defaults_match_reference():
+def test_ema_config_defaults_match_the_reference():
     cfg = EMAConfig()
     assert not cfg.enable
     assert cfg.inv_gamma == 1.0
