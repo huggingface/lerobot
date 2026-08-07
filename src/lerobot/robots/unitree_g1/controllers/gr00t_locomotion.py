@@ -21,7 +21,7 @@ import numpy as np
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from .g1_utils import (
+from ..g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
     G1_29_JointIndex,
@@ -86,6 +86,7 @@ class GrootLocomotionController:
         # Load policies
         self.policy_balance, self.policy_walk = load_groot_policies()
 
+        self.default_angles = GROOT_DEFAULT_ANGLES
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
         # Robot state

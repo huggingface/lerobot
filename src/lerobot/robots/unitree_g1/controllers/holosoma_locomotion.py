@@ -22,7 +22,7 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
-from .g1_utils import (
+from ..g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
@@ -104,6 +104,7 @@ class HolosomaLocomotionController:
         # Load policy and gains
         self.policy, self.kp, self.kd = load_policy()
 
+        self.default_angles = DEFAULT_ANGLES
         self.cmd = np.zeros(3, dtype=np.float32)
 
         # Robot state

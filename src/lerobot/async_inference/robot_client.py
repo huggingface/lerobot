@@ -48,7 +48,15 @@ import grpc
 import torch
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
+
+# pyrealsense2 isn't importable on every platform (e.g. Jetson with an older glibc). Register
+# the realsense camera type when it's available, but don't hard-crash the client when it isn't.
+try:
+    from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+except ImportError:
+    RealSenseCameraConfig = None
+
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -57,6 +65,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     so_follower,
+    unitree_g1,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore

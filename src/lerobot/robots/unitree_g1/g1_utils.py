@@ -23,6 +23,43 @@ import numpy as np
 
 NUM_MOTORS = 29
 
+# Joint-order permutation between IsaacLab and Mujoco convention
+ISAACLAB_TO_MUJOCO = np.array(
+    [
+        0,
+        3,
+        6,
+        9,
+        13,
+        17,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        21,
+        23,
+        25,
+        27,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28,
+    ],
+    dtype=np.int32,
+)
+MUJOCO_TO_ISAACLAB = np.argsort(ISAACLAB_TO_MUJOCO).astype(np.int32)
+
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
 REMOTE_KEYS = REMOTE_AXES + REMOTE_BUTTONS
@@ -68,8 +105,9 @@ def make_locomotion_controller(name: str | None):
     if name is None:
         return None
     controllers = {
-        "GrootLocomotionController": "lerobot.robots.unitree_g1.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.holosoma_locomotion",
+        "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
+        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
+        "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
     }
     module_path = controllers.get(name)
     if module_path is None:
