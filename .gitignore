@@ -176,8 +176,3 @@ outputs/
 *.urdf
 *.xml
 *.part
-
-# Lance / LanceDB dataset artifacts (converted datasets, benchmark outputs)
-*.lance/
-.lancedb/
-lancedb/
