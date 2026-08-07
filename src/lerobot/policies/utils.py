@@ -80,6 +80,49 @@ def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
     return tuple(output.shape)
 
 
+# State-dict prefixes used by pre-0.6 in-policy Normalizer modules. When these appear in a
+# checkpoint, normalization stats are not loaded into the current policy and the checkpoint
+# needs migration to the external processor pipeline.
+LEGACY_NORMALIZATION_KEY_PREFIXES: tuple[str, ...] = (
+    "normalize_inputs.buffer_",
+    "unnormalize_outputs.buffer_",
+    "normalize_targets.buffer_",
+    "unnormalize_targets.buffer_",
+)
+
+
+def has_legacy_normalization_keys(keys: list[str]) -> bool:
+    """Return True when keys include legacy in-policy normalization buffers."""
+    return any(key.startswith(prefix) for key in keys for prefix in LEGACY_NORMALIZATION_KEY_PREFIXES)
+
+
+def warn_legacy_normalization_keys(
+    keys: list[str],
+    *,
+    pretrained_name_or_path: str | None = None,
+    revision: str | None = None,
+) -> None:
+    """Warn when a checkpoint still embeds legacy in-policy normalization buffers.
+
+    Intended to run against safetensors keys *before* dispatching to a policy-specific
+    ``_load_as_safetensor`` hook, so the warning is emitted even when a custom loader
+    does not call :func:`log_model_loading_keys`.
+    """
+    if not has_legacy_normalization_keys(keys):
+        return
+
+    from lerobot.processor.pipeline import build_processor_migration_command
+
+    checkpoint = pretrained_name_or_path or "<checkpoint>"
+    migration_command = build_processor_migration_command(checkpoint, revision=revision)
+    logging.warning(
+        "This checkpoint still uses the legacy in-policy normalization system "
+        "(keys like 'normalize_inputs.buffer_*'). Those stats are not loaded into the "
+        "current policy, so inference/eval can silently degrade. Migrate with: %s",
+        migration_command,
+    )
+
+
 def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) -> None:
     """Log missing and unexpected keys when loading a model.
 
