@@ -63,11 +63,24 @@ class RolloutStrategy(abc.ABC):
         self._interpolator = ActionInterpolator(multiplier=ctx.runtime.cfg.interpolation_multiplier)
         self._engine = ctx.policy.inference
         logger.info("Starting inference engine...")
-        self._engine.reset()
+        self.reset_control_state()
         self._engine.start()
         self._warmup_flushed = False
-        self._cached_obs_processed = None
         logger.info("Inference engine started")
+
+    def reset_control_state(self) -> None:
+        """Clear episode-scoped control state so a paused session can restart cleanly.
+
+        Resets the inference engine (policy hidden state, action queues), the
+        action interpolator, and the cached processed observation.  Used by the
+        interactive session between run segments; only call while the control
+        loop is not running.
+        """
+        if self._engine is not None:
+            self._engine.reset()
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
 
     def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
         """Run the observation processor and notify the engine — throttled to policy ticks.
@@ -125,7 +138,7 @@ class RolloutStrategy(abc.ABC):
         if robot.is_connected:
             if return_to_initial_position and hw.initial_position:
                 logger.info("Returning robot to initial position before shutdown...")
-                self._return_to_initial_position(hw)
+                self.return_to_initial_position(hw)
             elif not return_to_initial_position:
                 logger.info(
                     "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
@@ -138,7 +151,7 @@ class RolloutStrategy(abc.ABC):
             teleop.disconnect()
 
     @staticmethod
-    def _return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
+    def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
         """Smoothly interpolate the robot back to its initial position."""
         robot = hw.robot_wrapper
         target = hw.initial_position
