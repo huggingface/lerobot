@@ -2740,6 +2740,18 @@ def _native_backend(config: G05Config) -> nn.Module:
     return G05NativeBackend.from_config(model_config)
 
 
+def _first_cot_text(metadata: Mapping[str, Any]) -> str | None:
+    """First non-empty chain-of-thought string in a batched inference result."""
+    texts = metadata.get("cot_text")
+    if isinstance(texts, str):
+        return texts.strip() or None
+    if isinstance(texts, list | tuple):
+        for text in texts:
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return None
+
+
 class G05Policy(PreTrainedPolicy):
     """LeRobot policy surface for G0.5's unified CoT and action stream."""
 
@@ -3294,7 +3306,14 @@ class G05Policy(PreTrainedPolicy):
         if system_mode == "system2":
             metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
         metadata = {key: result[key] for key in metadata_keys if key in result}
+        # Keep the same-pass reasoning for `last_reasoning` so the runtime can display
+        # it without routing it through the subtask channel, which would replace the
+        # operator's task on the next prompt.
+        self._last_cot_text = _first_cot_text(metadata)
         return action, metadata
+
+    # Set by `_run_inference`; System 1 leaves it None.
+    _last_cot_text: str | None = None
 
     def predict_action_chunk_with_runtime(
         self,
@@ -3311,6 +3330,10 @@ class G05Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor:
         action, _ = self._run_inference(batch)
         return action
+
+    def last_reasoning(self) -> str | None:
+        """System 2 chain-of-thought from the pass that produced the last action chunk."""
+        return self._last_cot_text
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:

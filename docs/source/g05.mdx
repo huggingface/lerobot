@@ -104,9 +104,11 @@ lerobot-rollout \
 ```
 
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`. Call `predict_action_chunk_with_runtime` directly to read
-the CoT telemetry alongside the matching action chunk; the interactive panel
-shows the task only.
+`predict_cot=true`. The interactive panel shows the chain-of-thought on a
+`reasoning` line via `last_reasoning`, and `predict_action_chunk_with_runtime`
+returns the full telemetry alongside the matching action chunk. The reasoning is
+display-only: it never re-enters the observation batch, so it cannot replace the
+operator's task.
 
 ```bash
 lerobot-rollout \

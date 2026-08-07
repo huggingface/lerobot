@@ -1292,3 +1292,14 @@ def test_named_embodiment_rebuilds_stale_camera_sizes():
     )
 
     assert set(config.camera_sizes) == set(G05_CAMERA_PROFILES["robotwin"])
+
+
+def test_last_reasoning_exposes_system2_cot_without_touching_the_task():
+    from lerobot.policies.g05.modeling_g05 import _first_cot_text
+
+    assert _first_cot_text({"cot_text": ["Subtask: move carefully"]}) == "Subtask: move carefully"
+    assert _first_cot_text({"cot_text": ["", "  ", "later"]}) == "later"
+    assert _first_cot_text({"cot_text": "plain string"}) == "plain string"
+    # System 1 emits no CoT, so the panel shows no reasoning line.
+    assert _first_cot_text({}) is None
+    assert _first_cot_text({"cot_text": ["   "]}) is None
