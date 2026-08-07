@@ -243,14 +243,16 @@ class EO1Policy(PreTrainedPolicy):
             "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
         }
 
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        """Single-sample text generation, as the interactive language runtime calls it."""
+    @property
+    def subtask_prompt_template(self) -> str:
+        """EO-1's trained subtask wording, filled with the operator's goal by the runtime."""
+        return "{task}\nPredict the next action in language."
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation with EO-1's own text head."""
+        return self._one_text(batch, kind="vqa", user_text=prompt)
+
+    def _one_text(self, batch: dict[str, Tensor], *, kind: str, user_text: str | None = None) -> str:
         outputs = self.generate_texts(
             batch,
             kind=kind,

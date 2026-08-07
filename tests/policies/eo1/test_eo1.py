@@ -278,10 +278,12 @@ def test_lerobot_eo1_exposes_image_conditioned_text_generation(monkeypatch):
 
     assert output == ["the cup is left of the plate"]
     # The runtime contract is the single-sample form, decoding with `config.generation`.
-    assert policy.generate_text(batch, kind="vqa", user_text="Where is the cup?") == (
-        "the cup is left of the plate"
-    )
+    assert policy.generate_text(batch, "Where is the cup?") == "the cup is left of the plate"
     assert policy.supports_text_generation()
+    # The runtime fills this with the operator's goal and calls `generate_text`.
+    assert policy.subtask_prompt_template.replace("{task}", "clear the table") == (
+        "clear the table\nPredict the next action in language."
+    )
 
 
 def test_eo1_recipe_processor_builds_sparse_joint_labels():
