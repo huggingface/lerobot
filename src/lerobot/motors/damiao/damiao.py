@@ -60,7 +60,13 @@ logger = logging.getLogger(__name__)
 
 LONG_TIMEOUT_SEC = 0.1
 MEDIUM_TIMEOUT_SEC = 0.01
-SHORT_TIMEOUT_SEC = 0.001
+# Window for collecting the replies to a batch of MIT command frames (_mit_control_batch).
+# Was 0.001, which expires before the tail of a 7-motor batch replies: measured on a Metal arm
+# at 200 Hz, 9.2% of replies were lost over socketcan and 6.3% over slcan, and the loss climbed
+# with position in the send order (first motor 38 lost, last motor 86, on socketcan) -- the
+# signature of an expiring window rather than bus loss. _mit_control_batch discards misses
+# silently, so this never surfaced. At 0.005 the same runs lose 0.019% / 0.000%.
+SHORT_TIMEOUT_SEC = 0.005
 PRECISE_TIMEOUT_SEC = 0.0001
 
 

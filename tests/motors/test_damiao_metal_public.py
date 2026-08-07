@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
+
 from lerobot.motors.damiao import DamiaoMotorsBus
+
 
 def test_sync_write_metal_delegates():
     bus = DamiaoMotorsBus.__new__(DamiaoMotorsBus)  # skip __init__/hardware

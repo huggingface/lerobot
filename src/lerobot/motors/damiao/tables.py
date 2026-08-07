@@ -204,9 +204,11 @@ OPENARMS_DEFAULT_MOTOR_TYPES = {
     "gripper": MotorType.DM4310,  # Gripper
 }
 
-# MIT control parameter ranges
-MIT_KP_RANGE = (0.0, 500.0)
-MIT_KD_RANGE = (0.0, 5.0)
+# MIT control parameter ranges. Annotated as fixed-length pairs (not bare tuples) because they
+# are splatted into `_float_to_uint(x, x_min, x_max, bits)`; without this mypy infers
+# `tuple[float, ...]` and reports the unpack as "Too many arguments".
+MIT_KP_RANGE: tuple[float, float] = (0.0, 500.0)
+MIT_KD_RANGE: tuple[float, float] = (0.0, 5.0)
 
 # CAN frame command IDs
 CAN_CMD_ENABLE = 0xFC
