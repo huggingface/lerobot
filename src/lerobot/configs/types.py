@@ -31,6 +31,18 @@ class PipelineFeatureType(str, Enum):
     OBSERVATION = "OBSERVATION"
 
 
+class TextKind(str, Enum):
+    """What the interactive language runtime can ask a policy's text head for.
+
+    One vocabulary shared by every policy, so `generate_text` callers and
+    implementations cannot drift. Values are lowercase to match the batched
+    `generate_texts` APIs, which accept a wider set (caption, grounding, ...).
+    """
+
+    SUBTASK = "subtask"  # next low-level instruction to condition actions on
+    VQA = "vqa"  # answer a question about the current view
+
+
 class NormalizationMode(str, Enum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"
