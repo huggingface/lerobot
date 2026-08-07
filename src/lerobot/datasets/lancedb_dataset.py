@@ -254,6 +254,7 @@ def _storage_options(db_uri: str, storage_options: dict | None, revision: str | 
 
 
 def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
+    require_package("lancedb", extra="lancedb")  # earliest common site: also reached via lance_metadata()
     if _is_remote_uri(db_uri):
         os.environ.setdefault("LANCE_IO_THREADS", "256")
     options = _storage_options(db_uri, storage_options, revision)
@@ -321,14 +322,18 @@ def is_lance_dataset(
 
 
 def resolve_lance_root(
-    repo_id: str | None, root: str | Path | None, storage_options: dict | None = None
+    repo_id: str | None, root: str | Path | None, storage_options: dict | None = None,
+    revision: str | None = None,
 ) -> tuple[str, Path]:
     """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
     if root is not None and _is_remote_uri(root):
         db_uri = str(root).rstrip("/")
-        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", db_uri)
+        # Key the cache by revision too: an hf:// root at a non-default revision must not
+        # reuse (or overwrite) another revision's materialized meta.
+        cache_key = f"{db_uri}@{revision}" if revision else db_uri
+        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
         if not (local_root / "meta").exists():
-            _materialize_meta(_connect(db_uri, storage_options), local_root)
+            _materialize_meta(_connect(db_uri, storage_options, revision), local_root)
         return db_uri, local_root
     root_path = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
     if (root_path / f"{FRAMES_TABLE}.lance").exists():
@@ -342,7 +347,7 @@ def lance_metadata(
     repo_id: str | None, root: str | Path | None, revision: str | None = None,
     storage_options: dict | None = None,
 ) -> LeRobotDatasetMetadata:
-    _, local_root = resolve_lance_root(repo_id, root, storage_options)
+    _, local_root = resolve_lance_root(repo_id, root, storage_options, revision)
     return LeRobotDatasetMetadata(
         repo_id if repo_id is not None else str(local_root), root=local_root, revision=revision
     )
@@ -387,7 +392,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
         super().__init__()
-        require_package("lancedb", extra="lance")
+        require_package("lancedb", extra="lancedb")
         if repo_id is None and root is None:
             raise ValueError("Provide `repo_id`, `root`, or both.")
 
@@ -395,7 +400,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self._storage_options = storage_options
 
-        self._db_uri, self.root = resolve_lance_root(repo_id, root, self._storage_options)
+        self._db_uri, self.root = resolve_lance_root(repo_id, root, self._storage_options, revision)
 
         self.meta = LeRobotDatasetMetadata(
             repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision

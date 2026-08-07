@@ -247,6 +247,7 @@ def make_train_eval_datasets(
         episodes=train_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=train_image_transforms,
+        depth_output_unit=cfg.dataset.depth_output_unit,
     )
 
     eval_dataset = _make_map_dataset(
@@ -254,6 +255,7 @@ def make_train_eval_datasets(
         episodes=eval_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=None,
+        depth_output_unit=cfg.dataset.depth_output_unit,
     )
 
     if cfg.dataset.use_imagenet_stats:

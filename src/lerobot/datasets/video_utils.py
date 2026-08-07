@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar
 
 import av
 import fsspec
@@ -105,7 +105,7 @@ def decode_video_frames(
 
 
 def decode_video_frames_pyav(
-    video_path: Path | str,
+    video_path: Path | str | BinaryIO,
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
@@ -124,7 +124,8 @@ def decode_video_frames_pyav(
     video can be adjusted at encoding time to trade off decoding speed against file size.
 
     Args:
-        video_path: Path to the video file.
+        video_path: Path to the video file, or a seekable binary file-like object
+            (supporting ``read``/``seek``) — e.g. a buffered remote source.
         timestamps: List of timestamps (in seconds) to extract frames for.
         tolerance_s: Allowed deviation in seconds between a queried timestamp and the closest
             decoded frame.
