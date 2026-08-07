@@ -32,7 +32,7 @@ from PIL import Image
 from safetensors.torch import load_file
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig, TextKind
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -1319,7 +1319,7 @@ class WallOSS05Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Any],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
