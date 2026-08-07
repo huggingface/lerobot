@@ -145,6 +145,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
+    trust_remote_code: bool | None
 
 
 def make_pre_post_processors(
@@ -178,6 +179,8 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        trust_remote_code = kwargs.get("trust_remote_code", False) or False
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
@@ -206,6 +209,7 @@ def make_pre_post_processors(
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
+            trust_remote_code=trust_remote_code,
         )
         postprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -216,6 +220,7 @@ def make_pre_post_processors(
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
+            trust_remote_code=trust_remote_code,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):

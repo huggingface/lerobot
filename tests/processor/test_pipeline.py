@@ -16,6 +16,7 @@
 
 import json
 import os
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -2456,7 +2457,16 @@ def test_rce_attempt_blocked():
     malicious_config = {
         "name": "malicious-processor",
         "steps": [
-            {"class": "subprocess.Popen", "config": {"args": ["/bin/sh", "-c", f"touch {marker_file}"]}}
+            {
+                "class": "subprocess.Popen",
+                "config": {
+                    "args": [
+                        sys.executable,
+                        "-c",
+                        f"import pathlib; pathlib.Path({repr(marker_file)}).touch()",
+                    ]
+                },
+            }
         ],
     }
 
@@ -2473,6 +2483,41 @@ def test_rce_attempt_blocked():
     assert not os.path.exists(marker_file), (
         "Security vulnerability! Code executed and marker file was created."
     )
+
+
+def test_untrusted_external_module_blocked():
+    """Test that custom external modules require trust_remote_code=True."""
+    untrusted_config = {
+        "name": "untrusted-processor",
+        "steps": [{"class": "unimported_fake_external_module.SomeStep", "config": {}}],
+    }
+
+    model_dir = _create_temp_model_dir(untrusted_config)
+
+    with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+        DataProcessorPipeline.from_pretrained(
+            model_dir,
+            config_filename="processor.json",
+            trust_remote_code=False,
+        )
+
+
+def test_trust_remote_code_flag():
+    """Test that trust_remote_code=True allows dynamic lookup attempt of external module."""
+    external_config = {
+        "name": "external-processor",
+        "steps": [{"class": "non_existent_external_module_xyz.SomeStep", "config": {}}],
+    }
+
+    model_dir = _create_temp_model_dir(external_config)
+
+    # Should pass trust_remote_code check and fail at module import stage (ImportError)
+    with pytest.raises(ImportError, match="Failed to load processor step"):
+        DataProcessorPipeline.from_pretrained(
+            model_dir,
+            config_filename="processor.json",
+            trust_remote_code=True,
+        )
 
 
 def test_invalid_class_path_without_dot():

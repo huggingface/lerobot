@@ -33,6 +33,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
@@ -631,6 +632,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
+        trust_remote_code: bool = False,
         **kwargs,
     ) -> DataProcessorPipeline[TInput, TOutput]:
         """Loads a pipeline from a local directory, single file, or Hugging Face Hub repository.
@@ -740,7 +742,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs, is_local_source
+            loaded_config,
+            overrides or {},
+            model_id,
+            base_path,
+            hub_download_kwargs,
+            is_local_source,
+            trust_remote_code=trust_remote_code,
         )
 
         # 4. Validate that all overrides were used
@@ -765,6 +773,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
+        trust_remote_code: bool = False,
     ) -> DataProcessorPipeline[TInput, TOutput]:
         """Build a pipeline from an in-memory config and optional state tensors.
 
@@ -780,7 +789,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         cls._validate_loaded_config("<in-memory config>", config, "<in-memory config>")
 
-        steps, remaining_override_keys = cls._build_steps_from_config(config, overrides or {})
+        steps, remaining_override_keys = cls._build_steps_from_config(
+            config, overrides or {}, trust_remote_code=trust_remote_code
+        )
         cls._validate_overrides_used(remaining_override_keys, config)
 
         pipeline = cls(
@@ -938,6 +949,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         base_path: Path | None,
         hub_download_kwargs: dict[str, Any],
         is_local_source: bool = False,
+        trust_remote_code: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build all processor steps with overrides and state loading.
 
@@ -990,7 +1002,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ImportError: If a step class cannot be imported or found in registry
             ValueError: If a step cannot be instantiated with its configuration
         """
-        steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
+        steps, remaining_override_keys = cls._build_steps_from_config(
+            loaded_config, overrides, trust_remote_code=trust_remote_code
+        )
 
         for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):
             cls._load_step_state(
@@ -1004,6 +1018,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         cls,
         loaded_config: dict[str, Any],
         overrides: dict[str, Any],
+        trust_remote_code: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build processor steps from config without loading tensor state.
 
@@ -1018,7 +1033,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         remaining_override_keys = set(overrides.keys())
 
         for step_entry in loaded_config["steps"]:
-            step_class, step_key = cls._resolve_step_class(step_entry)
+            step_class, step_key = cls._resolve_step_class(step_entry, trust_remote_code=trust_remote_code)
             processor_step = cls._instantiate_step(step_entry, step_class, step_key, overrides)
 
             if step_key in remaining_override_keys:
@@ -1029,7 +1044,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return processor_steps, remaining_override_keys
 
     @classmethod
-    def _resolve_step_class(cls, step_entry: dict[str, Any]) -> tuple[type[ProcessorStep], str]:
+    def _resolve_step_class(
+        cls, step_entry: dict[str, Any], trust_remote_code: bool = False
+    ) -> tuple[type[ProcessorStep], str]:
         """Resolve step class from registry or import path.
 
         This method implements a two-tier resolution strategy:
@@ -1061,6 +1078,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Args:
             step_entry: The step configuration dictionary (must have "registry_name" or "class")
+            trust_remote_code: Whether to allow importing custom processor step classes from
+                external modules that are not built into lerobot or already loaded.
 
         Returns:
             Tuple of (step_class, step_key)
@@ -1069,6 +1088,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Raises:
             ImportError: If step class cannot be loaded from registry or import path
+            ValueError: If class path is invalid or custom external import requires trust_remote_code
         """
         if "registry_name" in step_entry:
             try:
@@ -1086,6 +1106,15 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 )
 
             module_path, class_name = full_class_path.rsplit(".", 1)
+
+            is_lerobot_module = module_path.startswith("lerobot.") or module_path == "lerobot"
+            is_already_loaded = module_path in sys.modules
+
+            if not (trust_remote_code or is_lerobot_module or is_already_loaded):
+                raise ValueError(
+                    f"Loading processor step from custom external module '{module_path}' requires `trust_remote_code=True`. "
+                    f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration."
+                )
 
             try:
                 module = importlib.import_module(module_path)
