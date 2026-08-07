@@ -44,6 +44,14 @@ logger = logging.getLogger(__name__)
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
+    """A PyTorch `Dataset` over episodic robot data: per-frame state/action tensors, optional videos.
+
+    Backed by parquet files (`data/`) for tabular observation/action/reward data, optional video files
+    (`videos/`) for image observations, and a `meta/` directory holding `info.json` (shapes, keys, fps),
+    `stats.json` (normalization statistics), and per-episode metadata. See `__init__`'s docstring for the
+    on-disk layout, and `create()` for building a new (empty) dataset from scratch.
+    """
+
     def __init__(
         self,
         repo_id: str,
@@ -68,8 +76,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         *,
         token: str | bool | None = None,
     ):
-        """
-        2 modes are available for instantiating this class, depending on 2 different use cases:
+        """2 modes are available for instantiating this class, depending on 2 different use cases.
 
         1. Your dataset already exists:
             - On your local disk in the 'root' folder. This is typically the case when you recorded your
@@ -168,7 +175,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 conversion. This works for both image-backed and video-backed observations and can later be
                 updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
                 Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
+            delta_timestamps (dict[list[float]] | None, optional): Per-feature timestamp offsets (in
+                seconds, relative to a frame's own timestamp) of additional frames to return alongside it.
+                Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
@@ -185,6 +194,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
+            return_uint8 (bool, optional): For RGB videos, whether to return raw uint8 frames instead of
+                the default float32 frames normalized to [0, 1]. Defaults to False.
+            depth_output_unit (str, optional): Physical unit depth maps are dequantized to at load time:
+                "mm" (millimeters) or "m" (metres). Has no effect on datasets without depth cameras.
+                Defaults to "mm".
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             rgb_encoder (RGBEncoderConfig | None, optional): Video encoder settings for cameras
@@ -395,7 +409,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def hf_dataset(self) -> datasets.Dataset:
-        """The underlying Hugging Face Dataset object"""
+        """The underlying Hugging Face Dataset object."""
         self.reader = self._ensure_reader()
         if self.reader.hf_dataset is None:
             self.reader.load_and_activate()
@@ -540,6 +554,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.hf_dataset[idx]
 
     def __repr__(self):
+        """A short summary: repo ID, selected episode/sample counts, and feature keys."""
         feature_keys = list(self.features)
         return (
             f"{self.__class__.__name__}({{\n"
@@ -738,6 +753,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 during capture instead of writing images first.
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
+            video_files_size_in_mb: Max video file size in MB. Defaults to
+                ``DEFAULT_VIDEO_FILE_SIZE_IN_MB``.
+            data_files_size_in_mb: Max parquet file size in MB. Defaults to
+                ``DEFAULT_DATA_FILE_SIZE_IN_MB``.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.

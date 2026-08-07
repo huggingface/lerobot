@@ -51,6 +51,20 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         *,
         token: str | bool | None = None,
     ):
+        """Construct a `LeRobotDataset` for each `repo_id` and concatenate them.
+
+        Args:
+            repo_ids: The Hub repo IDs (or local dataset names, if `root` is set) to load.
+            root: Root directory containing the underlying datasets. Defaults to `$HF_LEROBOT_HOME`.
+            episodes: Optional mapping from `repo_id` to the episode indices to load from it.
+            image_transforms: Transform applied to visual observations in each underlying dataset.
+            delta_timestamps: Passed through to each underlying `LeRobotDataset`.
+            tolerances_s: Optional mapping from `repo_id` to its timestamp tolerance, in seconds. Defaults
+                to `1e-4` for every dataset.
+            download_videos: Whether to download video files for each underlying dataset.
+            video_backend: The video decoding backend to use.
+            token: Hugging Face Hub authentication token.
+        """
         super().__init__()
         self.repo_ids = repo_ids
         self.root = Path(root) if root else HF_LEROBOT_HOME
@@ -140,6 +154,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def features(self) -> datasets.Features:
+        """The union of all underlying datasets' features (minus `disabled_features`)."""
         features = {}
         for dataset in self._datasets:
             features.update(
@@ -186,17 +201,26 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
     @property
     def tolerance_s(self) -> float:
-        """Tolerance in seconds used to discard loaded frames when their timestamps
-        are not close enough from the requested frames. It is only used when `delta_timestamps`
-        is provided or when loading video frames from mp4 files.
+        """Tolerance in seconds used to discard loaded frames when their timestamps aren't close enough.
+
+        Only used when `delta_timestamps` is provided or when loading video frames from mp4 files.
         """
         # 1e-4 to account for possible numerical error
         return 1 / self.fps - 1e-4
 
     def __len__(self):
+        """The total number of frames across all underlying datasets."""
         return self.num_frames
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        """Return the frame at `idx`, resolved to the underlying dataset it falls in.
+
+        Adds a `"dataset_index"` key identifying which underlying dataset the frame came from, and drops
+        any `disabled_features` keys.
+
+        Raises:
+            IndexError: If `idx` is out of bounds.
+        """
         if idx >= len(self):
             raise IndexError(f"Index {idx} out of bounds.")
         # Determine which dataset to get an item from based on the index.
@@ -219,6 +243,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         return item
 
     def __repr__(self):
+        """A summary: repo IDs, sample/episode counts, media type, fps, camera keys, and transforms."""
         return (
             f"{self.__class__.__name__}(\n"
             f"  Repository IDs: '{self.repo_ids}',\n"

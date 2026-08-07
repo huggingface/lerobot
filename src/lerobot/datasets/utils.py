@@ -63,11 +63,21 @@ hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
 """
 
 
-class CompatibilityError(Exception): ...
+class CompatibilityError(Exception):
+    """Base class for errors raised when a dataset's `codebase_version` doesn't match this install."""
+
+    ...
 
 
 class BackwardCompatibilityError(CompatibilityError):
+    """Raised when a dataset was saved with an older, unsupported `codebase_version`."""
+
     def __init__(self, repo_id: str, version: packaging.version.Version):
+        """Build the error message pointing the user at the v2.1-to-v3.0 conversion script.
+
+        Raises:
+            NotImplementedError: If `version` isn't the one supported legacy version (2.1).
+        """
         if version.major == 2 and version.minor == 1:
             message = V30_MESSAGE.format(repo_id=repo_id, version=version)
         else:
@@ -78,7 +88,10 @@ class BackwardCompatibilityError(CompatibilityError):
 
 
 class ForwardCompatibilityError(CompatibilityError):
+    """Raised when a dataset was saved with a newer `codebase_version` than this install supports."""
+
     def __init__(self, repo_id: str, version: packaging.version.Version):
+        """Build the error message pointing the user at upgrading their `lerobot` install."""
         message = FUTURE_MESSAGE.format(repo_id=repo_id, version=version)
         super().__init__(message)
 
@@ -189,6 +202,12 @@ class DatasetInfo:
     tools: list[dict] | None = None
 
     def __post_init__(self) -> None:
+        """Coerce feature shapes from list to tuple, and validate `fps`/`chunks_size`/file-size fields.
+
+        Raises:
+            ValueError: If `fps`, `chunks_size`, `data_files_size_in_mb`, or `video_files_size_in_mb` isn't
+                positive.
+        """
         # Coerce feature shapes from list to tuple — JSON deserialisation
         # returns lists, but the rest of the codebase expects tuples.
         for ft in self.features.values():
@@ -239,6 +258,11 @@ class DatasetInfo:
     # Once all callers have been migrated to attribute access, remove these.
     # ---------------------------------------------------------------------------
     def __getitem__(self, key: str):
+        """Deprecated dict-style read; use attribute access instead.
+
+        Raises:
+            KeyError: If `key` isn't a field on this class.
+        """
         import warnings
 
         warnings.warn(
@@ -253,6 +277,7 @@ class DatasetInfo:
             raise KeyError(key) from err
 
     def __setitem__(self, key: str, value) -> None:
+        """Deprecated dict-style write; use attribute assignment instead."""
         import warnings
 
         warnings.warn(
@@ -290,6 +315,7 @@ def has_legacy_hub_download_metadata(root: Path) -> bool:
 
 
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
+    """Advance to the next `(chunk_idx, file_idx)`, rolling over to a new chunk once `chunks_size` is hit."""
     if file_idx == chunks_size - 1:
         file_idx = 0
         chunk_idx += 1
@@ -355,7 +381,7 @@ def check_version_compatibility(
         repo_id (str): The repository ID for logging purposes.
         version_to_check (str | packaging.version.Version): The version of the dataset.
         current_version (str | packaging.version.Version): The current version of the codebase.
-        enforce_breaking_major (bool): If True, raise an error on major version mismatch.
+        enforce_breaking_major (bool, *optional*, defaults to `True`): If True, raise an error on major version mismatch.
 
     Raises:
         BackwardCompatibilityError: If the dataset version is from a newer, incompatible
@@ -382,9 +408,9 @@ def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[
 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
-        token: Authentication token used for Hub requests. Pass a string token,
-            ``True`` to require the locally stored token, ``False`` to disable
-            authentication, or ``None`` to use the Hugging Face Hub default.
+        token (`str | bool | None`, *optional*): Authentication token used for Hub requests. Pass a string
+            token, `True` to require the locally stored token, `False` to disable authentication, or `None`
+            to use the Hugging Face Hub default.
 
     Returns:
         list[packaging.version.Version]: A list of valid versions found.
@@ -414,7 +440,7 @@ def get_safe_version(
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
         version (str | packaging.version.Version): The target version.
-        token: Authentication token forwarded to the Hub version lookup.
+        token (`str | bool | None`, *optional*): Authentication token forwarded to the Hub version lookup.
 
     Returns:
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
@@ -461,7 +487,7 @@ def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) ->
     Args:
         repo_id (str): The ID of the repository.
         branch (str): The name of the branch to create.
-        repo_type (str | None): The type of the repository (e.g., "dataset").
+        repo_type (str | None, *optional*): The type of the repository (e.g., "dataset").
     """
     api = HfApi()
 
@@ -486,10 +512,12 @@ def create_lerobot_dataset_card(
     https://huggingface.co/docs/hub/repositories-licenses.
 
     Args:
-        tags (list | None): A list of tags to add to the dataset card.
-        dataset_info (DatasetInfo | None): The dataset's info object, which will
+        tags (list | None, *optional*): A list of tags to add to the dataset card.
+        dataset_info (DatasetInfo | None, *optional*): The dataset's info object, which will
             be displayed on the card.
-        **kwargs: Additional keyword arguments to populate the card template.
+        kwargs (`Any`, *optional*): Values used to replace placeholders in the card template, e.g. `license`, which
+            must be a valid license identifier from
+            https://huggingface.co/docs/hub/repositories-licenses.
 
     Returns:
         DatasetCard: The generated dataset card object.
@@ -524,10 +552,12 @@ def create_lerobot_dataset_card(
 
 
 def is_float_in_list(target, float_list, threshold=1e-6):
+    """Return `True` if `float_list` contains a value within `threshold` of `target`."""
     return any(abs(target - x) <= threshold for x in float_list)
 
 
 def find_float_index(target, float_list, threshold=1e-6):
+    """Return the index of the first value in `float_list` within `threshold` of `target`, or -1."""
     for i, x in enumerate(float_list):
         if abs(target - x) <= threshold:
             return i
@@ -535,9 +565,7 @@ def find_float_index(target, float_list, threshold=1e-6):
 
 
 def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
-    """
-    Safe shards the dataset.
-    """
+    """Safe shards the dataset."""
     shard_idx = min(dataset.num_shards, index + 1) - 1
 
     return dataset.shard(num_shards, index=shard_idx)
