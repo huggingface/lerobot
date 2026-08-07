@@ -3320,21 +3320,19 @@ class G05Policy(PreTrainedPolicy):
         return self._run_inference(batch, task=task, system_mode=system_mode)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor:
-        action, _ = self._run_inference(batch)
-        return action
-
-    @torch.no_grad()
-    def predict_action_chunk_with_text(self, batch: dict[str, Any], **kwargs) -> tuple[Tensor, str | None]:
-        """The chunk and the System 2 chain-of-thought generated in the same pass.
+    def predict_action_chunk(
+        self, batch: dict[str, Any], *, with_text: bool = False, **kwargs
+    ) -> Tensor | tuple[Tensor, str | None]:
+        """The action chunk, and with `with_text` the same-pass chain-of-thought.
 
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
         extends the prefill cache with the CoT tokens and the flow head then runs on
         that extended cache, so the action really is conditioned on this text rather
-        than merely accompanied by it. System 1 emits none and reports `text=None`.
+        than merely accompanied by it. This is why G0.5 honours `with_text` at all.
+        System 1 generates no CoT and reports `None`.
         """
         action, metadata = self._run_inference(batch)
-        return action, _first_cot_text(metadata)
+        return (action, _first_cot_text(metadata)) if with_text else action
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:

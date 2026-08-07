@@ -1305,7 +1305,7 @@ def test_first_cot_text_picks_the_first_non_empty_row():
     assert _first_cot_text({"cot_text": ["   "]}) is None
 
 
-def test_predict_action_chunk_with_text_pairs_same_pass_cot_with_its_chunk():
+def test_with_text_pairs_same_pass_cot_with_its_chunk():
     import torch
 
     from lerobot.policies.g05.modeling_g05 import G05Policy
@@ -1316,13 +1316,13 @@ def test_predict_action_chunk_with_text_pairs_same_pass_cot_with_its_chunk():
         def _run_inference(self, batch, **kwargs):
             return chunk, {"cot_text": ["Subtask: grasp the cup"]}
 
-    action, text = G05Policy.predict_action_chunk_with_text(Stub(), {})
+    action, text = G05Policy.predict_action_chunk(Stub(), {}, with_text=True)
 
     assert action is chunk
     assert text == "Subtask: grasp the cup"
 
 
-def test_predict_action_chunk_with_text_reports_no_text_for_system1():
+def test_with_text_reports_no_text_for_system1():
     import torch
 
     from lerobot.policies.g05.modeling_g05 import G05Policy
@@ -1331,4 +1331,6 @@ def test_predict_action_chunk_with_text_reports_no_text_for_system1():
         def _run_inference(self, batch, **kwargs):
             return torch.zeros(1, 2, 3), {}
 
-    assert G05Policy.predict_action_chunk_with_text(Stub(), {})[1] is None
+    assert G05Policy.predict_action_chunk(Stub(), {}, with_text=True)[1] is None
+    # Without the flag the bare chunk comes back, as every other policy returns.
+    assert isinstance(G05Policy.predict_action_chunk(Stub(), {}), torch.Tensor)
