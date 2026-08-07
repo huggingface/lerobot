@@ -207,9 +207,11 @@ lerobot-rollout \
     --device=cuda
 ```
 
-Set both `inference.rtc.execution_horizon` and `inference.queue_threshold` to at
-least the checkpoint's `rtc_training_max_delay`. Rollout stops with an explicit
-error if measured latency exceeds that trained range. The default
+Set `inference.rtc.execution_horizon` between the checkpoint's
+`rtc_training_max_delay` and `chunk_size - rtc_training_max_delay`, and
+`inference.queue_threshold` to at least `rtc_training_max_delay`. A one-off
+latency spike past the trained range discards that chunk and retries; rollout
+stops with an explicit error only if the delay stays out of range. The default
 `--inference.rtc.mode=guided` remains available for ordinary checkpoints.
 
 ### Loading a checkpoint

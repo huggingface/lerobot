@@ -99,7 +99,9 @@ for step in range(num_steps):
 
 For trained mode, both `execution_horizon` and the rollout backend's
 `inference.queue_threshold` must be at least the checkpoint's
-`rtc_training_max_delay`; rollout validates this before connecting the robot.
+`rtc_training_max_delay`, and `execution_horizon` must not exceed
+`chunk_size - rtc_training_max_delay` (the `d <= s <= H - d` bound from the RTC
+paper); rollout validates this before connecting the robot.
 
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 

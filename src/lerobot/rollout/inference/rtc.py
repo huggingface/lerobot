@@ -54,6 +54,8 @@ _RTC_IDLE_SLEEP_S: float = 0.01
 _RTC_ERROR_RETRY_DELAY_S: float = 0.5
 # Consecutive transient errors tolerated before giving up and propagating shutdown.
 _RTC_MAX_CONSECUTIVE_ERRORS: int = 10
+# Consecutive unusable trained-RTC chunks tolerated before declaring the delay unsupportable.
+_RTC_MAX_CONSECUTIVE_DISCARDS: int = 5
 # Hard timeout for joining the RTC thread on stop().
 _RTC_JOIN_TIMEOUT_S: float = 3.0
 
@@ -63,11 +65,7 @@ class _FatalRTCInferenceError(RuntimeError):
 
 
 class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
-    """Raised when measured latency exceeds a trained RTC checkpoint's support."""
-
-
-class _TrainedRTCPrefixUnavailableError(_FatalRTCInferenceError):
-    """Raised when the queue cannot provide the prefix used for conditioning."""
+    """Raised when measured latency persistently exceeds a trained RTC checkpoint's support."""
 
 
 # ---------------------------------------------------------------------------
@@ -113,14 +111,17 @@ def _trained_rtc_chunk_can_merge(
     training_max_delay: int,
     has_previous_actions: bool,
 ) -> bool:
-    """Check that a trained RTC chunk covers the overlap observed during inference."""
+    """Whether a trained RTC chunk still covers the overlap that actually elapsed.
+
+    A chunk is unusable either because inference outran the prefix it was conditioned on, or
+    because the elapsed delay left the range the checkpoint was trained for. Both are transient
+    by nature (a latency spike), so this reports them the same way and lets the caller retry;
+    only a persistent run of unusable chunks is fatal.
+    """
     if not has_previous_actions:
         return True
     if measured_delay > training_max_delay:
-        raise _TrainedRTCDelayExceededError(
-            f"Measured RTC inference delay ({measured_delay}) exceeds the checkpoint's "
-            f"rtc_training_max_delay ({training_max_delay})."
-        )
+        return False
     return measured_delay <= conditioned_delay
 
 
@@ -140,14 +141,28 @@ def _estimate_rtc_delay(
     return 0
 
 
-def _validate_trained_rtc_prefix_available(*, conditioned_delay: int, available_steps: int) -> None:
-    """Reject hard-prefix inference when the real queue is shorter than its delay."""
-    if conditioned_delay > available_steps:
-        raise _TrainedRTCPrefixUnavailableError(
-            f"Trained RTC needs {conditioned_delay} committed prefix actions, but the queue has "
-            f"only {available_steps}. Increase --inference.queue_threshold and "
-            "--inference.rtc.execution_horizon."
+def _clamp_trained_rtc_delay(*, conditioned_delay: int, available_steps: int, training_max_delay: int) -> int:
+    """Clamp the hard prefix to what both the checkpoint and the queue can back.
+
+    Past ``training_max_delay`` the model has never seen a prefix that long, and past
+    ``available_steps`` ``_normalize_prev_actions_length`` zero-pads the tail, so the extra
+    steps would be inpainted as if zeros were committed actions. Clamping keeps the chunk
+    usable; ``_trained_rtc_chunk_can_merge`` still discards it if the delay that actually
+    elapsed outran this prefix.
+    """
+    clamped = min(conditioned_delay, training_max_delay, available_steps)
+    if clamped < conditioned_delay:
+        logger.warning(
+            "Trained RTC wanted a %d-step prefix but the checkpoint supports %d and the queue "
+            "holds %d committed actions; conditioning on %d. Raise --inference.queue_threshold "
+            "and --inference.rtc.execution_horizon, or retrain with a larger "
+            "--policy.rtc_training_max_delay, to keep the full overlap.",
+            conditioned_delay,
+            training_max_delay,
+            available_steps,
+            clamped,
         )
+    return clamped
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +343,7 @@ class RTCInferenceEngine(InferenceEngine):
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
             inference_count = 0
             consecutive_errors = 0
+            consecutive_discards = 0
 
             while not self._shutdown_event.is_set():
                 if not self._policy_active.is_set():
@@ -358,10 +374,10 @@ class RTCInferenceEngine(InferenceEngine):
                             has_previous_actions=has_previous_actions,
                         )
                         if self._rtc_config.mode == "trained" and delay > 0:
-                            available_steps = 0 if prev_actions is None else prev_actions.shape[0]
-                            _validate_trained_rtc_prefix_available(
+                            delay = _clamp_trained_rtc_delay(
                                 conditioned_delay=delay,
-                                available_steps=available_steps,
+                                available_steps=0 if prev_actions is None else prev_actions.shape[0],
+                                training_max_delay=training_max_delay,
                             )
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
@@ -422,14 +438,28 @@ class RTCInferenceEngine(InferenceEngine):
                                 has_previous_actions=has_previous_actions,
                             )
                         ):
+                            consecutive_discards += 1
                             logger.warning(
-                                "Discarding trained RTC chunk: measured delay %d exceeded "
-                                "conditioned delay %d; retrying with updated latency",
+                                "Discarding trained RTC chunk (%d/%d): measured delay %d exceeded "
+                                "conditioned delay %d (checkpoint supports %d); retrying with "
+                                "updated latency",
+                                consecutive_discards,
+                                _RTC_MAX_CONSECUTIVE_DISCARDS,
                                 new_delay,
                                 delay,
+                                training_max_delay,
                             )
+                            if consecutive_discards >= _RTC_MAX_CONSECUTIVE_DISCARDS:
+                                raise _TrainedRTCDelayExceededError(
+                                    f"Measured RTC inference delay ({new_delay}) stayed above the "
+                                    f"usable overlap for {consecutive_discards} consecutive chunks; "
+                                    f"the checkpoint supports rtc_training_max_delay="
+                                    f"{training_max_delay}. Retrain with a larger delay, lower "
+                                    "--fps, or switch to --inference.rtc.mode=guided."
+                                )
                             continue
 
+                        consecutive_discards = 0
                         queue.merge(original, processed, new_delay, idx_before)
 
                         if (

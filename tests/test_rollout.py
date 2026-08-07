@@ -142,29 +142,28 @@ def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
     )
 
 
-def test_trained_rtc_rejects_measured_delay_above_checkpoint_support():
-    from lerobot.rollout.inference.rtc import (
-        _trained_rtc_chunk_can_merge,
-        _TrainedRTCDelayExceededError,
+def test_trained_rtc_discards_chunk_measured_above_checkpoint_support():
+    """A latency spike past the trained delay discards the chunk; it must not kill the rollout."""
+    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+
+    assert not _trained_rtc_chunk_can_merge(
+        conditioned_delay=3,
+        measured_delay=5,
+        training_max_delay=4,
+        has_previous_actions=True,
     )
 
-    with pytest.raises(_TrainedRTCDelayExceededError, match="rtc_training_max_delay"):
-        _trained_rtc_chunk_can_merge(
-            conditioned_delay=3,
-            measured_delay=5,
-            training_max_delay=4,
-            has_previous_actions=True,
-        )
 
+def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
+    """Conditioning past the queue tail would hard-inpaint zero padding, so clamp instead."""
+    from lerobot.rollout.inference.rtc import _clamp_trained_rtc_delay
 
-def test_trained_rtc_rejects_prefix_shorter_than_conditioned_delay():
-    from lerobot.rollout.inference.rtc import (
-        _TrainedRTCPrefixUnavailableError,
-        _validate_trained_rtc_prefix_available,
-    )
-
-    with pytest.raises(_TrainedRTCPrefixUnavailableError, match="only 2"):
-        _validate_trained_rtc_prefix_available(conditioned_delay=4, available_steps=2)
+    # Queue tail is the binding limit.
+    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=2, training_max_delay=10) == 2
+    # Trained capacity is the binding limit.
+    assert _clamp_trained_rtc_delay(conditioned_delay=12, available_steps=30, training_max_delay=10) == 10
+    # Neither binds.
+    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=30, training_max_delay=10) == 4
 
 
 @pytest.mark.parametrize(
@@ -172,6 +171,8 @@ def test_trained_rtc_rejects_prefix_shorter_than_conditioned_delay():
     [
         (3, 4, "execution_horizon"),
         (4, 3, "queue_threshold"),
+        # RTC needs d <= s <= H - d; s = 17 exceeds chunk_size - max_delay = 16.
+        (17, 20, "at most"),
     ],
 )
 def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
@@ -179,7 +180,7 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
     from lerobot.rollout.inference import RTCInferenceConfig
 
-    policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4)
+    policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=20)
     inference_config = RTCInferenceConfig(
         rtc=RTCConfig(mode="trained", execution_horizon=execution_horizon),
         queue_threshold=queue_threshold,
@@ -187,6 +188,20 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
 
     with pytest.raises(ValueError, match=match):
         _validate_trained_rtc_rollout_config(policy_config, inference_config)
+
+
+def test_trained_rtc_rollout_accepts_valid_capacity():
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.context import _validate_trained_rtc_rollout_config
+    from lerobot.rollout.inference import RTCInferenceConfig
+
+    policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=50)
+    inference_config = RTCInferenceConfig(
+        rtc=RTCConfig(mode="trained", execution_horizon=10),
+        queue_threshold=30,
+    )
+
+    _validate_trained_rtc_rollout_config(policy_config, inference_config)
 
 
 def test_relative_state_order_follows_checkpoint_action_names():

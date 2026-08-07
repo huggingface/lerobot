@@ -128,6 +128,16 @@ def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInf
             f"checkpoint's rtc_training_max_delay ({training_max_delay})."
         )
 
+    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
+    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
+    chunk_size = int(getattr(policy_config, "chunk_size", 0))
+    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
+            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
+            f"{chunk_size - training_max_delay})."
+        )
+
 
 def _resolve_action_key_order(
     policy_action_names: list[str] | None, dataset_action_names: list[str]
