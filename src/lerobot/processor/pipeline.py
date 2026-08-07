@@ -1172,18 +1172,24 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if "registry_name" in step_entry:
             try:
                 step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
-                return step_class, step_entry["registry_name"]
+                step_key = step_entry["registry_name"]
             except KeyError as e:
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
         else:
             # Fallback to dynamic import using the full class path
-            full_class_path = step_entry["class"]
+            full_class_path = step_entry.get("class", "")
+            if not full_class_path or "." not in full_class_path:
+                raise ValueError(
+                    f"Invalid class path '{full_class_path}' in step entry. "
+                    "Expected a full module path like 'lerobot.processor.normalize.NormalizeStep'."
+                )
+
             module_path, class_name = full_class_path.rsplit(".", 1)
 
             try:
                 module = importlib.import_module(module_path)
                 step_class = getattr(module, class_name)
-                return step_class, class_name
+                step_key = class_name
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Failed to load processor step '{full_class_path}'. "
@@ -1191,6 +1197,14 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     f"Consider registering the step using @ProcessorStepRegistry.register() for better portability. "
                     f"Error: {str(e)}"
                 ) from e
+
+        if not (isinstance(step_class, type) and issubclass(step_class, ProcessorStep)):
+            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
+            raise TypeError(
+                f"Resolved target '{step_class}' for processor step '{step_name}' "
+                "is not a valid ProcessorStep subclass."
+            )
+        return step_class, step_key
 
     @classmethod
     def _instantiate_step(
