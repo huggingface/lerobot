@@ -58,6 +58,7 @@ _FASTWAM_ACTION_BASE_COMPAT_KEYS = (
 
 
 def default_video_dit_config(action_dim: int) -> dict[str, Any]:
+    """Return the default kwargs dict for the video-generation DiT backbone, sized for `action_dim`."""
     return {
         "patch_size": [1, 2, 2],
         "in_dim": 48,
@@ -81,6 +82,7 @@ def default_video_dit_config(action_dim: int) -> dict[str, Any]:
 
 
 def default_action_dit_config(action_dim: int) -> dict[str, Any]:
+    """Return the default kwargs dict for the action-generation DiT backbone, sized for `action_dim`."""
     return {
         "action_dim": action_dim,
         "hidden_dim": 1024,
@@ -136,7 +138,6 @@ def _validate_wan_model_id(value: str, field_name: str) -> str:
 
 def is_fastwam_base_compatible_config(config: FastWAMConfig) -> bool:
     """Return whether `fastwam_base` partial weights can initialize this config."""
-
     default_video_config = default_video_dit_config(config.action_dim)
     default_action_config = default_action_dit_config(config.action_dim)
     return all(
@@ -153,30 +154,129 @@ def is_fastwam_base_compatible_config(config: FastWAMConfig) -> bool:
 class FastWAMConfig(PreTrainedConfig):
     """Configuration for the FastWAM LeRobot policy.
 
+    FastWAM adapts the Wan2.2 video-diffusion backbone into a robot policy: a video expert and an action
+    expert are jointly trained (or fine-tuned) as a Mixture-of-Transformers, sharing attention over a
+    predicted future video and the corresponding action chunk.
+
     Args:
-        action_dim (int): Number of scalar action channels per timestep.
-        proprio_dim (int | None): Number of proprioception channels used as an
-            extra text-context token. `None` disables proprio conditioning.
-        action_horizon (int): Number of actions predicted by one policy call.
-        num_video_frames (int): Raw video sampling window (in dataset frames). The
-            model actually operates on `model_video_frames` frames after subsampling
-            by `action_video_freq_ratio`.
-        action_video_freq_ratio (int): Actions are sampled at this multiple of the
-            video frame rate. Video frames are taken every `action_video_freq_ratio`-th
-            raw frame, so the model sees `(num_video_frames - 1) // ratio + 1` frames
-            spanning the same time window as `action_horizon` actions (ratio actions
-            per video frame).
-        image_size (tuple[int, int]): Concatenated image size as `(height, width)`.
-        context_len (int): Maximum text embedding token length.
-        video_dit_config (dict[str, Any] | None): Wan video expert config.
-        action_dit_config (dict[str, Any] | None): Action expert config.
-        use_gradient_checkpointing (bool): Enable activation checkpointing in both DiT
-            experts (trades compute for memory; propagated into the DiT configs).
-        freeze_video_expert (bool): Freeze the ~5B Wan video expert
-            (`model.video_expert`) so only the action expert + proprio encoder train.
-            Cuts the AdamW optimizer footprint substantially; the video expert keeps its
-            pretrained weights. (If enabled, also set `loss.lambda_video=0` to skip the
-            now-gradient-free video loss compute.)
+        n_obs_steps (`int`, *optional*, defaults to 1):
+            Number of environment steps of observation to pass to the policy.
+        input_features (`dict[str, PolicyFeature]`, *optional*):
+            Input feature specification, keyed by feature name. `__post_init__` builds a synthetic
+            single-image default at `image_size` when left unset; `set_dataset_feature_metadata` later
+            replaces it with the dataset's real per-camera keys.
+        output_features (`dict[str, PolicyFeature]`, *optional*):
+            Output feature specification, keyed by feature name. `__post_init__` builds a default `action`
+            feature of shape `(action_dim,)` when left unset.
+        device (`str`, *optional*):
+            Torch device to run the policy on, e.g. `"cuda"` or `"cpu"`. Auto-selected when unset or
+            unavailable.
+        use_amp (`bool`, *optional*, defaults to `False`):
+            Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`):
+            Whether this policy is trained with PEFT adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`):
+            Whether to push the trained policy to the Hugging Face Hub.
+        repo_id (`str`, *optional*):
+            Hub repository id to push the policy to.
+        private (`bool`, *optional*):
+            Whether the pushed Hub repository is private.
+        tags (`list[str]`, *optional*):
+            Tags to attach to the policy on the Hub.
+        license (`str`, *optional*):
+            License identifier for the policy on the Hub.
+        pretrained_path (`Path`, *optional*):
+            Repo id or local directory of pretrained weights saved with `save_pretrained`. Auto-populated
+            from `base_model_id` when the DiT configs are `fastwam_base`-compatible; otherwise left unset
+            to initialize from scratch.
+        pretrained_revision (`str`, *optional*):
+            Hub revision to pin when loading `pretrained_path`.
+        action_dim (`int`, *optional*, defaults to 7):
+            Number of scalar action channels per timestep.
+        proprio_dim (`int`, *optional*, defaults to 8):
+            Number of proprioception channels used as an extra text-context token. `None` disables proprio
+            conditioning.
+        action_horizon (`int`, *optional*, defaults to 32):
+            Number of actions predicted by one policy call.
+        n_action_steps (`int`, *optional*, defaults to 32):
+            Number of actions from a predicted chunk that are actually executed before re-querying the
+            policy. Must not exceed `action_horizon`.
+        num_video_frames (`int`, *optional*, defaults to 33):
+            Raw video sampling window, in dataset frames. The model actually operates on
+            `model_video_frames` frames after subsampling by `action_video_freq_ratio`.
+        action_video_freq_ratio (`int`, *optional*, defaults to 4):
+            Actions are sampled at this multiple of the video frame rate. Video frames are taken every
+            `action_video_freq_ratio`-th raw frame, so the model sees `(num_video_frames - 1) // ratio + 1`
+            frames spanning the same time window as `action_horizon` actions.
+        image_size (`tuple[int, int]`, *optional*, defaults to `(224, 448)`):
+            Concatenated image size as `(height, width)`, shared across every camera view.
+        context_len (`int`, *optional*, defaults to 128):
+            Maximum text embedding token length.
+        model_id (`str`, *optional*, defaults to `"Wan-AI/Wan2.2-TI2V-5B"`):
+            Hub id (or local path) of the Wan2.2 video-diffusion backbone.
+        tokenizer_model_id (`str`, *optional*, defaults to `"google/umt5-xxl"`):
+            Hub id of the UMT5 tokenizer.
+        text_encoder_model_id (`str`, *optional*, defaults to `"Wan-AI/Wan2.2-TI2V-5B-Diffusers"`):
+            Hub id of the frozen UMT5 text encoder and VAE used for text/video conditioning.
+        base_model_id (`str`, *optional*, defaults to `"lerobot/fastwam_base"`):
+            Hub id of the FastWAM base checkpoint used to auto-populate `pretrained_path` when the DiT
+            configs are compatible with it. `None` disables this auto-loading.
+        tokenizer_max_len (`int`, *optional*, defaults to 128):
+            Maximum token length passed to the tokenizer.
+        load_text_encoder (`bool`, *optional*, defaults to `True`):
+            Whether to load the frozen UMT5 text encoder. Disable when the batch always supplies
+            precomputed `context`/`context_mask`.
+        mot_checkpoint_mixed_attn (`bool`, *optional*, defaults to `False`):
+            Whether the Mixture-of-Transformers module checkpoints its mixed video/action attention.
+        torch_dtype (`str`, *optional*, defaults to `"bfloat16"`):
+            Dtype the Wan backbone and action expert are built and run in.
+        prompt_template (`str`, *optional*, defaults to `"A video recorded from a robot's point of view executing the following instruction: {task}"`):
+            Template the raw `task` string is formatted into before text encoding.
+        num_inference_steps (`int`, *optional*, defaults to 10):
+            Number of denoising steps used at inference time.
+        inference_seed (`int`, *optional*, defaults to 42):
+            Random seed for the inference noise sampler. `None` samples fresh noise every call.
+        rand_device (`str`, *optional*, defaults to `"cpu"`):
+            Device the inference noise sampler draws from.
+        text_cfg_scale (`float`, *optional*, defaults to 1.0):
+            Classifier-free-guidance scale applied against `negative_prompt` at inference time.
+        negative_prompt (`str`, *optional*, defaults to `""`):
+            Negative prompt used for classifier-free guidance.
+        sigma_shift (`float`, *optional*):
+            Overrides the diffusion schedule's sigma shift at inference time. `None` uses the scheduler's
+            own shift.
+        tiled (`bool`, *optional*, defaults to `False`):
+            Whether to run the Wan VAE in tiled mode to reduce memory use.
+        fp32_attention (`bool`, *optional*, defaults to `True`):
+            Whether the video and action DiT experts compute attention in fp32.
+        use_gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+            Whether to enable activation checkpointing in both DiT experts, trading compute for memory.
+            Propagated into `video_dit_config` and `action_dit_config`.
+        freeze_video_expert (`bool`, *optional*, defaults to `False`):
+            Whether to freeze the ~5B Wan video expert so only the action expert and proprio encoder
+            train, cutting the AdamW optimizer footprint substantially. Also set `loss.lambda_video=0` to
+            skip the now-gradient-free video loss compute.
+        toggle_action_dimensions (`list[int]`, *optional*):
+            Action dimensions the postprocessor flips between two fixed values, for LIBERO-style toggle
+            actions such as the gripper. Empty disables the toggle.
+        video_scheduler (`dict[str, float | int]`, *optional*):
+            Train/inference shift and step-count settings for the video diffusion scheduler.
+        action_scheduler (`dict[str, float | int]`, *optional*):
+            Train/inference shift and step-count settings for the action diffusion scheduler.
+        loss (`dict[str, float]`, *optional*):
+            Per-term loss weights, keyed by `"lambda_video"` and `"lambda_action"`.
+        video_dit_config (`dict[str, Any]`, *optional*):
+            Wan video expert architecture config. Built from `default_video_dit_config(action_dim)` when
+            left unset.
+        action_dit_config (`dict[str, Any]`, *optional*):
+            Action expert architecture config. Built from `default_action_dit_config(action_dim)` when
+            left unset.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps each `FeatureType` to the `NormalizationMode` used to normalize/unnormalize it.
+        optimizer_lr (`float`, *optional*, defaults to 0.0001):
+            Learning rate used to build the default `AdamWConfig` optimizer preset.
+        optimizer_weight_decay (`float`, *optional*, defaults to 0.01):
+            Weight decay for the default optimizer preset.
     """
 
     n_obs_steps: int = 1
@@ -232,6 +332,7 @@ class FastWAMConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1.0e-2
 
     def __post_init__(self) -> None:
+        """Resolve `device` (see [`~configs.PreTrainedConfig.__post_init__`]), then validate this config. Validates the DiT/video backbone configuration."""
         super().__post_init__()
         self.image_size = tuple(self.image_size)
         self.model_id = _validate_wan_model_id(self.model_id, "model_id")
@@ -280,9 +381,11 @@ class FastWAMConfig(PreTrainedConfig):
             self.pretrained_path = pretrained_path
 
     def get_optimizer_preset(self) -> AdamWConfig:
+        """See [`~configs.PreTrainedConfig.get_optimizer_preset`]."""
         return AdamWConfig(lr=self.optimizer_lr, weight_decay=self.optimizer_weight_decay)
 
     def get_scheduler_preset(self) -> None:
+        """See [`~configs.PreTrainedConfig.get_scheduler_preset`]."""
         return None
 
     def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
@@ -317,6 +420,7 @@ class FastWAMConfig(PreTrainedConfig):
         self.validate_features()
 
     def validate_features(self) -> None:
+        """See [`~configs.PreTrainedConfig.validate_features`]."""
         if self.action_dim <= 0:
             raise ValueError(f"`action_dim` must be positive, got {self.action_dim}.")
         if self.action_horizon <= 0:
@@ -377,12 +481,16 @@ class FastWAMConfig(PreTrainedConfig):
 
     @property
     def model_video_frames(self) -> int:
-        """Number of video frames the model actually operates on, after subsampling the
-        raw `num_video_frames` window by `action_video_freq_ratio` (e.g. 33 -> 9)."""
+        """Number of video frames the model actually operates on.
+
+        Computed by subsampling the raw `num_video_frames` window by `action_video_freq_ratio` (e.g.
+        33 -> 9).
+        """
         return (self.num_video_frames - 1) // self.action_video_freq_ratio + 1
 
     @property
     def observation_delta_indices(self) -> list[int]:
+        """See [`~configs.PreTrainedConfig.observation_delta_indices`]."""
         # Load the video frames the model is supervised on: the future window subsampled by
         # action_video_freq_ratio (e.g. [0, 4, 8, ..., 32] -> 9 frames). Each video frame is
         # thus `action_video_freq_ratio` actions apart, while actions load at the full rate
@@ -392,8 +500,10 @@ class FastWAMConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
+        """See [`~configs.PreTrainedConfig.action_delta_indices`]."""
         return list(range(self.action_horizon))
 
     @property
     def reward_delta_indices(self) -> None:
+        """See [`~configs.PreTrainedConfig.reward_delta_indices`]."""
         return None

@@ -40,7 +40,7 @@ def make_act_pre_post_processors(
 
     Args:
         config (ACTConfig): The ACT policy configuration object.
-        dataset_stats (dict[str, dict[str, torch.Tensor]] | None): A dictionary containing dataset
+        dataset_stats (dict[str, dict[str, torch.Tensor]] | None, *optional*): A dictionary containing dataset
             statistics (e.g., mean and std) used for normalization. Defaults to None.
 
     Returns:

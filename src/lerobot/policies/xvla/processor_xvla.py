@@ -50,10 +50,7 @@ def make_xvla_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Build the LeRobot processor pipelines for XVLA.
-    """
-
+    """Build the LeRobot processor pipelines for XVLA."""
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
     input_steps = [
@@ -82,8 +79,7 @@ def make_xvla_pre_post_processors(
 # Custom XVLA processor steps
 @dataclass
 class LiberoProcessorStep(ObservationProcessorStep):
-    """
-    Processes LIBERO observations into the LeRobot format.
+    """Processes LIBERO observations into the LeRobot format.
 
     This step handles the specific observation structure from LIBERO environments,
     which includes nested robot_state dictionaries and image observations.
@@ -103,9 +99,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     """
 
     def _process_observation(self, observation):
-        """
-        Processes both image and robot_state observations from LIBERO.
-        """
+        """Processes both image and robot_state observations from LIBERO."""
         processed_obs = observation.copy()
         for key in list(processed_obs.keys()):
             if key.startswith(f"{OBS_IMAGES}."):
@@ -141,9 +135,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Transforms feature keys from the LIBERO format to the LeRobot standard.
-        """
+        """Transforms feature keys from the LIBERO format to the LeRobot standard."""
         new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
 
         # copy over non-STATE features
@@ -166,8 +158,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
         return new_features
 
     def _mat_to_rotate6d(self, rot_mats: torch.Tensor) -> torch.Tensor:
-        """
-        Convert batched rotation matrices (B, 3, 3) into 6D rotation representation (B, 6).
+        """Convert batched rotation matrices (B, 3, 3) into 6D rotation representation (B, 6).
 
         Args:
             rot_mats (Tensor): Rotation matrices of shape (B, 3, 3)
@@ -179,7 +170,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
             TypeError: if input is not a torch tensor
             ValueError: if shape is not (B, 3, 3)
         """
-
         if not isinstance(rot_mats, torch.Tensor):
             raise TypeError(f"mat_to_rot6d expects a torch.Tensor, got {type(rot_mats)}")
 
@@ -208,8 +198,7 @@ class XVLAImageScaleProcessorStep(ProcessorStep):
     for XVLA models that expect images in uint8-like range.
 
     Args:
-        image_keys: List of observation keys that contain images to scale.
-                   If None, will automatically detect keys starting with "observation.images."
+        image_keys (`list[str] | None`, *optional*): Observation keys to apply this to. `None` applies to all image observations.
     """
 
     image_keys: list[str] | None = None
@@ -259,9 +248,8 @@ class XVLAImageToFloatProcessorStep(ProcessorStep):
     that are stored as uint8 values.
 
     Args:
-        image_keys: List of observation keys that contain images to convert.
-                   If None, will automatically detect keys starting with "observation.images."
-        validate_range: If True, validates that input values are in [0, 255] range (default: True)
+        image_keys (`list[str] | None`, *optional*): Observation keys to apply this to. `None` applies to all image observations.
+        validate_range (`bool`, *optional*, defaults to `True`): Whether to check that input values are already in [0, 255] before converting.
 
     Raises:
         ValueError: If validate_range is True and image values are not in [0, 255] range.
@@ -334,8 +322,7 @@ class XVLAImageNetNormalizeProcessorStep(ProcessorStep):
     The normalization formula is: (image - mean) / std
 
     Args:
-        image_keys: List of observation keys that contain images to normalize.
-                   If None, will automatically detect keys starting with "observation.images."
+        image_keys (`list[str] | None`, *optional*): Observation keys to apply this to. `None` applies to all image observations.
 
     Raises:
         ValueError: If image values are not in the [0, 1] range.
@@ -409,7 +396,7 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
     which is used by XVLA to identify different robot embodiments or task domains.
 
     Args:
-        domain_id: The domain ID to add (default: 3)
+        domain_id (`int`, *optional*, defaults to 0): The domain ID to add.
     """
 
     domain_id: int = 0
@@ -460,7 +447,8 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
     Final output: [target_eef (3), axis_angle (3), gripper (1)] = 7D action
 
     Args:
-        expected_action_dim: Expected input action dimension (default: 10, supports 6D rotation + extras)
+        expected_action_dim (`int`, *optional*, defaults to 10): Expected input action dimension (supports
+            6D rotation + extras).
     """
 
     expected_action_dim: int = 10
@@ -516,9 +504,7 @@ def make_xvla_libero_pre_post_processors() -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Build the LeRobot processor pipelines for XVLA with LIBERO environment.
-    """
+    """Build the LeRobot processor pipelines for XVLA with LIBERO environment."""
     pre_processor_steps: list[ProcessorStep] = []
     post_processor_steps: list[ProcessorStep] = []
     pre_processor_steps.extend(

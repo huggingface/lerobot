@@ -9,7 +9,19 @@ Each policy has its own guide with training recipes and results — [ACT](../act
 
 ## PreTrainedPolicy
 
+The abstract base class every policy subclasses. `forward` computes the training loss, `select_action`
+returns one action at a time for control loops, and `predict_action_chunk` returns a full action chunk.
+
 [[autodoc]] lerobot.policies.pretrained.PreTrainedPolicy
+    - forward
+    - predict_action_chunk
+    - select_action
+    - get_optim_params
+    - reset
+    - from_pretrained
+    - supports_rtc
+    - push_model_to_hub
+    - wrap_with_peft
 
 ## PreTrainedConfig
 
@@ -18,3 +30,148 @@ Each policy has its own guide with training recipes and results — [ACT](../act
 ## make_policy
 
 [[autodoc]] lerobot.policies.factory.make_policy
+
+## get_policy_class
+
+[[autodoc]] lerobot.policies.factory.get_policy_class
+
+## make_policy_config
+
+[[autodoc]] lerobot.policies.factory.make_policy_config
+
+## make_pre_post_processors
+
+[[autodoc]] lerobot.policies.factory.make_pre_post_processors
+
+## ACT
+
+[[autodoc]] lerobot.policies.act.modeling_act.ACTPolicy
+    - all
+
+[[autodoc]] lerobot.policies.act.configuration_act.ACTConfig
+
+## SmolVLA
+
+[[autodoc]] lerobot.policies.smolvla.modeling_smolvla.SmolVLAPolicy
+    - all
+
+[[autodoc]] lerobot.policies.smolvla.configuration_smolvla.SmolVLAConfig
+
+## π₀ (PI0)
+
+[[autodoc]] lerobot.policies.pi0.modeling_pi0.PI0Policy
+    - all
+
+[[autodoc]] lerobot.policies.pi0.configuration_pi0.PI0Config
+
+## π₀-FAST (PI0Fast)
+
+[[autodoc]] lerobot.policies.pi0_fast.modeling_pi0_fast.PI0FastPolicy
+    - all
+
+[[autodoc]] lerobot.policies.pi0_fast.configuration_pi0_fast.PI0FastConfig
+
+## π₀.₅ (PI05)
+
+[[autodoc]] lerobot.policies.pi05.modeling_pi05.PI05Policy
+    - all
+
+[[autodoc]] lerobot.policies.pi05.configuration_pi05.PI05Config
+
+## MolmoAct2
+
+[[autodoc]] lerobot.policies.molmoact2.modeling_molmoact2.MolmoAct2Policy
+    - all
+
+[[autodoc]] lerobot.policies.molmoact2.configuration_molmoact2.MolmoAct2Config
+
+## VLA-JEPA
+
+[[autodoc]] lerobot.policies.vla_jepa.modeling_vla_jepa.VLAJEPAPolicy
+    - all
+
+[[autodoc]] lerobot.policies.vla_jepa.configuration_vla_jepa.VLAJEPAConfig
+
+## EO-1
+
+[[autodoc]] lerobot.policies.eo1.modeling_eo1.EO1Policy
+    - all
+
+[[autodoc]] lerobot.policies.eo1.configuration_eo1.EO1Config
+
+## LingBot-VA
+
+[[autodoc]] lerobot.policies.lingbot_va.modeling_lingbot_va.LingBotVAPolicy
+    - all
+
+[[autodoc]] lerobot.policies.lingbot_va.configuration_lingbot_va.LingBotVAConfig
+
+## FastWAM
+
+[[autodoc]] lerobot.policies.fastwam.modeling_fastwam.FastWAMPolicy
+    - all
+
+[[autodoc]] lerobot.policies.fastwam.configuration_fastwam.FastWAMConfig
+
+## EVO1
+
+[[autodoc]] lerobot.policies.evo1.modeling_evo1.Evo1Policy
+    - all
+
+[[autodoc]] lerobot.policies.evo1.configuration_evo1.Evo1Config
+
+## NVIDIA GR00T
+
+[[autodoc]] lerobot.policies.groot.modeling_groot.GrootPolicy
+    - all
+
+[[autodoc]] lerobot.policies.groot.configuration_groot.GrootConfig
+
+## X-VLA
+
+[[autodoc]] lerobot.policies.xvla.modeling_xvla.XVLAPolicy
+    - all
+
+[[autodoc]] lerobot.policies.xvla.configuration_xvla.XVLAConfig
+
+## Multitask DiT Policy
+
+[[autodoc]] lerobot.policies.multi_task_dit.modeling_multi_task_dit.MultiTaskDiTPolicy
+    - all
+
+[[autodoc]] lerobot.policies.multi_task_dit.configuration_multi_task_dit.MultiTaskDiTConfig
+
+## WALL-OSS
+
+[[autodoc]] lerobot.policies.wall_x.modeling_wall_x.WallXPolicy
+    - all
+
+[[autodoc]] lerobot.policies.wall_x.configuration_wall_x.WallXConfig
+
+## Diffusion Policy
+
+[[autodoc]] lerobot.policies.diffusion.modeling_diffusion.DiffusionPolicy
+    - all
+
+[[autodoc]] lerobot.policies.diffusion.configuration_diffusion.DiffusionConfig
+
+## Gaussian Actor
+
+[[autodoc]] lerobot.policies.gaussian_actor.modeling_gaussian_actor.GaussianActorPolicy
+    - all
+
+[[autodoc]] lerobot.policies.gaussian_actor.configuration_gaussian_actor.GaussianActorConfig
+
+## TD-MPC
+
+[[autodoc]] lerobot.policies.tdmpc.modeling_tdmpc.TDMPCPolicy
+    - all
+
+[[autodoc]] lerobot.policies.tdmpc.configuration_tdmpc.TDMPCConfig
+
+## VQ-BeT
+
+[[autodoc]] lerobot.policies.vqbet.modeling_vqbet.VQBeTPolicy
+    - all
+
+[[autodoc]] lerobot.policies.vqbet.configuration_vqbet.VQBeTConfig

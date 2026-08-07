@@ -30,6 +30,20 @@ from lerobot.utils.feature_utils import build_dataset_frame
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
 ):
+    """Push each `batch` entry onto its matching queue, filling a fresh queue by repeating the first value.
+
+    Keys in `batch` with no matching queue in `queues`, or listed in `exclude_keys`, are skipped.
+
+    Args:
+        queues (`dict`): A mapping from key to a fixed-maxlen `deque`, one per observation/action history
+            to track.
+        batch (`dict`): The latest values to push, keyed the same way as `queues`.
+        exclude_keys (`list[str] | None`, *optional*): Keys to skip even if present in both `batch` and
+            `queues`.
+
+    Returns:
+        `queues`, updated in place (also returned for convenience).
+    """
     if exclude_keys is None:
         exclude_keys = []
     for key in batch:
@@ -64,12 +78,12 @@ def get_dtype_from_parameters(module: nn.Module) -> torch.dtype:
 
 
 def get_output_shape(module: nn.Module, input_shape: tuple) -> tuple:
-    """
-    Calculates the output shape of a PyTorch module given an input shape.
+    """Calculates the output shape of a PyTorch module given an input shape.
 
     Args:
         module (nn.Module): a PyTorch module
-        input_shape (tuple): A tuple representing the input shape, e.g., (batch_size, channels, height, width)
+        input_shape (tuple): A tuple representing the input shape, e.g., `(batch_size, channels, height,
+            width)`.
 
     Returns:
         tuple: The output shape of the module.
@@ -111,12 +125,10 @@ def prepare_observation_for_inference(
     5. Adding task and robot type information to the dictionary.
 
     Args:
-        observation: A dictionary mapping observation names (str) to NumPy
-            array data. For images, the format is expected to be (H, W, C).
-        device: The PyTorch device (e.g., 'cpu' or 'cuda') to which the
-            tensors will be moved.
-        task: An optional string identifier for the current task.
-        robot_type: An optional string identifier for the robot being used.
+        observation (`dict`): A dictionary of NumPy arrays keyed by observation name.
+        device (`device`): The torch device to move the resulting tensors to.
+        task (`str | None`, *optional*): The task string to attach to the observation, if any.
+        robot_type (`str | None`, *optional*): The robot type string to attach to the observation, if any.
 
     Returns:
         A dictionary where values are PyTorch tensors preprocessed for
@@ -152,13 +164,12 @@ def build_inference_frame(
     tensor-based format suitable for passing to a policy model.
 
     Args:
-        observation: The raw observation dictionary, which may contain
-            superfluous keys.
-        device: The target PyTorch device for the final tensors.
-        ds_features: A configuration dictionary that specifies which features
-            to extract from the raw observation.
-        task: An optional string identifier for the current task.
-        robot_type: An optional string identifier for the robot being used.
+        observation (`dict`): The raw observation dictionary from the robot/environment.
+        device (`device`): The torch device to move the resulting tensors to.
+        ds_features (`dict`): The dataset's feature definitions, used to extract the relevant keys from
+            `observation`.
+        task (`str | None`, *optional*): The task string to attach to the observation, if any.
+        robot_type (`str | None`, *optional*): The robot type string to attach to the observation, if any.
 
     Returns:
         A dictionary of preprocessed tensors ready for model inference.
@@ -180,10 +191,8 @@ def make_robot_action(action_tensor: PolicyAction, ds_features: dict[str, dict])
     action tensor is mapped to a named motor or actuator command.
 
     Args:
-        action_tensor: A PyTorch tensor representing the policy's action,
-            typically with a batch dimension (e.g., shape [1, action_dim]).
-        ds_features: A configuration dictionary containing metadata, including
-            the names corresponding to each index of the action tensor.
+        action_tensor (`Tensor`): The policy's raw output action tensor.
+        ds_features (`dict`): The dataset's feature definitions, used to name each action dimension.
 
     Returns:
         A dictionary mapping action names (e.g., "joint_1_motor") to their
@@ -205,9 +214,7 @@ def raise_feature_mismatch_error(
     provided_features: set[str],
     expected_features: set[str],
 ) -> None:
-    """
-    Raises a standardized ValueError for feature mismatches between dataset/environment and policy config.
-    """
+    """Raises a standardized ValueError for feature mismatches between dataset/environment and policy config."""
     missing = expected_features - provided_features
     extra = provided_features - expected_features
     # TODO (jadechoghari): provide a dynamic rename map suggestion to the user.
@@ -227,8 +234,7 @@ def validate_visual_features_consistency(
     cfg: PreTrainedConfig,
     features: dict[str, PolicyFeature],
 ) -> None:
-    """
-    Validates visual feature consistency between a policy config and provided dataset/environment features.
+    """Validates visual feature consistency between a policy config and provided dataset/environment features.
 
     Validation passes if EITHER:
     - Policy's expected visuals are a subset of dataset (policy uses some cameras, dataset has more)

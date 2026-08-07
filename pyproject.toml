@@ -448,7 +448,44 @@ ignore = [
 "src/lerobot/model/**" = ["D"]
 "src/lerobot/motors/**" = ["D"]
 "src/lerobot/optim/**" = ["D"]
-"src/lerobot/policies/**" = ["D"]
+"src/lerobot/policies/__init__.py" = ["D"]
+"src/lerobot/policies/pi_gemma.py" = ["D"]
+"src/lerobot/policies/common/**" = ["D"]
+# Wave 3 of the docstring initiative documents each policy family's config class in full, plus only
+# the public forward/select_action surface of modeling_*.py's main <Family>Policy class and the
+# processor_*.py's make_<family>_pre_post_processors factory. modeling_*.py and processor_*.py also
+# contain internal building blocks (nn.Module helpers, ProcessorStep internals) that remain out of
+# scope, so those two file patterns stay D-ignored wholesale rather than enumerated per symbol; the
+# narrower Policy/processor-factory scope is instead enforced via the AST coverage check and
+# utils/check_docstrings.py's leaf-module entries. configuration_*.py is fully documented and stays
+# checked here.
+"src/lerobot/policies/*/modeling_*.py" = ["D"]
+"src/lerobot/policies/*/processor_*.py" = ["D"]
+"src/lerobot/policies/evo1/evo1_model.py" = ["D"]
+"src/lerobot/policies/evo1/flow_matching.py" = ["D"]
+"src/lerobot/policies/evo1/internvl3_embedder.py" = ["D"]
+"src/lerobot/policies/fastwam/wan/**" = ["D"]
+"src/lerobot/policies/groot/action_head/**" = ["D"]
+"src/lerobot/policies/groot/groot_n1_7.py" = ["D"]
+"src/lerobot/policies/groot/utils.py" = ["D"]
+"src/lerobot/policies/lingbot_va/utils.py" = ["D"]
+"src/lerobot/policies/rtc/action_interpolator.py" = ["D"]
+"src/lerobot/policies/rtc/action_queue.py" = ["D"]
+"src/lerobot/policies/rtc/debug_tracker.py" = ["D"]
+"src/lerobot/policies/rtc/debug_visualizer.py" = ["D"]
+"src/lerobot/policies/rtc/latency_tracker.py" = ["D"]
+"src/lerobot/policies/rtc/relative.py" = ["D"]
+"src/lerobot/policies/smolvla/smolvlm_with_expert.py" = ["D"]
+"src/lerobot/policies/vla_jepa/action_head.py" = ["D"]
+"src/lerobot/policies/vla_jepa/qwen_interface.py" = ["D"]
+"src/lerobot/policies/vla_jepa/world_model.py" = ["D"]
+"src/lerobot/policies/vqbet/vqbet_utils.py" = ["D"]
+"src/lerobot/policies/wall_x/constant.py" = ["D"]
+"src/lerobot/policies/wall_x/qwen_model/**" = ["D"]
+"src/lerobot/policies/wall_x/utils.py" = ["D"]
+"src/lerobot/policies/xvla/action_hub.py" = ["D"]
+"src/lerobot/policies/xvla/soft_transformer.py" = ["D"]
+"src/lerobot/policies/xvla/utils.py" = ["D"]
 "src/lerobot/processor/**" = ["D"]
 "src/lerobot/rewards/**" = ["D"]
 "src/lerobot/rl/**" = ["D"]
@@ -515,7 +552,7 @@ ignore-private = false
 ignore-property-decorators = false
 ignore-module = false
 ignore-setters = false
-fail-under = 55
+fail-under = 58
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]

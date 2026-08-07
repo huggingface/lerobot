@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-SmolVLA:
+"""SmolVLA:
 
 [Paper](https://huggingface.co/papers/2506.01844)
 
@@ -140,12 +139,17 @@ def aloha_gripper_from_angular_inv(value):
 
 
 class SmolVLAPolicy(PreTrainedPolicy):
-    """Wrapper class around VLAFlowMatching model to train and run inference within LeRobot."""
+    """SmolVLA vision-language-action policy: a `VLAFlowMatching` model (SmolVLM2 backbone plus a
+    flow-matching action expert) wrapped for training and inference within LeRobot.
+    """
 
     config_class = SmolVLAConfig
     name = "smolvla"
 
     def supports_rtc(self) -> bool:
+        """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`]. SmolVLA implements Real-Time
+        Chunking inference.
+        """
         return True
 
     def __init__(
@@ -153,12 +157,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         config: SmolVLAConfig,
         **kwargs,
     ):
-        """
-        Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                    the configuration class is used.
-        """
+        """Build the underlying `VLAFlowMatching` model from `config`.
 
+        Args:
+            config (`SmolVLAConfig`): Policy configuration class instance.
+        """
         require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()
@@ -168,7 +171,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self):
-        """This should be called whenever the environment is reset."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the cached action queue used by
+        `select_action`.
+        """
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
@@ -190,6 +195,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 model_value.rtc_processor = self.rtc_processor
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]."""
         return self.parameters()
 
     def _get_action_chunk(
@@ -232,6 +238,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def predict_action_chunk(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
     ) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`]. Runs the flow-matching
+        sampler (`config.num_steps` denoising steps) to generate the chunk.
+        """
         self.eval()
 
         batch = self._prepare_batch(batch)
@@ -244,13 +253,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def select_action(
         self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
     ) -> Tensor:
-        """Select a single action given environment observations.
-
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Pops one action off an internal
+        queue, refilling the queue by calling `predict_action_chunk` whenever it is empty.
         """
-
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
         )
@@ -277,15 +282,23 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def forward(
         self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
     ) -> dict[str, Tensor]:
-        """Do a full training forward pass to compute the loss.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`]. Computes the flow-matching loss between
+        the model's predicted and target velocity fields.
 
         Args:
-            batch: Training batch containing observations and actions.
-            noise: Optional noise tensor for flow matching.
-            time: Optional time tensor for flow matching.
-            reduction: How to reduce the loss. Options:
-                - "mean": Return scalar mean loss (default, backward compatible)
-                - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
+            batch (`dict[str, Tensor]`):
+                A batch of preprocessed, normalized observation/action tensors, as produced by this
+                policy's preprocessor pipeline.
+            noise (`Tensor | None`, *optional*):
+                Pre-sampled noise for the flow-matching objective. Freshly sampled when `None`.
+            time (`Tensor | None`, *optional*):
+                Pre-sampled flow-matching timestep. Freshly sampled when `None`.
+            reduction (`str`, *optional*, defaults to `"mean"`):
+                How to reduce the per-element loss. `"mean"` returns a scalar mean loss; `"none"` returns
+                per-sample losses of shape `(batch_size,)`, e.g. for RA-BC weighting.
+
+        Returns:
+            `tuple[Tensor, dict]`: The loss and a dict of logging-friendly loss statistics.
         """
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
@@ -407,13 +420,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return actions
 
     def prepare_state(self, batch):
-        """Pad state"""
+        """Take the latest observation state and zero-pad it to `config.max_state_dim`."""
         state = batch[OBS_STATE][:, -1, :] if batch[OBS_STATE].ndim > 2 else batch[OBS_STATE]
         state = pad_vector(state, self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):
-        """Pad action"""
+        """Zero-pad the target action to `config.max_action_dim`."""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
@@ -441,13 +454,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
 
 def pad_tensor(tensor, max_len, pad_value=0):
-    """
-    Efficiently pads a tensor along sequence dimension to match max_len.
+    """Efficiently pads a tensor along sequence dimension to match max_len.
 
     Args:
         tensor (torch.Tensor): Shape (B, L, ...) or (B, L).
         max_len (int): Fixed sequence length.
-        pad_value (int/float): Value for padding.
+        pad_value (int/float, *optional*, defaults to 0): Value for padding.
 
     Returns:
         torch.Tensor: Shape (B, max_len, ...) or (B, max_len).
@@ -464,8 +476,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
 
 
 class VLAFlowMatching(nn.Module):
-    """
-    SmolVLA
+    """SmolVLA
 
     [Paper]()
 

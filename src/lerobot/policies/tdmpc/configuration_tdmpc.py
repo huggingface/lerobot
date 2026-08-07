@@ -32,65 +32,125 @@ class TDMPCConfig(PreTrainedConfig):
     Those are: `input_features`, `output_features`, and perhaps `max_random_shift_ratio`.
 
     Args:
-        n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
-            action repeats in Q-learning or ask your favorite chatbot)
-        horizon: Horizon for model predictive control.
-        n_action_steps: Number of action steps to take from the plan given by model predictive control. This
-            is an alternative to using action repeats. If this is set to more than 1, then we require
+        n_obs_steps (`int`, *optional*, defaults to 1):
+            Number of environment steps of observation to pass to the policy (the current step and
+            additional steps going back). TD-MPC only supports a value of 1; anything else raises in
+            `__post_init__`.
+        input_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from input feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        output_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from output feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        device (`str | None`, *optional*):
+            Device the policy runs on, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`. Falls back to the
+            best available device if unset or unavailable.
+        use_amp (`bool`, *optional*, defaults to `False`):
+            Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`):
+            Whether this policy is trained with PEFT (parameter-efficient fine-tuning) adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`):
+            Whether to push the trained policy to the Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*):
+            Hugging Face Hub repository id to push the policy to, when `push_to_hub` is enabled.
+        private (`bool | None`, *optional*):
+            Whether to create/push the Hub repository as private.
+        tags (`list[str] | None`, *optional*):
+            Tags to attach to the policy's Hub model card.
+        license (`str | None`, *optional*):
+            License identifier to add to the policy's Hub model card.
+        pretrained_path (`Path | None`, *optional*):
+            Path or Hub repo id of pretrained weights to initialize the policy from. If `None`, the policy
+            is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*):
+            Hub revision (branch, tag, or commit hash) pinning the pretrained model version.
+        n_action_repeats (`int`, *optional*, defaults to 2):
+            The number of times to repeat the action returned by the planning. (hint: Google action
+            repeats in Q-learning or ask your favorite chatbot.)
+        horizon (`int`, *optional*, defaults to 5):
+            Horizon for model predictive control.
+        n_action_steps (`int`, *optional*, defaults to 1):
+            Number of action steps to take from the plan given by model predictive control. This is an
+            alternative to using action repeats. If this is set to more than 1, then we require
             `n_action_repeats == 1`, `use_mpc == True` and `n_action_steps <= horizon`. Note that this
             approach of using multiple steps from the plan is not in the original implementation.
-        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
-            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
-            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
-            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
-        image_encoder_hidden_dim: Number of channels for the convolutional layers used for image encoding.
-        state_encoder_hidden_dim: Hidden dimension for MLP used for state vector encoding.
-        latent_dim: Observation's latent embedding dimension.
-        q_ensemble_size: Number of Q function estimators to use in an ensemble for uncertainty estimation.
-        mlp_dim: Hidden dimension of MLPs used for modelling the dynamics encoder, reward function, policy
-            (π), Q ensemble, and V.
-        discount: Discount factor (γ) to use for the reinforcement learning formalism.
-        use_mpc: Whether to use model predictive control. The alternative is to just sample the policy model
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps a feature type name (e.g. `"STATE"`, `"VISUAL"`) to the `NormalizationMode` to apply to
+            it. Defaults to identity normalization for visual, state, and environment features, and
+            min/max normalization for the action, which TD-MPC assumes lies in `[-1, 1]`.
+        image_encoder_hidden_dim (`int`, *optional*, defaults to 32):
+            Number of channels for the convolutional layers used for image encoding.
+        state_encoder_hidden_dim (`int`, *optional*, defaults to 256):
+            Hidden dimension for MLP used for state vector encoding.
+        latent_dim (`int`, *optional*, defaults to 50):
+            Observation's latent embedding dimension.
+        q_ensemble_size (`int`, *optional*, defaults to 5):
+            Number of Q function estimators to use in an ensemble for uncertainty estimation.
+        mlp_dim (`int`, *optional*, defaults to 512):
+            Hidden dimension of MLPs used for modelling the dynamics encoder, reward function, policy (π),
+            Q ensemble, and V.
+        discount (`float`, *optional*, defaults to 0.9):
+            Discount factor (γ) to use for the reinforcement learning formalism.
+        use_mpc (`bool`, *optional*, defaults to `True`):
+            Whether to use model predictive control. The alternative is to just sample the policy model
             (π) for each step.
-        cem_iterations: Number of iterations for the MPPI/CEM loop in MPC.
-        max_std: Maximum standard deviation for actions sampled from the gaussian PDF in CEM.
-        min_std: Minimum standard deviation for noise applied to actions sampled from the policy model (π).
+        cem_iterations (`int`, *optional*, defaults to 6):
+            Number of iterations for the MPPI/CEM loop in MPC.
+        max_std (`float`, *optional*, defaults to 2.0):
+            Maximum standard deviation for actions sampled from the gaussian PDF in CEM.
+        min_std (`float`, *optional*, defaults to 0.05):
+            Minimum standard deviation for noise applied to actions sampled from the policy model (π).
             Doubles up as the minimum standard deviation for actions sampled from the gaussian PDF in CEM.
-        n_gaussian_samples: Number of samples to draw from the gaussian distribution every CEM iteration. Must
-            be non-zero.
-        n_pi_samples: Number of samples to draw from the policy / world model rollout every CEM iteration. Can
-            be zero.
-        uncertainty_regularizer_coeff: Coefficient for the uncertainty regularization used when estimating
-            trajectory values (this is the λ coefficient in eqn 4 of FOWM).
-        n_elites: The number of elite samples to use for updating the gaussian parameters every CEM iteration.
-        elite_weighting_temperature: The temperature to use for softmax weighting (by trajectory value) of the
-            elites, when updating the gaussian parameters for CEM.
-        gaussian_mean_momentum: Momentum (α) used for EMA updates of the mean parameter μ of the gaussian
-            parameters optimized in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
-        max_random_shift_ratio: Maximum random shift (as a proportion of the image size) to apply to the
-            image(s) (in units of pixels) for training-time augmentation. If set to 0, no such augmentation
-            is applied. Note that the input images are assumed to be square for this augmentation.
-        reward_coeff: Loss weighting coefficient for the reward regression loss.
-        expectile_weight: Weighting (τ) used in expectile regression for the state value function (V).
-            v_pred < v_target is weighted by τ and v_pred >= v_target is weighted by (1-τ). τ is expected to
-            be in [0, 1]. Setting τ closer to 1 results in a more "optimistic" V. This is sensible to do
-            because v_target is obtained by evaluating the learned state-action value functions (Q) with
-            in-sample actions that may not be always optimal.
-        value_coeff: Loss weighting coefficient for both the state-action value (Q) TD loss, and the state
-            value (V) expectile regression loss.
-        consistency_coeff: Loss weighting coefficient for the consistency loss.
-        advantage_scaling: A factor by which the advantages are scaled prior to exponentiation for advantage
-            weighted regression of the policy (π) estimator parameters. Note that the exponentiated advantages
-            are clamped at 100.0.
-        pi_coeff: Loss weighting coefficient for the action regression loss.
-        temporal_decay_coeff: Exponential decay coefficient for decaying the loss coefficient for future time-
-            steps. Hint: each loss computation involves `horizon` steps worth of actions starting from the
-            current time step.
-        target_model_momentum: Momentum (α) used for EMA updates of the target models. Updates are calculated
-            as ϕ ← αϕ + (1-α)θ where ϕ are the parameters of the target model and θ are the parameters of the
-            model being trained.
+        n_gaussian_samples (`int`, *optional*, defaults to 512):
+            Number of samples to draw from the gaussian distribution every CEM iteration. Must be
+            non-zero.
+        n_pi_samples (`int`, *optional*, defaults to 51):
+            Number of samples to draw from the policy / world model rollout every CEM iteration. Can be
+            zero.
+        uncertainty_regularizer_coeff (`float`, *optional*, defaults to 1.0):
+            Coefficient for the uncertainty regularization used when estimating trajectory values (this is
+            the λ coefficient in eqn 4 of FOWM).
+        n_elites (`int`, *optional*, defaults to 50):
+            The number of elite samples to use for updating the gaussian parameters every CEM iteration.
+        elite_weighting_temperature (`float`, *optional*, defaults to 0.5):
+            The temperature to use for softmax weighting (by trajectory value) of the elites, when
+            updating the gaussian parameters for CEM.
+        gaussian_mean_momentum (`float`, *optional*, defaults to 0.1):
+            Momentum (α) used for EMA updates of the mean parameter μ of the gaussian parameters optimized
+            in CEM. Updates are calculated as μ⁻ ← αμ⁻ + (1-α)μ.
+        max_random_shift_ratio (`float`, *optional*, defaults to 0.0476):
+            Maximum random shift (as a proportion of the image size) to apply to the image(s) (in units of
+            pixels) for training-time augmentation. If set to 0, no such augmentation is applied. Note
+            that the input images are assumed to be square for this augmentation.
+        reward_coeff (`float`, *optional*, defaults to 0.5):
+            Loss weighting coefficient for the reward regression loss.
+        expectile_weight (`float`, *optional*, defaults to 0.9):
+            Weighting (τ) used in expectile regression for the state value function (V). `v_pred <
+            v_target` is weighted by τ and `v_pred >= v_target` is weighted by `(1-τ)`. τ is expected to
+            be in `[0, 1]`. Setting τ closer to 1 results in a more "optimistic" V. This is sensible to do
+            because `v_target` is obtained by evaluating the learned state-action value functions (Q) with
+            in-sample actions that may not always be optimal.
+        value_coeff (`float`, *optional*, defaults to 0.1):
+            Loss weighting coefficient for both the state-action value (Q) TD loss, and the state value
+            (V) expectile regression loss.
+        consistency_coeff (`float`, *optional*, defaults to 20.0):
+            Loss weighting coefficient for the consistency loss.
+        advantage_scaling (`float`, *optional*, defaults to 3.0):
+            A factor by which the advantages are scaled prior to exponentiation for advantage weighted
+            regression of the policy (π) estimator parameters. Note that the exponentiated advantages are
+            clamped at 100.0.
+        pi_coeff (`float`, *optional*, defaults to 0.5):
+            Loss weighting coefficient for the action regression loss.
+        temporal_decay_coeff (`float`, *optional*, defaults to 0.5):
+            Exponential decay coefficient for decaying the loss coefficient for future time-steps. Hint:
+            each loss computation involves `horizon` steps worth of actions starting from the current
+            time step.
+        target_model_momentum (`float`, *optional*, defaults to 0.995):
+            Momentum (α) used for EMA updates of the target models. Updates are calculated as ϕ ← αϕ +
+            (1-α)θ where ϕ are the parameters of the target model and θ are the parameters of the model
+            being trained.
+        optimizer_lr (`float`, *optional*, defaults to 0.0003):
+            Learning rate for the Adam optimizer preset.
     """
 
     # Input / output structure.
@@ -147,9 +207,9 @@ class TDMPCConfig(PreTrainedConfig):
     optimizer_lr: float = 3e-4
 
     def __post_init__(self):
+        """Resolve `device` (see [`~configs.PreTrainedConfig.__post_init__`]), then validate this config. Validates the planning horizon and network configuration."""
         super().__post_init__()
 
-        """Input validation (not exhaustive)."""
         if self.n_gaussian_samples <= 0:
             raise ValueError(
                 f"The number of gaussian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
@@ -175,12 +235,15 @@ class TDMPCConfig(PreTrainedConfig):
                 raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
 
     def get_optimizer_preset(self) -> AdamConfig:
+        """See [`~configs.PreTrainedConfig.get_optimizer_preset`]."""
         return AdamConfig(lr=self.optimizer_lr)
 
     def get_scheduler_preset(self) -> None:
+        """See [`~configs.PreTrainedConfig.get_scheduler_preset`]."""
         return None
 
     def validate_features(self) -> None:
+        """See [`~configs.PreTrainedConfig.validate_features`]."""
         # There should only be one image key.
         if len(self.image_features) > 1:
             raise ValueError(
@@ -196,12 +259,15 @@ class TDMPCConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.observation_delta_indices`]."""
         return list(range(self.horizon + 1))
 
     @property
     def action_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.action_delta_indices`]."""
         return list(range(self.horizon))
 
     @property
     def reward_delta_indices(self) -> None:
+        """See [`~configs.PreTrainedConfig.reward_delta_indices`]."""
         return list(range(self.horizon))

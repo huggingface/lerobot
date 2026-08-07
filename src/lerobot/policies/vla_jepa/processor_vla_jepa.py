@@ -107,6 +107,26 @@ def make_vla_jepa_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    """Construct the pre-processor and post-processor pipelines for the VLA-JEPA policy.
+
+    The pre-processing pipeline renames observation features, adds a batch dimension, moves data to the
+    configured device, and normalizes input/output features.
+
+    The post-processing pipeline unnormalizes both input and output features (unlike the default policy
+    unnormalizer, which only covers output features), and optionally clips normalized actions and
+    snaps/binarizes a gripper action dimension around the unnormalization step, depending on
+    `config.clip_normalized_actions`, `config.pre_snap_gripper_action`, and
+    `config.binarize_gripper_action`.
+
+    Args:
+        config (VLAJEPAConfig): The policy configuration.
+        dataset_stats (dict[str, dict[str, torch.Tensor]] | None, *optional*): Statistics used for
+            normalizing and unnormalizing features. Defaults to `None`.
+
+    Returns:
+        tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]: The configured pre-processor and
+            post-processor pipelines.
+    """
     features = {**config.input_features, **config.output_features}
     steps = make_default_policy_processor_steps(config, dataset_stats)
     input_steps = [

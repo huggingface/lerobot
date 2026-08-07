@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Groot Policy Wrapper for LeRobot Integration
+"""Groot Policy Wrapper for LeRobot Integration
 
 Minimal integration that delegates to Isaac-GR00T N1.7 components where
 possible without porting their code. Dataset loading and training
@@ -69,10 +68,17 @@ class GrootPolicy(PreTrainedPolicy):
     config_class = GrootConfig
 
     def supports_rtc(self) -> bool:
+        """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`]. GR00T N1.7 implements RTC."""
         return True
 
     def __init__(self, config: GrootConfig, **kwargs):
-        """Initialize Groot policy wrapper."""
+        """Build the underlying GR00T N1.7 model from `config` and reset the action queue.
+
+        Args:
+            config (GrootConfig): Policy configuration; also validated/completed via
+                `config.validate_features()`.
+            kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+        """
         require_package("transformers", extra="groot")
         super().__init__(config)
         config.validate_features()
@@ -149,7 +155,7 @@ class GrootPolicy(PreTrainedPolicy):
         ]
 
     def reset(self):
-        """Reset policy state when environment resets."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the action queue."""
         self._action_queue = deque([], maxlen=self._action_queue_steps)
 
     @classmethod
@@ -168,27 +174,40 @@ class GrootPolicy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Load Groot policy from pretrained model.
+        """Load a Groot policy from either a raw N1.7 checkpoint or a fine-tuned LeRobot checkpoint.
 
         Handles two cases:
         1. Base GR00T N1.7 models - loads the raw model
         2. Fine-tuned LeRobot checkpoints - loads config and weights from safetensors
 
         Args:
-            pretrained_name_or_path: Path to the GR00T model or fine-tuned checkpoint
-            config: Optional GrootConfig. If None, loads from checkpoint or creates default
-            force_download: Force download even if cached
-            resume_download: Resume interrupted download
-            proxies: Proxy settings
-            token: HuggingFace authentication token
-            cache_dir: Cache directory path
-            local_files_only: Only use local files
-            revision: Specific model revision
-            strict: Strict state dict loading
-            **kwargs: Additional arguments (passed to config)
+            pretrained_name_or_path (str | Path): Hub id or local path to the GR00T model or the
+                fine-tuned checkpoint.
+            config (GrootConfig | None, *optional*): Config to use. If `None`, one is loaded from the
+                checkpoint (fine-tuned case) or created with defaults (base-model case).
+            force_download (bool, *optional*, defaults to `False`): Whether to force (re-)downloading
+                the files, overriding the existing cache.
+            resume_download (bool | None, *optional*): Deprecated; ignored by the underlying Hub client.
+            proxies (dict | None, *optional*): A dictionary of proxy servers to use by protocol or
+                endpoint.
+            token (str | bool | None, *optional*): The token to use as HTTP bearer authorization for
+                remote files.
+            cache_dir (str | Path | None, *optional*): Path to the folder where cached files are stored.
+            local_files_only (bool, *optional*, defaults to `False`): If `True`, avoid downloading the
+                file and use the local cache only.
+            revision (str | None, *optional*): Revision on the Hub: a branch name, git tag, or commit id.
+            strict (bool, *optional*, defaults to `True`): Whether to require an exact match between the
+                checkpoint's and the instantiated model's parameter keys.
+            kwargs: For the fine-tuned-checkpoint case, forwarded to
+                [`~policies.pretrained.PreTrainedPolicy.from_pretrained`]. For the base-model case,
+                applied as config field overrides.
 
         Returns:
-            Initialized GrootPolicy instance with loaded model
+            T: The loaded `GrootPolicy` instance, in eval mode.
+
+        Raises:
+            ValueError: If `config.base_model_path` (or `pretrained_name_or_path`) resolves to an
+                unsupported GR00T model version.
         """
         requested_version = infer_groot_model_version(str(pretrained_name_or_path)) or GROOT_N1_7
         logger.info(
@@ -285,7 +304,11 @@ class GrootPolicy(PreTrainedPolicy):
         return policy
 
     def get_optim_params(self):  # type: ignore[override]
-        """Isaac-GR00T excludes biases and normalization parameters from weight decay."""
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Splits parameters into weight-decay and no-weight-decay groups, matching the Isaac-GR00T
+        recipe of excluding biases and normalization parameters from weight decay.
+        """
         return self._build_weight_decay_parameter_groups(self)
 
     def _resolve_action_queue_steps(self) -> int:
@@ -307,7 +330,6 @@ class GrootPolicy(PreTrainedPolicy):
 
     def _resolve_prediction_horizon(self, actions: Tensor) -> int:
         """Return the policy-facing action horizon for a native GR00T prediction."""
-
         horizons = [actions.shape[1]]
         checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
             self.config.base_model_path,
@@ -444,9 +466,10 @@ class GrootPolicy(PreTrainedPolicy):
         return inputs, options
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Training forward pass.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
 
-        Delegates to Isaac-GR00T model.forward when inputs are compatible.
+        Delegates to the underlying Isaac-GR00T model's `forward`, run under BF16 autocast when
+        `config.use_bf16` is set.
         """
         groot_inputs = self._filter_groot_inputs(batch, include_action=True)
 
@@ -472,12 +495,11 @@ class GrootPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: object) -> Tensor:
-        """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
 
-        Returns a tensor of shape (B, n_action_steps, action_dim).
-
-        For N1.7, LeRobot's RTC leftovers are converted into the native GR00T
-        action-overlap options before calling the underlying model.
+        Delegates to the underlying Isaac-GR00T model's `get_action`, returning a tensor of shape
+        `(B, n_action_steps, action_dim)`. LeRobot's RTC leftovers, if any, are converted into the
+        native GR00T action-overlap options before calling the model.
         """
         self.eval()
 
@@ -513,7 +535,15 @@ class GrootPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select single action from action queue."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`.
+
+        Raises:
+            NotImplementedError: If `config.use_relative_actions` is set, since cached relative-chunk
+                actions can be decoded against newer observation states; use `predict_action_chunk`
+                directly instead.
+        """
         if getattr(self.config, "use_relative_actions", False):
             raise NotImplementedError(
                 "GrootPolicy.select_action does not support relative-action policies because cached "

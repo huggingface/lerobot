@@ -74,6 +74,11 @@ _GROOT_ACTION_DECODE_TRANSFORM_ALIASES = {
 
 
 def normalize_groot_model_version(model_version: str) -> str:
+    """Resolve `model_version` to a canonical GR00T version string.
+
+    Raises:
+        ValueError: If `model_version` isn't a recognized alias.
+    """
     normalized = _GROOT_MODEL_VERSION_ALIASES.get(model_version.lower())
     if normalized is None:
         supported = GROOT_N1_7
@@ -85,6 +90,11 @@ def normalize_groot_model_version(model_version: str) -> str:
 
 
 def normalize_groot_action_decode_transform(transform: str | None) -> str | None:
+    """Resolve `transform` to a canonical action-decode-transform name, or `None`.
+
+    Raises:
+        ValueError: If `transform` isn't a recognized alias.
+    """
     if transform is None:
         return None
     normalized = _GROOT_ACTION_DECODE_TRANSFORM_ALIASES.get(transform.lower())
@@ -100,6 +110,7 @@ def normalize_groot_action_decode_transform(transform: str | None) -> str | None
 
 
 def infer_groot_model_version(model_path: str | None) -> str | None:
+    """Infer the GR00T model version (`GROOT_N1_7`) from a checkpoint path, or `None` if undetermined."""
     if not model_path:
         return None
     model_path_lower = model_path.lower()
@@ -117,6 +128,7 @@ def infer_groot_model_version(model_path: str | None) -> str | None:
 
 
 def is_raw_groot_n1_7_checkpoint(model_path: str | Path | None) -> bool:
+    """Return `True` if `model_path` looks like an un-migrated, raw upstream GR00T N1.7 checkpoint."""
     if model_path is None:
         return False
 
@@ -133,6 +145,7 @@ def is_raw_groot_n1_7_checkpoint(model_path: str | Path | None) -> bool:
 
 
 def infer_groot_n1_7_embodiment_tag(model_path: str | Path | None) -> str | None:
+    """Infer the embodiment tag from a raw GR00T N1.7 checkpoint's `processor_config.json`, if resolvable."""
     if model_path is None:
         return None
 
@@ -152,6 +165,13 @@ def infer_groot_n1_7_embodiment_tag(model_path: str | Path | None) -> str | None
 def infer_groot_n1_7_action_horizon(
     model_path: str | Path | None, embodiment_tag: str | None = None
 ) -> int | None:
+    """Infer the action horizon from a raw GR00T N1.7 checkpoint's `processor_config.json`, if resolvable.
+
+    Args:
+        model_path (`str | pathlib.Path | None`): Path to the checkpoint directory.
+        embodiment_tag (`str | None`, *optional*): The embodiment tag to look up. Inferred via
+            `infer_groot_n1_7_embodiment_tag` when `None`.
+    """
     if model_path is None:
         return None
 
@@ -185,6 +205,13 @@ def infer_groot_n1_7_action_horizon(
 def infer_groot_n1_7_action_execution_horizon(
     model_path: str | Path | None, embodiment_tag: str | None = None
 ) -> int | None:
+    """Infer the action execution horizon (<= action horizon) for a raw GR00T N1.7 checkpoint.
+
+    Args:
+        model_path (`str | pathlib.Path | None`): Path to the checkpoint directory.
+        embodiment_tag (`str | None`, *optional*): The embodiment tag to look up. Inferred via
+            `infer_groot_n1_7_embodiment_tag` when `None`.
+    """
     action_horizon = infer_groot_n1_7_action_horizon(model_path, embodiment_tag)
     if action_horizon is None:
         return None
@@ -241,7 +268,127 @@ def _infer_groot_model_version_from_config(config: dict) -> str | None:
 @PreTrainedConfig.register_subclass("groot")
 @dataclass
 class GrootConfig(PreTrainedConfig):
-    """Configuration for Groot policy wrapper."""
+    """Configuration for the GR00T N1.7 policy wrapper.
+
+    Wraps NVIDIA's Isaac-GR00T N1.7 model (a Qwen3-VL/Cosmos-Reason2 backbone plus a flow-matching
+    action head) for fine-tuning and inference through LeRobot. GR00T N1.5 checkpoints and configs are
+    no longer supported; loading one raises with `GROOT_N1_5_REMOVAL_GUIDANCE`.
+
+    Args:
+        n_obs_steps (`int`, *optional*, defaults to 1): Number of environment steps of observation to
+            pass to the policy (the current step plus this many additional steps looking back).
+        input_features (`dict[str, lerobot.configs.types.PolicyFeature] | None`, *optional*): Mapping from input feature name to its `PolicyFeature` (type and shape). Populated automatically from the dataset when not explicitly provided.
+        output_features (`dict[str, lerobot.configs.types.PolicyFeature] | None`, *optional*): Mapping from output feature name to its `PolicyFeature` (type and shape). Populated automatically from the dataset when not explicitly provided.
+        device (`str | None`, *optional*): Device the policy runs on, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`. If unset or unavailable, auto-selected on construction.
+        use_amp (`bool`, *optional*, defaults to `False`): Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`): Whether this policy is trained with PEFT (parameter-efficient fine-tuning) adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`): Whether to push the trained policy to the Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*): Hugging Face Hub repository id to push the policy to, when `push_to_hub` is enabled.
+        private (`bool | None`, *optional*): Whether to create/push the Hub repository as private.
+        tags (`list[str] | None`, *optional*): Tags to attach to the policy's Hub model card.
+        license (`str | None`, *optional*): License identifier to add to the policy's Hub model card.
+        pretrained_path (`pathlib.Path | None`, *optional*): Path or Hub repo id of pretrained weights to initialize the policy from. If `None`, the policy is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*): Hub revision (branch, tag, or commit hash) pinning the pretrained model version.
+        chunk_size (`int`, *optional*, defaults to 40): The size of the action prediction chunk decoded
+            per call to `predict_action_chunk`.
+        n_action_steps (`int`, *optional*, defaults to 40): The number of actions from a predicted
+            chunk that are actually queued for execution. Must not exceed `chunk_size`.
+        max_state_dim (`int`, *optional*, defaults to 132): Maximum observation-state dimension expected
+            by the pretrained GR00T model; shorter states are zero-padded.
+        max_action_dim (`int`, *optional*, defaults to 132): Maximum action dimension expected by the
+            pretrained GR00T model; shorter actions are zero-padded.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*): Per-feature-type
+            normalization mode. Always `IDENTITY` for every feature: GR00T normalizes state/action
+            internally in its own processor steps and the Qwen3-VL image processor handles image
+            normalization, so this mapping is not consulted by `make_groot_pre_post_processors`.
+        base_model_path (`str | None`, *optional*): Path or Hub id of the base GR00T N1.7 model whose
+            backbone weights and checkpoint sidecars (`statistics.json`, `processor_config.json`, ...)
+            are loaded. Distinct from the inherited `pretrained_path`, which points at a saved LeRobot
+            checkpoint directory. Defaults to `GROOT_N1_7_BASE_MODEL` when left unset.
+        action_decode_transform (`str | None`, *optional*, defaults to `"auto"`): Named action transform
+            applied after raw N1.7 checkpoint decoding and before `env.step()`. `"auto"` resolves to the
+            embodiment default (`"libero"` for the `libero_sim` embodiment, otherwise no transform);
+            pass `"none"` to explicitly disable it.
+        embodiment_tag (`str`, *optional*, defaults to `"new_embodiment"`): Embodiment tag to use for
+            training, e.g. `"new_embodiment"` or `"gr1"`.
+        tune_llm (`bool`, *optional*, defaults to `False`): Whether to fine-tune the LLM backbone.
+        tune_visual (`bool`, *optional*, defaults to `False`): Whether to fine-tune the vision tower.
+        tune_projector (`bool`, *optional*, defaults to `True`): Whether to fine-tune the projector.
+        tune_diffusion_model (`bool`, *optional*, defaults to `True`): Whether to fine-tune the
+            flow-matching action head.
+        tune_vlln (`bool`, *optional*, defaults to `True`): Whether to fine-tune the VL LayerNorm and VL
+            self-attention projector in the action head.
+        tune_top_llm_layers (`int`, *optional*, defaults to 0): Number of top LLM backbone layers to
+            fine-tune (0 means none). Lets you adapt just the final language layers without unfreezing
+            the whole backbone; independent of `tune_llm`, which tunes the entire LLM.
+        num_inference_timesteps (`int | None`, *optional*): Number of flow-matching denoising steps used
+            to decode an action chunk at inference time. `None` keeps the checkpoint value (GR00T N1.7
+            default: 4).
+        rtc_ramp_rate (`float | None`, *optional*): Real-Time Chunking overlap-blend ramp rate, used
+            when the RTC engine supplies a previous-chunk prefix. `None` keeps the checkpoint value
+            (GR00T N1.7 default: 6.0).
+        use_flash_attention (`bool`, *optional*, defaults to `False`): Whether to request the
+            flash-attention-2 kernel for the Qwen3-VL backbone. Set to `True` only after installing a
+            flash-attn build matching your torch/CUDA environment; otherwise the backbone falls back to
+            SDPA, which is numerically equivalent.
+        use_relative_actions (`bool`, *optional*, defaults to `False`): Whether to enable GR00T-style
+            state-relative action chunks (the action chunk is expressed relative to the current
+            observation state).
+        relative_exclude_joints (`list[str]`, *optional*): Action dimensions that stay absolute when
+            `use_relative_actions` is set; matched as a case-insensitive substring against the dataset's
+            action feature names. With the empty default every dimension is treated as relative,
+            including the gripper; set e.g. `["gripper"]` to keep the gripper absolute.
+        optimizer_lr (`float`, *optional*, defaults to 0.0001): Learning rate for the AdamW optimizer.
+        optimizer_betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.999)`): AdamW betas, as
+            used by the Isaac-GR00T N1.7 fine-tuning recipe.
+        optimizer_eps (`float`, *optional*, defaults to 1e-08): AdamW epsilon.
+        optimizer_weight_decay (`float`, *optional*, defaults to 1e-05): AdamW weight decay.
+        warmup_ratio (`float`, *optional*, defaults to 0.05): Fraction of `max_steps` used as cosine
+            scheduler warmup.
+        use_bf16 (`bool`, *optional*, defaults to `True`): Whether to run the GR00T forward/inference
+            passes under BF16 autocast.
+        model_params_fp32 (`bool`, *optional*, defaults to `True`): Whether to keep model parameters in
+            FP32 while computing under BF16 autocast, matching the native N1.7 fine-tuning recipe.
+        image_size (`tuple[int, int]`, *optional*, defaults to `(256, 256)`): Legacy field kept only so
+            that a GR00T N1.5-era `image_size=(224, 224)` config is detected and remapped to the N1.7
+            default in `__post_init__`; image sizing is otherwise handled by the backbone's image
+            processor.
+        tokenizer_assets_repo (`str | None`, *optional*): Deprecated GR00T N1.5 field. Must stay `None`;
+            a non-`None` value is treated as an N1.5 checkpoint/config and rejected in `__post_init__`.
+        lora_rank (`int`, *optional*, defaults to 0): Deprecated, never-wired LoRA field kept only so
+            older saved configs still parse.
+        lora_alpha (`int`, *optional*, defaults to 16): Deprecated, never-wired LoRA field kept only so
+            older saved configs still parse.
+        lora_dropout (`float`, *optional*, defaults to 0.1): Deprecated, never-wired LoRA field kept only
+            so older saved configs still parse.
+        lora_full_model (`bool`, *optional*, defaults to `False`): Deprecated, never-wired LoRA field
+            kept only so older saved configs still parse.
+        video_backend (`str`, *optional*, defaults to `"decord"`): Deprecated Isaac-GR00T runner field;
+            unused by the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        balance_dataset_weights (`bool`, *optional*, defaults to `True`): Deprecated Isaac-GR00T runner
+            field; unused by the LeRobot N1.7 implementation, kept only so older saved configs still
+            parse.
+        balance_trajectory_weights (`bool`, *optional*, defaults to `True`): Deprecated Isaac-GR00T
+            runner field; unused by the LeRobot N1.7 implementation, kept only so older saved configs
+            still parse.
+        dataset_paths (`list[str] | None`, *optional*): Deprecated Isaac-GR00T runner field; unused by
+            the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        output_dir (`str`, *optional*, defaults to `"./tmp/gr00t"`): Deprecated Isaac-GR00T runner field;
+            unused by the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        save_steps (`int`, *optional*, defaults to 1000): Deprecated Isaac-GR00T runner field; unused by
+            the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        max_steps (`int`, *optional*, defaults to 10000): Total training steps; used together with
+            `warmup_ratio` to derive the cosine scheduler's warmup step count in
+            `get_scheduler_preset`.
+        batch_size (`int`, *optional*, defaults to 32): Deprecated Isaac-GR00T runner field; unused by
+            the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        dataloader_num_workers (`int`, *optional*, defaults to 8): Deprecated Isaac-GR00T runner field;
+            unused by the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        report_to (`str`, *optional*, defaults to `"wandb"`): Deprecated Isaac-GR00T runner field; unused
+            by the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+        resume (`bool`, *optional*, defaults to `False`): Deprecated Isaac-GR00T runner field; unused by
+            the LeRobot N1.7 implementation, kept only so older saved configs still parse.
+    """
 
     # Basic policy settings
     n_obs_steps: int = 1
@@ -372,6 +519,12 @@ class GrootConfig(PreTrainedConfig):
     resume: bool = False
 
     def __post_init__(self):
+        """Reject legacy GR00T N1.5 configs, normalize fields, and remap N1.5-era defaults.
+
+        Raises:
+            ValueError: If `tokenizer_assets_repo` is set (an N1.5-only field), if `base_model_path`
+                resolves to a GR00T N1.5 checkpoint, or if `n_action_steps` exceeds `chunk_size`.
+        """
         if self.tokenizer_assets_repo is not None:
             raise ValueError(
                 "Config sets 'tokenizer_assets_repo', which only existed for GR00T N1.5; this looks "

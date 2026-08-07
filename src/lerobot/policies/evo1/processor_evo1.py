@@ -381,6 +381,25 @@ def make_evo1_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    """Build the pre/post-processor pipelines for EVO1.
+
+    The preprocessor pads observation state and training actions to EVO1's fixed `max_state_dim` /
+    `max_action_dim` widths (tracking the padding with an `action_mask`) before normalizing and moving the
+    batch to `config.device`. The postprocessor unnormalizes predicted actions, crops them back down to the
+    real action dimensionality, optionally binarizes the gripper channel, and moves the result to CPU.
+
+    Args:
+        config (`Evo1Config`):
+            EVO1 policy configuration.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]]`, *optional*):
+            Per-feature normalization statistics, as produced by `LeRobotDatasetMetadata.stats`. Padded to
+            `max_state_dim`/`max_action_dim` before being handed to the (un)normalizer steps.
+
+    Returns:
+        `tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]`: The preprocessor (batch of raw
+        observations/actions -> model input) and postprocessor (model output -> environment action)
+        pipelines.
+    """
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
     normalization_stats = _pad_evo1_stats(config, dataset_stats)

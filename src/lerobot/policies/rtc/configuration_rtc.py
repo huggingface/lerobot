@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Real Time Chunking (RTC) and Bidirectional Decoding (BID) configuration classes.
+"""Real Time Chunking (RTC) and Bidirectional Decoding (BID) configuration classes.
 
 Based on:
 - Real Time Chunking: https://www.physicalintelligence.company/research/real_time_chunking

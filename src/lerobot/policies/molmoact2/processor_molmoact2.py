@@ -1116,6 +1116,27 @@ def make_molmoact2_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    """Build the pre/post-processor pipeline pair for the MolmoAct2 policy.
+
+    The preprocessor renames observation keys, adds a batch dimension, applies the optional
+    joint-frame transform, masked-normalizes state/action with dataset statistics, and packs
+    everything (video, state, action, language, setup/control tokens) into the vendored HF model's
+    input format before moving tensors to `config.device`. The postprocessor reverses the
+    normalization and joint-frame transform on the predicted actions.
+
+    Args:
+        config (MolmoAct2Config): Policy configuration; supplies feature keys, checkpoint-derived
+            metadata, and the normalization mapping.
+        dataset_stats (dict[str, dict[str, torch.Tensor]] | None, *optional*): Per-feature statistics
+            used for state/action normalization. If `None` and `config.norm_tag` is set, statistics
+            are instead loaded from the checkpoint's own normalization metadata.
+        dataset_meta (Any | None, *optional*): Dataset metadata, used to build gripper masks for the
+            masked normalizer/unnormalizer steps.
+
+    Returns:
+        `tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]`: The `(preprocessor, postprocessor)`
+        pipeline pair.
+    """
     env_action_dim = None
     if config.output_features and ACTION in config.output_features:
         env_action_dim = int(config.output_features[ACTION].shape[0])
