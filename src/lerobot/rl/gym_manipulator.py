@@ -305,7 +305,9 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     """Create robot environment from configuration.
 
     Args:
-        cfg: Environment configuration.
+        cfg (`HILSerlRobotEnvConfig`): Environment configuration. `cfg.name == "gym_hil"` selects the
+            GymHIL simulation environment; otherwise a real-robot `RobotEnv` is built from
+            `cfg.robot`/`cfg.teleop`.
 
     Returns:
         Tuple of (gym environment, teleoperator device).
@@ -363,10 +365,13 @@ def make_processors(
     """Create environment and action processors.
 
     Args:
-        env: Robot environment instance.
-        teleop_device: Teleoperator device for intervention.
-        cfg: Processor configuration.
-        device: Target device for computations.
+        env (`Env`): The environment returned by `make_robot_env`.
+        teleop_device (`lerobot.teleoperators.teleoperator.Teleoperator | None`): The teleoperator
+            device returned by `make_robot_env`, used to configure intervention-related processor
+            steps. `None` for simulation environments.
+        cfg (`HILSerlRobotEnvConfig`): Environment configuration; provides the reward classifier,
+            gripper, and reset-behavior settings for the built processor steps.
+        device (`str`, *optional*, defaults to `"cpu"`): Torch device the processors run on.
 
     Returns:
         Tuple of (environment processor, action processor).
@@ -536,20 +541,21 @@ def step_env_and_process_transition(
     env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
 ) -> EnvTransition:
-    """
-    Execute one step with processor pipeline.
+    """Execute one step with processor pipeline.
 
     Args:
-        env: The robot environment
-        transition: Current transition state
-        action: Action to execute
-        env_processor: Environment processor
-        action_processor: Action processor
+        env (`Env`): The environment to step.
+        transition (`EnvTransition`): The current transition; its observation is overwritten with the
+            action processor's input before dispatch, then discarded.
+        action (`Tensor`): The raw action to process and send to `env`.
+        env_processor (`DataProcessorPipeline`): Post-processes the environment-produced transition
+            (e.g. reward shaping, termination overrides).
+        action_processor (`DataProcessorPipeline`): Pre-processes `action` before it reaches `env`
+            (e.g. intervention overrides, gripper handling).
 
     Returns:
         Processed transition with updated state.
     """
-
     # Create action transition
     transition[TransitionKey.ACTION] = action
     transition[TransitionKey.OBSERVATION] = (
@@ -618,14 +624,16 @@ def control_loop(
     cfg: GymManipulatorConfig,
 ) -> None:
     """Main control loop for robot environment interaction.
-    if cfg.mode == "record": then a dataset will be created and recorded
+
+    When `cfg.mode == "record"`, a dataset is created and recorded.
 
     Args:
-     env: The robot environment
-     env_processor: Environment processor
-     action_processor: Action processor
-     teleop_device: Teleoperator device
-     cfg: gym_manipulator configuration
+        env (`Env`): The environment to control, built via `make_robot_env`.
+        env_processor (`DataProcessorPipeline`): Post-processes environment-produced transitions.
+        action_processor (`DataProcessorPipeline`): Pre-processes teleoperator actions before they
+            reach `env`.
+        teleop_device (`Teleoperator`): Teleoperator device driving the robot.
+        cfg (`GymManipulatorConfig`): Control-loop configuration (mode, fps, episode/dataset settings).
     """
     dt = 1.0 / cfg.env.fps
 

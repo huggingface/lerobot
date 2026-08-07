@@ -30,6 +30,19 @@ from lerobot.utils.transition import Transition
 
 
 class BatchTransition(TypedDict):
+    """A batch of transitions sampled from a `ReplayBuffer`.
+
+    **Attributes**:
+        - **state** (`dict[str, torch.Tensor]`) -- Batched observation tensors at time `t`.
+        - **action** (`torch.Tensor`) -- Batched actions taken at time `t`.
+        - **reward** (`torch.Tensor`) -- Batched rewards received after `action`.
+        - **next_state** (`dict[str, torch.Tensor]`) -- Batched observation tensors at time `t+1`.
+        - **done** (`torch.Tensor`) -- Batched episode-termination flags.
+        - **truncated** (`torch.Tensor`) -- Batched episode-truncation flags.
+        - **complementary_info** (`dict[str, torch.Tensor | float | int] | None`) -- Optional extra
+          per-transition data (e.g. intervention flags), when present in the underlying dataset.
+    """
+
     state: dict[str, torch.Tensor]
     action: torch.Tensor
     reward: torch.Tensor
@@ -40,10 +53,7 @@ class BatchTransition(TypedDict):
 
 
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:
-    """
-    Perform a per-image random crop over a batch of images in a vectorized way.
-    (Same as shown previously.)
-    """
+    """Perform a per-image random crop over a batch of images in a vectorized way."""
     B, C, H, W = images.shape  # noqa: N806
     crop_h, crop_w = output_size
 
@@ -72,13 +82,15 @@ def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Te
 
 
 def random_shift(images: torch.Tensor, pad: int = 4):
-    """Vectorized random shift, imgs: (B,C,H,W), pad: #pixels"""
+    """Vectorized random shift. `images` has shape `(B, C, H, W)`; `pad` is the shift range in pixels."""
     _, _, h, w = images.shape
     images = F.pad(input=images, pad=(pad, pad, pad, pad), mode="replicate")
     return random_crop_vectorized(images=images, output_size=(h, w))
 
 
 class ReplayBuffer:
+    """In-memory replay buffer of `Transition`s, sampled in batches for off-policy RL training."""
+
     def __init__(
         self,
         capacity: int,
@@ -89,11 +101,12 @@ class ReplayBuffer:
         storage_device: str = "cpu",
         optimize_memory: bool = False,
     ):
-        """
-        Replay buffer for storing transitions.
+        """Replay buffer for storing transitions.
+
         It will allocate tensors on the specified device, when the first transition is added.
         NOTE: If you encounter memory issues, you can try to use the `optimize_memory` flag to save memory or
         and use the `storage_device` flag to store the buffer on a different device.
+
         Args:
             capacity (int): Maximum number of transitions to store in the buffer.
             device (str): The device where the tensors will be moved when sampling ("cuda:0" or "cpu").
@@ -187,6 +200,7 @@ class ReplayBuffer:
         self.initialized = True
 
     def __len__(self):
+        """Number of transitions currently stored in the buffer."""
         return self.size
 
     def add(
@@ -305,8 +319,8 @@ class ReplayBuffer:
         async_prefetch: bool = True,
         queue_size: int = 2,
     ):
-        """
-        Creates an infinite iterator that yields batches of transitions.
+        """Creates an infinite iterator that yields batches of transitions.
+
         Will automatically restart when internal iterator is exhausted.
 
         Args:
@@ -329,10 +343,9 @@ class ReplayBuffer:
                 yield from iterator
 
     def _get_async_iterator(self, batch_size: int, queue_size: int = 2):
-        """
-        Create an iterator that continuously yields prefetched batches in a
-        background thread. The design is intentionally simple and avoids busy
-        waiting / complex state management.
+        """Create an iterator that continuously yields prefetched batches in a background thread.
+
+        The design is intentionally simple and avoids busy waiting / complex state management.
 
         Args:
             batch_size (int): Size of batches to sample.
@@ -383,8 +396,7 @@ class ReplayBuffer:
             producer_thread.join(timeout=1.0)
 
     def _get_naive_iterator(self, batch_size: int, queue_size: int = 2):
-        """
-        Creates a simple non-threaded iterator that yields batches.
+        """Creates a simple non-threaded iterator that yields batches.
 
         Args:
             batch_size (int): Size of batches to sample
@@ -398,6 +410,7 @@ class ReplayBuffer:
         queue = collections.deque()
 
         def enqueue(n):
+            """Sample `n` more batches and append them to `queue`."""
             for _ in range(n):
                 data = self.sample(batch_size)
                 queue.append(data)
@@ -419,8 +432,7 @@ class ReplayBuffer:
         storage_device: str = "cpu",
         optimize_memory: bool = False,
     ) -> "ReplayBuffer":
-        """
-        Convert a LeRobotDataset into a ReplayBuffer.
+        """Convert a LeRobotDataset into a ReplayBuffer.
 
         Args:
             lerobot_dataset (LeRobotDataset): The dataset to convert.
@@ -509,9 +521,7 @@ class ReplayBuffer:
         root=None,
         task_name="from_replay_buffer",
     ) -> LeRobotDataset:
-        """
-        Converts all transitions in this ReplayBuffer into a single LeRobotDataset object.
-        """
+        """Converts all transitions in this ReplayBuffer into a single LeRobotDataset object."""
         if self.size == 0:
             raise ValueError("The replay buffer is empty. Cannot convert to a dataset.")
 
@@ -612,8 +622,7 @@ class ReplayBuffer:
         dataset: LeRobotDataset,
         state_keys: Sequence[str] | None = None,
     ) -> list[Transition]:
-        """
-        Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
+        """Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
 
         Args:
             dataset (LeRobotDataset):
@@ -733,12 +742,11 @@ class ReplayBuffer:
 
 # Utility function to guess shapes/dtypes from a tensor
 def guess_feature_info(t, name: str):
-    """
-    Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
+    """Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
+
     If it looks like a 3D (C,H,W) shape, we might consider it an 'image'.
     Otherwise default to appropriate dtype for numeric.
     """
-
     shape = tuple(t.shape)
     # Basic guess: if we have exactly 3 dims and shape[0] in {1, 3}, guess 'image'
     if len(shape) == 3 and shape[0] in [1, 3]:
@@ -757,8 +765,7 @@ def guess_feature_info(t, name: str):
 def concatenate_batch_transitions(
     left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
 ) -> BatchTransition:
-    """
-    Concatenates two BatchTransition objects into one.
+    """Concatenates two BatchTransition objects into one.
 
     This function merges the right BatchTransition into the left one by concatenating
     all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions

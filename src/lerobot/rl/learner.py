@@ -14,8 +14,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-Learner server runner for distributed HILSerl robot policy training.
+"""Learner server runner for distributed HILSerl robot policy training.
 
 This script implements the learner component of the distributed HILSerl architecture.
 It initializes the policy network, maintains replay buffers, and updates
@@ -121,6 +120,11 @@ from .trainer import RLTrainer
 
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
+    """CLI entry point for the HILSerl learner server.
+
+    Args:
+        cfg (`TrainRLServerPipelineConfig`): Parsed from the CLI, forwarded to `train`.
+    """
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     if not use_threads(cfg):
@@ -136,14 +140,13 @@ def train_cli(cfg: TrainRLServerPipelineConfig):
 
 
 def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
-    """
-    Main training function that initializes and runs the training process.
+    """Main training function that initializes and runs the training process.
 
     Args:
-        cfg (TrainRLServerPipelineConfig): The training configuration
-        job_name (str | None, optional): Job name for logging. Defaults to None.
+        cfg (`TrainRLServerPipelineConfig`): The training configuration.
+        job_name (`str | None`, *optional*): Job name for logging. Defaults to `cfg.job_name` when
+            unset.
     """
-
     cfg.validate()
 
     if job_name is None:
@@ -198,13 +201,12 @@ def start_learner_threads(
     wandb_logger: WandBLogger | None,
     shutdown_event: Any,  # Event
 ) -> None:
-    """
-    Start the learner threads for training.
+    """Start the learner threads for training.
 
     Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration
-        wandb_logger (WandBLogger | None): Logger for metrics
-        shutdown_event: Event to signal shutdown
+        cfg (`TrainRLServerPipelineConfig`): Training configuration.
+        wandb_logger (`WandBLogger | None`): Logger for metrics.
+        shutdown_event (`Event`): Event signaling the learner and its background workers to stop.
     """
     # Create multiprocessing queues
     transition_queue = Queue()
@@ -275,9 +277,7 @@ def add_actor_information_and_train(
     interaction_message_queue: Queue,
     parameters_queue: Queue,
 ):
-    """
-    Handles data transfer from the actor to the learner, manages training updates,
-    and logs training progress in an online reinforcement learning setup.
+    """Handles data transfer from the actor to the learner, manages training updates, and logs progress.
 
     This function continuously:
     - Transfers transitions from the actor to the replay buffer.
@@ -482,17 +482,18 @@ def start_learner(
     shutdown_event: Any,  # Event
     cfg: TrainRLServerPipelineConfig,
 ):
-    """
-    Start the learner server for training.
-    It will receive transitions and interaction messages from the actor server,
-    and send policy parameters to the actor server.
+    """Start the learner server for training.
+
+    Receives transitions and interaction messages from the actor server, and sends policy parameters
+    to the actor server.
 
     Args:
-        parameters_queue: Queue for sending policy parameters to the actor
-        transition_queue: Queue for receiving transitions from the actor
-        interaction_message_queue: Queue for receiving interaction messages from the actor
-        shutdown_event: Event to signal shutdown
-        cfg: Training configuration
+        parameters_queue (`Queue`): Queue of serialized policy weights, drained and streamed to the
+            actor by `LearnerService.StreamParameters`.
+        transition_queue (`Queue`): Queue filled by `LearnerService.SendTransitions`.
+        interaction_message_queue (`Queue`): Queue filled by `LearnerService.SendInteractions`.
+        shutdown_event (`Event`): Event signaling this process/thread to stop.
+        cfg (`TrainRLServerPipelineConfig`): Training configuration.
     """
     if not use_threads(cfg):
         # Create a process-specific log file
@@ -560,8 +561,7 @@ def save_training_checkpoint(
     preprocessor=None,
     postprocessor=None,
 ) -> None:
-    """
-    Save training checkpoint and associated data.
+    """Save training checkpoint and associated data.
 
     This function performs the following steps:
     1. Creates a checkpoint directory with the current optimization step
@@ -572,18 +572,26 @@ def save_training_checkpoint(
     6. If an offline replay buffer exists, saves it as a separate dataset
 
     Args:
-        cfg: Training configuration
-        optimization_step: Current optimization step
-        online_steps: Total number of online steps
-        interaction_message: Dictionary containing interaction information
-        policy: Policy model to save
-        optimizers: Dictionary of optimizers
-        replay_buffer: Replay buffer to save as dataset
-        offline_replay_buffer: Optional offline replay buffer to save
-        dataset_repo_id: Repository ID for dataset
-        fps: Frames per second for dataset
-        preprocessor: Optional preprocessor pipeline to save
-        postprocessor: Optional postprocessor pipeline to save
+        cfg (`TrainRLServerPipelineConfig`): Training configuration, saved alongside the checkpoint.
+        optimization_step (`int`): Current optimization step; used to name the checkpoint directory.
+        online_steps (`int`): Total number of online steps; used to size the checkpoint directory's
+            zero-padded step number.
+        interaction_message (`dict | None`): Latest interaction message; its `"Interaction step"`
+            entry is saved for resuming training.
+        policy (`Module`): Policy model to save.
+        optimizers (`dict`): Dictionary of optimizers whose states are saved.
+        replay_buffer (`ReplayBuffer`): Replay buffer to save as a dataset.
+        algorithm (`lerobot.rl.algorithms.base.RLAlgorithm | None`, *optional*): Algorithm whose state
+            dict (critic ensembles, temperature, etc.) should also be saved.
+        offline_replay_buffer (`lerobot.rl.buffer.ReplayBuffer | None`, *optional*): Optional offline
+            replay buffer, saved as a separate dataset when provided.
+        dataset_repo_id (`str | None`, *optional*): Repository id used when converting the replay
+            buffer(s) to a dataset.
+        fps (`int`, *optional*, defaults to 30): Frames per second recorded on the saved dataset(s).
+        preprocessor (`PolicyProcessorPipeline | None`, *optional*): Optional preprocessor pipeline to
+            save alongside the policy.
+        postprocessor (`PolicyProcessorPipeline | None`, *optional*): Optional postprocessor pipeline
+            to save alongside the policy.
     """
     logging.info(f"Checkpoint policy after step {optimization_step}")
     _num_digits = max(6, len(str(online_steps)))
@@ -650,8 +658,7 @@ def save_training_checkpoint(
 
 
 def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipelineConfig:
-    """
-    Handle the resume logic for training.
+    """Handle the resume logic for training.
 
     If resume is True:
     - Verifies that a checkpoint exists
@@ -712,19 +719,19 @@ def load_training_state(
     algorithm: RLAlgorithm | None = None,
     device: str | torch.device = "cpu",
 ):
-    """
-    Loads the training state (optimizers, RNG, step + interaction step, and
-    algorithm-owned tensors) from the most recent checkpoint.
+    """Loads the training state from the most recent checkpoint.
+
+    Restores optimizers, RNG state, the optimization/interaction step, and algorithm-owned tensors.
 
     Args:
-        cfg (TrainRLServerPipelineConfig): Training configuration; `cfg.resume` gates the load and
+        cfg (`TrainRLServerPipelineConfig`): Training configuration; `cfg.resume` gates the load and
             `cfg.output_dir` locates the last checkpoint.
-        optimizers (Optimizer | dict[str, Optimizer]): Optimizers to load state into.
-        algorithm (RLAlgorithm | None, optional): Algorithm whose state dict should be restored.
+        optimizers (`Optimizer | dict[str, Optimizer]`): Optimizers to load state into.
+        algorithm (`RLAlgorithm | None`, *optional*): Algorithm whose state dict should be restored.
             Required for full main-equivalent resume; the policy itself is restored separately via
-            `make_policy`. Defaults to None.
-        device (str | torch.device, optional): Device on which to place loaded algorithm tensors.
-            Defaults to "cpu".
+            `make_policy`.
+        device (`str | torch.device`, *optional*, defaults to `"cpu"`): Device on which to place
+            loaded algorithm tensors.
 
     Returns:
         tuple[int | None, int | None]: `(optimization_step, interaction_step)`, or `(None, None)`
@@ -772,8 +779,7 @@ def load_training_state(
 
 
 def log_training_info(cfg: TrainRLServerPipelineConfig, policy: nn.Module) -> None:
-    """
-    Log information about the training process.
+    """Log information about the training process.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
@@ -792,8 +798,7 @@ def log_training_info(cfg: TrainRLServerPipelineConfig, policy: nn.Module) -> No
 def initialize_replay_buffer(
     cfg: TrainRLServerPipelineConfig, device: str, storage_device: str
 ) -> ReplayBuffer:
-    """
-    Initialize a replay buffer, either empty or from a dataset if resuming.
+    """Initialize a replay buffer, either empty or from a dataset if resuming.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
@@ -837,8 +842,7 @@ def initialize_offline_replay_buffer(
     device: str,
     storage_device: str,
 ) -> ReplayBuffer:
-    """
-    Initialize an offline replay buffer from a dataset.
+    """Initialize an offline replay buffer from a dataset.
 
     Args:
         cfg (TrainRLServerPipelineConfig): Training configuration
@@ -875,6 +879,7 @@ def initialize_offline_replay_buffer(
 
 
 def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
+    """Whether the learner's background workers should run as threads instead of processes."""
     return cfg.policy.concurrency.learner == "threads"
 
 
@@ -884,14 +889,14 @@ def check_nan_in_transition(
     next_state: torch.Tensor,
     raise_error: bool = False,
 ) -> bool:
-    """
-    Check for NaN values in transition data.
+    """Check for NaN values in transition data.
 
     Args:
-        observations: Dictionary of observation tensors
-        actions: Action tensor
-        next_state: Dictionary of next state tensors
-        raise_error: If True, raises ValueError when NaN is detected
+        observations (`Tensor`): Dictionary of observation tensors.
+        actions (`Tensor`): Action tensor.
+        next_state (`Tensor`): Dictionary of next-observation tensors.
+        raise_error (`bool`, *optional*, defaults to `False`): Whether to raise a `ValueError` instead
+            of just logging when a NaN is found.
 
     Returns:
         bool: True if NaN values were detected, False otherwise
@@ -925,6 +930,12 @@ def check_nan_in_transition(
 
 
 def push_actor_policy_to_queue(parameters_queue: Queue, algorithm: RLAlgorithm) -> None:
+    """Serialize `algorithm`'s current weights and enqueue them for the actor-facing gRPC stream.
+
+    Args:
+        parameters_queue (`Queue`): Queue drained by `LearnerService.StreamParameters`.
+        algorithm (`RLAlgorithm`): Source of the weights, via `get_weights`.
+    """
     logging.debug("[LEARNER] Pushing actor policy to the queue")
 
     # Create a dictionary to hold all the state dicts
@@ -958,11 +969,13 @@ def process_transitions(
     """Process all available transitions from the queue.
 
     Args:
-        transition_queue: Queue for receiving transitions from the actor
-        replay_buffer: Replay buffer to add transitions to
-        offline_replay_buffer: Offline replay buffer to add transitions to
-        dataset_repo_id: Repository ID for dataset
-        shutdown_event: Event to signal shutdown
+        transition_queue (`Queue`): Queue filled by `LearnerService.SendTransitions`.
+        replay_buffer (`ReplayBuffer`): Buffer every non-NaN transition is added to.
+        offline_replay_buffer (`ReplayBuffer`): Buffer intervention transitions are additionally added
+            to, when `dataset_repo_id` is set.
+        dataset_repo_id (`str | None`): When set, transitions tagged as interventions are also added
+            to `offline_replay_buffer`.
+        shutdown_event (`Event`): Event that stops the loop when set.
     """
     while not transition_queue.empty() and not shutdown_event.is_set():
         transition_list = transition_queue.get()
@@ -996,10 +1009,12 @@ def process_interaction_messages(
     """Process all available interaction messages from the queue.
 
     Args:
-        interaction_message_queue: Queue for receiving interaction messages
-        interaction_step_shift: Amount to shift interaction step by
-        wandb_logger: Logger for tracking progress
-        shutdown_event: Event to signal shutdown
+        interaction_message_queue (`Queue`): Queue filled by `LearnerService.SendInteractions`.
+        interaction_step_shift (`int`): Offset added to each message's `"Interaction step"` so it
+            stays consistent with checkpointed state after a resume.
+        wandb_logger (`lerobot.common.wandb_utils.WandBLogger | None`): Logger the message is
+            forwarded to, when set.
+        shutdown_event (`Event`): Event that stops the loop when set.
 
     Returns:
         dict | None: The last interaction message processed, or None if none were processed

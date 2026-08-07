@@ -49,6 +49,18 @@ class OnlineOfflineMixer(DataMixer):
         offline_buffer: ReplayBuffer | None = None,
         online_ratio: float = 1.0,
     ):
+        """Create the mixer.
+
+        Args:
+            online_buffer (`ReplayBuffer`): Buffer of transitions collected online during training.
+            offline_buffer (`ReplayBuffer | None`, *optional*): Buffer of pre-collected offline
+                transitions. When `None`, every batch is drawn from `online_buffer` alone.
+            online_ratio (`float`, *optional*, defaults to 1.0): Fraction of each batch drawn from
+                `online_buffer`; the remainder comes from `offline_buffer`. Must be in `[0, 1]`.
+
+        Raises:
+            ValueError: If `online_ratio` is not in `[0, 1]`.
+        """
         if not 0.0 <= online_ratio <= 1.0:
             raise ValueError(f"online_ratio must be in [0, 1], got {online_ratio}")
         self.online_buffer = online_buffer
@@ -56,6 +68,7 @@ class OnlineOfflineMixer(DataMixer):
         self.online_ratio = online_ratio
 
     def sample(self, batch_size: int) -> BatchType:
+        """See [`~rl.data_sources.DataMixer.sample`]."""
         if self.offline_buffer is None:
             return self.online_buffer.sample(batch_size)
 
@@ -73,7 +86,6 @@ class OnlineOfflineMixer(DataMixer):
         queue_size: int = 2,
     ):
         """Yield batches by composing buffer async iterators."""
-
         n_online = max(1, int(batch_size * self.online_ratio))
 
         online_iter = self.online_buffer.get_iterator(

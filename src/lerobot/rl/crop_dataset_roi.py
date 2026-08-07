@@ -29,8 +29,7 @@ from lerobot.utils.constants import DONE, REWARD
 
 
 def select_rect_roi(img):
-    """
-    Allows the user to draw a rectangular ROI on the image.
+    """Allows the user to draw a rectangular ROI on the image.
 
     The user must click and drag to draw the rectangle.
     - While dragging, the rectangle is dynamically drawn.
@@ -52,6 +51,7 @@ def select_rect_roi(img):
     index_x, index_y = -1, -1  # Initial click coordinates
 
     def mouse_callback(event, x, y, flags, param):
+        """`cv2.setMouseCallback` handler that drives the click-and-drag ROI selection."""
         nonlocal index_x, index_y, drawing, roi, working_img
 
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -118,12 +118,11 @@ def select_rect_roi(img):
 
 
 def select_square_roi_for_images(images: dict) -> dict:
-    """
-    For each image in the provided dictionary, open a window to allow the user
-    to select a rectangular ROI. Returns a dictionary mapping each key to a tuple
-    (top, left, height, width) representing the ROI.
+    """For each image in the provided dictionary, open a window to allow the user to select a ROI.
 
-    Parameters:
+    Returns a dictionary mapping each key to a tuple (top, left, height, width) representing the ROI.
+
+    Args:
         images (dict): Dictionary where keys are identifiers and values are OpenCV images.
 
     Returns:
@@ -149,9 +148,7 @@ def select_square_roi_for_images(images: dict) -> dict:
 
 
 def get_image_from_lerobot_dataset(dataset: LeRobotDataset):
-    """
-    Find the first row in the dataset and extract the image in order to be used for the crop.
-    """
+    """Find the first row in the dataset and extract the image in order to be used for the crop."""
     row = dataset[0]
     image_dict = {}
     for k in row:
@@ -169,19 +166,23 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
     push_to_hub: bool = False,
     task: str = "",
 ) -> LeRobotDataset:
-    """
-    Converts an existing LeRobotDataset by iterating over its episodes and frames,
-    applying cropping and resizing to image observations, and saving a new dataset
-    with the transformed data.
+    """Converts an existing LeRobotDataset to a new one with cropped/resized image observations.
+
+    Iterates over the source dataset's episodes and frames, applying cropping and resizing to image
+    observations, and saves a new dataset with the transformed data.
 
     Args:
-        original_dataset (LeRobotDataset): The source dataset.
-        crop_params_dict (dict[str, Tuple[int, int, int, int]]):
+        original_dataset (`LeRobotDataset`): The source dataset.
+        crop_params_dict (`dict[str, tuple[int, int, int, int]]`):
             A dictionary mapping observation keys to crop parameters (top, left, height, width).
-        new_repo_id (str): Repository id for the new dataset.
-        new_dataset_root (str): The root directory where the new dataset will be written.
-        resize_size (tuple[int, int], optional): The target size (height, width) after cropping.
-            Defaults to (128, 128).
+        new_repo_id (`str`): Repository id for the new dataset.
+        new_dataset_root (`str`): The root directory where the new dataset will be written.
+        resize_size (`tuple[int, int]`, *optional*, defaults to `(128, 128)`): The target size
+            (height, width) after cropping.
+        push_to_hub (`bool`, *optional*, defaults to `False`): Whether to push the new dataset to the
+            Hugging Face Hub.
+        task (`str`, *optional*, defaults to `""`): Task description recorded on every frame of the
+            new dataset.
 
     Returns:
         LeRobotDataset: A new LeRobotDataset where the specified image observations have been cropped

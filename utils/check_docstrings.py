@@ -60,6 +60,7 @@ PATH_TO_LEROBOT = PATH_TO_REPO / "src" / "lerobot"
 # Modules whose public objects are checked. Add a module here once its docstrings follow the standard.
 MODULES_TO_CHECK = [
     "lerobot.robots",
+    "lerobot.rl",
 ]
 
 # Objects that do not yet follow the standard, so the check can be green from day one. Removing an entry
