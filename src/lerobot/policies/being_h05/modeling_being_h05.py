@@ -33,6 +33,7 @@ from torch.nn.attention.flex_attention import (
     or_masks,
 )
 
+from lerobot.configs import TextKind
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -1057,7 +1058,7 @@ class BeingH05Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Any],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
