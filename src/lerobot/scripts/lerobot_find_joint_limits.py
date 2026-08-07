@@ -58,6 +58,7 @@ from lerobot.robots import (  # noqa: F401
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
+    bi_metal_leader,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,
@@ -65,6 +66,7 @@ from lerobot.teleoperators import (  # noqa: F401
     gamepad,
     koch_leader,
     make_teleoperator_from_config,
+    metal_leader,
     omx_leader,
     openarm_leader,
     openarm_mini,
