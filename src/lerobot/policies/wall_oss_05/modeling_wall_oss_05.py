@@ -834,6 +834,11 @@ class WallOSS05Policy(PreTrainedPolicy):
         )
         return prompt, _ACTION_TOKEN * self.config.chunk_size
 
+    @property
+    def subtask_prompt_template(self) -> str:
+        """Wall's trained subtask wording, filled with the operator's goal by the runtime."""
+        return "{task}\nPredict the next action in language.\n"
+
     def _get_text_prompt(self, instruction: str, kind: str) -> str:
         prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nObservation:"
         for camera_name in self.config.camera_key_mapping.values():
