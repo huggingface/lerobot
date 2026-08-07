@@ -612,11 +612,10 @@ def train(cfg: TrainPipelineConfig):
     # not depend on it.
     ema = None
     if cfg.ema.enable:
-        from accelerate.utils import DistributedType  # noqa: PLC0415
-
-        if accelerator.distributed_type == DistributedType.FSDP:
+        if parallel_dims.is_sharded:
             raise NotImplementedError(
-                "--ema.enable=true is not supported with FSDP: the parameters are sharded across ranks."
+                "--ema.enable=true is not supported with sharded training (FSDP2/HSDP/CP): the "
+                "parameters are sharded across ranks. Use a replicated (DDP) or single-GPU run."
             )
         if cfg.peft is not None:
             raise NotImplementedError("--ema.enable=true is not supported together with PEFT adapters.")
@@ -728,7 +727,9 @@ def train(cfg: TrainPipelineConfig):
         )
 
         # Pull one optimizer step of the live weights into the EMA shadow (main process only).
-        if ema is not None:
+        # The shadow tracks optimizer updates, not micro-batches: gate on the sync step under
+        # gradient accumulation.
+        if ema is not None and accelerator.sync_gradients:
             ema.step(accelerator.unwrap_model(policy).parameters())
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we

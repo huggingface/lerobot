@@ -276,6 +276,27 @@ def test_train_with_constant_ema_decay(tmp_path):
     assert ema_state["optimization_step"] == 2
 
 
+def test_train_with_ema_and_gradient_accumulation(tmp_path):
+    """The shadow tracks optimizer steps, not micro-batches, under gradient accumulation."""
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
+    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
+
+    root = make_dummy_dataset(tmp_path)
+    output_dir = tmp_path / "_output"
+
+    cfg = make_train_config(root, output_dir, steps=4, ema_enable=True)
+    cfg.accelerator.gradient_accumulation.steps = 2
+    train(cfg)
+
+    ema_state = torch.load(
+        output_dir / "checkpoints" / "000004" / TRAINING_STATE_DIR / EMA_STATE_FILENAME,
+        weights_only=True,
+    )
+    # 4 micro-batches / 2 accumulation steps = 2 optimizer updates.
+    assert ema_state["optimization_step"] == 2
+
+
 def test_train_without_ema_writes_no_ema_files(tmp_path):
     pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
     pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
