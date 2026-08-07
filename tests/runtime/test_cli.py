@@ -100,8 +100,7 @@ def test_ask_runtime_pauses_and_routes_current_observation(capsys):
     assert not runtime.state.action_queue
     policy.generate_text.assert_called_once_with(
         {"image": "current", "task": "clear the table"},
-        kind="vqa",
-        user_text="What is beside the bowl?",
+        "What is beside the bowl?",
     )
     assert "[policy] The mug is beside the bowl." in capsys.readouterr().out
 
