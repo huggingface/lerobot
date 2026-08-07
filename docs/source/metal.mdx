@@ -17,48 +17,119 @@ no ROS, no vendor SDK, no compiled blobs.
 - **Shared joint naming**: joints use the reBot convention (`shoulder_pan`, `shoulder_lift`,
   `elbow_flex`, `wrist_flex`, `wrist_yaw`, `wrist_roll`, `gripper`), so a leader that speaks the
   same names drives the follower with no key remapping.
+- **Gravity-compensated leader**: a Metal arm can lead another Metal arm. It is too heavy to hold
+  by hand, so instead of switching torque off, `metal_leader` stays powered and streams Pinocchio
+  gravity torque with `kp = 0` — the motors carry the arm's weight while the operator moves it.
 
 ## Platform Requirements
 
+Metal talks to its motors over CAN, via one of two `python-can` transports:
+
+- **`slcan`** (Linux, macOS, Windows) — **the default.** `python-can` drives the USB-CAN
+  adapter's serial port directly through `pyserial`, with no kernel CAN stack involved. Needs no
+  privileged setup, and it is the only option on macOS and Windows, which have no SocketCAN.
+- **`socketcan`** (Linux only) — the kernel CAN stack. Choose this when you want the rest of the
+  Linux CAN ecosystem: `candump` and `can-utils`, or a filtering daemon in front of the bus.
+
+The transport is chosen with `can_interface`, and `port` changes meaning to match: an interface
+name (`can0`) for SocketCAN, a serial port (`/dev/ttyACM0`, `/dev/cu.usbmodem1101`, `COM5`) for
+slcan. The two are independent of the adapter — the same CANable serves either.
+
 <Tip warning={true}>
-  **Linux only**: Metal is driven over SocketCAN, which is Linux-specific. It has not been tested
-  on macOS or Windows.
+  **macOS and Windows are untested end to end.** slcan itself is verified on
+  Linux against a CANable (see [Bandwidth](#bandwidth)), and it is the same code
+  path on every OS, but no one has yet run a full session on macOS or Windows.
+  Reports welcome.
 </Tip>
 
 ## Install LeRobot 🤗
 
-Follow our [Installation Guide](./installation), then install the metal extra (pulls in
-`python-can` via the `damiao` extra):
+Follow our [Installation Guide](./installation), then install the metal extra. It pulls in
+`python-can` and `pyserial` (via `damiao`) for the CAN transport — `pyserial` is what backs the
+`slcan` interface on macOS and Windows — and `pin` (Pinocchio) for the leader's gravity
+compensation:
 
 ```bash
 pip install -e ".[metal]"
 ```
 
-## Hardware / CAN Setup
+That is enough to drive the arm from Python. To also record datasets and train on them, add the
+script and training extras:
+
+```bash
+pip install -e ".[metal,core_scripts,training]"
+```
+
+Teleoperating from a Star Arm 102 leader needs `rebot` on top — see
+[that section](#teleoperation-with-a-star-arm-102-leader) for the full command.
+
+## Hardware and CAN Setup
 
 Metal runs classic CAN (not CAN FD) at 1 Mbps. A single arm lives on one bus; a bimanual setup
 needs two physically independent buses, because both arms use the same fixed motor CAN IDs.
 
-<Tip warning={true}>
-  **SocketCAN only.** `metal_follower` rejects any other `can_interface`. The serial `slcan` path
-  cannot sustain the per-tick traffic of a 7-motor arm at 60 Hz, which shows up as stuttering
-  rather than a clean failure — so it is refused up front.
-</Tip>
+### Option A — slcan (default, any OS, no setup)
+
+Nothing to bring up: point `port` at the adapter's serial port. `can_interface` already defaults
+to `slcan`, so there is nothing else to set.
+
+```bash
+--robot.port=/dev/ttyACM0            # Linux
+--robot.port=/dev/cu.usbmodem1101    # macOS
+--robot.port=COM5                    # Windows
+```
+
+On Linux, make sure no `slcand` is already holding that serial port — a tty can be claimed by
+the kernel's slcan line discipline or by `pyserial`, never both. If it is, you will get
+`Inappropriate ioctl for device`.
+
+### Option B — SocketCAN (Linux only)
 
 With a native CAN adapter:
 
 ```bash
 sudo ip link set can0 up type can bitrate 1000000
+sudo ip link set can0 txqueuelen 1000
 ```
 
-With a USB-CAN adapter (CANable and friends), bridge it into SocketCAN first:
+With a USB-CAN adapter (CANable and friends), bridge it into SocketCAN with `slcand` first:
 
 ```bash
-sudo slcand -o -c -s8 -t hw -S 921600 /dev/ttyACM0 can0 && sudo ip link set up can0
+sudo slcand -o -f -s8 /dev/ttyACM0 can0 && sudo ip link set up can0
+sudo ip link set can0 txqueuelen 1000
 ```
 
-`slcand` is a user-space daemon, so this has to be re-run after each reboot. For general CAN
-adapter setup (drivers, troubleshooting), see the
+`-s8` selects 1 Mbps. `slcand` is a user-space daemon, so this has to be re-run after each
+reboot. `txqueuelen 1000` is not optional — the default of 10 overflows within a few ticks.
+
+Then point the arm at the interface and **ask for SocketCAN explicitly** — `can_interface`
+defaults to `slcan`, so passing only `port=can0` would try to open `can0` as a serial device:
+
+```bash
+--robot.port=can0 --robot.can_interface=socketcan
+```
+
+### Finding the serial port
+
+With `slcan`, `port` is a serial device, and on Linux `ttyACM*` numbering is assigned in
+enumeration order — it is not stable across reboots or re-cabling. To identify an adapter, unplug
+it and run:
+
+```bash
+lerobot-find-port
+```
+
+It lists the ports present, waits for you to disconnect one, and reports which one disappeared.
+
+For a bimanual setup, where two adapters swapping numbers would silently drive the wrong arm, use
+the stable by-id symlinks instead of the raw device:
+
+```bash
+ls /dev/serial/by-id/
+--robot.port=/dev/serial/by-id/usb-...-if00
+```
+
+For general CAN adapter setup (drivers, troubleshooting), see the
 [Damiao Motors and CAN Bus guide](./damiao).
 
 ## Motor Configuration
@@ -67,15 +138,15 @@ Each joint is a Damiao motor flashed with one of three custom MIT ranges registe
 (`metal_jlo`, `metal_j2`, `metal_jhi`), not the stock Damiao motor-type tables. Send/recv CAN
 IDs run `0x01..0x07` / `0x11..0x17`. Joint limits come from the vendor's `motor_config.cpp`:
 
-| Joint           | Motor Type | Send ID | Recv ID | Limits (deg)   |
-| --------------- | ---------- | ------- | ------- | -------------- |
-| `shoulder_pan`  | metal_jlo  | 0x01    | 0x11    | -160 .. 160    |
-| `shoulder_lift` | metal_j2   | 0x02    | 0x12    | -180 .. 0      |
-| `elbow_flex`    | metal_jlo  | 0x03    | 0x13    | 0 .. 180       |
-| `wrist_flex`    | metal_jlo  | 0x04    | 0x14    | -123 .. 81     |
-| `wrist_yaw`     | metal_jhi  | 0x05    | 0x15    | -85 .. 85      |
-| `wrist_roll`    | metal_jhi  | 0x06    | 0x16    | -145 .. 145    |
-| `gripper`       | metal_jhi  | 0x07    | 0x17    | 0 .. 137.5     |
+| Joint           | Motor Type | Send ID | Recv ID | Limits (deg) |
+| --------------- | ---------- | ------- | ------- | ------------ |
+| `shoulder_pan`  | metal_jlo  | 0x01    | 0x11    | -160 .. 160  |
+| `shoulder_lift` | metal_j2   | 0x02    | 0x12    | -180 .. 0    |
+| `elbow_flex`    | metal_jlo  | 0x03    | 0x13    | 0 .. 180     |
+| `wrist_flex`    | metal_jlo  | 0x04    | 0x14    | -123 .. 81   |
+| `wrist_yaw`     | metal_jhi  | 0x05    | 0x15    | -85 .. 85    |
+| `wrist_roll`    | metal_jhi  | 0x06    | 0x16    | -145 .. 145  |
+| `gripper`       | metal_jhi  | 0x07    | 0x17    | 0 .. 137.5   |
 
 Every commanded position is clamped to these limits, gripper included. The gripper is not
 optional — the follower always exposes all 7 motors, and `gripper.pos` is passed through in raw
@@ -91,12 +162,11 @@ On the first `connect()` with a new `--robot.id`, the follower prompts for this 
 It can also be run explicitly:
 
 ```bash
-lerobot-calibrate --robot.type=metal_follower --robot.port=can0 --robot.id=my_metal_follower
+lerobot-calibrate --robot.type=metal_follower --robot.port=/dev/ttyACM0 --robot.id=my_metal_follower
 ```
 
 The result is saved under the LeRobot calibration cache and reused on later runs, so the prompt
 appears once per `id`.
-
 
 ## Usage
 
@@ -108,7 +178,7 @@ appears once per `id`.
 ```bash
 lerobot-calibrate \
     --robot.type=metal_follower \
-    --robot.port=can0 \
+    --robot.port=/dev/ttyACM0 \
     --robot.id=my_metal_follower
 ```
 
@@ -119,7 +189,7 @@ lerobot-calibrate \
 from lerobot.robots.metal_follower import MetalFollower, MetalFollowerConfig
 
 config = MetalFollowerConfig(
-    port="can0",
+    port="/dev/ttyACM0",
     id="my_metal_follower",
 )
 
@@ -151,9 +221,9 @@ follower.disconnect()
 ### Teleoperation with a Star Arm 102 leader
 
 Metal is teleoperated with a
-[Seeed Studio Star Arm 102 / reBot Arm 102](./rebot_b601) leader (`rebot_102_leader`) — a
-7-joint leader on FashionStar UART servos. Both arms use the same joint names, so leader actions
-map onto follower motors directly.
+[Seeed Studio Star Arm 102 / reBot Arm 102](./rebot_b601) leader — a 7-joint leader on
+FashionStar UART servos. Both arms use the same joint names, so leader actions map onto follower
+motors directly.
 
 Install the extras (adds `motorbridge-smart-servo` for the leader's servos):
 
@@ -161,37 +231,26 @@ Install the extras (adds `motorbridge-smart-servo` for the leader's servos):
 pip install -e ".[metal,rebot]"
 ```
 
-The cross-arm mapping — servo ids, per-joint direction/scale, and output ranges matched to the
-Metal joint limits — lives in one config file:
+Use the teleoperator type **`rebot_102_leader_metal`**, not `rebot_102_leader`. Both drive the
+same leader hardware over the same servo bus; they differ only in the joint mapping. The stock
+`rebot_102_leader` defaults describe the reBot B601 follower, and against a Metal arm four of
+seven joints are wrong — `elbow_flex` and `gripper` saturate against the follower's soft limits
+and stop moving entirely, `wrist_flex` tracks backwards, and `wrist_roll` loses travel. Nothing
+errors: the teleop loop still reports a healthy 60 Hz.
+
+Because the mapping ships with the type, the config file only carries what is specific to your
+machine. Save it as `star_metal.json`:
 
 ```json
 {
   "robot": {
     "type": "metal_follower",
-    "port": "can0",
-    "can_interface": "socketcan",
-    "max_relative_target": {
-      "shoulder_pan": 3, "shoulder_lift": 3, "elbow_flex": 4, "wrist_flex": 4,
-      "wrist_yaw": 3, "wrist_roll": 3, "gripper": 15
-    }
+    "port": "/dev/ttyACM0"
   },
   "teleop": {
-    "type": "rebot_102_leader",
+    "type": "rebot_102_leader_metal",
     "port": "/dev/ttyUSB0",
-    "id": "star_metal",
-    "joint_ids": {
-      "shoulder_pan": 0, "shoulder_lift": 1, "elbow_flex": 2, "wrist_flex": 3,
-      "wrist_yaw": 4, "wrist_roll": 5, "gripper": 6
-    },
-    "joint_directions": {
-      "shoulder_pan": -1, "shoulder_lift": -1, "elbow_flex": -0.667, "wrist_flex": -1,
-      "wrist_yaw": 1, "wrist_roll": -1, "gripper": 1.895
-    },
-    "joint_ranges": {
-      "shoulder_pan": [-160, 160], "shoulder_lift": [-180, 0], "elbow_flex": [0, 180],
-      "wrist_flex": [-123, 81], "wrist_yaw": [-85, 85], "wrist_roll": [-145, 145],
-      "gripper": [0, 115]
-    }
+    "id": "star_metal"
   }
 }
 ```
@@ -206,9 +265,168 @@ On the very first run with a new `--teleop.id`, the leader prompts for calibrati
 Star Arm to its zero pose, close the gripper, and press ENTER. The calibration is saved and
 reused on later runs.
 
-`joint_directions` accepts fractional values to rescale a leader joint onto a follower joint
-with a different travel (e.g. `-0.667` on `elbow_flex`). If a joint moves the wrong way on your
-build, flip the sign.
+`joint_directions` and `joint_ranges` remain overridable per joint if your build differs — the
+type only supplies the defaults. Two things to know before changing `joint_ranges`: it is a copy
+of the follower's `joint_limits` (a test enforces the identity, so the leader can never command
+outside the follower's envelope), and it also sets the multi-turn unwrap window, so a range
+borrowed from a different follower can land a joint on the wrong 360° branch rather than merely
+failing to clip. `joint_directions` accepts fractional values to rescale a leader joint onto a
+follower joint with different travel (e.g. `-0.667` on `elbow_flex`); if a joint moves the wrong
+way on your build, flip the sign.
+
+#### Capping how far the follower moves per step
+
+`max_relative_target` defaults to `None` — no cap — and teleoperation works without it. Consider
+setting it here anyway: unlike a Metal leader, the Star Arm is a different mechanism read over
+UART servos, so a dropped or glitched servo frame becomes a large jump in the commanded pose,
+which firm follow-gains then chase at full stiffness. The cap bounds that jump in degrees per
+step. These values are the ones used on the hardware this driver was developed against:
+
+```json
+"max_relative_target": {
+  "shoulder_pan": 3,
+  "shoulder_lift": 3,
+  "elbow_flex": 4,
+  "wrist_flex": 4,
+  "wrist_yaw": 3,
+  "wrist_roll": 3,
+  "gripper": 15
+}
+```
+
+Add it inside the `"robot"` block. Too low and the follower cannot keep up with fast leader
+motion — it lags, then catches up when you slow down. Note this is a per-step cap, so its
+effective speed limit scales with the loop rate: 3 degrees/step is 180 deg/s at 60 Hz.
+
+### Teleoperation with a second Metal arm (gravity-compensated leader)
+
+A Metal arm can also lead another Metal arm. Since the two are identical, every joint maps 1:1
+and there is no mapping table at all — the leader simply reports the angles the follower should
+hold.
+
+The catch is that a Metal arm weighs several kilos and will not hold itself up. So unlike a
+torque-off leader, `metal_leader` stays **powered** while you move it: a background thread reads
+the arm's pose, computes the gravity torque with [Pinocchio](https://github.com/stack-of-tasks/pinocchio),
+and streams it as the MIT feedforward term with `kp = 0`. The motors carry the arm's own weight;
+your hand supplies only the force needed to move it. The arm feels close to weightless, but it is
+live — it is holding itself up, not switched off.
+
+```json
+{
+  "robot": { "type": "metal_follower", "port": "/dev/ttyACM0" },
+  "teleop": {
+    "type": "metal_leader",
+    "port": "/dev/ttyACM1",
+    "id": "metal_metal"
+  }
+}
+```
+
+Each arm needs its own USB-CAN adapter, hence the two serial ports. Save it as
+`metal_metal.json` and run:
+
+```bash
+lerobot-teleoperate --config_path metal_metal.json --display_data=false
+```
+
+The gripper is left fully backdrivable (`kp = 0`) with a small friction feedforward so it is easy
+to squeeze, and its raw motor angle drives the follower's gripper directly.
+
+#### The URDF
+
+Gravity compensation needs the arm's mass and inertia, which come from a URDF. LeRobot does not
+ship robot descriptions, so on first connect the leader downloads
+`metal_with_gripper.urdf` (~8.5 KB) from the arm's description repository, verifies its checksum,
+and caches it under `$HF_LEROBOT_HOME/metal`. Later runs are offline. The URL is pinned to a
+commit, so an edit upstream can never silently retune your arm.
+
+If the machine has no network access, fetch the file once elsewhere and point at it:
+
+```bash
+lerobot-teleoperate --config_path metal_metal.json \
+    --teleop.urdf_path=/path/to/metal_with_gripper.urdf
+```
+
+<Tip warning={true}>
+  If the URDF cannot be fetched, `connect()` raises **before** enabling torque.
+  This is deliberate: an energized arm with no gravity thread behind it puts its
+  full weight in the operator's hand. Do not work around this by disabling the
+  check.
+</Tip>
+
+Note that the URDF must be the 6-revolute-joint variant (`nq = 6`), where the gripper's mass is
+lumped into the last link. The `metal_description` ROS package ships a different file that models
+the gripper jaws as two prismatic joints (`nq = 8`); the leader rejects it at startup rather than
+failing on every control tick.
+
+#### Tuning the feel
+
+Gravity compensation alone leaves the arm holding its weight but still fighting its own gearbox
+friction. `friction_scale` cancels that friction per joint, making the arm feel lighter and more
+transparent:
+
+```bash
+lerobot-teleoperate --config_path metal_metal.json \
+    --teleop.friction_scale='{"shoulder_lift": 3.0}' \
+    --teleop.gravity_hz=100
+```
+
+<Tip warning={true}>
+  Friction compensation is positive feedback: the faster a joint moves, the
+  harder the motor pushes it. Past a joint-specific threshold it **runs away**.
+  Raise `friction_scale` one joint at a time, in small steps, with a hand on the
+  arm — and do not lower `leader_kd` to 0 at the same time, since damping is
+  what stops a runaway.
+</Tip>
+
+The defaults are tuned on hardware and differ per joint because this arm's real friction does not
+match the vendor's uniform model. Set `use_velocity_feedforward=false` for pure gravity
+compensation: heavier in the hand, but with no runaway mechanism at all.
+
+#### Bandwidth
+
+Each gravity tick costs 28 CAN frames (a 7-motor read plus a 7-motor write). At the default
+`gravity_hz=100`, together with `get_action` at 60 Hz, that is roughly 3.6k frames/s. Raising it
+to 200 doubles the gravity share to about 70% of a 1 Mbps bus. Two consequences:
+
+- **`txqueuelen` matters** (SocketCAN only). The default of 10 overflows almost immediately; set
+  it to 1000 when bringing the interface up (see [Hardware / CAN Setup](#hardware-and-can-setup)).
+- **`gravity_hz=200` needs SocketCAN.** slcan is limited by per-tick round-trip latency, not by
+  bandwidth. Measured on a Metal arm over a CANable, one full 28-frame gravity tick:
+
+  | transport | tick p50 | p99    | frames lost |
+  | --------- | -------- | ------ | ----------- |
+  | socketcan | 3.9 ms   | 5.6 ms | 0           |
+  | slcan     | 4.8 ms   | 8.2 ms | 0           |
+
+  Neither loses frames, and slcan's median is within ~20% of SocketCAN — but 4.8 ms is 96% of
+  the 5 ms period at `gravity_hz=200`, and that measurement excludes Pinocchio's solve. At the
+  default `gravity_hz=100` the same tick uses ~48% of the 10 ms period, which is why 100 is the
+  default. `MetalLeader` warns if you raise it above 100 while on slcan.
+
+If the bus gets tight, lower `gravity_hz` further. Gravity compensation only has to outrun human
+arm dynamics (under ~10 Hz), so even 100 Hz leaves an order of magnitude of margin.
+
+#### Bimanual leaders
+
+`bi_metal_leader` composes two `MetalLeader` instances and prefixes their action keys with
+`left_` / `right_`, matching `bi_metal_follower`. Each arm needs its own CAN bus — they share the
+same fixed motor CAN IDs, and each runs its own gravity thread.
+
+```python
+from lerobot.teleoperators.bi_metal_leader import BiMetalLeader, BiMetalLeaderConfig
+from lerobot.teleoperators.metal_leader import MetalLeaderConfigBase
+
+teleop = BiMetalLeader(
+    BiMetalLeaderConfig(
+        left_arm_config=MetalLeaderConfigBase(port="/dev/ttyACM0"),
+        right_arm_config=MetalLeaderConfigBase(port="/dev/ttyACM1"),
+    )
+)
+```
+
+A bimanual Metal-to-Metal setup therefore needs **four** independent CAN buses: one per leader
+arm and one per follower arm.
 
 ### Recording Data
 
@@ -235,40 +453,81 @@ from lerobot.robots.bi_metal_follower import BiMetalFollower, BiMetalFollowerCon
 from lerobot.robots.metal_follower import MetalFollowerConfigBase
 
 config = BiMetalFollowerConfig(
-    left_arm_config=MetalFollowerConfigBase(port="can0"),
-    right_arm_config=MetalFollowerConfigBase(port="can1"),
+    left_arm_config=MetalFollowerConfigBase(port="/dev/ttyACM0"),
+    right_arm_config=MetalFollowerConfigBase(port="/dev/ttyACM1"),
 )
 robot = BiMetalFollower(config)
 ```
 
+Pair it with two Star Arm leaders. `BiRebot102LeaderConfig` embeds a full leader config per arm,
+so using `RebotArm102LeaderMetalConfig` here is what keeps the joint mapping from having to be
+repeated for each arm:
+
+```python
+from lerobot.teleoperators.bi_rebot_102_leader import BiRebot102Leader, BiRebot102LeaderConfig
+from lerobot.teleoperators.rebot_102_leader import RebotArm102LeaderMetalConfig
+
+teleop = BiRebot102Leader(
+    BiRebot102LeaderConfig(
+        left_arm_config=RebotArm102LeaderMetalConfig(port="/dev/ttyUSB0"),
+        right_arm_config=RebotArm102LeaderMetalConfig(port="/dev/ttyUSB1"),
+    )
+)
+```
+
 ## Configuration Options
 
-| Parameter                      | Default       | Description                                                                                  |
-| ------------------------------ | ------------- | -------------------------------------------------------------------------------------------- |
-| `port`                         | `"can0"`      | SocketCAN interface                                                                            |
-| `can_interface`                | `"socketcan"` | Only `"socketcan"` is accepted                                                                 |
-| `can_bitrate`                  | `1000000`     | Classic CAN bitrate (1 Mbps); Metal does not use CAN FD                                        |
-| `use_can_fd`                   | `False`       | Always `False` for Metal                                                                       |
-| `gains`                        | `None`        | Per-motor MIT follow gains `{name: (kp, kd)}`; `None` uses `METAL_FOLLOWER_GAINS`              |
-| `max_relative_target`          | `None`        | Per-step travel cap, in degrees; float or per-joint dict                                       |
-| `startup_sync_speed_deg`       | `1.0`         | Max degrees/step during the slow initial sync to the leader; `None` disables                   |
-| `startup_sync_tolerance_deg`   | `3.0`         | Once within this of the target, switch to full-speed tracking                                  |
-| `velocity_feedforward`         | `True`        | Send a filtered finite-difference velocity in the MIT frame                                    |
-| `velocity_ff_alpha`            | `0.35`        | Low-pass factor for that velocity estimate                                                     |
-| `velocity_ff_max_deg_s`        | `200.0`       | Clamp on the estimated velocity                                                                |
-| `disable_torque_on_disconnect` | `False`       | Whether to disable torque when disconnecting                                                   |
+### Follower (`metal_follower`)
+
+| Parameter                      | Default   | Description                                                                                             |
+| ------------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `port`                         | `None`    | **Required.** Serial port for `slcan` (`/dev/ttyACM0`, `COM5`); interface name for `socketcan` (`can0`) |
+| `can_interface`                | `"slcan"` | `"slcan"` (any OS, no setup) or `"socketcan"` (Linux only)                                              |
+| `can_bitrate`                  | `1000000` | Classic CAN bitrate (1 Mbps); Metal does not use CAN FD                                                 |
+| `use_can_fd`                   | `False`   | Always `False` for Metal                                                                                |
+| `gains`                        | per joint | Per-motor MIT follow gains `{name: (kp, kd)}`, applied at connect; defaults are tuned on hardware       |
+| `max_relative_target`          | `None`    | Per-step travel cap, in degrees; float or per-joint dict                                                |
+| `startup_sync_speed_deg`       | `1.0`     | Max degrees/step during the slow initial sync to the leader; `None` disables                            |
+| `startup_sync_tolerance_deg`   | `3.0`     | Once within this of the target, switch to full-speed tracking                                           |
+| `velocity_feedforward`         | `True`    | Send a filtered finite-difference velocity in the MIT frame                                             |
+| `velocity_ff_alpha`            | `0.08`    | Low-pass factor for that velocity estimate; lower is smoother but lags fast moves                       |
+| `velocity_ff_max_deg_s`        | `120.0`   | Clamp on the estimated velocity, so a fast leader move doesn't kick                                     |
+| `disable_torque_on_disconnect` | `False`   | Whether to disable torque when disconnecting                                                            |
 
 At teleop start the follower **slowly syncs** to the leader's pose (`startup_sync_speed_deg`)
 before tracking at full speed, so firm follow-gains don't snap it across a large gap. A joint
 that cannot converge — parked past a soft limit, or held by stiction stronger than `kp * step` —
 is released to full speed after stalling rather than holding the whole arm back.
 
+### Leader (`metal_leader`)
+
+The transport fields (`port`, `can_interface`, `can_bitrate`, `use_can_fd`, `motor_can_ids`) are
+the same as the follower's. The rest control gravity compensation:
+
+| Parameter                  | Default         | Description                                                                                     |
+| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `urdf_path`                | `""`            | Local URDF to use; empty downloads and caches the pinned one                                    |
+| `gravity_hz`               | `100`           | Gravity-compensation thread rate; lower it first if the bus gets tight. `200` needs `socketcan` |
+| `leader_kd`                | `0.0`           | MIT damping while compensated (`kp` is always 0); float or per-joint dict                       |
+| `use_velocity_feedforward` | `True`          | Cancel gearbox friction as well as gravity; `False` gives gravity only                          |
+| `friction_scale`           | tuned per joint | How much friction to cancel per joint; higher is lighter, too high **runs away**                |
+| `velocity_deadzone_rad_s`  | `0.05`          | Measured velocity below this counts as zero, so the friction term doesn't chatter at rest       |
+| `gripper_friction_scale`   | `1.0`           | Scales the gripper's own friction feedforward; `0` leaves it at zero torque                     |
+| `hold_kp_on_disconnect`    | `50.0`          | Freeze the arm in place on disconnect so it stays up; `0` leaves it limp                        |
+| `hold_kd_on_disconnect`    | `1.0`           | Damping for that hold                                                                           |
+
+On disconnect the gravity thread stops, so the arm would sag on its last zero-`kp` command. It
+holds its final pose instead — up, but no longer weightless. How long that hold persists is set by
+the motors' own command-timeout configuration, not by LeRobot.
+
 ## Status Notes
 
-- **Follow gains are tuned, not stock.** `METAL_FOLLOWER_GAINS` starts from the vendor's
-  `follow_mit_kp`/`follow_mit_kd` and raises damping on the wrist and gripper, which oscillate at
-  the vendor values on a 60 Hz loop. They are applied at `connect()` — the bus default `kp=10` is
-  far too soft to hold the arm against gravity. Override per build with `gains`.
+- **Follow gains are tuned, not stock.** They are applied at `connect()` — the bus default
+  `kp=10` is far too soft to hold the arm against gravity. The defaults pair high stiffness with
+  heavy damping: `kd` sits close to the reBot B601 follower's (12 on the big joints), which
+  teleoperates very smoothly, while `kp` stays ~8× higher, because B601's `kp=45` leaves ~7.5° of
+  gravity sag on this arm and the shoulder and elbow cannot hold themselves up. Smoothness here
+  comes from damping, not from softness. Override per build with `gains`.
 - **Gripper is raw motor degrees.** `gripper.pos` is the motor angle (0 = closed, 137.5 = the
   vendor's open limit), not normalized to physical jaw opening in millimetres.
 - **Calibration is a zero-pose reference, not a stored offset.** `set_zero_position` writes to
@@ -291,14 +550,18 @@ ip link show can0
 ```
 
 If the interface is missing and you are on a USB-CAN adapter, `slcand` is probably not running —
-re-run the bring-up command from [Hardware / CAN Setup](#hardware--can-setup). If it fails with
+re-run the bring-up command from [Hardware / CAN Setup](#hardware-and-can-setup). If it fails with
 `Device or resource busy`, a stale daemon still holds the serial port: `sudo pkill slcand`.
 
 ### Arm Sags or Lags Behind the Leader
 
-Stiffness alone leaves a steady-state error proportional to the gravity load -- roughly 0.7 deg
-at the worst-loaded joint with the default gains, or about 1 cm at the end effector with the arm
-extended. Raise `kp` for the affected joint via `gains` if that matters for your task.
+Stiffness alone leaves a steady-state error proportional to the gravity load -- roughly 0.9 deg
+at the worst-loaded joint with the default gains, or a little over 1 cm at the end effector with
+the arm extended. Raise `kp` for the affected joint via `gains` if that matters for your task.
+
+If instead the follow feels _mushy_ -- vague, slow to arrive, rather than drooping -- that is the
+damping and the velocity filter, not the stiffness. Raise `velocity_ff_alpha` back toward `0.2`
+before touching `kd` or `kp`.
 
 ## Resources
 
