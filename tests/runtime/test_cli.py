@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from lerobot.configs import TextKind
 from lerobot.runtime.cli import _ask_runtime, _build_rollout_runtime_io, _parse_args
 from lerobot.runtime.language_runtime import RuntimeState
 
@@ -100,7 +101,7 @@ def test_ask_runtime_pauses_and_routes_current_observation(capsys):
     assert not runtime.state.action_queue
     policy.generate_text.assert_called_once_with(
         {"image": "current", "task": "clear the table"},
-        kind="vqa",
+        kind=TextKind.VQA,
         user_text="What is beside the bowl?",
     )
     assert "[policy] The mug is beside the bowl." in capsys.readouterr().out

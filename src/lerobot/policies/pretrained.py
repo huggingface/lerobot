@@ -30,7 +30,7 @@ from safetensors.torch import load_model as load_model_as_safetensor, save_model
 from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig, TextKind
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -293,7 +293,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         batch: dict[str, Tensor],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         """Decode one string from the policy's text head, for policies that have one.
@@ -302,14 +302,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         it owns scheduling, the action loop, and the conversation state, and calls here
         only to turn the current observation into text. Decode with
         `self.config.text_temperature` and `self.config.text_top_p`, so a checkpoint
-        decodes the way it was trained.
+        decodes the way it was trained. A policy needing knobs beyond those two (top-k,
+        repetition penalty, ...) declares them on its own config rather than on the
+        base, which stays at the settings every text head shares.
 
         Args:
             batch: A preprocessed observation batch. The runtime puts the operator's
                 high-level goal in `batch["task"]` and the active subtask, once one has
                 been generated, in `batch["subtask"]`.
-            kind: What to generate. `"subtask"` is the next low-level instruction to
-                condition actions on; `"vqa"` answers `user_text` about the current view.
+            kind: What to generate, from the shared `TextKind` catalog.
+                `SUBTASK` is the next low-level instruction to condition actions on;
+                `VQA` answers `user_text` about the current view.
             user_text: The operator's question, for kinds that take one.
 
         Returns:

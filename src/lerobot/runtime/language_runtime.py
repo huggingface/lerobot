@@ -24,6 +24,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from lerobot.configs import TextKind
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,7 +115,7 @@ class LanguageConditionedPolicy(Protocol):
     def supports_text_generation(self) -> bool: ...
 
     def generate_text(
-        self, batch: dict[str, Any], *, kind: str = ..., user_text: str | None = ...
+        self, batch: dict[str, Any], *, kind: TextKind = ..., user_text: str | None = ...
     ) -> str: ...
 
 
@@ -169,7 +171,7 @@ class SubtaskController:
         self._chunks_until_regen = max(1, self.chunks_per_regen) - 1
 
         batch = build_language_batch(observation, state)
-        subtask = self.policy.generate_text(batch, kind="subtask")
+        subtask = self.policy.generate_text(batch, kind=TextKind.SUBTASK)
         self.diagnostics.last_raw = subtask or ""
         if not subtask:
             self.diagnostics.empty += 1
