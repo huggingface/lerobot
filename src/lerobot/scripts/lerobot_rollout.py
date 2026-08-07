@@ -44,6 +44,19 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
 
+    # Interactive session (base or sentry strategy): the robot stays idle
+    # until /start is typed; /subtask <text> re-instructs the policy mid-run;
+    # /reset returns it to the initial position (hardware and policy stay
+    # warm); /stop shuts down gracefully.  With --strategy.type=sentry the
+    # session also records continuously, labeling frames with the live task.
+    lerobot-rollout \\
+        --strategy.type=base \\
+        --policy.path=lerobot/act_koch_real \\
+        --robot.type=koch_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --task="pick up cube" \\
+        --interactive=true
+
     # Base mode — RTC inference for slow VLAs (Pi0, Pi0.5, SmolVLA)
     lerobot-rollout \\
         --strategy.type=base \\
@@ -173,7 +186,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
+from lerobot.rollout import (
+    InteractiveSession,
+    LinkedEvent,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -215,6 +234,10 @@ def rollout(cfg: RolloutConfig):
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
+    if cfg.interactive:
+        # Session commands (/reset, /stop) end the running control loop by setting
+        # the local flag; process signals still propagate through the parent event.
+        shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
     ctx = build_rollout_context(cfg, shutdown_event)
@@ -230,8 +253,12 @@ def rollout(cfg: RolloutConfig):
 
     try:
         strategy.setup(ctx)
-        logger.info("Rollout setup complete, starting rollout...")
-        strategy.run(ctx)
+        if cfg.interactive:
+            logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
+            InteractiveSession(strategy, ctx).run()
+        else:
+            logger.info("Rollout setup complete, starting rollout...")
+            strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:

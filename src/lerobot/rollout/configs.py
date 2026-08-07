@@ -239,6 +239,14 @@ class RolloutConfig:
     # Runtime
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Interactive session: control the rollout from stdin with chat-style
+    # commands (/start, /subtask <text>, /reset, /stop) while hardware and
+    # policy stay warm.  The robot does not move until /start is received,
+    # `/subtask` re-instructs the policy mid-run, and logs below ERROR are
+    # muted while the session runs so they don't interleave with the prompt.
+    # Supported with --strategy.type=base (no recording) and sentry
+    # (continuous recording; frames are labeled with the live task).
+    interactive: bool = False
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -292,6 +300,17 @@ class RolloutConfig:
         if isinstance(self.strategy, BaseStrategyConfig) and self.dataset is not None:
             raise ValueError(
                 "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
+            )
+
+        # Interactive mode drives strategy.run() in restartable segments and reads
+        # commands from stdin.  Base and sentry qualify: their run() loops keep no
+        # per-run terminal or dataset-finalization state.  The other recording
+        # strategies are excluded for now: they bind their own keyboard controls
+        # (which fight the command prompt for the terminal) and their run() loops
+        # finalize the dataset on exit, so they cannot be restarted.
+        if self.interactive and not isinstance(self.strategy, (BaseStrategyConfig, SentryStrategyConfig)):
+            raise ValueError(
+                f"--interactive=true supports --strategy.type=base or sentry (got '{self.strategy.type}')."
             )
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop

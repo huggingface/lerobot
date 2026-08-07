@@ -124,13 +124,13 @@ class RTCInferenceEngine(InferenceEngine):
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
     ) -> None:
+        super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
         self._hw_features = hw_features
-        self._task = task
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -140,10 +140,14 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
+        # Bumped by reset() (under _obs_lock) so chunks whose inference started
+        # before a reset are discarded instead of merged into the fresh queue.
+        self._reset_epoch = 0
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
         self._rtc_error = Event()
+        self._failure_traceback: str | None = None
         self._global_shutdown_event = shutdown_event
         self._rtc_thread: Thread | None = None
 
@@ -191,6 +195,15 @@ class RTCInferenceEngine(InferenceEngine):
         return self._rtc_error.is_set()
 
     @property
+    def failure_traceback(self) -> str | None:
+        """Traceback captured when the RTC thread died (see ``failed``).
+
+        Kept on the engine so consumers that mute console logging (the
+        interactive session) can still surface the fatal error.
+        """
+        return self._failure_traceback
+
+    @property
     def action_queue(self) -> ActionQueue | None:
         """The shared action queue between the RTC thread and the main loop."""
         return self._action_queue
@@ -235,13 +248,29 @@ class RTCInferenceEngine(InferenceEngine):
         self._policy_active.set()
 
     def reset(self) -> None:
-        """Reset the policy, processors, and action queue."""
+        """Reset the policy, processors, and action queue.
+
+        Call while the engine is paused (both DAgger transitions and the
+        interactive session do): the RTC thread may still be finishing an
+        inference started before the pause, so ``reset`` also drops the last
+        published observation — it can be arbitrarily stale by the time the
+        engine resumes (e.g. the robot was returned to its initial position
+        in the meantime), and a chunk computed from it would jerk the robot
+        toward the old pose — and bumps the reset epoch so any in-flight
+        chunk is discarded instead of merged into the cleared queue.
+        """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
         if self._action_queue is not None:
             self._action_queue.clear()
+        with self._obs_lock:
+            self._obs_holder["obs"] = None
+            self._reset_epoch += 1
+        # The queue was just cleared, so a pending task change has nothing
+        # stale left to blend against.
+        self._discard_task_change()
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -281,6 +310,7 @@ class RTCInferenceEngine(InferenceEngine):
                 queue = self._action_queue
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
+                    epoch_before = self._reset_epoch
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
@@ -294,11 +324,24 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
+                        task, task_changed = self._take_task()
+                        if task_changed:
+                            # No queue flush on purpose: dropping the queued
+                            # actions would leave the robot without commands for
+                            # a full inference latency.  With RTC blending on
+                            # (the default) this chunk — already conditioned on
+                            # the new instruction — is merged over the previous
+                            # chunk's leftover prefix, so the switch lands within
+                            # one inference and the transition stays continuous.
+                            # With blending disabled the queue drains first, so
+                            # it lands up to one chunk later.
+                            logger.info("Task changed to '%s' — applied from this chunk on", task)
+
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, self._task, self._robot.robot_type
+                            obs_batch, policy_device, task, self._robot.robot_type
                         )
-                        obs_batch["task"] = [self._task]
+                        obs_batch["task"] = [task]
 
                         preprocessed = self._preprocessor(obs_batch)
 
@@ -339,7 +382,12 @@ class RTCInferenceEngine(InferenceEngine):
                         else:
                             latency_tracker.add(new_latency)
 
-                        queue.merge(original, processed, new_delay, idx_before)
+                        with self._obs_lock:
+                            epoch_unchanged = epoch_before == self._reset_epoch
+                        if epoch_unchanged:
+                            queue.merge(original, processed, new_delay, idx_before)
+                        else:
+                            logger.info("Discarding action chunk computed before an engine reset")
 
                         if (
                             is_warmup
@@ -368,8 +416,9 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
 
         except Exception as e:
+            self._failure_traceback = traceback.format_exc()
             logger.error("Fatal error in RTC thread: %s", e)
-            logger.error(traceback.format_exc())
+            logger.error(self._failure_traceback)
             self._rtc_error.set()
             # Unblock any warmup waiters so the main loop doesn't spin forever
             self._compile_warmup_done.set()
