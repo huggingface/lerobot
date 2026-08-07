@@ -236,13 +236,11 @@ class MyPolicy(PreTrainedPolicy):
     ) -> str:
         messages = self.build_messages(kind, batch, user_text)
         inputs, tokenizer = self.tokenize_messages(messages, batch)
-        gen = self.config.generation
         return self.decode(
             inputs,
             tokenizer=tokenizer,
-            min_new_tokens=gen.min_new_tokens,
-            temperature=gen.temperature,
-            top_p=gen.top_p,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
         )
 
     def build_messages(self, kind, batch, user_text):
@@ -267,19 +265,31 @@ The batch is a preprocessed observation with `batch["task"]` set to the operator
 
 ### Sampling settings
 
-Decoding parameters live on the checkpoint, in [`PreTrainedConfig.generation`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py), so a head decodes the way it was trained:
+Decoding parameters live on the checkpoint, in [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py), so a head decodes the way it was trained:
 
 ```python
-gen = self.config.generation  # min_new_tokens, temperature, top_p
+self.config.text_temperature  # 0.0 is greedy argmax
+self.config.text_top_p        # nucleus filtering threshold
 ```
 
-Override them per run through the usual policy path — no runtime-specific flags:
+The `text_` prefix keeps them distinct from action-sampling settings such as `PI0FastConfig.temperature`. Override them per run through the usual policy path — no runtime-specific flags:
 
 ```bash
-lerobot-rollout --language --policy.path=... --policy.generation.temperature=0.5
+lerobot-rollout --language --policy.path=... --policy.text_temperature=0.5
 ```
 
-Temperature `0.0` is greedy argmax and matches most training setups. Raising `min_new_tokens` to 3-5 is a useful probe for an under-trained head whose prior at position 0 still favours EOS.
+Temperature `0.0` is greedy argmax and is the default; any value above `0.0` enables sampling with `text_top_p`. Greedy suits a subtask head trained with cross-entropy against one target per step, but raising the temperature is a useful probe for an under-trained head stuck on a single output.
+
+### Reasoning emitted with the action
+
+Some policies produce reasoning and an action from a single inference pass rather than a separate planning call. Expose it by overriding `last_reasoning`:
+
+```python
+def last_reasoning(self) -> str | None:
+    return self._last_cot_text
+```
+
+The runtime panel shows it on a `reasoning` line. It is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task.
 
 ### Keep training and deployment aligned
 
