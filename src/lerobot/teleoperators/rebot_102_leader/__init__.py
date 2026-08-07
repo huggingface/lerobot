@@ -15,6 +15,16 @@
 # limitations under the License.
 
 from .config_rebot_102_leader import RebotArm102LeaderConfig, RebotArm102LeaderTeleopConfig
+from .config_rebot_102_leader_metal import (
+    RebotArm102LeaderMetalConfig,
+    RebotArm102LeaderMetalTeleopConfig,
+)
 from .rebot_102_leader import RebotArm102Leader
 
-__all__ = ["RebotArm102Leader", "RebotArm102LeaderConfig", "RebotArm102LeaderTeleopConfig"]
+__all__ = [
+    "RebotArm102Leader",
+    "RebotArm102LeaderConfig",
+    "RebotArm102LeaderMetalConfig",
+    "RebotArm102LeaderMetalTeleopConfig",
+    "RebotArm102LeaderTeleopConfig",
+]

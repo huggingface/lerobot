@@ -103,7 +103,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_openarm_mini import BiOpenArmMini
 
         return BiOpenArmMini(config)
-    elif config.type == "rebot_102_leader":
+    elif config.type in ("rebot_102_leader", "rebot_102_leader_metal"):
+        # Same leader hardware and same driver; the Metal variant only carries a different
+        # joint mapping (see config_rebot_102_leader_metal.py).
         from .rebot_102_leader import RebotArm102Leader
 
         return RebotArm102Leader(config)
