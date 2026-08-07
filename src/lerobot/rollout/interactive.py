@@ -33,6 +33,15 @@ which every strategy control loop already polls as
 propagate through the linked event's parent, so Ctrl-C behaves exactly as in
 non-interactive runs.
 
+While the session runs, console log handlers are muted (including
+non-propagating library loggers like ``transformers``) and Python warnings
+are suppressed, so system output does not interleave with the chat prompt;
+only the session's own output is shown.  File log handlers are unaffected,
+and console logging resumes when the session ends (so teardown logs are
+visible).  A fatal inference-engine error is still surfaced: the session
+prints the engine's captured traceback.  Run without ``--interactive`` to
+see the full live log output.
+
 The command table is intentionally a name → handler mapping so future
 commands (``/subtask``, ``/ask`` — see the language-runtime work in
 PR #4183/#4234) can be registered without restructuring the parser or the
@@ -46,6 +55,7 @@ import os
 import select
 import sys
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Event, Thread
@@ -60,6 +70,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BANNER_RULE = "─" * 60
+
+
+def _mute_console_log_handlers() -> list[tuple[logging.Handler, int]]:
+    """Mute console log handlers for the interactive session.
+
+    System logs (policy, robot, control loop) contend with the chat prompt
+    for the terminal, so raise every console handler above ``CRITICAL``
+    while the session runs.  All loggers are covered, not just the root:
+    libraries like ``transformers`` and ``datasets`` attach their own
+    stderr handlers with ``propagate=False``.  File handlers are left
+    untouched — anyone who wants a persistent log can attach one — and the
+    previous levels are returned so :func:`_restore_log_handlers` can undo
+    the muting.
+    """
+    loggers = [logging.getLogger()]
+    loggers += [lg for lg in logging.Logger.manager.loggerDict.values() if isinstance(lg, logging.Logger)]
+    muted = []
+    for lg in loggers:
+        for handler in lg.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                muted.append((handler, handler.level))
+                handler.setLevel(logging.CRITICAL + 1)
+    return muted
+
+
+def _restore_log_handlers(muted: list[tuple[logging.Handler, int]]) -> None:
+    """Restore handler levels changed by :func:`_mute_console_log_handlers`."""
+    for handler, level in muted:
+        handler.setLevel(level)
 
 
 class LinkedEvent(Event):
@@ -340,12 +379,16 @@ class InteractiveSession:
     def run(self) -> None:
         """Run the session until ``/stop``, EOF, engine failure, or a shutdown signal."""
         play_sounds = self._ctx.runtime.cfg.play_sounds
-        self._print(self._render_banner())
-        self._listener.start()
+        muted_handlers: list[tuple[logging.Handler, int]] = []
+        saved_warning_filters = warnings.filters[:]
         try:
+            muted_handlers = _mute_console_log_handlers()
+            warnings.simplefilter("ignore")
+            self._print(self._render_banner())
+            self._listener.start()
             while not self._global_shutdown.is_set():
                 if self._ctx.policy.inference.failed:
-                    self._print("Inference engine failed — shutting down. See the log for the error.")
+                    self._report_engine_failure()
                     break
                 if self._stop_requested.is_set():
                     break
@@ -361,7 +404,19 @@ class InteractiveSession:
                 self._wake.clear()
         finally:
             self._listener.stop()
+            # Restore before log_say so teardown logs are visible again.
+            _restore_log_handlers(muted_handlers)
+            warnings.filters[:] = saved_warning_filters
             log_say("Interactive session ended", play_sounds)
+
+    def _report_engine_failure(self) -> None:
+        """Surface a fatal engine error despite the muted console logging."""
+        self._print("Inference engine failed — shutting down.")
+        failure_traceback = self._ctx.policy.inference.failure_traceback
+        if failure_traceback:
+            self._print(failure_traceback)
+        else:
+            self._print("Re-run without --interactive=true to see the error output.")
 
     def _run_segment(self) -> None:
         """Execute one ``strategy.run`` segment until interrupted or finished."""
@@ -394,6 +449,7 @@ class InteractiveSession:
 
     def _reset_robot(self) -> None:
         """Pause inference and return the robot to its initial position."""
+        self._print("Resetting — returning the robot to its initial position...")
         self._ctx.policy.inference.pause()
         log_say("Resetting robot to initial position", self._ctx.runtime.cfg.play_sounds)
         if self._ctx.hardware.initial_position:
@@ -465,6 +521,7 @@ class InteractiveSession:
             f"{_BANNER_RULE}\n"
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"{self._render_help()}\n"
+            "System logs and warnings are muted during the session; they resume when it ends.\n"
             f"{_BANNER_RULE}"
         )
 

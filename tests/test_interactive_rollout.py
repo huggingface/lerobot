@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import contextlib
+import io
+import logging
 import os
 import time
 from threading import Event, Thread
@@ -184,8 +186,6 @@ def test_stdin_listener_handler_errors_do_not_kill_reader():
 
 def test_stdin_listener_blocking_fallback():
     """Streams without a file descriptor (e.g. StringIO) use the blocking readline path."""
-    import io
-
     lines: list[str] = []
     eof = Event()
     listener = StdinCommandListener(lines.append, on_eof=eof.set, stream=io.StringIO("/start\n\n/help\n"))
@@ -207,6 +207,7 @@ def _make_session(input_stream, run_behavior=None):
     stop_event = LinkedEvent(parent)
     engine = MagicMock()
     engine.failed = False
+    engine.failure_traceback = None
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(
             cfg=SimpleNamespace(play_sounds=False),
@@ -351,11 +352,12 @@ def test_session_exits_on_parent_shutdown():
         assert not thread.is_alive()
 
 
-def test_session_stops_on_engine_failure():
+def test_session_stops_on_engine_failure(capsys):
     def failing_run(c):
-        # Mimic the RTC thread's fatal-error path: flag the failure and set
-        # the shutdown event the engine was built with (the LinkedEvent).
+        # Mimic the RTC thread's fatal-error path: flag the failure, capture
+        # the traceback, and set the engine's shutdown event (the LinkedEvent).
         c.policy.inference.failed = True
+        c.policy.inference.failure_traceback = "RuntimeError: boom-traceback"
         c.runtime.shutdown_event.set()
 
     with _pipe_stream() as (reader, _writer):
@@ -364,8 +366,10 @@ def test_session_stops_on_engine_failure():
         session._handle_line("/start")
         thread.join(timeout=2.0)
         assert not thread.is_alive()
-        # A failed engine ends the session instead of returning to idle.
+        # A failed engine ends the session instead of returning to idle, and
+        # the captured traceback is surfaced despite the muted console logs.
         strategy.return_to_initial_position.assert_not_called()
+        assert "boom-traceback" in capsys.readouterr().out
 
 
 def test_session_stops_on_engine_failure_while_idle():
@@ -445,6 +449,58 @@ def test_session_commands_via_stream():
         thread.join(timeout=2.0)
         assert not thread.is_alive()
         assert strategy.run.call_count == 1
+
+
+def test_session_mutes_console_logging_and_restores_on_exit():
+    import warnings
+
+    root = logging.getLogger()
+    console_handler = logging.StreamHandler(io.StringIO())
+    console_handler.setLevel(logging.INFO)
+    root.addHandler(console_handler)
+    # Libraries like transformers attach their own console handler with
+    # propagate=False; those must be muted too.
+    lib_logger = logging.getLogger("test_interactive_fake_lib")
+    lib_logger.propagate = False
+    lib_handler = logging.StreamHandler(io.StringIO())
+    lib_handler.setLevel(logging.WARNING)
+    lib_logger.addHandler(lib_handler)
+    n_warning_filters = len(warnings.filters)
+    try:
+        with _pipe_stream() as (reader, _writer):
+            session, _strategy, _engine, _parent, _run_started = _make_session(reader)
+            thread = _start_session_thread(session)
+            assert _wait_for(
+                lambda: console_handler.level == logging.CRITICAL + 1
+                and lib_handler.level == logging.CRITICAL + 1
+            )
+            session._handle_line("/stop")
+            thread.join(timeout=2.0)
+        assert console_handler.level == logging.INFO
+        assert lib_handler.level == logging.WARNING
+        assert len(warnings.filters) == n_warning_filters
+    finally:
+        root.removeHandler(console_handler)
+        lib_logger.removeHandler(lib_handler)
+
+
+def test_session_does_not_mute_file_log_handlers(tmp_path):
+    root = logging.getLogger()
+    file_handler = logging.FileHandler(tmp_path / "session.log")
+    file_handler.setLevel(logging.INFO)
+    root.addHandler(file_handler)
+    try:
+        with _pipe_stream() as (reader, _writer):
+            session, _strategy, _engine, _parent, run_started = _make_session(reader)
+            thread = _start_session_thread(session)
+            session._handle_line("/start")
+            assert _wait_for(run_started.is_set)
+            assert file_handler.level == logging.INFO
+            session._handle_line("/stop")
+            thread.join(timeout=2.0)
+    finally:
+        root.removeHandler(file_handler)
+        file_handler.close()
 
 
 def test_session_drives_real_base_strategy():
