@@ -299,7 +299,7 @@ That keeps the base config free of knobs most policies never read, and your extr
 
 The runtime asks for actions through `predict_action_chunk_with_text`, which returns an `ActionChunkPrediction(action, text)`. The default implementation on the base class calls your `predict_action_chunk` and reports `text=None`, so a policy without a text head needs nothing.
 
-Override it when your policy has text to attribute to the chunk. Policies that produce reasoning and an action from a single inference pass return the text generated in that pass:
+Override it **only** if your policy emits text and actions from one inference stream, where the action is conditioned on the text rather than merely accompanied by it:
 
 ```python
 def predict_action_chunk_with_text(self, batch, **kwargs) -> ActionChunkPrediction:
@@ -307,17 +307,9 @@ def predict_action_chunk_with_text(self, batch, **kwargs) -> ActionChunkPredicti
     return ActionChunkPrediction(action=action, text=first_text(metadata))
 ```
 
-Policies whose text head runs as its own pass return the subtask the chunk was conditioned on, which the runtime supplies in `batch["subtask"]`:
+If your text head runs as its own prefill, do not override this to echo `batch["subtask"]`. That string is already runtime state, and returning it here would claim a causal link inside this pass that does not exist. Expose `generate_text` and leave the default alone.
 
-```python
-def predict_action_chunk_with_text(self, batch, **kwargs) -> ActionChunkPrediction:
-    return ActionChunkPrediction(
-        action=self.predict_action_chunk(batch, **kwargs),
-        text=batch.get("subtask") or None,
-    )
-```
-
-Never run an extra generation pass here — a caller wanting fresh text calls `generate_text`.
+The override must not run an extra generation pass. Whether text appears is a property of the checkpoint and its configuration, so the call costs no more than `predict_action_chunk` — a caller wanting fresh text on demand calls `generate_text`.
 
 The runtime panel shows the text on a `reasoning` line. It is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task. Returning the pair rather than caching it on the policy is what makes that safe — the runtime commits text and chunk together under one lock, so a chunk invalidated mid-inference takes its text with it.
 
