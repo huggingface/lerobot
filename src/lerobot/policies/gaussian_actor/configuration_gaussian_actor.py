@@ -26,7 +26,7 @@ def is_image_feature(key: str) -> bool:
     """Check if a feature key represents an image feature.
 
     Args:
-        key: The feature key to check
+        key (`str`): The feature key to check.
 
     Returns:
         True if the key represents an image feature, False otherwise
@@ -54,6 +54,8 @@ class ConcurrencyConfig:
 
 @dataclass
 class ActorLearnerConfig:
+    """Actor-learner distributed architecture settings (network address, weight-push frequency)."""
+
     learner_host: str = "127.0.0.1"
     learner_port: int = 50051
     policy_parameters_push_frequency: int = 4
@@ -62,6 +64,8 @@ class ActorLearnerConfig:
 
 @dataclass
 class CriticNetworkConfig:
+    """MLP architecture settings for the critic network(s)."""
+
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activate_final: bool = True
     final_activation: str | None = None
@@ -69,12 +73,16 @@ class CriticNetworkConfig:
 
 @dataclass
 class ActorNetworkConfig:
+    """MLP architecture settings for the actor network."""
+
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activate_final: bool = True
 
 
 @dataclass
 class PolicyConfig:
+    """Gaussian-policy output-head settings (tanh squashing, std clamping)."""
+
     use_tanh_squash: bool = True
     std_min: float = 1e-5
     std_max: float = 10.0
@@ -94,9 +102,95 @@ class GaussianActorConfig(PreTrainedConfig):
     logic live on the algorithm side (see ``lerobot.rl.algorithms.sac``).
 
     CLI: ``--policy.type=gaussian_actor``.
+
+    Args:
+        n_obs_steps (`int`, *optional*, defaults to 1):
+            Number of environment steps of observation to pass to the policy (the current step and
+            additional steps going back). This policy predicts a single action from a single step, so
+            this is not expected to be changed from 1.
+        input_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from input feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        output_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from output feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        device (`str`, *optional*, defaults to `"cpu"`):
+            Device the policy runs on, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`.
+        use_amp (`bool`, *optional*, defaults to `False`):
+            Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`):
+            Whether this policy is trained with PEFT (parameter-efficient fine-tuning) adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`):
+            Whether to push the trained policy to the Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*):
+            Hugging Face Hub repository id to push the policy to, when `push_to_hub` is enabled.
+        private (`bool | None`, *optional*):
+            Whether to create/push the Hub repository as private.
+        tags (`list[str] | None`, *optional*):
+            Tags to attach to the policy's Hub model card.
+        license (`str | None`, *optional*):
+            License identifier to add to the policy's Hub model card.
+        pretrained_path (`Path | None`, *optional*):
+            Path or Hub repo id of pretrained weights to initialize the policy from. If `None`, the
+            policy is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*):
+            Hub revision (branch, tag, or commit hash) pinning the pretrained model version.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps a feature type name (e.g. `"STATE"`, `"VISUAL"`) to the `NormalizationMode` to apply to
+            it. Defaults to mean/std normalization for visual features and min/max normalization for
+            state, environment, and action features.
+        dataset_stats (`dict[str, dict[str, list[float]]] | None`, *optional*):
+            Statistics used to normalize image, state, and action features. Defaults to placeholder
+            values; normally overridden with statistics computed from the actual training dataset.
+        storage_device (`str`, *optional*, defaults to `"cpu"`):
+            Device on which a copy of the model's parameters is kept for transport between the actor and
+            learner processes in the actor-learner architecture.
+        vision_encoder_name (`str | None`, *optional*):
+            Name of a pretrained vision encoder to use for image observations, e.g.
+            `"lerobot/resnet10"` for the HIL-SERL ResNet10 encoder. `None` (the default) uses a
+            lightweight from-scratch CNN encoder instead.
+        freeze_vision_encoder (`bool`, *optional*, defaults to `True`):
+            Whether to freeze the vision encoder's parameters during training.
+        image_encoder_hidden_dim (`int`, *optional*, defaults to 32):
+            Hidden dimension size for the from-scratch image encoder (unused when `vision_encoder_name`
+            is set).
+        shared_encoder (`bool`, *optional*, defaults to `True`):
+            Whether the actor and critic(s) share the same observation encoder instance.
+        num_discrete_actions (`int | None`, *optional*):
+            Number of discrete actions appended to the continuous action output, e.g. for a gripper
+            open/close action. `None` disables the discrete critic and action head.
+        image_embedding_pooling_dim (`int`, *optional*, defaults to 8):
+            Number of learned spatial pooling features per image, used by the image encoder's spatial
+            embedding layer.
+        state_encoder_hidden_dim (`int`, *optional*, defaults to 256):
+            Hidden dimension size for the state encoder.
+        latent_dim (`int`, *optional*, defaults to 256):
+            Dimension of the observation encoder's output latent space.
+        online_steps (`int`, *optional*, defaults to 1000000):
+            Number of steps to run during online training.
+        online_buffer_capacity (`int`, *optional*, defaults to 100000):
+            Capacity of the online replay buffer.
+        offline_buffer_capacity (`int`, *optional*, defaults to 100000):
+            Capacity of the offline replay buffer.
+        async_prefetch (`bool`, *optional*, defaults to `False`):
+            Whether to use asynchronous prefetching for the replay buffers.
+        online_step_before_learning (`int`, *optional*, defaults to 100):
+            Number of steps to collect before online learning starts.
+        actor_learner_config (`ActorLearnerConfig`, *optional*):
+            Transport configuration (host, port, push frequency, queue timeout) for the actor-learner
+            architecture.
+        concurrency (`ConcurrencyConfig`, *optional*):
+            Concurrency configuration (threads or processes) for the actor and learner.
+        actor_network_kwargs (`ActorNetworkConfig`, *optional*):
+            Architecture configuration (hidden dimensions, final activation) for the actor network.
+        policy_kwargs (`PolicyConfig`, *optional*):
+            Configuration for the Gaussian policy head (tanh squashing, std bounds, final-layer init
+            scale).
+        discrete_critic_network_kwargs (`CriticNetworkConfig`, *optional*):
+            Architecture configuration (hidden dimensions, final activation) for the discrete critic
+            network.
     """
 
-    # Mapping of feature types to normalization modes
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -106,7 +200,6 @@ class GaussianActorConfig(PreTrainedConfig):
         }
     )
 
-    # Statistics for normalizing different types of inputs
     dataset_stats: dict[str, dict[str, list[float]]] | None = field(
         default_factory=lambda: {
             OBS_IMAGE: {
@@ -125,60 +218,42 @@ class GaussianActorConfig(PreTrainedConfig):
     )
 
     # Architecture specifics
-    # Device to run the model on (e.g., "cuda", "cpu")
     device: str = "cpu"
-    # Device to store the model on
     storage_device: str = "cpu"
-    # Name of the vision encoder model (Set to "lerobot/resnet10" for hil serl resnet10)
     vision_encoder_name: str | None = None
-    # Whether to freeze the vision encoder during training
     freeze_vision_encoder: bool = True
-    # Hidden dimension size for the image encoder
     image_encoder_hidden_dim: int = 32
-    # Whether to use a shared encoder for actor and critic
     shared_encoder: bool = True
-    # Number of discrete actions, eg for gripper actions
     num_discrete_actions: int | None = None
-    # Dimension of the image embedding pooling
     image_embedding_pooling_dim: int = 8
 
     # Encoder architecture
-    # Hidden dimension size for the state encoder
     state_encoder_hidden_dim: int = 256
-    # Dimension of the latent space
     latent_dim: int = 256
 
     # Online training (TODO(Khalil): relocate to TrainRLServerPipelineConfig)
-    # Number of steps for online training
     online_steps: int = 1000000
-    # Capacity of the online replay buffer
     online_buffer_capacity: int = 100000
-    # Capacity of the offline replay buffer
     offline_buffer_capacity: int = 100000
-    # Whether to use asynchronous prefetching for the buffers
     async_prefetch: bool = False
-    # Number of steps before learning starts
     online_step_before_learning: int = 100
 
     # Actor-learner transport (TODO(Khalil): relocate to TrainRLServerPipelineConfig).
-    # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
-    # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # Network architecture
-    # Configuration for the actor network architecture
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
-    # Configuration for the policy parameters (Gaussian head)
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-    # Configuration for the discrete critic network
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
 
     def __post_init__(self):
+        """Resolve `device` (see [`~configs.PreTrainedConfig.__post_init__`]), then validate this config. Validates actor/critic network and learner configuration."""
         super().__post_init__()
         # Any validation specific to GaussianActor configuration
 
     def get_optimizer_preset(self) -> MultiAdamConfig:
+        """See [`~configs.PreTrainedConfig.get_optimizer_preset`]."""
         # Default learning rate used to satisfy the abstract ``get_optimizer_preset()``
         # contract from ``PreTrainedConfig``. The actual optimizers used during RL
         # training are built by ``SACAlgorithm.make_optimizers_and_scheduler()`` from
@@ -195,9 +270,11 @@ class GaussianActorConfig(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> None:
+        """See [`~configs.PreTrainedConfig.get_scheduler_preset`]."""
         return None
 
     def validate_features(self) -> None:
+        """See [`~configs.PreTrainedConfig.validate_features`]."""
         has_image = any(is_image_feature(key) for key in self.input_features)
         has_state = OBS_STATE in self.input_features
 
@@ -211,16 +288,20 @@ class GaussianActorConfig(PreTrainedConfig):
 
     @property
     def image_features(self) -> list[str]:
+        """The names of the input features that are images."""
         return [key for key in self.input_features if is_image_feature(key)]
 
     @property
     def observation_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.observation_delta_indices`]."""
         return None
 
     @property
     def action_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.action_delta_indices`]."""
         return None  # SAC typically predicts one action at a time
 
     @property
     def reward_delta_indices(self) -> None:
+        """See [`~configs.PreTrainedConfig.reward_delta_indices`]."""
         return None

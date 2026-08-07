@@ -34,8 +34,7 @@ def make_diffusion_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for a diffusion policy.
+    """Constructs pre-processor and post-processor pipelines for a diffusion policy.
 
     The pre-processing pipeline prepares the input data for the model by:
     1. Renaming features.
@@ -48,10 +47,8 @@ def make_diffusion_pre_post_processors(
     2. Unnormalizing the output features to their original scale.
 
     Args:
-        config: The configuration object for the diffusion policy,
-            containing feature definitions, normalization mappings, and device information.
-        dataset_stats: A dictionary of statistics used for normalization.
-            Defaults to None.
+        config (`DiffusionConfig`): The policy's configuration, providing feature shapes/types and normalization settings.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used to initialize normalization layers.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.

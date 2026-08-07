@@ -165,7 +165,6 @@ def _load_n1_7_checkpoint_processor_assets(config: GrootConfig) -> _GrootN17Chec
     Returns ``None`` for non-raw N1.7 checkpoints so the generic GR00T pipeline
     can keep using caller-provided dataset stats and config values.
     """
-
     if not is_raw_groot_n1_7_checkpoint(config.base_model_path):
         return None
 
@@ -273,7 +272,6 @@ def _load_n1_7_checkpoint_stats(
     joints. LeRobot normalizers operate over a single vector, so this function
     preserves checkpoint group order while flattening each selected statistic.
     """
-
     if raw_stats is None:
         all_stats = read_json(checkpoint_path / "statistics.json")
         raw_stats = all_stats.get(embodiment_tag)
@@ -381,7 +379,6 @@ _GROOT_ABSENT_STANDARD_OVERRIDE_KEYS = frozenset(
 
 def _drop_groot_absent_standard_overrides(overrides: dict[str, Any] | None) -> dict[str, Any] | None:
     """Strip standard override keys that a GR00T pipeline has no step for."""
-
     if not overrides:
         return overrides
 
@@ -414,7 +411,6 @@ def _apply_groot_step_overrides(
     silently (standard normalization keys GR00T has no step for are removed
     beforehand by ``_drop_groot_absent_standard_overrides``).
     """
-
     if not overrides:
         return
 
@@ -487,7 +483,6 @@ def make_groot_pre_post_processors_from_pretrained(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Load Groot processors for a raw N1.7 checkpoint or a serialized LeRobot pipeline."""
-
     # Drop the standard normalizer/unnormalizer override keys lerobot-train emits unconditionally:
     # GR00T has no such steps, so they would make both the raw-checkpoint and serialized override
     # paths raise. This must happen before either branch below.
@@ -584,7 +579,6 @@ def _reconnect_groot_n1_7_pack_decode_steps(
     The pack step holds the per-instance raw-state cache that relative-action
     decoding reads its reference state from; the link itself is not serialized.
     """
-
     pack_step = next(
         (step for step in preprocessor.steps if isinstance(step, GrootN17PackInputsStep)),
         None,
@@ -1155,13 +1149,13 @@ def make_groot_pre_post_processors(
     This mirrors SO100-style preprocessing and keeps scales consistent with GR00T.
 
     Args:
-        config: Groot configuration containing data_config, embodiment_tag, etc.
-        dataset_stats: Optional per-key min/max statistics for normalization before padding.
+        config (`GrootConfig`): The policy's configuration, providing feature shapes/types and normalization settings.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used to initialize normalization layers.
+        dataset_meta (`typing.Any | None`, *optional*): Dataset metadata, forwarded to factories that need more than just `dataset_stats`.
 
     Returns:
         Tuple of (preprocessor, postprocessor) pipelines
     """
-
     dataset_meta = dataset_meta or getattr(config, "_runtime_dataset_meta", None)
     checkpoint_assets = _load_n1_7_checkpoint_processor_assets(config)
     checkpoint_stats = checkpoint_assets.stats if checkpoint_assets is not None else None
@@ -1354,7 +1348,6 @@ def _to_uint8_np_bthwc(img_t: torch.Tensor) -> np.ndarray:
 
 def _align_video_horizon(video: np.ndarray, horizon: int | None) -> np.ndarray:
     """Match the checkpoint video horizon by truncating or left-padding frames."""
-
     if horizon is None or horizon <= 0:
         return video
     current = video.shape[1]
@@ -2010,7 +2003,6 @@ class GrootN17PackInputsStep(ProcessorStep):
 
     def get_cached_raw_state(self) -> dict[str, np.ndarray] | None:
         """Return the latest unnormalized state split by checkpoint modality key."""
-
         return self._last_raw_state
 
     def state_dict(self) -> dict[str, torch.Tensor]:
@@ -2225,7 +2217,6 @@ def _n1_7_decode_stats_for_action(
     use_percentiles: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Select the min/max arrays needed to decode one checkpoint action group."""
-
     is_relative = use_relative_action and config_value(action_config.get("rep")) == "relative"
     modality = "relative_action" if is_relative else "action"
     stats = raw_stats.get(modality, {}).get(key, {})
@@ -2524,8 +2515,7 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
         return features
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns a serializable dictionary of the processor's configuration.
+        """Returns a serializable dictionary of the processor's configuration.
 
         Excludes 'stats' since they are saved separately via state_dict().
         """
@@ -2538,8 +2528,7 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
         }
 
     def state_dict(self) -> dict[str, torch.Tensor]:
-        """
-        Returns normalization statistics as a flat state dictionary.
+        """Returns normalization statistics as a flat state dictionary.
 
         This enables saving stats to safetensors files, similar to normalizer_processor.
         """
@@ -2554,8 +2543,7 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
         return flat
 
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
-        """
-        Loads normalization statistics from a flat state dictionary.
+        """Loads normalization statistics from a flat state dictionary.
 
         This enables loading stats from safetensors files during from_pretrained.
         """

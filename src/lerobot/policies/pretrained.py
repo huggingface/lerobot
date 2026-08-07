@@ -54,12 +54,27 @@ _SINGLE_FILE_SHARD_SIZE = "1TB"
 
 
 class ActionSelectKwargs(TypedDict, total=False):
+    """Extra keyword arguments accepted by `select_action`/`predict_action_chunk`.
+
+    **Attributes**:
+        - **noise** (`Tensor | None`) -- Optional pre-sampled noise, for policies whose action generation
+          is stochastic (e.g. diffusion/flow-matching policies), used in place of freshly sampled noise.
+    """
+
     noise: Tensor | None
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
-    """
-    Base class for policy models.
+    """Base class for policy models.
+
+    Subclasses must define `config_class` and `name`, and implement `forward`, `predict_action_chunk`,
+    `select_action`, `get_optim_params`, and `reset`. See `docs/source/writing_docstrings.mdx` for the
+    concrete-subclass documentation pattern (config dataclass + this contract's deviations only).
+
+    **Attributes**:
+        - **config_class** (`type[PreTrainedConfig]`) -- The config class this policy expects.
+        - **name** (`str`) -- The registered name of this policy (matches its config's
+          `draccus.ChoiceRegistry` name).
     """
 
     config_class: None
@@ -82,6 +97,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     _cp_plan: ClassVar[dict[str, Any] | None] = None
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
+        """Store `config` on `self.config`. Subclasses build their model in their own `__init__`.
+
+        Raises:
+            ValueError: If `config` is not a `PreTrainedConfig` instance.
+        """
         super().__init__()
         if not isinstance(config, PreTrainedConfig):
             raise ValueError(
@@ -92,6 +112,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self.config = config
 
     def __init_subclass__(cls, **kwargs):
+        """Enforce that every concrete subclass defines `config_class` and `name`.
+
+        Raises:
+            TypeError: If `cls` doesn't define `config_class` or `name`.
+        """
         super().__init_subclass__(**kwargs)
         if not getattr(cls, "config_class", None):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
@@ -142,9 +167,36 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         strict: bool = False,
         **kwargs,
     ) -> T:
-        """
+        """Instantiate the policy from `config` and load its safetensors weights.
+
         The policy is set in evaluation mode by default using `policy.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `policy.train()`.
+
+        Args:
+            pretrained_name_or_path (str | Path): Either the `repo_id` of a model hosted on the Hub, or a
+                path to a directory containing weights saved using `save_pretrained`.
+            config (PreTrainedConfig | None, *optional*): The policy config to use. If `None`, resolved
+                from `pretrained_name_or_path` via `PreTrainedConfig.from_pretrained`.
+            force_download (bool, *optional*, defaults to `False`): Whether to force (re-)downloading the
+                files from the Hub, overriding the existing cache.
+            resume_download (bool | None, *optional*): Deprecated; ignored by the underlying Hub client.
+            proxies (dict | None, *optional*): A dictionary of proxy servers to use by protocol or endpoint.
+            token (str | bool | None, *optional*): The token to use as HTTP bearer authorization for
+                remote files. By default, uses the token cached by `huggingface-cli login`.
+            cache_dir (str | Path | None, *optional*): Path to the folder where cached files are stored.
+            local_files_only (bool, *optional*, defaults to `False`): If `True`, avoid downloading the
+                file and return the path to the local cached file if it exists.
+            revision (str | None, *optional*): Revision on the Hub: a branch name, git tag, or commit id.
+            strict (bool, *optional*, defaults to `False`): Whether to require an exact match between the
+                checkpoint's and the instantiated model's parameter keys.
+            kwargs: Forwarded to `config`'s resolution (when `config` is `None`) and to the policy's
+                constructor.
+
+        Returns:
+            T: The loaded policy, in eval mode, on `config.device`.
+
+        Raises:
+            FileNotFoundError: If the weights file isn't found locally or on the Hub.
         """
         if config is None:
             config = PreTrainedConfig.from_pretrained(
@@ -197,8 +249,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @abc.abstractmethod
     def get_optim_params(self) -> dict:
-        """
-        Returns the policy-specific parameters dict to be passed on to the optimizer.
+        """Returns the policy-specific parameters dict to be passed on to the optimizer.
+
+        Returns:
+            dict: The policy-specific parameters dict to be passed on to the optimizer.
         """
         raise NotImplementedError
 
@@ -217,10 +271,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
-        """_summary_
+        """Compute the training loss for a batch of normalized observations and actions.
 
         Args:
-            batch (dict[str, Tensor]): _description_
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation/action tensors,
+                as produced by this policy's preprocessor pipeline.
 
         Returns:
             tuple[Tensor, dict | None]: The loss and potentially other information. Apart from the loss which
@@ -234,6 +289,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation tensors.
+            kwargs: See `ActionSelectKwargs`.
+
+        Returns:
+            Tensor: The predicted action chunk.
         """
         raise NotImplementedError
 
@@ -243,6 +305,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation tensors.
+            kwargs: See `ActionSelectKwargs`.
+
+        Returns:
+            Tensor: The single action to execute next.
         """
         raise NotImplementedError
 
@@ -291,8 +360,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         peft_config=None,
         peft_cli_overrides: dict | None = None,
     ) -> PreTrainedPolicy:
-        """
-        Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
+        """Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
 
         This method is the single entry point for PEFT integration. Subclasses should
         override `_get_default_peft_targets()` to provide default target modules, and
@@ -336,8 +404,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return peft_model
 
     def _get_default_peft_targets(self) -> dict[str, any] | None:
-        """
-        Return default PEFT target modules for this policy.
+        """Return default PEFT target modules for this policy.
 
         Override this in subclasses to provide policy-specific defaults. These defaults
         are PEFT-method agnostic - they only specify which modules to target.
@@ -346,8 +413,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return None
 
     def _validate_peft_config(self, peft_config) -> None:
-        """
-        Validate the PEFT configuration for this policy.
+        """Validate the PEFT configuration for this policy.
 
         Override this in subclasses to add policy-specific validation or warnings.
         The default implementation checks that a pretrained_path exists.
@@ -365,8 +431,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
 
     def _preprocess_peft_cli_overrides(self, cli_overrides: dict, peft_method_type) -> dict:
-        """
-        Preprocess CLI overrides: rename keys and handle method-specific init_type.
+        """Preprocess CLI overrides: rename keys and handle method-specific init_type.
 
         Args:
             cli_overrides: Dict of CLI options (will be copied, not mutated).

@@ -744,12 +744,17 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
 
 class PI0Policy(PreTrainedPolicy):
-    """PI0 OpenPI Policy for LeRobot."""
+    """PyTorch port of Physical Intelligence's PI0 vision-language-action policy, generating action
+    chunks via flow matching.
+    """
 
     config_class = PI0Config
     name = "pi0"
 
     def supports_rtc(self) -> bool:
+        """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`]. PI0 implements Real-Time Chunking
+        inference.
+        """
         return True
 
     def __init__(
@@ -757,9 +762,10 @@ class PI0Policy(PreTrainedPolicy):
         config: PI0Config,
         **kwargs,
     ):
-        """
+        """Build the underlying PI0 model from `config`.
+
         Args:
-            config: Policy configuration class instance.
+            config (`PI0Config`): Policy configuration class instance.
         """
         require_package("transformers", extra="pi")
         super().__init__(config)
@@ -794,7 +800,11 @@ class PI0Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
+        """See [`~policies.pretrained.PreTrainedPolicy.from_pretrained`].
+
+        Additionally remaps checkpoint state-dict keys from the upstream openpi naming convention before
+        loading them, and defaults `strict` to `True` rather than `False`.
+        """
         print(
             "The PI0 model is a direct port of the OpenPI implementation. \n"
             "This implementation follows the original OpenPI structure for compatibility. \n"
@@ -955,10 +965,13 @@ class PI0Policy(PreTrainedPolicy):
         return fixed_state_dict
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]."""
         return self.parameters()
 
     def reset(self):
-        """Reset internal state - called when environment resets."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the cached action queue used by
+        `select_action`.
+        """
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
@@ -1046,18 +1059,20 @@ class PI0Policy(PreTrainedPolicy):
         return images, img_masks
 
     def prepare_state(self, batch):
-        """Pad state"""
+        """Zero-pad the observation state to `config.max_state_dim`."""
         state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):
-        """Pad action"""
+        """Zero-pad the target action to `config.max_action_dim`."""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Pops one action off an internal
+        queue, refilling the queue by calling `predict_action_chunk` whenever it is empty.
+        """
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
         )
@@ -1074,7 +1089,9 @@ class PI0Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`]. Runs the flow-matching
+        sampler (`config.num_inference_steps` denoising steps) to generate the chunk.
+        """
         self.eval()
 
         # Prepare inputs
@@ -1092,13 +1109,19 @@ class PI0Policy(PreTrainedPolicy):
         return actions
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`]. Computes the flow-matching loss between
+        the model's predicted and target velocity fields.
 
         Args:
-            batch: Training batch containing observations and actions.
-            reduction: How to reduce the loss. Options:
-                - "mean": Return scalar mean loss (default, backward compatible)
-                - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
+            batch (`dict[str, Tensor]`):
+                A batch of preprocessed, normalized observation/action tensors, as produced by this
+                policy's preprocessor pipeline.
+            reduction (`str`, *optional*, defaults to `"mean"`):
+                How to reduce the per-element loss. `"mean"` returns a scalar mean loss; `"none"` returns
+                per-sample losses of shape `(batch_size,)`, e.g. for RA-BC weighting.
+
+        Returns:
+            `tuple[Tensor, dict]`: The loss and a dict of logging-friendly loss statistics.
         """
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
