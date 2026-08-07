@@ -57,6 +57,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     so_follower,
+    unitree_g1,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
