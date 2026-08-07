@@ -260,6 +260,7 @@ lerobot-rollout \
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/start`          | Start (or restart) the policy control loop                                                                                                                                         |
 | `/subtask <text>` | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/ask <question>` | Ask a supported policy text head about its latest view. The answer is generated in the background without pausing the session                                                      |
 | `/reset`          | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
 | `/stop`           | End the session and run the normal shutdown routines                                                                                                                               |
 | `/help`           | List the commands                                                                                                                                                                  |
@@ -269,6 +270,9 @@ lerobot-rollout \
 Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
 > /subtask put the cube in the box
 Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /ask where is the red cube?
+Question queued: 'where is the red cube?' (the rollout keeps running)
+[policy] The red cube is beside the bowl.
 > /reset
 Task restored to 'pick up the cube'
 Resetting — returning the robot to its initial position...
@@ -288,6 +292,12 @@ Robot reset — holding at initial position. /start to run.
 - **RTC** (`--inference.type=rtc`) — the next chunk is generated under the new instruction and merged over the previous chunk's leftover prefix, so the switch lands within one inference and the motion stays continuous. The queue is deliberately not cleared: that would leave the robot without commands for a full inference latency. (With blending turned off via `--inference.rtc.enabled=false` the queued chunk drains first, so the switch lands up to one chunk later.)
 
 With `--use_torch_compile=true`, a switch whose instruction tokenizes to a different length can trigger a recompilation on the next forward pass, pausing inference for as long as the original warm-up took. Prefer leaving compilation off for sessions where you expect to re-instruct the policy often.
+
+**How `/ask` runs without taking over the rollout.** During an active rollout, the inference engine caches the latest policy-ready observation, so the command reader never touches cameras, processors, or robot hardware. A single background worker sends that snapshot to the optional `PreTrainedPolicy.generate_text(..., kind=TextKind.VQA, user_text=question)` hook and prints the result when ready. Questions are independent turns; there is no conversation history, and a second question is rejected while one is running so stale image tensors cannot accumulate. WALL-OSS (`wall_x`) is the first policy implementing this hook; policies without a compatible text head report that `/ask` is unsupported.
+
+Text and action calls share one policy safely: the engine gives a pending question priority after the current action inference finishes, while action inference uses a non-blocking gate. The hardware loop therefore keeps ticking and `/ask` never clears an action queue. RTC continues dispatching its buffered actions while text is decoded. Sync keeps the robot on its last commanded target until the policy is available again. Text generation still consumes model/GPU capacity, so response generation can reduce action freshness; RTC is preferred when uninterrupted action buffering matters.
+
+`/stop` suppresses any late answer and gives an active decoder five seconds to finish cleanly. If it is stuck, hardware teardown continues rather than leaving the robot session open indefinitely; the daemon may retain its model/GPU resources until it returns.
 
 **Console logs are muted while the session runs** so they don't interleave with what you're typing; they resume when it ends. A fatal inference error is still printed. Run without `--interactive` to watch the live log.
 

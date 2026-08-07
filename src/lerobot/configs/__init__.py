@@ -31,6 +31,7 @@ from .types import (
     PipelineFeatureType,
     PolicyFeature,
     RTCAttentionSchedule,
+    TextKind,
 )
 from .video import (
     DEFAULT_DEPTH_UNIT,
@@ -54,6 +55,7 @@ __all__ = [
     "PipelineFeatureType",
     "PolicyFeature",
     "RTCAttentionSchedule",
+    "TextKind",
     # Config classes
     "DatasetRecordConfig",
     "DatasetConfig",

@@ -52,6 +52,7 @@ from torch.nn import CrossEntropyLoss
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as tv_functional
 
+from lerobot.configs import TextKind
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
@@ -107,6 +108,7 @@ else:
 
 from .utils import (
     get_wallx_normal_text,
+    img_key_mapping,
     preprocesser_call,
     process_grounding_points,
     replace_action_token,
@@ -1585,6 +1587,25 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             - Handles special cases for input_embeds, generation methods, and GPU synchronization
             - Manages vision inputs to avoid unnecessary forward passes
         """
+        if cache_position is None:
+            past_length = 0
+            if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
+                past_length = int(past_key_values.get_seq_length())
+            input_length = input_ids.shape[1]
+            end = input_length if input_length > past_length else past_length + input_length
+            cache_position = torch.arange(
+                past_length,
+                end,
+                dtype=torch.long,
+                device=input_ids.device,
+            )
+            if cache_position.numel() == 0:
+                cache_position = torch.arange(
+                    input_length,
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+
         # Initialize MoE token types if not provided
         if moe_token_types is None:
             moe_token_types = torch.zeros_like(
@@ -1851,6 +1872,23 @@ class WallXPolicy(PreTrainedPolicy):
         """Get parameters for optimization."""
         return self.parameters()
 
+    @staticmethod
+    def _observation_prompt(img_keys: list[str]) -> str:
+        prompt = "Observation:"
+        for label in img_key_mapping(img_keys):
+            prompt += f" {label}: <|vision_start|><|image_pad|><|vision_end|>"
+        return prompt
+
+    def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
+        if kind == TextKind.SUBTASK:
+            instruction = f"{instruction}\nPredict the next action in language."
+        return (
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+            f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"
+            f"Instruction: {instruction}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+
     def preprocess_inputs(
         self,
         batch: dict[str, Any],
@@ -2079,6 +2117,118 @@ class WallXPolicy(PreTrainedPolicy):
                     loss_dict[f"channel_{key}"] = value.detach()
 
         return loss, loss_dict
+
+    def _build_text_inputs(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: str,
+        user_text: str | list[str] | None,
+    ) -> BatchFeature:
+        batch_size = batch[OBS_STATE].shape[0]
+        img_keys = [key for key in self.config.image_features if key in batch]
+        if not img_keys:
+            raise ValueError("Wall-X text generation requires at least one image feature.")
+
+        image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
+        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
+        tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
+        if user_text is None:
+            instructions = tasks
+        elif isinstance(user_text, str):
+            instructions = [user_text] * batch_size
+        elif len(user_text) == batch_size:
+            instructions = user_text
+        else:
+            raise ValueError(f"Expected one text prompt for each of the {batch_size} samples.")
+
+        texts = [
+            process_grounding_points(
+                self._format_text_prompt(str(instruction), kind, img_keys),
+                orig_height,
+                orig_width,
+                resized_height,
+                resized_width,
+                MODEL_TYPE,
+            )
+            for instruction in instructions
+        ]
+        inputs = preprocesser_call(
+            processor=self.model.processor,
+            text=texts,
+            images=image_inputs,
+            videos=None,
+            device=batch[OBS_STATE].device,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=TOKENIZER_MAX_LENGTH,
+        )
+        inputs.pop("labels", None)
+        inputs["moe_token_types"] = torch.zeros_like(inputs.input_ids, dtype=torch.bool)
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                inputs[key] = value.to(batch[OBS_STATE].device)
+        return inputs
+
+    @torch.no_grad()
+    def generate_text(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        kind: TextKind = TextKind.SUBTASK,
+        user_text: str | None = None,
+    ) -> str:
+        """Generate one grounded language response from the WALL-OSS VLM."""
+        outputs = self.generate_texts(
+            batch,
+            kind=kind,
+            user_text=user_text,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
+        )
+        if len(outputs) != 1:
+            raise ValueError(f"Interactive rollout expected one Wall-X output, got {len(outputs)}.")
+        return outputs[0]
+
+    @torch.no_grad()
+    def generate_texts(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: TextKind = TextKind.VQA,
+        user_text: str | list[str] | None = None,
+        max_new_tokens: int = 100,
+        min_new_tokens: int = 0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+    ) -> list[str]:
+        """Generate grounded Wall-X text for one or more observations."""
+        self.eval()
+        if kind not in {TextKind.VQA, TextKind.SUBTASK}:
+            raise ValueError("Unsupported Wall-X text kind.")
+        inputs = self._build_text_inputs(batch, kind=kind, user_text=user_text)
+        prompt_length = inputs.input_ids.shape[1]
+        sampling = temperature > 0
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "min_new_tokens": min_new_tokens,
+            "do_sample": sampling,
+            "eos_token_id": self.model.processor.tokenizer.eos_token_id,
+            "pad_token_id": self.model.processor.tokenizer.pad_token_id,
+            "use_cache": True,
+        }
+        if sampling:
+            generation_kwargs.update(temperature=temperature, top_p=top_p)
+        output_ids = self.model.generate(**inputs, **generation_kwargs)
+        return [
+            value.strip()
+            for value in self.model.processor.tokenizer.batch_decode(
+                output_ids[:, prompt_length:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+        ]
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:

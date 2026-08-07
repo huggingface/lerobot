@@ -31,6 +31,13 @@ class PipelineFeatureType(str, Enum):
     OBSERVATION = "OBSERVATION"
 
 
+class TextKind(str, Enum):
+    """Text-generation requests understood by interactive policy hooks."""
+
+    SUBTASK = "subtask"
+    VQA = "vqa"
+
+
 class NormalizationMode(str, Enum):
     MIN_MAX = "MIN_MAX"
     MEAN_STD = "MEAN_STD"

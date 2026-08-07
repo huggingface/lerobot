@@ -28,7 +28,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig, TextKind
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -233,6 +233,28 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         action_queue = getattr(self, "_action_queue", None)
         if action_queue is not None:
             action_queue.clear()
+
+    def supports_text_generation(self) -> bool:
+        """Whether this policy implements the optional :meth:`generate_text` hook."""
+        return type(self).generate_text is not PreTrainedPolicy.generate_text
+
+    def generate_text(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        kind: TextKind = TextKind.SUBTASK,
+        user_text: str | None = None,
+    ) -> str:
+        """Generate one string from a policy's optional language head.
+
+        Interactive rollout calls this with a policy-ready observation batch.
+        Implementations must treat the batch as read-only and avoid mutating
+        action queues or episode state: text generation runs on a background
+        worker while the control loop remains active.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head. Implement `generate_text` to support /ask."
+        )
 
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""

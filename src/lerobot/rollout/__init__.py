@@ -52,6 +52,8 @@ from .interactive import (
     InteractiveSession,
     LinkedEvent,
     StdinCommandListener,
+    TextQueryRequest,
+    TextQueryWorker,
     parse_command,
 )
 from .strategies import (
@@ -82,6 +84,8 @@ __all__ = [
     "InteractiveCommand",
     "InteractiveSession",
     "LinkedEvent",
+    "TextQueryRequest",
+    "TextQueryWorker",
     "PolicyContext",
     "ProcessorContext",
     "RTCInferenceConfig",

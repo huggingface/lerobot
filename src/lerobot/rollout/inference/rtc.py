@@ -124,8 +124,7 @@ class RTCInferenceEngine(InferenceEngine):
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
     ) -> None:
-        super().__init__(task=task)
-        self._policy = policy
+        super().__init__(task=task, policy=policy)
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
@@ -260,14 +259,16 @@ class RTCInferenceEngine(InferenceEngine):
         chunk is discarded instead of merged into the cleared queue.
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
-        self._policy.reset()
-        self._preprocessor.reset()
-        self._postprocessor.reset()
+        with self._policy_call_lock:
+            self._policy.reset()
+            self._preprocessor.reset()
+            self._postprocessor.reset()
         if self._action_queue is not None:
             self._action_queue.clear()
         with self._obs_lock:
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
+        self._reset_text_observation()
         # The queue was just cleared, so a pending task change has nothing
         # stale left to blend against.
         self._discard_task_change()
@@ -316,6 +317,12 @@ class RTCInferenceEngine(InferenceEngine):
                     continue
 
                 if queue.qsize() <= self._rtc_queue_threshold:
+                    if not self._try_begin_action_inference():
+                        # A background /ask is using the policy.  The control
+                        # thread can keep draining the already-produced RTC
+                        # actions; do not start another model call meanwhile.
+                        time.sleep(_RTC_IDLE_SLEEP_S)
+                        continue
                     try:
                         current_time = time.perf_counter()
                         idx_before = queue.get_action_index()
@@ -344,6 +351,7 @@ class RTCInferenceEngine(InferenceEngine):
                         obs_batch["task"] = [task]
 
                         preprocessed = self._preprocessor(obs_batch)
+                        self._publish_text_observation(preprocessed)
 
                         if prev_actions is not None and self._relative_step is not None:
                             # Rebase against the raw cached state so the leftover tail stays in
@@ -412,6 +420,8 @@ class RTCInferenceEngine(InferenceEngine):
                             # Persistent failure: stop retrying and propagate shutdown.
                             raise
                         time.sleep(_RTC_ERROR_RETRY_DELAY_S)
+                    finally:
+                        self._end_action_inference()
                 else:
                     time.sleep(_RTC_IDLE_SLEEP_S)
 

@@ -21,7 +21,7 @@ import io
 import logging
 import os
 import time
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -30,12 +30,15 @@ import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs import TextKind  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     InferenceEngine,
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
     StdinCommandListener,
+    TextQueryRequest,
+    TextQueryWorker,
     parse_command,
 )
 
@@ -198,6 +201,35 @@ def test_stdin_listener_blocking_fallback():
     listener.stop()
 
 
+def test_text_query_worker_stop_is_bounded_and_suppresses_callback():
+    query_started = Event()
+    release_query = Event()
+    answers = []
+
+    def answer(request):
+        query_started.set()
+        assert release_query.wait(timeout=2.0)
+        return request.question
+
+    worker = TextQueryWorker(
+        answer=answer,
+        on_answer=lambda request, response: answers.append((request, response)),
+        on_error=lambda request, exc: pytest.fail(f"unexpected error for {request}: {exc}"),
+    )
+    worker.start()
+    assert worker.submit(TextQueryRequest("question", {}))
+    assert _wait_for(query_started.is_set)
+
+    assert worker.stop(timeout_s=0.01) is False
+    active_thread = worker._thread
+    worker.start()
+    assert worker._thread is active_thread
+    release_query.set()
+    assert worker.stop(timeout_s=2.0) is True
+    assert worker._thread is None
+    assert answers == []
+
+
 # ---------------------------------------------------------------------------
 # InteractiveSession
 # ---------------------------------------------------------------------------
@@ -221,8 +253,8 @@ class _FakeEngine(InferenceEngine):
     def reset(self) -> None: ...
     def get_action(self, obs_frame=None): ...
 
-    def __init__(self, task: str = "pick up the cube") -> None:
-        super().__init__(task=task)
+    def __init__(self, task: str = "pick up the cube", policy=None) -> None:
+        super().__init__(task=task, policy=policy)
         self.start = MagicMock()
         self.stop = MagicMock()
         self.reset = MagicMock()
@@ -232,11 +264,11 @@ class _FakeEngine(InferenceEngine):
         self.get_action = MagicMock(return_value=None)
 
 
-def _make_session(input_stream, run_behavior=None):
+def _make_session(input_stream, run_behavior=None, policy=None):
     """Build a session around a mock strategy and a minimal fake context."""
     parent = Event()
     stop_event = LinkedEvent(parent)
-    engine = _FakeEngine()
+    engine = _FakeEngine(policy=policy)
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(
             cfg=SimpleNamespace(play_sounds=False),
@@ -500,8 +532,10 @@ def test_session_mutes_console_logging_and_restores_on_exit():
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
             assert _wait_for(
-                lambda: console_handler.level == logging.CRITICAL + 1
-                and lib_handler.level == logging.CRITICAL + 1
+                lambda: (
+                    console_handler.level == logging.CRITICAL + 1
+                    and lib_handler.level == logging.CRITICAL + 1
+                )
             )
             session._handle_line("/stop")
             thread.join(timeout=2.0)
@@ -673,6 +707,220 @@ def test_session_reset_restores_initial_task():
         thread.join(timeout=2.0)
 
 
+def test_session_reset_invalidates_text_observation(capsys):
+    policy = MagicMock()
+    policy.supports_text_generation.return_value = True
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(reader, policy=policy)
+        engine._publish_text_observation({"observation.state": "before-reset"})
+        thread = _start_session_thread(session)
+
+        session._handle_line("/reset")
+        # Simulate an action inference that started before /reset but reaches
+        # publication after the command handler invalidated the old scene.
+        engine._publish_text_observation({"observation.state": "late-before-reset"})
+        assert engine.snapshot_text_observation() is None
+        session._handle_line("/ask what can you see?")
+
+        assert "rollout is not running" in capsys.readouterr().out
+        policy.generate_text.assert_not_called()
+
+        engine._reset_text_observation()
+        engine._publish_text_observation({"observation.state": "after-restart"})
+        assert engine.snapshot_text_observation()["observation.state"] == "after-restart"
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_ask_reports_usage_unsupported_policy_and_missing_observation(capsys):
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, _engine, _parent, _run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/ask")
+        session._handle_line("/ask what can you see?")
+        out = capsys.readouterr().out
+        assert "Usage: /ask <question>" in out
+        assert "does not support /ask" in out
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+    policy = MagicMock()
+    policy.supports_text_generation.return_value = True
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, _engine, _parent, run_started = _make_session(reader, policy=policy)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/ask what can you see?")
+        assert "rollout is not running" in capsys.readouterr().out
+
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+        session._handle_line("/ask what can you see?")
+        assert "No policy observation is available yet" in capsys.readouterr().out
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_ask_runs_in_background_without_stopping_rollout(capsys):
+    query_started = Event()
+    release_query = Event()
+    calls = []
+
+    class TextPolicy:
+        @staticmethod
+        def supports_text_generation() -> bool:
+            return True
+
+        @staticmethod
+        def generate_text(observation, *, kind, user_text):
+            calls.append((observation, kind, user_text, current_thread().name))
+            query_started.set()
+            assert release_query.wait(timeout=2.0)
+            return "The red cube is beside the bowl."
+
+    with _pipe_stream() as (reader, _writer):
+        session, strategy, engine, _parent, run_started = _make_session(reader, policy=TextPolicy())
+        engine._publish_text_observation({"observation.state": "snapshot", "task": "stale task"})
+        engine.set_task("current task")
+        thread = _start_session_thread(session)
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+
+        session._handle_line('/ask "Where is the red cube?"')
+        assert _wait_for(query_started.is_set)
+        # The query worker is blocked in generation, but the rollout segment
+        # and command listener remain live and the engine has not been paused.
+        assert session._running.is_set()
+        assert strategy.run.call_count == 1
+        engine.pause.assert_not_called()
+
+        session._handle_line("/ask another question")
+        assert "already being answered" in capsys.readouterr().out
+
+        release_query.set()
+        assert _wait_for(lambda: not session._text_query.busy)
+        out = capsys.readouterr().out
+        assert "[policy] The red cube is beside the bowl." in out
+        assert len(calls) == 1
+        observation, kind, user_text, thread_name = calls[0]
+        assert observation["observation.state"] == "snapshot"
+        assert observation["task"] == "current task"
+        assert kind is TextKind.VQA
+        assert user_text == "Where is the red cube?"
+        assert thread_name == "InteractiveTextQuery"
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+
+
+def test_session_ask_failure_is_nonfatal(capsys):
+    class FailingTextPolicy:
+        @staticmethod
+        def supports_text_generation() -> bool:
+            return True
+
+        @staticmethod
+        def generate_text(observation, *, kind, user_text):
+            del observation, kind, user_text
+            raise RuntimeError("decoder failed")
+
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, run_started = _make_session(reader, policy=FailingTextPolicy())
+        engine._publish_text_observation({"observation.state": "snapshot"})
+        thread = _start_session_thread(session)
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+        session._handle_line("/ask what can you see?")
+        assert _wait_for(lambda: not session._text_query.busy)
+        assert "Policy question failed (RuntimeError): decoder failed" in capsys.readouterr().out
+        assert session._running.is_set()
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_does_not_restart_while_text_query_owns_policy(capsys):
+    query_started = Event()
+    release_query = Event()
+
+    class TextPolicy:
+        @staticmethod
+        def supports_text_generation() -> bool:
+            return True
+
+        @staticmethod
+        def generate_text(observation, *, kind, user_text):
+            del observation, kind, user_text
+            query_started.set()
+            assert release_query.wait(timeout=2.0)
+            return "answer"
+
+    with _pipe_stream() as (reader, _writer):
+        session, strategy, engine, _parent, run_started = _make_session(reader, policy=TextPolicy())
+        engine._publish_text_observation({"observation.state": "snapshot"})
+        thread = _start_session_thread(session)
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+        session._handle_line("/ask question")
+        assert _wait_for(query_started.is_set)
+
+        session._handle_line("/reset")
+        assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+        session._handle_line("/start")
+        assert "question is still finishing" in capsys.readouterr().out
+        assert strategy.run.call_count == 1
+
+        release_query.set()
+        assert _wait_for(lambda: not session._text_query.busy)
+        run_started.clear()
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+        assert strategy.run.call_count == 2
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_stop_suppresses_late_text_answer(capsys):
+    query_started = Event()
+    release_query = Event()
+
+    class TextPolicy:
+        @staticmethod
+        def supports_text_generation() -> bool:
+            return True
+
+        @staticmethod
+        def generate_text(observation, *, kind, user_text):
+            del observation, kind, user_text
+            query_started.set()
+            assert release_query.wait(timeout=2.0)
+            return "late answer"
+
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, run_started = _make_session(reader, policy=TextPolicy())
+        engine._publish_text_observation({"observation.state": "snapshot"})
+        thread = _start_session_thread(session)
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+        session._handle_line("/ask question")
+        assert _wait_for(query_started.is_set)
+        capsys.readouterr()
+
+        session._handle_line("/stop")
+        # Shutdown waits for the model call so teardown cannot race its GPU use.
+        time.sleep(0.05)
+        assert thread.is_alive()
+        release_query.set()
+        thread.join(timeout=2.0)
+
+        assert not thread.is_alive()
+        assert "[policy] late answer" not in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # InferenceEngine task holder (the /subtask plumbing)
 # ---------------------------------------------------------------------------
@@ -702,6 +950,90 @@ def test_engine_discard_task_change():
     assert engine._take_task() == ("b", False)
 
 
+def test_engine_text_query_has_priority_without_blocking_action_loop():
+    query_started = Event()
+    release_query = Event()
+
+    class TextPolicy:
+        @staticmethod
+        def supports_text_generation() -> bool:
+            return True
+
+        @staticmethod
+        def generate_text(observation, *, kind, user_text):
+            del observation, kind, user_text
+            query_started.set()
+            assert release_query.wait(timeout=2.0)
+            return "answer"
+
+    engine = _FakeEngine(policy=TextPolicy())
+    query_thread = Thread(
+        target=lambda: engine.generate_text({}, kind=TextKind.VQA, user_text="question"),
+        daemon=True,
+    )
+    query_thread.start()
+    assert _wait_for(query_started.is_set)
+
+    # Action inference probes the gate without waiting for text decoding.
+    assert engine._try_begin_action_inference() is False
+    release_query.set()
+    query_thread.join(timeout=2.0)
+    assert not query_thread.is_alive()
+
+    assert engine._try_begin_action_inference() is True
+    engine._end_action_inference()
+
+
+def test_rtc_engine_does_not_race_action_inference_with_text_query():
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.inference import RTCInferenceEngine
+
+    query_started = Event()
+    release_query = Event()
+
+    def generate_text(observation, *, kind, user_text):
+        del observation, kind, user_text
+        query_started.set()
+        assert release_query.wait(timeout=2.0)
+        return "answer"
+
+    policy = MagicMock()
+    policy.supports_text_generation.return_value = True
+    policy.generate_text.side_effect = generate_text
+    engine = RTCInferenceEngine(
+        policy=policy,
+        preprocessor=SimpleNamespace(steps=[]),
+        postprocessor=SimpleNamespace(steps=[]),
+        robot_wrapper=SimpleNamespace(action_features={}, robot_type="test"),
+        rtc_config=RTCConfig(),
+        hw_features={},
+        task="test",
+        fps=30,
+        device="cpu",
+    )
+    query_thread = Thread(
+        target=lambda: engine.generate_text({}, kind=TextKind.VQA, user_text="question"),
+        daemon=True,
+    )
+    query_thread.start()
+    assert _wait_for(query_started.is_set)
+
+    engine.start()
+    try:
+        engine.notify_observation({"joint.pos": 0.0})
+        engine.resume()
+        time.sleep(0.05)
+        # The RTC worker remains responsive but does not enter the same policy
+        # while language decoding owns it.
+        assert engine._rtc_thread is not None and engine._rtc_thread.is_alive()
+        policy.predict_action_chunk.assert_not_called()
+    finally:
+        engine.stop()
+        release_query.set()
+        query_thread.join(timeout=2.0)
+    assert not query_thread.is_alive()
+
+
 def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     """A /subtask switch must reach the policy and drop stale queued actions."""
     import torch
@@ -728,6 +1060,7 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
     assert policy.drop_queued_actions.call_count == 0
     assert policy.select_action.call_args[0][0]["task"] == "pick up the cube"
+    assert engine.snapshot_text_observation()["task"] == "pick up the cube"
 
     engine.set_task("fold the towel")
     engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})

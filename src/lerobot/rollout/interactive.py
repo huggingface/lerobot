@@ -19,6 +19,7 @@ rollout from the terminal while hardware and policy stay connected and warm:
 
     /start           start (or restart) the policy control loop
     /subtask <text>  change the instruction the policy follows, mid-run
+    /ask <question>  ask the policy about the latest view without stopping
     /reset           stop movement, return the robot to its initial position,
                      and restore the instruction passed on the command line
     /stop            end the session and run the normal shutdown routines
@@ -29,8 +30,9 @@ Threading model (mirrors the DAgger events pattern): a daemon
 thread-safe state — flags for the session loop, and the instruction string
 via :meth:`InferenceEngine.set_task`; it never touches hardware, and never
 mutates policy state (the engine applies a task change on its own inference
-thread).  The
-:class:`InteractiveSession` driver runs on the main thread and executes
+thread).  ``/ask`` snapshots the latest policy-ready observation and hands it
+to one background text-query worker; the worker never reads robot hardware.
+The :class:`InteractiveSession` driver runs on the main thread and executes
 ``strategy.run(ctx)`` in *segments*: each ``/start`` begins a segment, and
 ``/reset`` / ``/stop`` end it by setting the session's :class:`LinkedEvent`,
 which every strategy control loop already polls as
@@ -48,9 +50,8 @@ prints the engine's captured traceback.  Run without ``--interactive`` to
 see the full live log output.
 
 The command table is intentionally a name → (handler, argument hint, help)
-mapping so further commands (``/ask`` and the rest of the language-runtime
-work in PR #4183/#4234) can be registered without restructuring the parser,
-the help output, or the session loop.
+mapping so further commands can be registered without restructuring the
+parser, the help output, or the session loop.
 """
 
 from __future__ import annotations
@@ -63,9 +64,11 @@ import time
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Event, Thread
+from queue import Empty, Queue
+from threading import Event, Lock, Thread
 from typing import IO, TYPE_CHECKING
 
+from lerobot.configs import TextKind
 from lerobot.utils.utils import log_say
 
 if TYPE_CHECKING:
@@ -326,6 +329,141 @@ class StdinCommandListener:
             self._emit_eof()
 
 
+@dataclass(frozen=True)
+class TextQueryRequest:
+    """One immutable policy question paired with the view seen at submission."""
+
+    question: str
+    observation: dict
+
+
+class TextQueryWorker:
+    """Single background worker for non-blocking interactive policy questions.
+
+    At most one request may be queued or running.  This bounds the number of
+    retained image tensors (the observation can live on the GPU) and gives the
+    operator an explicit "busy" response instead of accumulating questions
+    against increasingly stale views.
+    """
+
+    _STOP = object()
+    _JOIN_TIMEOUT_S = 5.0
+
+    def __init__(
+        self,
+        answer: Callable[[TextQueryRequest], str],
+        on_answer: Callable[[TextQueryRequest, str], None],
+        on_error: Callable[[TextQueryRequest, Exception], None],
+    ) -> None:
+        self._answer = answer
+        self._on_answer = on_answer
+        self._on_error = on_error
+        self._queue: Queue[TextQueryRequest | object] = Queue(maxsize=1)
+        self._state_lock = Lock()
+        self._busy = False
+        self._stopping = Event()
+        self._stop_enqueued = False
+        self._thread: Thread | None = None
+
+    @property
+    def busy(self) -> bool:
+        with self._state_lock:
+            return self._busy
+
+    def start(self) -> None:
+        """Start the worker (idempotent)."""
+        with self._state_lock:
+            if self._thread is not None or self._stopping.is_set():
+                return
+            self._thread = Thread(target=self._run, daemon=True, name="InteractiveTextQuery")
+            self._thread.start()
+
+    def submit(self, request: TextQueryRequest) -> bool:
+        """Queue ``request`` without blocking; return ``False`` when busy or stopping."""
+        with self._state_lock:
+            if self._busy or self._stopping.is_set():
+                return False
+            self._busy = True
+            # stop() takes the same lock before publishing its sentinel, so a
+            # successful admission cannot race with shutdown and hit Queue.Full.
+            self._queue.put_nowait(request)
+        return True
+
+    def cancel(self) -> None:
+        """Reject new work, discard a queued request, and suppress late callbacks."""
+        with self._state_lock:
+            self._stopping.set()
+            discard_request = not self._stop_enqueued
+        if discard_request:
+            self._discard_queued_request()
+
+    def stop(self, timeout_s: float = _JOIN_TIMEOUT_S) -> bool:
+        """Cancel queued work and give an active model call bounded time to finish.
+
+        Returns ``False`` when decoding is still stuck after ``timeout_s``. The
+        worker is a daemon and callbacks stay suppressed, allowing hardware
+        teardown to proceed instead of hanging indefinitely.
+        """
+        self.cancel()
+        with self._state_lock:
+            thread = self._thread
+            enqueue_stop = thread is not None and not self._stop_enqueued
+            self._stop_enqueued = self._stop_enqueued or enqueue_stop
+        if thread is None:
+            return True
+        if enqueue_stop:
+            self._queue.put(self._STOP)
+        thread.join(timeout=timeout_s)
+        stopped = not thread.is_alive()
+        if stopped:
+            with self._state_lock:
+                if self._thread is thread:
+                    self._thread = None
+        return stopped
+
+    def _discard_queued_request(self) -> None:
+        try:
+            item = self._queue.get_nowait()
+        except Empty:
+            return
+        self._queue.task_done()
+        if item is self._STOP:
+            # A concurrent/repeated cancel must not consume the sentinel that
+            # an earlier stop() already published for the worker.
+            self._queue.put_nowait(self._STOP)
+            return
+        with self._state_lock:
+            self._busy = False
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is self._STOP:
+                    return
+                request = item
+                assert isinstance(request, TextQueryRequest)
+                if self._stopping.is_set():
+                    continue
+                try:
+                    answer = self._answer(request)
+                except Exception as exc:  # a language failure must not end robot control
+                    self._deliver(self._on_error, request, exc)
+                else:
+                    self._deliver(self._on_answer, request, answer)
+            finally:
+                if item is not self._STOP:
+                    with self._state_lock:
+                        self._busy = False
+                self._queue.task_done()
+
+    def _deliver(self, callback: Callable[..., None], *args) -> None:
+        """Linearize a result callback with cancellation."""
+        with self._state_lock:
+            if not self._stopping.is_set():
+                callback(*args)
+
+
 class InteractiveSession:
     """Drive a rollout strategy from chat-style stdin commands.
 
@@ -374,6 +512,11 @@ class InteractiveSession:
         # The instruction the rollout was launched with; /reset restores it.
         self._initial_task = ctx.policy.inference.task
         self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
+        self._text_query = TextQueryWorker(
+            self._answer_text_query,
+            self._report_text_answer,
+            self._report_text_error,
+        )
 
         # Written by the listener thread, consumed by the main loop.
         self._start_requested = Event()
@@ -383,11 +526,11 @@ class InteractiveSession:
         self._running = Event()
 
         # name -> (handler, argument hint, help line); /help and the banner
-        # render from this table, so future commands (e.g. /ask) stay
-        # documented for free.
+        # render from this table, so future commands stay documented for free.
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
+            "ask": (self._cmd_ask, " <question>", "ask the policy about the latest view"),
             "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
             "stop": (self._cmd_stop, "", "end the session and shut down"),
             "help": (self._cmd_help, "", "show this help"),
@@ -406,6 +549,7 @@ class InteractiveSession:
             muted_handlers = _mute_console_log_handlers()
             warnings.simplefilter("ignore")
             self._print(self._render_banner())
+            self._text_query.start()
             self._listener.start()
             while not self._global_shutdown.is_set():
                 if self._ctx.policy.inference.failed:
@@ -425,6 +569,13 @@ class InteractiveSession:
                 self._wake.clear()
         finally:
             self._listener.stop()
+            # A model call cannot be force-cancelled safely. Give it a bounded
+            # grace period, then prioritize hardware teardown if it is wedged.
+            if not self._text_query.stop():
+                self._print(
+                    "Policy question did not finish within 5 seconds — "
+                    "continuing hardware shutdown; its daemon thread will be abandoned."
+                )
             # Restore before log_say so teardown logs are visible again.
             _restore_log_handlers(muted_handlers)
             warnings.filters[:] = saved_warning_filters
@@ -453,7 +604,8 @@ class InteractiveSession:
         log_say("Starting rollout", self._ctx.runtime.cfg.play_sounds)
         self._print(
             f"Rollout running — task {_format_task(engine.task)}. "
-            "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+            "/subtask <text> to change it, /ask <question> to query the policy, "
+            "/reset to return to initial position, /stop to shut down."
         )
         self._running.set()
         try:
@@ -507,6 +659,9 @@ class InteractiveSession:
         if self._running.is_set():
             self._print("Already running — /reset to pause first, or /stop to shut down.")
             return
+        if self._text_query.busy:
+            self._print("A policy question is still finishing — wait for it before /start.")
+            return
         self._start_requested.set()
         self._wake.set()
 
@@ -527,6 +682,44 @@ class InteractiveSession:
         else:
             self._print(f"Task unchanged: {_format_task(task)}")
 
+    def _cmd_ask(self, cmd: InteractiveCommand) -> None:
+        question = _strip_quotes(cmd.args)
+        if not question:
+            self._print("Usage: /ask <question>")
+            return
+        engine = self._ctx.policy.inference
+        if not engine.supports_text_generation():
+            self._print("This policy does not support /ask (it has no text-generation head).")
+            return
+        if not self._running.is_set():
+            self._print("The rollout is not running — /start it before using /ask.")
+            return
+        observation = engine.snapshot_text_observation()
+        if observation is None:
+            self._print("No policy observation is available yet — /start the rollout and try again.")
+            return
+        request = TextQueryRequest(question=question, observation=observation)
+        if not self._text_query.submit(request):
+            self._print("A policy question is already being answered — try again when it finishes.")
+            return
+        self._print(f"Question queued: {question!r} (the rollout keeps running)")
+
+    def _answer_text_query(self, request: TextQueryRequest) -> str:
+        return self._ctx.policy.inference.generate_text(
+            request.observation,
+            kind=TextKind.VQA,
+            user_text=request.question,
+        )
+
+    def _report_text_answer(self, request: TextQueryRequest, answer: str) -> None:
+        if answer:
+            self._print(f"[policy] {answer}")
+        else:
+            self._print(f"The policy returned no answer for {request.question!r}.")
+
+    def _report_text_error(self, request: TextQueryRequest, exc: Exception) -> None:
+        self._print(f"Policy question failed ({type(exc).__name__}): {exc}")
+
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         # Last command wins: a /start still waiting to be serviced is cancelled
         # so the robot never starts moving after the operator asked it not to.
@@ -536,8 +729,13 @@ class InteractiveSession:
         # the main thread) so that both task writers run on this thread and are
         # ordered by command order — otherwise a /subtask typed right after
         # /reset would be silently reverted by the deferred restore.
-        if self._ctx.policy.inference.set_task(self._initial_task):
+        engine = self._ctx.policy.inference
+        if engine.set_task(self._initial_task):
             self._print(f"Task restored to {_format_task(self._initial_task)}")
+        # Homing changes the scene outside normal inference. Invalidate the
+        # cached VLM input synchronously so a following /ask cannot capture
+        # the pre-reset view while the main thread is still unwinding.
+        engine.invalidate_text_observation()
         self._reset_requested.set()
         self._segment_stop.set()
         self._wake.set()
@@ -546,6 +744,10 @@ class InteractiveSession:
         self._request_stop()
 
     def _request_stop(self) -> None:
+        # Suppress a queued/finishing answer as soon as /stop or EOF is
+        # observed; stop() in the session's finally block gives the model call
+        # bounded time to finish before hardware teardown continues.
+        self._text_query.cancel()
         self._start_requested.clear()  # last command wins, see _cmd_reset
         self._stop_requested.set()
         self._segment_stop.set()

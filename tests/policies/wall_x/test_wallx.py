@@ -16,6 +16,8 @@
 
 """Test script to verify Wall-X policy integration with LeRobot"""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -24,11 +26,15 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
+from lerobot.configs import TextKind  # noqa: E402
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
-from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import (  # noqa: E402
+    Qwen2_5_VLMoEForAction,
+    WallXPolicy,
+)
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
@@ -74,6 +80,80 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
 
     assert len(output.hidden_states) == config.num_hidden_layers + 1
     assert len(output.attentions) == config.num_hidden_layers
+
+
+def _make_unloaded_policy():
+    policy = WallXPolicy.__new__(WallXPolicy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(
+        text_temperature=0.0,
+        text_top_p=1.0,
+    )
+    return policy
+
+
+def test_policy_exposes_grounded_text_generation(monkeypatch):
+    class Inputs(dict):
+        __getattr__ = dict.__getitem__
+
+    class Tokenizer:
+        eos_token_id = 2
+        pad_token_id = 0
+
+        @staticmethod
+        def batch_decode(token_ids, **kwargs):
+            del kwargs
+            assert torch.equal(token_ids, torch.tensor([[7, 8]]))
+            return ["The mug is beside the bowl."]
+
+    class Model:
+        processor = SimpleNamespace(tokenizer=Tokenizer())
+
+        @staticmethod
+        def generate(input_ids, **kwargs):
+            del kwargs
+            return torch.cat([input_ids, torch.tensor([[7, 8]])], dim=1)
+
+    policy = _make_unloaded_policy()
+    policy.model = Model()
+    inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
+    monkeypatch.setattr(policy, "_build_text_inputs", lambda *args, **kwargs: inputs)
+
+    batch = {"observation.state": torch.zeros(1, 7), "task": "pick up the cup"}
+    assert (
+        policy.generate_text(batch, kind=TextKind.VQA, user_text="Where is the mug?")
+        == "The mug is beside the bowl."
+    )
+    assert policy.supports_text_generation()
+
+    prompt = policy._format_text_prompt(
+        "Where is the mug?",
+        TextKind.VQA,
+        ["observation.images.face_view"],
+    )
+    assert "Observation: front view:" in prompt
+    assert "Instruction: Where is the mug?" in prompt
+    assert prompt.endswith("<|im_start|>assistant\n")
+
+
+def test_text_generation_synthesizes_missing_cache_position():
+    class Cache:
+        @staticmethod
+        def get_seq_length():
+            return 3
+
+    pixel_values = torch.ones(1, 3, 4, 4)
+    inputs = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        object(),
+        torch.tensor([[9]]),
+        past_key_values=Cache(),
+        pixel_values=pixel_values,
+    )
+
+    assert torch.equal(inputs["cache_position"], torch.tensor([3]))
+    assert torch.equal(inputs["input_ids"], torch.tensor([[9]]))
+    # A continuation token reuses the KV cache, so the image is not encoded again.
+    assert inputs["pixel_values"] is None
 
 
 @require_cuda

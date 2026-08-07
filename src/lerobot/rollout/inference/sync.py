@@ -65,8 +65,7 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
-        super().__init__(task=task)
-        self._policy = policy
+        super().__init__(task=task, policy=policy)
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._dataset_features = dataset_features
@@ -90,9 +89,11 @@ class SyncInferenceEngine(InferenceEngine):
     def reset(self) -> None:
         """Reset the policy and pre/post-processors."""
         logger.info("Resetting sync inference state (policy + processors)")
-        self._policy.reset()
-        self._preprocessor.reset()
-        self._postprocessor.reset()
+        with self._policy_call_lock:
+            self._policy.reset()
+            self._preprocessor.reset()
+            self._postprocessor.reset()
+        self._reset_text_observation()
         # The policy was just reset, so a pending task change has nothing
         # stale left to flush.
         self._discard_task_change()
@@ -101,35 +102,46 @@ class SyncInferenceEngine(InferenceEngine):
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
         if obs_frame is None:
             return None
-        # Shallow copy is intentional: the caller (`send_next_action`) builds
-        # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
-        # tensor/array values are not shared with any other reader.
-        observation = copy(obs_frame)
-        autocast_ctx = (
-            torch.autocast(device_type=self._device.type)
-            if self._device.type == "cuda" and self._policy.config.use_amp
-            else nullcontext()
-        )
-        task, task_changed = self._take_task()
-        with torch.inference_mode(), autocast_ctx:
-            if task_changed:
-                # Chunking policies serve actions from an internal queue filled
-                # under the previous instruction (up to chunk_size ticks of stale
-                # behavior), so drop them and let the new instruction take effect
-                # on this very tick.  Deliberately narrower than ``policy.reset``:
-                # observation history and other episode state are kept, so a
-                # policy that conditions on them (and one that ignores the task
-                # entirely) sees no discontinuity.  Safe to mutate here — this is
-                # the thread that calls ``select_action``.
-                logger.info("Task changed to '%s' — dropping precomputed actions", task)
-                self._policy.drop_queued_actions()
-            observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
-            observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
-            action = self._postprocessor(action)
-        action_tensor = action.squeeze(0).cpu()
+        if not self._try_begin_action_inference():
+            # A background /ask owns (or is waiting for) the policy.  Do not
+            # block the control thread; the robot keeps executing its last
+            # dispatched target until action inference becomes available.
+            return None
+        try:
+            # Shallow copy is intentional: the caller (`send_next_action`) builds
+            # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
+            # tensor/array values are not shared with any other reader.
+            observation = copy(obs_frame)
+            autocast_ctx = (
+                torch.autocast(device_type=self._device.type)
+                if self._device.type == "cuda" and self._policy.config.use_amp
+                else nullcontext()
+            )
+            task, task_changed = self._take_task()
+            with torch.inference_mode(), autocast_ctx:
+                if task_changed:
+                    # Chunking policies serve actions from an internal queue filled
+                    # under the previous instruction (up to chunk_size ticks of stale
+                    # behavior), so drop them and let the new instruction take effect
+                    # on this very tick.  Deliberately narrower than ``policy.reset``:
+                    # observation history and other episode state are kept, so a
+                    # policy that conditions on them (and one that ignores the task
+                    # entirely) sees no discontinuity.  Safe to mutate here — this is
+                    # the thread that calls ``select_action``.
+                    logger.info("Task changed to '%s' — dropping precomputed actions", task)
+                    self._policy.drop_queued_actions()
+                observation = prepare_observation_for_inference(
+                    observation, self._device, task, self._robot_type
+                )
+                observation = self._preprocessor(observation)
+                self._publish_text_observation(observation)
+                action = self._policy.select_action(observation)
+                action = self._postprocessor(action)
+            action_tensor = action.squeeze(0).cpu()
 
-        # Reorder to match dataset action ordering so the caller can treat
-        # the returned tensor uniformly across backends.
-        action_dict = make_robot_action(action_tensor, self._dataset_features)
-        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+            # Reorder to match dataset action ordering so the caller can treat
+            # the returned tensor uniformly across backends.
+            action_dict = make_robot_action(action_tensor, self._dataset_features)
+            return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+        finally:
+            self._end_action_inference()

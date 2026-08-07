@@ -67,6 +67,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
+    # Decoding defaults for policies that implement `generate_text`.  They live
+    # in config.json so a text head uses the settings it was trained/evaluated
+    # with; policy-specific decoding knobs belong on the concrete config.
+    text_temperature: float = 0.0  # 0.0 = greedy; > 0 enables sampling
+    text_top_p: float = 1.0
+
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
