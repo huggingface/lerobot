@@ -32,7 +32,6 @@ from conftest import (  # noqa: E402
     make_train_batch,
     set_seed_all,
 )
-
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig  # noqa: E402
 from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAPolicy  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
