@@ -53,6 +53,7 @@ from torch.nn import CrossEntropyLoss
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as tv_functional
 
+from lerobot.configs import TextKind
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
@@ -2338,7 +2339,7 @@ class WallXPolicy(PreTrainedPolicy):
         self,
         batch: dict[str, Tensor],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
