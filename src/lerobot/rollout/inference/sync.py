@@ -65,12 +65,12 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
+        super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._dataset_features = dataset_features
         self._ordered_action_keys = ordered_action_keys
-        self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
         logger.info(
@@ -93,6 +93,9 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        # The policy was just reset, so a pending task change has nothing
+        # stale left to flush.
+        self._discard_task_change()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -107,10 +110,20 @@ class SyncInferenceEngine(InferenceEngine):
             if self._device.type == "cuda" and self._policy.config.use_amp
             else nullcontext()
         )
+        task, task_changed = self._take_task()
         with torch.inference_mode(), autocast_ctx:
-            observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
-            )
+            if task_changed:
+                # Chunking policies serve actions from an internal queue filled
+                # under the previous instruction (up to chunk_size ticks of stale
+                # behavior), so drop them and let the new instruction take effect
+                # on this very tick.  Deliberately narrower than ``policy.reset``:
+                # observation history and other episode state are kept, so a
+                # policy that conditions on them (and one that ignores the task
+                # entirely) sees no discontinuity.  Safe to mutate here — this is
+                # the thread that calls ``select_action``.
+                logger.info("Task changed to '%s' — dropping precomputed actions", task)
+                self._policy.drop_queued_actions()
+            observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
             action = self._postprocessor(action)

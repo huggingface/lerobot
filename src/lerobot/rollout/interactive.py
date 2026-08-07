@@ -17,14 +17,19 @@
 Enabled with ``--interactive=true``, this module lets the operator control a
 rollout from the terminal while hardware and policy stay connected and warm:
 
-    /start   start (or restart) the policy control loop
-    /reset   stop movement and return the robot to its initial position
-    /stop    end the session and run the normal shutdown routines
-    /help    show the available commands
+    /start           start (or restart) the policy control loop
+    /subtask <text>  change the instruction the policy follows, mid-run
+    /reset           stop movement, return the robot to its initial position,
+                     and restore the instruction passed on the command line
+    /stop            end the session and run the normal shutdown routines
+    /help            show the available commands
 
 Threading model (mirrors the DAgger events pattern): a daemon
-:class:`StdinCommandListener` thread reads lines and only ever sets
-thread-safe flags — it never touches hardware or the inference engine.  The
+:class:`StdinCommandListener` thread reads lines and only ever publishes
+thread-safe state — flags for the session loop, and the instruction string
+via :meth:`InferenceEngine.set_task`; it never touches hardware, and never
+mutates policy state (the engine applies a task change on its own inference
+thread).  The
 :class:`InteractiveSession` driver runs on the main thread and executes
 ``strategy.run(ctx)`` in *segments*: each ``/start`` begins a segment, and
 ``/reset`` / ``/stop`` end it by setting the session's :class:`LinkedEvent`,
@@ -42,10 +47,10 @@ visible).  A fatal inference-engine error is still surfaced: the session
 prints the engine's captured traceback.  Run without ``--interactive`` to
 see the full live log output.
 
-The command table is intentionally a name → handler mapping so future
-commands (``/subtask``, ``/ask`` — see the language-runtime work in
-PR #4183/#4234) can be registered without restructuring the parser or the
-session loop.
+The command table is intentionally a name → (handler, argument hint, help)
+mapping so further commands (``/ask`` and the rest of the language-runtime
+work in PR #4183/#4234) can be registered without restructuring the parser,
+the help output, or the session loop.
 """
 
 from __future__ import annotations
@@ -145,6 +150,18 @@ class InteractiveCommand:
 
     name: str
     args: str = ""
+
+
+def _format_task(task: str) -> str:
+    """Render a task string for the operator, naming the empty case explicitly."""
+    return repr(task) if task else "(none — set one with /subtask <text>)"
+
+
+def _strip_quotes(text: str) -> str:
+    """Drop one layer of matching surrounding quotes from a command argument."""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        return text[1:-1]
+    return text
 
 
 def parse_command(line: str) -> InteractiveCommand | None:
@@ -354,6 +371,8 @@ class InteractiveSession:
         self._ctx = ctx
         self._segment_stop = stop_event
         self._global_shutdown = stop_event.parent
+        # The instruction the rollout was launched with; /reset restores it.
+        self._initial_task = ctx.policy.inference.task
         self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
 
         # Written by the listener thread, consumed by the main loop.
@@ -363,13 +382,15 @@ class InteractiveSession:
         self._wake = Event()
         self._running = Event()
 
-        # name -> (handler, help line); /help and the banner render from this
-        # table, so future commands (/subtask, /ask) stay documented for free.
-        self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str]] = {
-            "start": (self._cmd_start, "start (or restart) the policy control loop"),
-            "reset": (self._cmd_reset, "stop movement and return the robot to its initial position"),
-            "stop": (self._cmd_stop, "end the session and shut down"),
-            "help": (self._cmd_help, "show this help"),
+        # name -> (handler, argument hint, help line); /help and the banner
+        # render from this table, so future commands (e.g. /ask) stay
+        # documented for free.
+        self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
+            "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
+            "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
+            "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
+            "stop": (self._cmd_stop, "", "end the session and shut down"),
+            "help": (self._cmd_help, "", "show this help"),
         }
 
     # ------------------------------------------------------------------
@@ -430,7 +451,10 @@ class InteractiveSession:
             return
         self._strategy.reset_control_state()
         log_say("Starting rollout", self._ctx.runtime.cfg.play_sounds)
-        self._print("Rollout running — /reset to pause and return to initial position, /stop to shut down.")
+        self._print(
+            f"Rollout running — task {_format_task(engine.task)}. "
+            "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+        )
         self._running.set()
         try:
             self._strategy.run(self._ctx)
@@ -448,7 +472,7 @@ class InteractiveSession:
             )
 
     def _reset_robot(self) -> None:
-        """Pause inference and return the robot to its initial position."""
+        """Pause inference and return the robot home (the task was restored by ``/reset``)."""
         self._print("Resetting — returning the robot to its initial position...")
         self._ctx.policy.inference.pause()
         log_say("Resetting robot to initial position", self._ctx.runtime.cfg.play_sounds)
@@ -472,7 +496,7 @@ class InteractiveSession:
         if entry is None:
             self._print(f"Unknown command '/{cmd.name}'. Type /help for the list.")
             return
-        handler, _ = entry
+        handler = entry[0]
         handler(cmd)
 
     def _handle_eof(self) -> None:
@@ -486,11 +510,34 @@ class InteractiveSession:
         self._start_requested.set()
         self._wake.set()
 
+    def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
+        engine = self._ctx.policy.inference
+        if not cmd.args:
+            self._print(f"Current task: {_format_task(engine.task)}")
+            return
+        task = _strip_quotes(cmd.args)
+        previous = engine.task
+        # Publishing the string is all this thread does: the engine applies the
+        # switch on its own inference thread.
+        if engine.set_task(task):
+            self._print(
+                f"Task: {_format_task(previous)} → {_format_task(task)} "
+                "(applies from the next policy inference)"
+            )
+        else:
+            self._print(f"Task unchanged: {_format_task(task)}")
+
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         # Last command wins: a /start still waiting to be serviced is cancelled
         # so the robot never starts moving after the operator asked it not to.
         # Flag first, segment-stop second (see the ordering note in _run_segment).
         self._start_requested.clear()
+        # Restore the task here rather than in _reset_robot (which runs later, on
+        # the main thread) so that both task writers run on this thread and are
+        # ordered by command order — otherwise a /subtask typed right after
+        # /reset would be silently reverted by the deferred restore.
+        if self._ctx.policy.inference.set_task(self._initial_task):
+            self._print(f"Task restored to {_format_task(self._initial_task)}")
         self._reset_requested.set()
         self._segment_stop.set()
         self._wake.set()
@@ -512,14 +559,16 @@ class InteractiveSession:
     # ------------------------------------------------------------------
 
     def _render_help(self) -> str:
-        width = max(len(name) for name in self._commands)
-        lines = [f"  /{name:<{width}}   {help_line}" for name, (_, help_line) in self._commands.items()]
+        usages = {name: f"/{name}{entry[1]}" for name, entry in self._commands.items()}
+        width = max(len(usage) for usage in usages.values())
+        lines = [f"  {usages[name]:<{width}}   {entry[2]}" for name, entry in self._commands.items()]
         return "Available commands:\n" + "\n".join(lines)
 
     def _render_banner(self) -> str:
         return (
             f"{_BANNER_RULE}\n"
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
+            f"Task: {_format_task(self._initial_task)}\n"
             f"{self._render_help()}\n"
             "System logs and warnings are muted during the session; they resume when it ends.\n"
             f"{_BANNER_RULE}"
