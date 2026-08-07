@@ -35,12 +35,11 @@ class FakePolicy:
     def supports_text_generation(self):
         return self.texts is not None
 
-    @property
-    def subtask_prompt_template(self):
-        return "predict next subtask, given this high level goal: {task}"
-
     # A policy overriding the template is what the runtime must respect, so the fake
     # deliberately does not use the base default.
+    def build_prompt(self, kind, **values):
+        assert kind == "subtask"
+        return f"predict next subtask, given this high level goal: {values['task']}"
 
     def generate_text(self, batch, prompt):
         self.batches.append((prompt, batch))
@@ -218,8 +217,43 @@ def test_default_subtask_template_is_the_trained_wall_oss_wording():
     """Pinned on purpose: editing it silently changes what every inheriting policy asks."""
     from lerobot.policies.pretrained import PreTrainedPolicy
 
-    template = PreTrainedPolicy.subtask_prompt_template.fget(object())
-    assert template == "{task}\nPredict the next action in language."
-    assert template.replace("{task}", "clear the table") == (
+    assert PreTrainedPolicy.PROMPT_TEMPLATES["subtask"] == ("{task}\nPredict the next action in language.")
+
+
+def test_prompt_registry_merges_a_policy_dict_over_the_base_defaults():
+    import pytest
+
+    from lerobot.policies.pretrained import PreTrainedPolicy
+
+    class Custom:
+        PROMPT_TEMPLATES = {"memory": "summarise progress toward {task}"}
+        prompt_template = PreTrainedPolicy.prompt_template
+        build_prompt = PreTrainedPolicy.build_prompt
+
+    policy = Custom()
+    # A registered kind the policy declared.
+    assert policy.build_prompt("memory", task="clear the table") == (
+        "summarise progress toward clear the table"
+    )
+    # A kind it did not declare still resolves through the base defaults.
+    assert policy.build_prompt("subtask", task="clear the table") == (
         "clear the table\nPredict the next action in language."
+    )
+    with pytest.raises(ValueError, match="no 'nope' prompt template"):
+        policy.build_prompt("nope")
+
+
+def test_build_prompt_tolerates_braces_in_the_substituted_value():
+    from lerobot.policies.pretrained import PreTrainedPolicy
+
+    class Policy:
+        PROMPT_TEMPLATES: dict[str, str] = {}
+        prompt_template = PreTrainedPolicy.prompt_template
+        build_prompt = PreTrainedPolicy.build_prompt
+
+    # `str.format` would raise on this task; `str.replace` does not.
+    assert (
+        Policy()
+        .build_prompt("subtask", task="put the {red} block down")
+        .startswith("put the {red} block down")
     )
