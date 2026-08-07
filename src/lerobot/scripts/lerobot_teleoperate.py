@@ -77,6 +77,7 @@ from pprint import pformat
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.common.control_utils import smooth_teleop_session_start
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -150,6 +151,10 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+    # Soft-start: smoothly align leader/follower before the control loop (set 0 to disable).
+    smooth_handover_duration_s: float = 2.0
+    # Control rate used during the soft-start interpolation.
+    smooth_handover_fps: int = 30
 
 
 def teleop_loop(
@@ -259,6 +264,19 @@ def teleoperate(cfg: TeleoperateConfig):
     robot.connect()
 
     try:
+        if cfg.smooth_handover_duration_s > 0:
+            logging.info(
+                "Smooth handover at session start (%.2fs @ %d Hz)",
+                cfg.smooth_handover_duration_s,
+                cfg.smooth_handover_fps,
+            )
+            smooth_teleop_session_start(
+                robot,
+                teleop,
+                robot_action_processor=robot_action_processor,
+                duration_s=cfg.smooth_handover_duration_s,
+                fps=cfg.smooth_handover_fps,
+            )
         teleop_loop(
             teleop=teleop,
             robot=robot,
