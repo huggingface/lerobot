@@ -285,6 +285,40 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def supports_text_generation(self) -> bool:
+        """Whether this policy implements `generate_text`."""
+        return type(self).generate_text is not PreTrainedPolicy.generate_text
+
+    def generate_text(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Decode one string from the policy's text head, for policies that have one.
+
+        This is the whole contract the interactive language runtime needs from a policy:
+        it owns scheduling, the action loop, and the conversation state, and calls here
+        only to turn the current observation into text. Sampling settings come from
+        `self.config.generation`, so a checkpoint decodes the way it was trained.
+
+        Args:
+            batch: A preprocessed observation batch. The runtime puts the operator's
+                high-level goal in `batch["task"]` and the active subtask, once one has
+                been generated, in `batch["subtask"]`.
+            kind: What to generate. `"subtask"` is the next low-level instruction to
+                condition actions on; `"vqa"` answers `user_text` about the current view.
+            user_text: The operator's question, for kinds that take one.
+
+        Returns:
+            The decoded text, or an empty string when the head produced nothing.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head. Implement `generate_text` to use it with "
+            "the interactive language runtime."
+        )
+
     def push_model_to_hub(
         self,
         cfg: TrainPipelineConfig,

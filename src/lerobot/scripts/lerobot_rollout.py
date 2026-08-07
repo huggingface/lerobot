@@ -247,7 +247,6 @@ _LANGUAGE_RUNTIME_FLAGS = {
     "--language",
     "--no_robot",
     "--direct_subtask",
-    "--disable_memory",
     "--fp8",
 }
 _LANGUAGE_RUNTIME_PREFIXES = (
@@ -255,9 +254,6 @@ _LANGUAGE_RUNTIME_PREFIXES = (
     "--ctrl_hz",
     "--high_level_hz",
     "--subtask_chunks_per_gen",
-    "--text_min_new_tokens",
-    "--text_temperature",
-    "--text_top_p",
 )
 
 
