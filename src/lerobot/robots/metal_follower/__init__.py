@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,17 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_rebot_102_leader import RebotArm102LeaderConfig, RebotArm102LeaderTeleopConfig
-from .config_rebot_102_leader_metal import (
-    RebotArm102LeaderMetalConfig,
-    RebotArm102LeaderMetalTeleopConfig,
-)
-from .rebot_102_leader import RebotArm102Leader
+from .config_metal_follower import MetalFollowerConfig, MetalFollowerConfigBase
+from .metal_follower import MetalFollower
 
-__all__ = [
-    "RebotArm102Leader",
-    "RebotArm102LeaderConfig",
-    "RebotArm102LeaderMetalConfig",
-    "RebotArm102LeaderMetalTeleopConfig",
-    "RebotArm102LeaderTeleopConfig",
-]
+__all__ = ["MetalFollower", "MetalFollowerConfig", "MetalFollowerConfigBase"]

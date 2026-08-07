@@ -18,12 +18,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lerobot.robots.metal_follower.config_metal_follower import MetalFollowerConfig
 from lerobot.teleoperators.bi_rebot_102_leader import BiRebot102Leader, BiRebot102LeaderConfig
 from lerobot.teleoperators.rebot_102_leader import (
     RebotArm102Leader,
     RebotArm102LeaderConfig,
+    RebotArm102LeaderMetalConfig,
+    RebotArm102LeaderMetalTeleopConfig,
     RebotArm102LeaderTeleopConfig,
 )
+from lerobot.teleoperators.utils import make_teleoperator_from_config
 
 _MODULE = "lerobot.teleoperators.rebot_102_leader.rebot_102_leader"
 
@@ -87,6 +91,67 @@ def test_get_action_applies_direction_and_clamp(leader):
 def test_send_feedback_not_implemented(leader):
     with pytest.raises(NotImplementedError):
         leader.send_feedback({})
+
+
+def test_metal_ranges_match_follower_limits():
+    """The Metal preset's joint_ranges must stay identical to the follower's soft limits.
+
+    This is the invariant the preset exists to hold: the leader must not be able to emit a
+    target outside the follower's mechanical envelope. If MetalFollowerConfig.joint_limits
+    changes, this fails and the preset has to be updated with it.
+    """
+    leader_ranges = RebotArm102LeaderMetalConfig(port="/dev/null").joint_ranges
+    follower_limits = MetalFollowerConfig().joint_limits
+
+    assert set(leader_ranges) == set(follower_limits)
+    for joint, (lo, hi) in follower_limits.items():
+        if joint == "gripper":
+            continue
+        assert leader_ranges[joint] == [lo, hi], f"{joint} drifted from the follower's limits"
+
+
+def test_metal_gripper_range_is_deliberately_narrower():
+    """The gripper is the one joint that intentionally stops short of the follower's limit.
+
+    The follower allows the vendor's 0..137.5 deg, but its stroke table only documents jaw
+    opening up to 116.4 deg, so the leader stops at 115 rather than commanding into the
+    undocumented stretch.
+    """
+    leader_lo, leader_hi = RebotArm102LeaderMetalConfig(port="/dev/null").joint_ranges["gripper"]
+    follower_lo, follower_hi = MetalFollowerConfig().joint_limits["gripper"]
+
+    assert leader_lo == follower_lo
+    assert leader_hi < follower_hi
+    assert leader_hi <= 116.4
+
+
+def test_metal_preset_differs_from_b601_where_expected():
+    """Guard the three joints the Metal mapping deliberately flips or rescales.
+
+    Without these, elbow_flex and gripper saturate against the follower's limits and stop
+    moving entirely, while wrist_flex tracks backwards.
+    """
+    b601 = RebotArm102LeaderConfig(port="/dev/null")
+    metal = RebotArm102LeaderMetalConfig(port="/dev/null")
+
+    assert metal.joint_ids == b601.joint_ids, "same servo bus layout, ids must not diverge"
+
+    differing = {
+        joint
+        for joint, direction in metal.joint_directions.items()
+        if direction != b601.joint_directions[joint]
+    }
+    assert differing == {"elbow_flex", "wrist_flex", "gripper"}
+
+
+def test_metal_preset_is_registered_and_builds_the_shared_driver():
+    cfg = RebotArm102LeaderMetalTeleopConfig(port="/dev/null")
+    assert cfg.type == "rebot_102_leader_metal"
+
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        teleop = make_teleoperator_from_config(cfg)
+    assert isinstance(teleop, RebotArm102Leader)
+    assert teleop.config.joint_ranges["gripper"] == [0, 115]
 
 
 def test_bimanual_prefixes_features():

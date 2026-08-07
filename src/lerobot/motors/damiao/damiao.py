@@ -60,7 +60,13 @@ logger = logging.getLogger(__name__)
 
 LONG_TIMEOUT_SEC = 0.1
 MEDIUM_TIMEOUT_SEC = 0.01
-SHORT_TIMEOUT_SEC = 0.001
+# Window for collecting the replies to a batch of MIT command frames (_mit_control_batch).
+# Was 0.001, which expires before the tail of a 7-motor batch replies: measured on a Metal arm
+# at 200 Hz, 9.2% of replies were lost over socketcan and 6.3% over slcan, and the loss climbed
+# with position in the send order (first motor 38 lost, last motor 86, on socketcan) -- the
+# signature of an expiring window rather than bus loss. _mit_control_batch discards misses
+# silently, so this never surfaced. At 0.005 the same runs lose 0.019% / 0.000%.
+SHORT_TIMEOUT_SEC = 0.005
 PRECISE_TIMEOUT_SEC = 0.0001
 
 
@@ -742,6 +748,14 @@ class DamiaoMotorsBus(MotorsBusBase):
             # Fall back to individual writes
             for motor, value in values.items():
                 self.write(data_name, motor, value)
+
+    def sync_write_metal(self, commands: dict) -> None:
+        """Public MIT batch write. commands: name -> (kp, kd, pos_deg, vel_deg_s, torque_nm).
+
+        Exposes the bus's existing MIT torque path (sync_write("Goal_Position") hardcodes
+        feedforward torque to 0), needed for gravity-compensation / force control.
+        """
+        self._mit_control_batch(commands)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         """Read calibration data from motors."""

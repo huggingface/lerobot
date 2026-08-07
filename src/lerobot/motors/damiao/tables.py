@@ -32,6 +32,9 @@ class MotorType(IntEnum):
     DMH3510 = 10
     DMH6215 = 11
     DMG6220 = 12
+    METAL_JLO = 13
+    METAL_J2 = 14
+    METAL_JHI = 15
 
 
 # Control modes
@@ -109,6 +112,9 @@ MOTOR_LIMIT_PARAMS = {
     MotorType.DMH3510: (12.5, 280, 1),
     MotorType.DMH6215: (12.5, 45, 10),
     MotorType.DMG6220: (12.5, 45, 10),
+    MotorType.METAL_JLO: (6.28, 10, 30),
+    MotorType.METAL_J2: (6.28, 10, 120),
+    MotorType.METAL_JHI: (6.28, 30, 20),
 }
 
 # Motor model names
@@ -126,6 +132,9 @@ MODEL_NAMES = {
     MotorType.DMH3510: "dmh3510",
     MotorType.DMH6215: "dmh6215",
     MotorType.DMG6220: "dmg6220",
+    MotorType.METAL_JLO: "metal_jlo",
+    MotorType.METAL_J2: "metal_j2",
+    MotorType.METAL_JHI: "metal_jhi",
 }
 
 # Motor resolution table (encoder counts per revolution)
@@ -143,6 +152,9 @@ MODEL_RESOLUTION = {
     "dmh3510": 65536,
     "dmh6215": 65536,
     "dmg6220": 65536,
+    "metal_jlo": 65536,
+    "metal_j2": 65536,
+    "metal_jhi": 65536,
 }
 
 # CAN baudrates supported by Damiao motors
@@ -192,9 +204,11 @@ OPENARMS_DEFAULT_MOTOR_TYPES = {
     "gripper": MotorType.DM4310,  # Gripper
 }
 
-# MIT control parameter ranges
-MIT_KP_RANGE = (0.0, 500.0)
-MIT_KD_RANGE = (0.0, 5.0)
+# MIT control parameter ranges. Annotated as fixed-length pairs (not bare tuples) because they
+# are splatted into `_float_to_uint(x, x_min, x_max, bits)`; without this mypy infers
+# `tuple[float, ...]` and reports the unpack as "Too many arguments".
+MIT_KP_RANGE: tuple[float, float] = (0.0, 500.0)
+MIT_KD_RANGE: tuple[float, float] = (0.0, 5.0)
 
 # CAN frame command IDs
 CAN_CMD_ENABLE = 0xFC

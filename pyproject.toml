@@ -149,6 +149,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # fails at load with "liburdfdom_sensor.so.4.0: cannot open shared object file" (see #3755).
 # There is no cmeel-urdfdom 5.x; <5 selects the 4.x ABI the placo/pin wheels are built against.
 placo-dep = ["placo>=0.9.6,<0.9.16", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
+pin-dep = ["pin>=3.1.0,<4.0.0", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
 transformers-dep = ["transformers>=5.4.0,<5.6.0"]
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
@@ -169,11 +170,16 @@ timm-dep = ["timm>=1.0.0,<1.1.0"]
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
 dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
-damiao = ["lerobot[can-dep]"]
-robstride = ["lerobot[can-dep]"]
+# pyserial backs python-can's "slcan" interface, the only CAN transport available on
+# macOS/Windows (SocketCAN is Linux-only). python-can declares pyserial under its own
+# optional extras, so without this a `slcan` bus raises ImportError at connect time.
+damiao = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
+robstride = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
+# pin-dep is for the leader's gravity compensation; the follower needs only the CAN stack.
+metal = ["lerobot[damiao]", "lerobot[pin-dep]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
@@ -304,6 +310,7 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[metal]",
     "lerobot[openarms]",
     "lerobot[reachy2]",
     "lerobot[rebot]",
