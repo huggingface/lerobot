@@ -315,27 +315,44 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Whether this policy has a usable text head."""
         return type(self).generate_text is not PreTrainedPolicy.generate_text
 
-    @property
-    def subtask_prompt_template(self) -> str:
-        """The prompt this checkpoint was trained to answer with a next subtask.
+    #: Prompts this checkpoint was trained to answer, keyed by kind. A subclass declares
+    #: its own dict; lookups fall back to these, so it only lists what it changes.
+    #:
+    #: Each value is a template whose ``{placeholder}`` fields the caller fills with
+    #: `build_prompt`. The wording is part of the model contract and model-specific down
+    #: to the token — WALL-OSS declares its mode in this turn, and a prompt that drifts
+    #: from the trained phrasing is answered out of distribution. So the policy owns the
+    #: wording while the caller owns the values.
+    #:
+    #: The default is the wording the WALL-OSS and EO-1 family were trained on, which more
+    #: released checkpoints recognise than a sentence written for the occasion. Declare your
+    #: own even when it matches: this default may be retuned, and a policy that pins its
+    #: template will not silently follow.
+    PROMPT_TEMPLATES: dict[str, str] = {  # noqa: RUF012
+        "subtask": "{task}\nPredict the next action in language.",
+    }
 
-        Returned as a template containing `{task}`, which the caller substitutes with the
-        operator's high-level goal before passing the result to `generate_text`. The
-        wording around it is part of the model contract and model-specific down to the
-        token — WALL-OSS declares its mode in this turn, and a prompt that drifts from
-        the trained phrasing is answered out of distribution. So the policy owns the
-        wording while the caller owns the goal.
+    def prompt_template(self, kind: str) -> str:
+        """The template registered for `kind`, falling back to the base defaults."""
+        merged = {**PreTrainedPolicy.PROMPT_TEMPLATES, **type(self).PROMPT_TEMPLATES}
+        template = merged.get(kind)
+        if template is None:
+            raise ValueError(
+                f"{type(self).__name__} has no {kind!r} prompt template. Registered kinds: {sorted(merged)}."
+            )
+        return template
 
-        Substitute with `str.replace`, not `str.format`: an operator's task may contain
-        braces, and a template may contain chat-control tokens.
+    def build_prompt(self, kind: str, **values: str) -> str:
+        """Fill the `kind` template, ready to pass to `generate_text`.
 
-        The default is the wording the WALL-OSS and EO-1 family were trained on, which
-        more released checkpoints recognise than a generic English sentence would. Override
-        it whenever your checkpoint was trained differently — for a model that declares
-        its mode in this very turn, the exact phrasing is the difference between an
-        in-distribution answer and a guess, down to the trailing newline.
+        Substitutes with `str.replace` rather than `str.format`: templates carry
+        chat-control tokens, and a value such as an operator's task may contain braces
+        that `format` would choke on.
         """
-        return "{task}\nPredict the next action in language."
+        template = self.prompt_template(kind)
+        for name, value in values.items():
+            template = template.replace("{" + name + "}", value)
+        return template
 
     def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
         """Answer `prompt` about the current observation, for policies with a text head.
