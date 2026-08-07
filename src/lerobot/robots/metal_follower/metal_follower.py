@@ -67,12 +67,22 @@ class MetalFollower(Robot):
         super().__init__(config)
         self.config = config
 
-        if config.can_interface != "socketcan":
+        if not config.port:
             raise ValueError(
-                f"metal_follower only supports can_interface='socketcan', got "
-                f"'{config.can_interface}'. Bring the USB-CAN adapter up as a socketcan "
-                "interface first, e.g. `sudo slcand -o -c -s8 -t hw -S 921600 /dev/ttyACM0 "
-                "can0 && sudo ip link set up can0`, then set port='can0'."
+                "metal_follower requires `port`. With can_interface='slcan' (the default) it is "
+                "the USB-CAN adapter's serial port — '/dev/ttyACM0' on Linux, "
+                "'/dev/cu.usbmodem1101' on macOS, 'COM5' on Windows. With "
+                "can_interface='socketcan' it is the interface name, e.g. 'can0'."
+            )
+
+        if config.can_interface not in ("socketcan", "slcan"):
+            raise ValueError(
+                f"metal_follower supports can_interface='socketcan' or 'slcan', got "
+                f"'{config.can_interface}'. On Linux, bring the USB-CAN adapter up as a socketcan "
+                "interface (`sudo slcand -o -f -s8 /dev/ttyACM0 can0 && sudo ip link set up can0 "
+                "&& sudo ip link set can0 txqueuelen 1000`) and set port='can0'. On macOS/Windows, "
+                "where SocketCAN does not exist, use can_interface='slcan' with the adapter's "
+                "serial port as `port` (e.g. '/dev/cu.usbmodem1101' or 'COM5')."
             )
 
         # Build all 7 motors: the 6 joints plus the permanent gripper.

@@ -96,8 +96,8 @@ def test_action_features_include_all_motors(follower):
 def test_velocity_feedforward_config_defaults():
     config = MetalFollowerConfig()
     assert config.velocity_feedforward is True
-    assert config.velocity_ff_alpha == 0.35
-    assert config.velocity_ff_max_deg_s == 200.0
+    assert config.velocity_ff_alpha == 0.08
+    assert config.velocity_ff_max_deg_s == 120.0
 
 
 def test_send_action_writes_goal_and_clamps(follower):
@@ -154,8 +154,11 @@ def test_moving_goals_encode_filtered_velocity_in_mit_frame():
         follower.send_action({"shoulder_pan.pos": 10.0})
 
     frame = _last_frame(wire)
-    # raw velocity is 500 deg/s, clipped to 200, then first EMA update is 0.35 * 200 = 70.
-    assert _decode_dq_deg_s(follower, frame) == pytest.approx(70.0, abs=0.3)
+    # Raw velocity is 10 deg / 0.02 s = 500 deg/s, clipped to velocity_ff_max_deg_s. The previous
+    # velocity is 0, so the first EMA update is just alpha * clipped. Derived from the config so
+    # retuning the feedforward defaults doesn't break this.
+    expected = follower.config.velocity_ff_alpha * follower.config.velocity_ff_max_deg_s
+    assert _decode_dq_deg_s(follower, frame) == pytest.approx(expected, abs=0.3)
     dq_uint = (frame.data[2] << 4) | (frame.data[3] >> 4)
     assert dq_uint != ((1 << 12) - 1) // 2
 
@@ -219,8 +222,6 @@ def test_mit_frames_carry_no_feedforward_torque():
     assert tau_uint == ((1 << 12) - 1) // 2  # exact 0.0 encoding
 
 
-
-
 def test_velocity_estimator_resets_after_long_action_gap():
     follower, wire = _make_wired_follower(velocity_ff_alpha=1.0)
 
@@ -235,3 +236,40 @@ def test_velocity_estimator_resets_after_long_action_gap():
 
     assert moving_velocity == pytest.approx(100.0, abs=0.3)
     assert _decode_dq_deg_s(follower, _last_frame(wire)) == pytest.approx(0.0, abs=0.3)
+
+
+# ── Transport guard ───────────────────────────────────────────────────────
+
+
+def test_slcan_is_accepted():
+    """slcan is the only CAN transport available on macOS/Windows, where SocketCAN does not exist.
+
+    Measured on a Metal arm over a CANable at the follower's 60 Hz: a full tick (7 state requests
+    + 7 replies + 7 MIT writes + 7 replies) costs ~5 ms of a 16.7 ms period and drops nothing.
+    """
+    follower = MetalFollower(MetalFollowerConfig(port="/dev/ttyACM0", can_interface="slcan"))
+    assert follower.bus.can_interface == "slcan"
+
+
+def test_socketcan_is_accepted():
+    follower = MetalFollower(MetalFollowerConfig(port="can0", can_interface="socketcan"))
+    assert follower.bus.can_interface == "socketcan"
+
+
+def test_unknown_can_interface_is_rejected():
+    with pytest.raises(ValueError, match="socketcan"):
+        MetalFollower(MetalFollowerConfig(port="can0", can_interface="pcan"))
+
+
+def test_port_is_required():
+    """`port` has no portable default: "can0" is meaningless on macOS/Windows, and silently
+    defaulting to it would send a Mac user into a SocketCAN failure with no hint why."""
+    with pytest.raises(ValueError, match="requires `port`"):
+        MetalFollower(MetalFollowerConfig())
+
+
+def test_defaults_to_slcan():
+    """slcan is the default because it is the only transport that works on all three platforms
+    and needs no privileged setup."""
+    assert MetalFollowerConfig().can_interface == "slcan"
+    assert MetalFollowerConfig().port is None

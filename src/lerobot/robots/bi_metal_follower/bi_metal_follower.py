@@ -90,7 +90,7 @@ class BiMetalFollower(BimanualMixin, Robot):
         # DamiaoMotorsBus instances, so their blocking I/O runs truly concurrently
         # (the GIL is released during the socket/serial waits). A persistent 2-worker
         # pool avoids per-tick thread creation. Shut down in disconnect().
-        self._io_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix='bi_metal_io')
+        self._io_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bi_metal_io")
 
     def _run_both(self, left_fn: Callable[[], Any], right_fn: Callable[[], Any]) -> tuple[Any, Any]:
         """Run the left and right arm I/O calls concurrently and return (left, right).
