@@ -10,13 +10,25 @@ itself with `@register_subclass("name")` and is then selectable by that name on 
 
 [[autodoc]] lerobot.configs.train.TrainPipelineConfig
 
+## EvalPipelineConfig
+
+[[autodoc]] lerobot.configs.eval.EvalPipelineConfig
+
 ## PreTrainedConfig
 
 [[autodoc]] lerobot.configs.PreTrainedConfig
 
+## RewardModelConfig
+
+[[autodoc]] lerobot.configs.rewards.RewardModelConfig
+
 ## DatasetConfig
 
 [[autodoc]] lerobot.configs.DatasetConfig
+
+## DatasetRecordConfig
+
+[[autodoc]] lerobot.configs.DatasetRecordConfig
 
 ## EvalConfig
 
@@ -25,3 +37,53 @@ itself with `@register_subclass("name")` and is then selectable by that name on 
 ## WandBConfig
 
 [[autodoc]] lerobot.configs.WandBConfig
+
+## PeftConfig
+
+[[autodoc]] lerobot.configs.PeftConfig
+
+## JobConfig
+
+[[autodoc]] lerobot.configs.JobConfig
+
+## Feature types
+
+[[autodoc]] lerobot.configs.FeatureType
+
+[[autodoc]] lerobot.configs.PipelineFeatureType
+
+[[autodoc]] lerobot.configs.NormalizationMode
+
+[[autodoc]] lerobot.configs.PolicyFeature
+
+[[autodoc]] lerobot.configs.RTCAttentionSchedule
+
+## Video encoding
+
+[[autodoc]] lerobot.configs.VideoEncoderConfig
+
+[[autodoc]] lerobot.configs.RGBEncoderConfig
+
+[[autodoc]] lerobot.configs.DepthEncoderConfig
+
+[[autodoc]] lerobot.configs.encoder_config_from_video_info
+
+## Distributed training
+
+[[autodoc]] lerobot.configs.parallelism.ParallelismConfig
+
+[[autodoc]] lerobot.configs.parallelism.ContextParallelConfig
+
+[[autodoc]] lerobot.configs.accelerator.AcceleratorConfig
+
+[[autodoc]] lerobot.configs.accelerator.FSDPConfig
+
+[[autodoc]] lerobot.configs.accelerator.DDPConfig
+
+[[autodoc]] lerobot.configs.accelerator.GradientAccumulationConfig
+
+[[autodoc]] lerobot.configs.accelerator.CompileConfig
+
+[[autodoc]] lerobot.configs.accelerator.ActivationCheckpointingConfig
+
+[[autodoc]] lerobot.configs.accelerator.ActivationCheckpointingMode

@@ -43,31 +43,45 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """Base configuration for reward models.
 
     Args:
-    input_features: A dictionary defining the PolicyFeature of the input data for the reward. The key represents
-        the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-    output_features: A dictionary defining the PolicyFeature of the output data for the reward. The key represents
-        the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        input_features (`dict[str, PolicyFeature]`, *optional*): A dictionary defining the `PolicyFeature`
+            of the input data for the reward. The key represents the input data name, and the value is a
+            `PolicyFeature`, which consists of `type` and `shape` attributes.
+        output_features (`dict[str, PolicyFeature]`, *optional*): A dictionary defining the `PolicyFeature`
+            of the output data for the reward, with the same key/value semantics as `input_features`.
+        device (`str | None`, *optional*): The torch device, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`.
+            If unset or unavailable, `__post_init__` auto-selects one.
+        pretrained_path (`str | None`, *optional*): Either the repo ID of a model hosted on the Hub or a
+            path to a directory containing weights saved using `.save_pretrained`. If not provided, the
+            reward model is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*): Optional Hub revision, e.g. a commit hash, branch,
+            or tag, to pin the pretrained reward model version.
+        push_to_hub (`bool`, *optional*, defaults to `False`): Whether to push the reward model to the
+            Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*): The Hub repo ID to push to. Required when `push_to_hub` is
+            `True`.
+        license (`str | None`, *optional*): The license to add to the reward model on the Hub.
+        tags (`list[str] | None`, *optional*): Tags to add to the reward model on the Hub.
+        private (`bool | None`, *optional*): Whether to upload to a private repository on the Hugging Face
+            Hub.
     """
 
-    # Reuses PolicyFeature
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
     device: str | None = None
 
     pretrained_path: str | None = None
-    # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained reward model version.
     pretrained_revision: str | None = None
 
     push_to_hub: bool = False
     repo_id: str | None = None
 
-    # Hub metadata
     license: str | None = None
     tags: list[str] | None = None
     private: bool | None = None
 
     def __post_init__(self) -> None:
+        """Auto-select `device` when unset or unavailable."""
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -75,6 +89,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def type(self) -> str:
+        """The reward model's registered `draccus.ChoiceRegistry` name."""
         choice_name = self.get_choice_name(self.__class__)
         if not isinstance(choice_name, str):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
@@ -82,14 +97,17 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        """`None`: reward models consume only the current observation timestep."""
         return None
 
     @property
     def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        """`None`: reward models consume only the current action timestep."""
         return None
 
     @property
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+        """`None`: reward models consume only the current reward timestep."""
         return None
 
     def get_optimizer_preset(self) -> OptimizerConfig | None:
@@ -97,9 +115,14 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         return None
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        """Default LR scheduler for this reward model. `None` here; overridden by subclasses that need one."""
         return None
 
     def validate_features(self) -> None:
+        """Check that `input_features`/`output_features` contain what this reward model requires.
+
+        No-op here; overridden by subclasses that have required features.
+        """
         pass
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -122,6 +145,33 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         revision: str | None = None,
         **reward_kwargs: Any,
     ) -> T:
+        """Download a reward model's `config.json` from the Hub (or read it locally) and parse it.
+
+        The concrete reward-model config subclass is resolved from the serialized `"type"` tag, so
+        calling this on the `RewardModelConfig` base class works for any registered reward-model type.
+
+        Args:
+            pretrained_name_or_path (`str | Path`): Either the `repo_id` of the config hosted on the Hub,
+                or a path to a directory containing a `config.json` saved via `.save_pretrained`.
+            force_download (`bool`, *optional*, defaults to `False`): Whether to force (re-)downloading
+                the files from the Hub, overriding the existing cache.
+            resume_download (`bool | None`, *optional*): Deprecated; ignored by the underlying Hub client.
+            proxies (`dict[Any, Any] | None`, *optional*): A dictionary of proxy servers to use by protocol
+                or endpoint.
+            token (`str | bool | None`, *optional*): The token to use as HTTP bearer authorization for
+                remote files. By default, uses the token cached by `huggingface-cli login`.
+            cache_dir (`str | Path | None`, *optional*): Path to the folder where cached files are stored.
+            local_files_only (`bool`, *optional*, defaults to `False`): If `True`, avoid downloading the
+                file and return the path to the local cached file if it exists.
+            revision (`str | None`, *optional*): Revision on the Hub: a branch name, git tag, or commit id.
+                Defaults to the latest commit on `main`.
+            reward_kwargs: Forwarded as CLI-style overrides via `reward_kwargs["cli_overrides"]`
+                (a list of `--key=value` strings applied on top of the loaded config); any other keys are
+                ignored.
+
+        Raises:
+            FileNotFoundError: If `config.json` isn't found locally or on the Hub.
+        """
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

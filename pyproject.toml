@@ -439,7 +439,6 @@ ignore = [
 "src/lerobot/async_inference/**" = ["D"]
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
-"src/lerobot/configs/**" = ["D"]
 "src/lerobot/data_processing/**" = ["D"]
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
