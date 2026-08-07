@@ -65,6 +65,8 @@ class EO1Policy(PreTrainedPolicy):
 
     config_class = EO1Config
     name = "eo1"
+    #: EO-1's trained subtask wording; the runtime fills it with the operator's goal.
+    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language."}  # noqa: RUF012
 
     def __init__(self, config: EO1Config, **kwargs):
         require_package("transformers", extra="eo1")
@@ -242,11 +244,6 @@ class EO1Policy(PreTrainedPolicy):
             "state_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN),
             "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
         }
-
-    @property
-    def subtask_prompt_template(self) -> str:
-        """EO-1's trained subtask wording, filled with the operator's goal by the runtime."""
-        return "{task}\nPredict the next action in language."
 
     def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
         """Answer `prompt` about the current observation with EO-1's own text head."""
