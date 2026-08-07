@@ -272,6 +272,92 @@ def test_batched_encoding_staging_survives_save(tmp_path):
     assert staging_dir.is_dir() and any(staging_dir.iterdir())
 
 
+def test_batched_encoding_end_to_end(tmp_path):
+    """Recording with ``batch_encoding_size > 1`` produces a loadable dataset.
+
+    Regression test: the batch encoder indexed ``meta.episodes`` — a view of
+    the on-disk state that lags the session (episodes live in the metadata
+    buffer until flushed) — so any fresh recording with a batch size above 1
+    crashed on its first batch (#2404, #2509).
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        batch_encoding_size=2,
+    )
+    for _ in range(5):  # two full batches + one remainder encoded at finalize
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "ds")
+    assert reloaded.meta.total_episodes == 5
+    assert reloaded.num_frames == 15
+    assert reloaded[reloaded.num_frames - 1][video_key].shape[-2:] == (64, 96)
+
+
+def test_batched_encoding_on_resumed_dataset(tmp_path):
+    """Batch encoding works when appending to an existing dataset via resume().
+
+    Regression test: on a resumed dataset, ``meta.episodes`` only covered the
+    episodes recorded in previous sessions, so the first batch of a resumed
+    session crashed with an IndexError. The video-metadata merge also aligned
+    on the dataframe's positional index, corrupting any episodes file that
+    does not start at episode 0.
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+    )
+    for _ in range(3):
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    dataset = LeRobotDataset.resume(
+        repo_id=DUMMY_REPO_ID,
+        root=tmp_path / "ds",
+        batch_encoding_size=2,
+    )
+    for _ in range(4):
+        for _ in range(3):
+            dataset.add_frame(_make_frame(features))
+        dataset.save_episode()
+    dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "ds")
+    assert reloaded.meta.total_episodes == 7
+    assert reloaded.num_frames == 21
+    assert reloaded[0][video_key].shape[-2:] == (64, 96)
+    assert reloaded[reloaded.num_frames - 1][video_key].shape[-2:] == (64, 96)
+
+
 def test_finalize_is_idempotent(tmp_path):
     """Calling finalize() twice does not raise."""
     dataset = LeRobotDataset.create(
