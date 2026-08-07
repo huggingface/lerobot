@@ -26,8 +26,7 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 @dataclass
 @ProcessorStepRegistry.register(name="libero_processor")
 class LiberoProcessorStep(ObservationProcessorStep):
-    """
-    Processes LIBERO observations into the LeRobot format.
+    """Processes LIBERO observations into the LeRobot format.
 
     This step handles the specific observation structure from LIBERO environments,
     which includes nested robot_state dictionaries and image observations.
@@ -47,9 +46,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     """
 
     def _process_observation(self, observation):
-        """
-        Processes both image and robot_state observations from LIBERO.
-        """
+        """Processes both image and robot_state observations from LIBERO."""
         processed_obs = observation.copy()
         for key in list(processed_obs.keys()):
             if key.startswith(f"{OBS_IMAGES}."):
@@ -85,9 +82,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Transforms feature keys from the LIBERO format to the LeRobot standard.
-        """
+        """Transforms feature keys from the LIBERO format to the LeRobot standard."""
         new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
 
         # copy over non-STATE features
@@ -109,11 +104,12 @@ class LiberoProcessorStep(ObservationProcessorStep):
         return new_features
 
     def observation(self, observation):
+        """See [`~processor.ObservationProcessorStep.observation`]. Delegates to `_process_observation`."""
         return self._process_observation(observation)
 
     def _quat2axisangle(self, quat: torch.Tensor) -> torch.Tensor:
-        """
-        Convert batched quaternions to axis-angle format.
+        """Convert batched quaternions to axis-angle format.
+
         Only accepts torch tensors of shape (B, 4).
 
         Args:
@@ -126,7 +122,6 @@ class LiberoProcessorStep(ObservationProcessorStep):
             TypeError: if input is not a torch tensor
             ValueError: if shape is not (B, 4)
         """
-
         if not isinstance(quat, torch.Tensor):
             raise TypeError(f"_quat2axisangle expected a torch.Tensor, got {type(quat)}")
 
@@ -156,8 +151,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="isaaclab_arena_processor")
 class IsaaclabArenaProcessorStep(ObservationProcessorStep):
-    """
-    Processes IsaacLab Arena observations into LeRobot format.
+    """Processes IsaacLab Arena observations into LeRobot format.
 
     **State Processing:**
     - Extracts state components from obs["policy"] based on `state_keys`.
@@ -176,9 +170,7 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
     camera_keys: tuple[str, ...]
 
     def _process_observation(self, observation):
-        """
-        Processes both image and policy state observations from IsaacLab Arena.
-        """
+        """Processes both image and policy state observations from IsaacLab Arena."""
         processed_obs = {}
 
         if f"{OBS_STR}.camera_obs" in observation:
@@ -225,4 +217,5 @@ class IsaaclabArenaProcessorStep(ObservationProcessorStep):
         return features
 
     def observation(self, observation):
+        """See [`~processor.ObservationProcessorStep.observation`]. Delegates to `_process_observation`."""
         return self._process_observation(observation)

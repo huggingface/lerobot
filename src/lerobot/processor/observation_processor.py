@@ -29,8 +29,7 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
 class VanillaObservationProcessorStep(ObservationProcessorStep):
-    """
-    Processes standard Gymnasium observations into the LeRobot format.
+    """Processes standard Gymnasium observations into the LeRobot format.
 
     This step handles both image and state data from a typical observation dictionary,
     preparing it for use in a LeRobot policy.
@@ -53,8 +52,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
     """
 
     def _process_single_image(self, img: np.ndarray) -> Tensor:
-        """
-        Processes a single NumPy image array into a channel-first, normalized tensor.
+        """Processes a single NumPy image array into a channel-first, normalized tensor.
 
         Args:
             img: A NumPy array representing the image, expected to be in channel-last
@@ -92,10 +90,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         return img_tensor
 
     def _process_observation(self, observation):
-        """
-        Processes both image and state observations.
-        """
-
+        """Processes both image and state observations."""
         processed_obs = observation.copy()
 
         if "pixels" in processed_obs:
@@ -126,13 +121,13 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         return processed_obs
 
     def observation(self, observation):
+        """See [`~processor.ObservationProcessorStep.observation`]. Delegates to `_process_observation`."""
         return self._process_observation(observation)
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Transforms feature keys from the Gym standard to the LeRobot standard.
+        """Transforms feature keys from the Gym standard to the LeRobot standard.
 
         This method standardizes the feature dictionary by renaming keys according
         to LeRobot's conventions, ensuring that policies can be constructed correctly.
