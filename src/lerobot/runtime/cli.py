@@ -149,9 +149,9 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         default=None,
         help="Stop after N ticks (debug / smoke-test).",
     )
-    # Sampling settings live on the checkpoint (``PreTrainedConfig.generation``) so a
-    # head decodes the way it was trained. Override per run with the usual policy
-    # path, e.g. ``--policy.generation.temperature=0.5``.
+    # Decoding settings live on the checkpoint (``PreTrainedConfig.text_temperature``
+    # and ``text_top_p``) so a head decodes the way it was trained. Override per run
+    # with the usual policy path, e.g. ``--policy.text_temperature=0.5``.
     p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging.")
     args, unknown = p.parse_known_args(raw_argv)
     unsupported = [arg for arg in unknown if not arg.startswith(("--robot.", "--policy."))]
@@ -208,7 +208,7 @@ def _load_policy(
     """Load a local or Hub policy for the language-only REPL.
 
     ``cli_overrides`` are ``--policy.``-prefixed arguments with the prefix stripped, so
-    settings such as ``--policy.generation.temperature`` apply here exactly as they do
+    settings such as ``--policy.text_temperature`` apply here exactly as they do
     on the rollout path.
     """
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
@@ -541,6 +541,11 @@ def _make_state_panel_renderer(
         )
         dispatched = int(st.get("actions_dispatched") or 0)
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
+
+        # Read-only telemetry from policies that emit reasoning with the action chunk.
+        reasoning = runtime.policy.last_reasoning()
+        if reasoning:
+            console.print(f"  [bold cyan]{'reasoning':<8}[/] {reasoning}")
 
         # Surface repeated or empty generations as overfitting diagnostics.
         diag = runtime.subtask.diagnostics

@@ -42,6 +42,9 @@ class FakePolicy:
         assert batch == {"observation.state": 1}
         return ["a0", "a1"]
 
+    def last_reasoning(self):
+        return None
+
 
 def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
     policy = FakePolicy(["pick cup"])
@@ -165,3 +168,9 @@ def test_prompt_change_discards_in_flight_action_chunk():
 
     assert not inference.is_alive()
     assert list(runtime.state.action_queue) == []
+
+
+def test_policy_without_in_stream_reasoning_reports_none():
+    from lerobot.policies.pretrained import PreTrainedPolicy
+
+    assert PreTrainedPolicy.last_reasoning(object()) is None
