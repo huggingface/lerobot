@@ -192,8 +192,12 @@ def test_policy_exposes_text_generation(monkeypatch):
 
     assert policy.generate_texts(batch, kind="subtask") == ["move toward the cup"]
     # The runtime contract is the single-sample form, decoding with `config.generation`.
-    assert policy.generate_text(batch, kind="subtask") == "move toward the cup"
+    assert policy.generate_text(batch, "pick up the cup") == "move toward the cup"
     assert policy.supports_text_generation()
+    # Token-exact with the trained subtask wording, trailing newline included.
+    assert policy.subtask_prompt_template.replace("{task}", "clear the table") == (
+        "clear the table\nPredict the next action in language.\n"
+    )
 
 
 @require_cuda

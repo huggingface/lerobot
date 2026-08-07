@@ -2337,15 +2337,16 @@ class WallXPolicy(PreTrainedPolicy):
                 inputs[key] = value.to(batch[OBS_STATE].device)
         return inputs
 
-    @torch.no_grad()
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        """Single-sample text generation, as the interactive language runtime calls it."""
+    @property
+    def subtask_prompt_template(self) -> str:
+        """WALL-OSS's trained subtask wording, filled with the operator's goal by the runtime."""
+        return "{task}\nPredict the next action in language.\n"
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation with WALL-OSS's own text head."""
+        return self._one_text(batch, kind="vqa", user_text=prompt)
+
+    def _one_text(self, batch: dict[str, Tensor], *, kind: str, user_text: str | None = None) -> str:
         outputs = self.generate_texts(
             batch,
             kind=kind,
@@ -2354,7 +2355,9 @@ class WallXPolicy(PreTrainedPolicy):
             top_p=self.config.text_top_p,
         )
         if len(outputs) != 1:
-            raise ValueError(f"The interactive runtime expected one WALL-OSS output, got {len(outputs)}.")
+            raise ValueError(
+                f"The interactive runtime expected one WALL-OSS text output, got {len(outputs)}."
+            )
         return outputs[0]
 
     @torch.no_grad()
