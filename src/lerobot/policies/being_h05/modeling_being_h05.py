@@ -1066,14 +1066,12 @@ class BeingH05Policy(PreTrainedPolicy):
                 "The released Being-H0.5 RoboCasa action fine-tune does not retain usable text "
                 "generation; use lerobot/being_h05_base for VQA."
             )
-        gen = self.config.generation
         generated = self.generate_texts(
             batch,
             _runtime_prompt(kind, batch, user_text),
             max_new_tokens=_RUNTIME_MAX_NEW_TOKENS.get(kind, 64),
-            min_new_tokens=gen.min_new_tokens,
-            temperature=gen.temperature,
-            top_p=gen.top_p,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
         )
         return generated[0].strip() if generated else ""
 
