@@ -340,6 +340,15 @@ class LiberoEnv(gym.Env):
         self._ensure_env()
         super().reset(seed=seed)
         self._env.seed(seed)
+        # A supplied seed must determine which initial state is loaded. Without
+        # this, `init_state_id` advances purely as a per-reset counter, so
+        # `reset(seed=s)` returns a different scene depending on how many resets
+        # happened earlier in the process -- making individual trials
+        # irreproducible and causing a resumed or reordered evaluation to sample
+        # a different set of initial states than a single-pass one. When no seed
+        # is given the existing round-robin behaviour is preserved.
+        if seed is not None:
+            self.init_state_id = seed
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
             raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
