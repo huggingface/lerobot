@@ -2083,6 +2083,11 @@ class HyVLAPolicy(PreTrainedPolicy):
             raise RuntimeError(f"Expected {2 * horizon} rel/abs tokens, got {actions.shape[-2]}.")
         return torch.cat((actions[:, :horizon], actions[:, horizon:]), dim=-1)
 
+    @property
+    def subtask_prompt_template(self) -> str:
+        """Hy's chat suffix marks where the assistant turn begins, so the goal alone suffices."""
+        return "{task}"
+
     @torch.no_grad()
     def generate_text(
         self,
@@ -2098,7 +2103,7 @@ class HyVLAPolicy(PreTrainedPolicy):
         it through Hy's normal prefix construction so the prompt matches training.
 
         Text runs as its own prefill: it is not produced alongside an action chunk, so
-        `predict_action_chunk_with_text` is deliberately left at the base default.
+        `predict_action_chunk` deliberately ignores `with_text` and returns a bare chunk.
         """
         self.eval()
         if kind == "subtask":
