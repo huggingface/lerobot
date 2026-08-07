@@ -229,11 +229,37 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        with_text: bool = False,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> Tensor | tuple[Tensor, str | None]:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        `with_text` asks for the text this policy generated *inside this pass*, returning
+        `(chunk, text)` instead of the bare chunk. Only a policy that emits text and
+        actions from one inference stream honours it — G0.5's System 2 chain-of-thought,
+        where the flow head runs on a cache the reasoning extended, so the action is
+        conditioned on the text rather than merely accompanied by it.
+
+        A policy whose text head runs its own prefill must ignore `with_text`: the
+        subtask it was conditioned on is already runtime state, and returning it here
+        would claim a causal link inside this pass that does not exist. Use
+        `generate_text` for that policy instead.
+
+        Honouring `with_text` costs nothing extra. Whether a policy generates text in its
+        pass is a property of the checkpoint and its configuration, not of the flag.
+
+        Callers must tolerate either return shape, since a policy that ignores the flag
+        still returns a bare chunk:
+
+            result = policy.predict_action_chunk(batch, with_text=True)
+            chunk, text = result if isinstance(result, tuple) else (result, None)
         """
         raise NotImplementedError
 
@@ -245,6 +271,72 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
+
+    def supports_text_generation(self) -> bool:
+        """Whether this policy has a usable text head."""
+        return type(self).generate_text is not PreTrainedPolicy.generate_text
+
+    #: Prompts this checkpoint was trained to answer, keyed by kind. A subclass declares
+    #: its own dict; lookups fall back to these, so it only lists what it changes.
+    #:
+    #: Each value is a template whose ``{placeholder}`` fields the caller fills with
+    #: `build_prompt`. The wording is part of the model contract and model-specific down
+    #: to the token — WALL-OSS declares its mode in this turn, and a prompt that drifts
+    #: from the trained phrasing is answered out of distribution. So the policy owns the
+    #: wording while the caller owns the values.
+    #:
+    #: The default is the wording the WALL-OSS and EO-1 family were trained on, which more
+    #: released checkpoints recognise than a sentence written for the occasion. Declare your
+    #: own even when it matches: this default may be retuned, and a policy that pins its
+    #: template will not silently follow.
+    PROMPT_TEMPLATES: dict[str, str] = {  # noqa: RUF012
+        "subtask": "{task}\nPredict the next action in language.",
+    }
+
+    def prompt_template(self, kind: str) -> str:
+        """The template registered for `kind`, falling back to the base defaults."""
+        merged = {**PreTrainedPolicy.PROMPT_TEMPLATES, **type(self).PROMPT_TEMPLATES}
+        template = merged.get(kind)
+        if template is None:
+            raise ValueError(
+                f"{type(self).__name__} has no {kind!r} prompt template. Registered kinds: {sorted(merged)}."
+            )
+        return template
+
+    def build_prompt(self, kind: str, **values: str) -> str:
+        """Fill the `kind` template, ready to pass to `generate_text`.
+
+        Substitutes with `str.replace` rather than `str.format`: templates carry
+        chat-control tokens, and a value such as an operator's task may contain braces
+        that `format` would choke on.
+        """
+        template = self.prompt_template(kind)
+        for name, value in values.items():
+            template = template.replace("{" + name + "}", value)
+        return template
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation, for policies with a text head.
+
+        The single text entry point: the caller supplies the whole
+        question, so this covers VQA, captioning, grounding and anything else the
+        checkpoint can answer. Decode with `self.config.text_temperature` and
+        `self.config.text_top_p`, so a checkpoint decodes the way it was trained.
+
+        Note that most VLA text heads are blind to proprioception — the prompt carries
+        images and language only — so answers are grounded in pixels, not robot state.
+
+        Args:
+            batch: A preprocessed observation batch, with the operator's goal in
+                `batch["task"]`.
+            prompt: The question to answer.
+
+        Returns:
+            The decoded text, or an empty string when the head produced nothing.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head. Implement `generate_text` to query it."
+        )
 
     def push_model_to_hub(
         self,
