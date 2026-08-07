@@ -15,7 +15,6 @@
 import threading
 import time
 
-from lerobot.configs import ActionChunkPrediction, TextKind
 from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
@@ -36,7 +35,7 @@ class FakePolicy:
     def supports_text_generation(self):
         return self.texts is not None
 
-    def generate_text(self, batch, *, kind=TextKind.SUBTASK, user_text=None):
+    def generate_text(self, batch, *, kind="subtask", user_text=None):
         self.batches.append((kind, batch))
         return self.texts.pop(0) if self.texts else ""
 
@@ -45,7 +44,7 @@ class FakePolicy:
         return ["a0", "a1"]
 
     def predict_action_chunk_with_text(self, batch):
-        return ActionChunkPrediction(action=self.predict_action_chunk(batch), text=self.chunk_text)
+        return self.predict_action_chunk(batch), self.chunk_text
 
 
 def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
@@ -64,7 +63,7 @@ def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
     assert executed == ["a0"]
     assert list(runtime.state.action_queue) == ["a1"]
     assert "  subtask: pick cup" in logs
-    assert policy.batches[0][0] is TextKind.SUBTASK
+    assert policy.batches[0][0] == "subtask"
 
 
 def test_policy_without_text_head_keeps_the_operator_instruction():
@@ -173,7 +172,7 @@ def test_prompt_change_discards_in_flight_action_chunk():
     assert list(runtime.state.action_queue) == []
     # The discarded chunk takes its text with it, so the panel cannot show reasoning
     # belonging to a chunk that was never executed.
-    assert runtime.state.last_prediction is None
+    assert runtime.state.last_chunk_text is None
 
 
 def test_accepted_chunk_publishes_its_text_for_display_only():
@@ -185,9 +184,7 @@ def test_accepted_chunk_publishes_its_text_for_display_only():
 
     runtime.step_once()
 
-    assert runtime.state.last_prediction is not None
-    assert runtime.state.last_prediction.text == "reach for the cup"
-    assert runtime.state.last_prediction.action == ["a0", "a1"]
+    assert runtime.state.last_chunk_text == "reach for the cup"
     # Never routed through the channel that is fed back to the policy as a command.
     assert "subtask" not in runtime.state.language_context
 
@@ -201,21 +198,6 @@ def test_policy_without_a_text_head_reports_no_chunk_text():
         def predict_action_chunk(self, batch, **kwargs):
             return ["a0"]
 
-    prediction = PreTrainedPolicy.predict_action_chunk_with_text(Chunker(), {})
-    assert prediction.action == ["a0"]
-    assert prediction.text is None
-
-
-def test_action_chunk_prediction_is_frozen():
-    import pytest
-
-    prediction = ActionChunkPrediction(action=["a0"], text="reach")
-    with pytest.raises(AttributeError):
-        prediction.text = "something else"
-
-
-def test_text_kind_members_compare_equal_to_their_wire_strings():
-    # Policies that dispatch on strings internally keep working unchanged.
-    assert TextKind.SUBTASK == "subtask"
-    assert TextKind.VQA == "vqa"
-    assert TextKind.VQA in {"vqa", "caption", "grounding"}
+    action, text = PreTrainedPolicy.predict_action_chunk_with_text(Chunker(), {})
+    assert action == ["a0"]
+    assert text is None

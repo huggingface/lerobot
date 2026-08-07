@@ -30,7 +30,7 @@ from safetensors.torch import load_model as load_model_as_safetensor, save_model
 from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
-from lerobot.configs import ActionChunkPrediction, PreTrainedConfig, TextKind
+from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -293,7 +293,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         batch: dict[str, Tensor],
         *,
-        kind: TextKind = TextKind.SUBTASK,
+        kind: str = "subtask",
         user_text: str | None = None,
     ) -> str:
         """Decode one string from the policy's text head, for policies that have one.
@@ -310,9 +310,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             batch: A preprocessed observation batch. The runtime puts the operator's
                 high-level goal in `batch["task"]` and the active subtask, once one has
                 been generated, in `batch["subtask"]`.
-            kind: What to generate, from the shared `TextKind` catalog.
-                `SUBTASK` is the next low-level instruction to condition actions on;
-                `VQA` answers `user_text` about the current view.
+            kind: What to generate. `"subtask"` is the next low-level instruction to
+                condition actions on; `"vqa"` answers `user_text` about the current view.
+                A policy may accept more of its own, such as `"caption"` or `"grounding"`.
             user_text: The operator's question, for kinds that take one.
 
         Returns:
@@ -325,7 +325,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def predict_action_chunk_with_text(
         self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
-    ) -> ActionChunkPrediction:
+    ) -> tuple[Tensor, str | None]:
         """Predict an action chunk together with text generated in the same pass.
 
         Override this only for a policy that emits text and actions from one inference
@@ -350,7 +350,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Returns:
             The chunk `predict_action_chunk` would return, and its text or `None`.
         """
-        return ActionChunkPrediction(action=self.predict_action_chunk(batch, **kwargs))
+        return self.predict_action_chunk(batch, **kwargs), None
 
     def push_model_to_hub(
         self,

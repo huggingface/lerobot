@@ -24,8 +24,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from lerobot.configs import ActionChunkPrediction, TextKind
-
 logger = logging.getLogger(__name__)
 
 
@@ -43,11 +41,11 @@ class RuntimeState:
     tick: Tick | None = None
     actions_dispatched: int = 0
     action_deadline: float | None = None
-    # The most recent chunk the runtime accepted, with its text. Display-only, and
-    # deliberately not in `language_context`: `build_language_batch` feeds that dict
-    # back to the policy as the next command, so reasoning routed through it would
-    # silently replace the operator's task.
-    last_prediction: ActionChunkPrediction | None = None
+    # Text from the chunk the runtime last accepted. Display-only, and deliberately
+    # not in `language_context`: `build_language_batch` feeds that dict back to the
+    # policy as the next command, so reasoning routed through it would silently
+    # replace the operator's task.
+    last_chunk_text: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     revision: int = 0
     lock: Any = field(default_factory=threading.RLock, repr=False)
@@ -115,12 +113,12 @@ class LanguageConditionedPolicy(Protocol):
     own instruction instead of a generated subtask.
     """
 
-    def predict_action_chunk_with_text(self, batch: dict[str, Any]) -> ActionChunkPrediction: ...
+    def predict_action_chunk_with_text(self, batch: dict[str, Any]) -> tuple[Any, str | None]: ...
 
     def supports_text_generation(self) -> bool: ...
 
     def generate_text(
-        self, batch: dict[str, Any], *, kind: TextKind = ..., user_text: str | None = ...
+        self, batch: dict[str, Any], *, kind: str = ..., user_text: str | None = ...
     ) -> str: ...
 
 
@@ -176,7 +174,7 @@ class SubtaskController:
         self._chunks_until_regen = max(1, self.chunks_per_regen) - 1
 
         batch = build_language_batch(observation, state)
-        subtask = self.policy.generate_text(batch, kind=TextKind.SUBTASK)
+        subtask = self.policy.generate_text(batch, kind="subtask")
         self.diagnostics.last_raw = subtask or ""
         if not subtask:
             self.diagnostics.empty += 1
@@ -347,7 +345,7 @@ class LanguageConditionedRuntime:
         try:
             # The observation provider already conditions the batch on the active
             # subtask, so the policy needs nothing beyond its usual inference call.
-            prediction = self.policy.predict_action_chunk_with_text(observation)
+            chunk, chunk_text = self.policy.predict_action_chunk_with_text(observation)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "predict_action_chunk_with_text failed: %s",
@@ -365,10 +363,10 @@ class LanguageConditionedRuntime:
             ):
                 logger.info("Discarded an action chunk invalidated during inference.")
                 return
-            self._enqueue_chunk(prediction.action)
+            self._enqueue_chunk(chunk)
             # Commit the text with its chunk, so a discarded chunk takes its text with it
             # rather than leaving it to be displayed against whichever chunk lands next.
-            self.state.last_prediction = prediction
+            self.state.last_chunk_text = chunk_text
 
     def _enqueue_chunk(self, chunk: Any) -> None:
         if chunk is None:
