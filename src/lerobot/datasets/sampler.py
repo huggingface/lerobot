@@ -55,7 +55,8 @@ class EpisodeAwareSampler:
         seed: int = 0,
         absolute_to_relative_idx: dict[int, int] | None = None,
     ):
-        """
+        """Build the sampler from per-episode `[from, to)` frame-index boundaries.
+
         Args:
             dataset_from_indices: Start index of each episode in the dataset.
             dataset_to_indices: End index of each episode in the dataset.
@@ -64,6 +65,13 @@ class EpisodeAwareSampler:
             drop_n_last_frames: Frames to drop from the end of each episode.
             shuffle: Whether to shuffle the indices.
             seed: Seed the permutation is derived from (together with the epoch).
+            absolute_to_relative_idx: Optional mapping from absolute dataset frame index to the relative
+                index actually yielded (e.g. when the sampler is used over a filtered subset).
+
+        Raises:
+            ValueError: If `drop_n_first_frames`/`drop_n_last_frames` is negative, if
+                `dataset_from_indices`/`dataset_to_indices` have different lengths, or if no episode has
+                any frames remaining after dropping.
         """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
@@ -116,12 +124,15 @@ class EpisodeAwareSampler:
         return [self._frame_index(k) for k in range(self._num_frames)]
 
     def set_epoch(self, epoch: int) -> None:
+        """Set the epoch the next `__iter__` call will use, without consuming an auto-advance."""
         self._epoch = epoch
 
     def state_dict(self) -> dict:
+        """Return `{"epoch": ..., "start_index": ...}`, enough to resume mid-epoch sample-exactly."""
         return {"epoch": self._epoch, "start_index": self._start_index}
 
     def load_state_dict(self, state: dict) -> None:
+        """Restore the epoch and within-epoch offset from a `state_dict()`-produced dict."""
         self._epoch = state["epoch"]
         self._start_index = state["start_index"]
 
@@ -140,6 +151,10 @@ class EpisodeAwareSampler:
         return absolute_idx
 
     def __iter__(self) -> Iterator[int]:
+        """Yield frame indices for the current epoch (from `set_epoch`/`load_state_dict`), then advance it.
+
+        Shuffled if `self.shuffle`, using a permutation seeded from `(seed, epoch)`.
+        """
         # Advance epoch state eagerly, not on first consumption of the generator.
         epoch, start = self._epoch, self._start_index
         self._epoch += 1
@@ -156,6 +171,7 @@ class EpisodeAwareSampler:
                 yield self._frame_index(k)
 
     def __len__(self) -> int:
+        """The total number of frames across the sampled episodes (full length, even mid-resume)."""
         return self._num_frames
 
 

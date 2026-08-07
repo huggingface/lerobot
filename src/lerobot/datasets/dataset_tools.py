@@ -118,10 +118,11 @@ def delete_episodes(
     consistent with its own metadata.
 
     Args:
-        dataset: The source LeRobotDataset.
-        episode_indices: List of episode indices to delete.
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+        dataset (`LeRobotDataset`): The source LeRobotDataset.
+        episode_indices (`list`): List of episode indices to delete.
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the edited dataset
+            will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/repo_id`.
+        repo_id (`str | None`, *optional*): Identifier for the edited dataset.
     """
     if not episode_indices:
         raise ValueError("No episodes to delete")
@@ -185,10 +186,11 @@ def split_dataset(
     output split stays consistent with its own metadata.
 
     Args:
-        dataset: The source LeRobotDataset to split.
-        splits: Either a dict mapping split names to episode indices, or a dict mapping
-                split names to fractions (must sum to <= 1.0).
-        output_dir: Root directory where the split datasets will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
+        dataset (`LeRobotDataset`): The source LeRobotDataset to split.
+        splits (`dict`): Either a dict mapping split names to episode indices, or a dict mapping
+            split names to fractions (must sum to <= 1.0).
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the split
+            datasets will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/repo_id`.
 
     Examples:
       Split by specific episodes
@@ -280,11 +282,14 @@ def merge_datasets(
     This is a wrapper around the aggregate_datasets functionality with a cleaner API.
 
     Args:
-        datasets: List of LeRobotDatasets to merge.
-        output_repo_id: Merged dataset identifier.
-        output_dir: Root directory where the merged dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/output_repo_id.
-        concatenate_videos: When False, keep one mp4 per source file instead of packing into shards.
-        concatenate_data: When False, keep one parquet per source file instead of packing into shards.
+        datasets (`list`): List of LeRobotDatasets to merge.
+        output_repo_id (`str`): Identifier for the merged dataset.
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the merged dataset
+            will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/output_repo_id`.
+        concatenate_videos (`bool`, *optional*, defaults to `True`): When `False`, keep one mp4 per
+            source file instead of packing them into shards.
+        concatenate_data (`bool`, *optional*, defaults to `True`): When `False`, keep one parquet file
+            per source file instead of packing them into shards.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -327,11 +332,14 @@ def modify_features(
     regardless of how many features are being added or removed.
 
     Args:
-        dataset: The source LeRobotDataset.
-        add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
-        remove_features: Optional feature name(s) to remove. Can be a single string or list.
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+        dataset (`LeRobotDataset`): The source LeRobotDataset.
+        add_features (`dict[str, tuple[numpy.ndarray | torch.Tensor | collections.abc.Callable, dict]] | None`, *optional*):
+            Dict mapping feature names to `(feature_values, feature_info)` tuples.
+        remove_features (`str | list[str] | None`, *optional*): Feature name(s) to remove. Can be a
+            single string or a list.
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the edited dataset
+            will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/repo_id`.
+        repo_id (`str | None`, *optional*): Identifier for the edited dataset.
 
     Returns:
         New dataset with features modified.
@@ -430,10 +438,11 @@ def add_features(
     copies the dataset once regardless of how many features are being added.
 
     Args:
-        dataset: The source LeRobotDataset.
-        features: Dictionary mapping feature names to (feature_values, feature_info) tuples.
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+        dataset (`LeRobotDataset`): The source LeRobotDataset.
+        features (`dict`): Dictionary mapping feature names to `(feature_values, feature_info)` tuples.
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the edited dataset
+            will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/repo_id`.
+        repo_id (`str | None`, *optional*): Identifier for the edited dataset.
 
     Returns:
         New dataset with all features added.
@@ -467,10 +476,12 @@ def remove_feature(
     """Remove features from a LeRobotDataset.
 
     Args:
-        dataset: The source LeRobotDataset.
-        feature_names: Name(s) of features to remove. Can be a single string or list.
-        output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
-        repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
+        dataset (`LeRobotDataset`): The source LeRobotDataset.
+        feature_names (`str | list[str]`): Name(s) of features to remove. Can be a single string or
+            a list.
+        output_dir (`str | pathlib.Path | None`, *optional*): Root directory where the edited dataset
+            will be stored. If not specified, defaults to `$HF_LEROBOT_HOME/repo_id`.
+        repo_id (`str | None`, *optional*): Identifier for the edited dataset.
 
     Returns:
         New dataset with features removed.
@@ -949,7 +960,7 @@ def _copy_and_reindex_episodes_metadata(
 
 
 def _write_parquet(df: pd.DataFrame, path: Path, meta: LeRobotDatasetMetadata) -> None:
-    """Write DataFrame to parquet
+    """Write DataFrame to parquet.
 
     This ensures images are properly embedded and the file can be loaded correctly by HF datasets.
     """
@@ -1457,13 +1468,14 @@ def modify_tasks(
     - meta/info.json (total_tasks)
 
     Args:
-        dataset: The source LeRobotDataset to modify.
-        new_task: Default task applied to any episode not covered by `episode_tasks` or a
-            matching `task_replacements` entry.
-        episode_tasks: Optional dict mapping episode indices to task strings. Takes precedence
-            over both `task_replacements` and `new_task`.
-        task_replacements: Optional dict mapping existing task strings to new ones. Applied to
-            episodes whose current task matches a key. Every key must be an existing task.
+        dataset (`LeRobotDataset`): The source LeRobotDataset to modify.
+        new_task (`str | None`, *optional*): Default task applied to any episode not covered by
+            `episode_tasks` or a matching `task_replacements` entry.
+        episode_tasks (`dict[int, str] | None`, *optional*): Dict mapping episode indices to task
+            strings. Takes precedence over both `task_replacements` and `new_task`.
+        task_replacements (`dict[str, str] | None`, *optional*): Dict mapping existing task strings to
+            new ones. Applied to episodes whose current task matches a key. Every key must be an
+            existing task.
 
     At least one of `new_task`, `episode_tasks`, or `task_replacements` must be provided.
 
@@ -1594,19 +1606,19 @@ def recompute_stats(
     """Recompute stats.json from scratch by iterating all episodes.
 
     Args:
-        dataset: The LeRobotDataset to recompute stats for.
-        skip_image_video: If True (default), only recompute stats for numeric features
-            (action, state, etc.) and keep existing image/video stats unchanged.
-        relative_action: If True, compute action stats in relative space by
-            iterating all valid action chunks and subtracting the current state.
-            This matches the normalization distribution the model sees during
-            training with ``use_relative_actions=True``.
-        relative_exclude_joints: Joint names to exclude from relative conversion when
-            relative_action=True. These dims keep absolute stats.
-        chunk_size: Action chunk size used for relative stats computation. Should match
-            ``policy.chunk_size``. Only used when ``relative_action=True``.
-        num_workers: Number of parallel threads for relative action stats computation.
-            Values ≤1 mean single-threaded. Only used when ``relative_action=True``.
+        dataset (`LeRobotDataset`): The LeRobotDataset to recompute stats for.
+        skip_image_video (`bool`, *optional*, defaults to `True`): If `True`, only recompute stats for
+            numeric features (action, state, etc.) and keep existing image/video stats unchanged.
+        relative_action (`bool`, *optional*, defaults to `False`): If `True`, compute action stats in
+            relative space by iterating all valid action chunks and subtracting the current state.
+            This matches the normalization distribution the model sees during training with
+            `use_relative_actions=True`.
+        relative_exclude_joints (`list[str] | None`, *optional*): Joint names to exclude from relative
+            conversion when `relative_action=True`. These dims keep absolute stats.
+        chunk_size (`int`, *optional*, defaults to 50): Action chunk size used for relative stats
+            computation. Should match `policy.chunk_size`. Only used when `relative_action=True`.
+        num_workers (`int`, *optional*, defaults to 0): Number of parallel threads for relative action
+            stats computation. Values <=1 mean single-threaded. Only used when `relative_action=True`.
 
     Returns:
         The same dataset with updated stats.
@@ -1709,24 +1721,22 @@ def convert_image_to_video_dataset(
     LeRobot dataset structure with videos stored in chunked MP4 files.
 
     Args:
-        dataset: The source LeRobot dataset with images.
-        output_dir: Root directory where the converted dataset will be stored. When
-            ``None``, defaults to ``$HF_LEROBOT_HOME/repo_id``. Equivalent to
-            ``new_root`` in ``EditDatasetConfig``.
-        repo_id: Converted dataset identifier. Equivalent to ``new_repo_id`` in
-            ``EditDatasetConfig``.
-        rgb_encoder: Video encoder settings applied to RGB cameras. When ``None``,
-            :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
-        depth_encoder: Video encoder settings applied to depth-map cameras, including
-            the quantization parameters persisted to the dataset metadata. When
-            ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
-        episode_indices: Episode indices to convert. When ``None``, all episodes are
-            converted.
-        num_workers: Number of threads for parallel processing.
-        max_episodes_per_batch: Maximum episodes per video batch, to bound memory use.
-            ``None`` means no limit.
-        max_frames_per_batch: Maximum frames per video batch, to bound memory use.
-            ``None`` means no limit.
+        dataset (`LeRobotDataset`): The source LeRobot dataset with images.
+        output_dir (`pathlib.Path | None`, *optional*): Root directory where the converted dataset will
+            be stored. When `None`, defaults to `$HF_LEROBOT_HOME/repo_id`.
+        repo_id (`str | None`, *optional*): Identifier for the converted dataset.
+        rgb_encoder (`lerobot.configs.video.RGBEncoderConfig | None`, *optional*): Video encoder settings
+            applied to RGB cameras. When `None`, `rgb_encoder_defaults` is used.
+        depth_encoder (`lerobot.configs.video.DepthEncoderConfig | None`, *optional*): Video encoder
+            settings applied to depth-map cameras, including the quantization parameters persisted to
+            the dataset metadata. When `None`, `depth_encoder_defaults` is used.
+        episode_indices (`list[int] | None`, *optional*): Episode indices to convert. When `None`, all
+            episodes are converted.
+        num_workers (`int`, *optional*, defaults to 4): Number of threads for parallel processing.
+        max_episodes_per_batch (`int | None`, *optional*): Maximum episodes per video batch, to bound
+            memory use. `None` means no limit.
+        max_frames_per_batch (`int | None`, *optional*): Maximum frames per video batch, to bound memory
+            use. `None` means no limit.
 
     Returns:
         A new :class:`LeRobotDataset` with images encoded as videos.
@@ -1966,18 +1976,17 @@ def reencode_dataset(
     Videos are re-encoded in-place and the video information in ``info.json`` is refreshed.
 
     Args:
-        dataset: An existing :class:`LeRobotDataset` whose videos will be
-            re-encoded.
-        rgb_encoder: Target encoder configuration applied to every RGB video
-            file. If ``None``, re-encoding is skipped for RGB videos.
-        depth_encoder: Target encoder configuration applied to every depth video
-            file. If ``None``, re-encoding is skipped for depth videos.
-            Quantization parameters will not override the ones in the current dataset.
-        encoder_threads: Per-encoder thread count forwarded to
-            :func:`reencode_video`. ``None`` lets the codec decide.
-        num_workers: Number of parallel processes. ``None`` or ``0`` means
-            sequential (no multiprocessing); ``1+`` spawns a
-            :class:`~concurrent.futures.ProcessPoolExecutor`.
+        dataset (`LeRobotDataset`): An existing :class:`LeRobotDataset` whose videos will be re-encoded.
+        rgb_encoder (`lerobot.configs.video.RGBEncoderConfig | None`, *optional*): Target encoder
+            configuration applied to every RGB video file. If `None`, re-encoding is skipped for RGB
+            videos.
+        depth_encoder (`lerobot.configs.video.DepthEncoderConfig | None`, *optional*): Target encoder
+            configuration applied to every depth video file. If `None`, re-encoding is skipped for depth
+            videos. Quantization parameters will not override the ones in the current dataset.
+        encoder_threads (`int | None`, *optional*): Per-encoder thread count forwarded to
+            `reencode_video`. `None` lets the codec decide.
+        num_workers (`int | None`, *optional*): Number of parallel processes. `None` or `0` means
+            sequential (no multiprocessing); `1+` spawns a `ProcessPoolExecutor`.
 
     Returns:
         The same :class:`LeRobotDataset` instance with its metadata updated

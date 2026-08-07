@@ -41,10 +41,11 @@ def write_u16_plane(plane: av.video.plane.VideoPlane, src: np.ndarray, fill_valu
     leave the padding untouched.
 
     Args:
-        plane: Destination 16-bit plane.
-        src: Source image, shape ``(height, width)``, dtype ``uint16``.
-        fill_value: If given, every pixel (padding included) is set to this first, so the
-            padding holds clean data instead of garbage.
+        plane (`VideoPlane`): Destination 16-bit plane to copy into.
+        src (`ndarray`): Source image, shape `(height, width)`, dtype `uint16`.
+        fill_value (`int | None`, *optional*): If given, every pixel of the plane
+            (including the row padding) is set to this value first, so the padding
+            holds clean data instead of garbage.
     """
     height, width = src.shape
     stride_u16 = plane.line_size // np.dtype(np.uint16).itemsize

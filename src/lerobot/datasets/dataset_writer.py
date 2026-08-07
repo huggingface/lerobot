@@ -200,8 +200,7 @@ class DatasetWriter:
             self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
 
     def add_frame(self, frame: dict) -> None:
-        """
-        Add a single frame to the current episode buffer.
+        """Add a single frame to the current episode buffer.
 
         Apart from images written to a temporary directory, nothing is written to disk
         until ``save_episode()`` is called.

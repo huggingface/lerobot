@@ -21,3 +21,37 @@ See [Using LeRobotDataset](../lerobot-dataset-v3) for the format and the common 
 ## StreamingLeRobotDataset
 
 [[autodoc]] lerobot.datasets.StreamingLeRobotDataset
+
+## EpisodeAwareSampler
+
+[[autodoc]] lerobot.datasets.sampler.EpisodeAwareSampler
+
+## Editing a dataset
+
+Functions in `lerobot.datasets.dataset_tools` for editing an existing `LeRobotDataset` on disk: adding,
+removing, or modifying features; splitting, merging, or deleting episodes; re-encoding video; and
+recomputing statistics. Each returns a new dataset rather than mutating the source in place.
+
+[[autodoc]] lerobot.datasets.dataset_tools.add_features
+
+[[autodoc]] lerobot.datasets.dataset_tools.remove_feature
+
+[[autodoc]] lerobot.datasets.dataset_tools.modify_features
+
+[[autodoc]] lerobot.datasets.dataset_tools.modify_tasks
+
+[[autodoc]] lerobot.datasets.dataset_tools.delete_episodes
+
+[[autodoc]] lerobot.datasets.dataset_tools.split_dataset
+
+[[autodoc]] lerobot.datasets.dataset_tools.merge_datasets
+
+[[autodoc]] lerobot.datasets.dataset_tools.recompute_stats
+
+[[autodoc]] lerobot.datasets.dataset_tools.reencode_dataset
+
+[[autodoc]] lerobot.datasets.dataset_tools.convert_image_to_video_dataset
+
+## Aggregating datasets
+
+[[autodoc]] lerobot.datasets.aggregate.aggregate_datasets

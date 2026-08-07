@@ -13,9 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-Depth encoding/decoding helpers for :class:`DepthEncoderConfig`.
-"""
+"""Depth encoding/decoding helpers for :class:`DepthEncoderConfig`."""
 
 import math
 from typing import Literal
@@ -92,13 +90,24 @@ def quantize_depth(
     ``depth_min``, ``depth_max``, and ``shift`` are always in **metres**.
 
     Args:
-        depth: Depth map; ``torch.Tensor`` is moved to CPU for conversion.
-        depth_min: Depth (metres) at quantum ``0``.
-        depth_max: Depth (metres) at quantum :data:`DEPTH_QMAX`.
-        shift: Depth shift (metres); used in log mode. Must satisfy ``depth_min + shift > 0``.
-        use_log: If ``True`` (default), quantize in log space.
-        video_backend: Video backend to use for encoding. Defaults to "pyav".
-        input_unit: Input unit policy (``"auto"``, ``"mm"``, ``"m"``).
+        depth (`numpy.ndarray[tuple[int, ...], numpy.dtype[numpy.uint16]] | numpy.ndarray[tuple[int, ...], numpy.dtype[numpy.float32]] | torch.Tensor`): Depth
+            map to quantize. A `torch.Tensor` is moved to CPU before conversion.
+        depth_min (`float`, *optional*, defaults to 0.01): Depth, in metres, mapped to quantum
+            `0`.
+        depth_max (`float`, *optional*, defaults to 10.0): Depth, in metres, mapped to quantum
+            `DEPTH_QMAX`.
+        shift (`float`, *optional*, defaults to 3.5): Depth shift, in metres, used in log mode.
+            Must satisfy `depth_min + shift > 0`.
+        use_log (`bool`, *optional*, defaults to `True`): If `True`, quantize in log space, which
+            allocates more quanta to near-range depth.
+        pix_fmt (`str`, *optional*, defaults to `"gray12le"`): Pixel format used to build the
+            `av.VideoFrame` when `video_backend="pyav"`.
+        video_backend (`str | None`, *optional*, defaults to `"pyav"`): Video backend used for
+            encoding. When `"pyav"`, returns an `av.VideoFrame`; otherwise returns the raw
+            `uint16` array.
+        input_unit (`Literal`, *optional*, defaults to `"auto"`): Input unit policy: `"auto"`
+            infers the unit from `depth`'s dtype, while `"mm"` or `"m"` force millimetres or
+            metres respectively.
 
     Returns:
         ``numpy.ndarray``, ``dtype=uint16``, same shape as ``depth``, values in
@@ -174,15 +183,28 @@ def dequantize_depth(
     Output layout is determined by ``output_channel_last``.
 
     Args:
-        quantized: 12-bit codes in ``[0, DEPTH_QMAX]``. ``np.ndarray``,
-            ``av.VideoFrame``, or ``torch.Tensor`` (any integer or float dtype).
-        depth_min, depth_max, shift, use_log: Same as :func:`quantize_depth` (metres).
-        pix_fmt: Pixel format used to extract the plane from an ``av.VideoFrame``.
-        output_unit: ``"mm"`` returns ``uint16`` millimetres (rint, clip
-            ``[0, 65535]``) when returning a numpy array, or ``float32`` mm when
-            ``output_tensor=True``. ``"m"`` returns ``float32`` metres in
-            ``[depth_min, depth_max]``.
-        output_tensor: If True, return a ``torch.Tensor`` instead of a numpy array.
+        quantized (`numpy.ndarray[tuple[int, ...], numpy.dtype[numpy.uint16]] | av.video.frame.VideoFrame | torch.Tensor`): 12-bit
+            codes in `[0, DEPTH_QMAX]`, as a numpy array, `av.VideoFrame`, or `torch.Tensor`
+            (any integer or float dtype).
+        depth_min (`float`, *optional*, defaults to 0.01): Depth, in metres, mapped to quantum
+            `0`. Must match the value passed to `quantize_depth`.
+        depth_max (`float`, *optional*, defaults to 10.0): Depth, in metres, mapped to quantum
+            `DEPTH_QMAX`. Must match the value passed to `quantize_depth`.
+        shift (`float`, *optional*, defaults to 3.5): Depth shift, in metres, used in log mode.
+            Must match the value passed to `quantize_depth`.
+        use_log (`bool`, *optional*, defaults to `True`): If `True`, invert the log-space mapping
+            used by `quantize_depth`. Must match the encoding call.
+        pix_fmt (`str`, *optional*, defaults to `"gray12le"`): Pixel format used to extract the
+            plane data when `quantized` is an `av.VideoFrame`.
+        output_unit (`Literal`, *optional*, defaults to `"mm"`): `"mm"` returns `uint16`
+            millimetres, clipped to `[0, 65535]`, when returning a numpy array, or `float32`
+            millimetres when `output_tensor=True`. `"m"` returns `float32` metres in
+            `[depth_min, depth_max]`.
+        output_tensor (`bool`, *optional*, defaults to `True`): If `True`, return a
+            `torch.Tensor` instead of a numpy array.
+        output_channel_last (`bool`, *optional*, defaults to `False`): If `True`, add the
+            restored singleton channel dimension as the last axis instead of the third-to-last
+            axis.
 
     Returns:
         Depth map in the requested unit and dtype.
