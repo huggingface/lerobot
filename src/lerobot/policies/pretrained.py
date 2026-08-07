@@ -286,41 +286,52 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     def supports_text_generation(self) -> bool:
-        """Whether this policy implements `generate_text`."""
+        """Whether this policy has a usable text head."""
         return type(self).generate_text is not PreTrainedPolicy.generate_text
 
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        """Decode one string from the policy's text head, for policies that have one.
+    def predict_subtask(self, batch: dict[str, Tensor]) -> str:
+        """Predict the next low-level instruction to condition actions on.
 
-        This is the whole contract the interactive language runtime needs from a policy:
-        it owns scheduling, the action loop, and the conversation state, and calls here
-        only to turn the current observation into text. Decode with
-        `self.config.text_temperature` and `self.config.text_top_p`, so a checkpoint
-        decodes the way it was trained. A policy needing knobs beyond those two (top-k,
-        repetition penalty, ...) declares them on its own config rather than on the
-        base, which stays at the settings every text head shares.
+        Takes no prompt: the policy owns the template it was trained with, which is
+        model-specific down to the token — WALL-OSS declares its mode in this turn, and
+        a prompt that drifts from the trained wording is answered out of distribution.
+        A caller cannot know that wording, so it is not a caller's parameter.
 
         Args:
             batch: A preprocessed observation batch. The runtime puts the operator's
-                high-level goal in `batch["task"]` and the active subtask, once one has
-                been generated, in `batch["subtask"]`.
-            kind: What to generate. `"subtask"` is the next low-level instruction to
-                condition actions on; `"vqa"` answers `user_text` about the current view.
-                A policy may accept more of its own, such as `"caption"` or `"grounding"`.
-            user_text: The operator's question, for kinds that take one.
+                high-level goal in `batch["task"]` and the previously generated subtask,
+                if any, in `batch["subtask"]`.
+
+        Returns:
+            The next subtask, or an empty string when the head produced nothing — the
+            runtime then keeps the previous subtask and counts it in the diagnostics.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot predict subtasks. Implement `predict_subtask` to "
+            "drive it from the interactive language runtime."
+        )
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation, for policies with a text head.
+
+        The open-ended counterpart to `predict_subtask`: the caller supplies the whole
+        question, so this covers VQA, captioning, grounding and anything else the
+        checkpoint can answer. Decode with `self.config.text_temperature` and
+        `self.config.text_top_p`, so a checkpoint decodes the way it was trained.
+
+        Note that most VLA text heads are blind to proprioception — the prompt carries
+        images and language only — so answers are grounded in pixels, not robot state.
+
+        Args:
+            batch: A preprocessed observation batch, with the operator's goal in
+                `batch["task"]`.
+            prompt: The question to answer.
 
         Returns:
             The decoded text, or an empty string when the head produced nothing.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} has no text head. Implement `generate_text` to use it with "
-            "the interactive language runtime."
+            f"{type(self).__name__} has no text head. Implement `generate_text` to query it."
         )
 
     def predict_action_chunk_with_text(
