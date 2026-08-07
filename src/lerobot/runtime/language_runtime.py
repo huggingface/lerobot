@@ -109,8 +109,8 @@ class RuntimeState:
 class LanguageConditionedPolicy(Protocol):
     """The policy surface the runtime drives.
 
-    ``subtask_prompt_template`` and ``generate_text`` are optional: a policy without a
-    text head runs on the operator's own instruction instead of a generated subtask.
+    ``build_prompt`` and ``generate_text`` are optional: a policy without a text head
+    runs on the operator's own instruction instead of a generated subtask.
     """
 
     def predict_action_chunk(
@@ -119,8 +119,7 @@ class LanguageConditionedPolicy(Protocol):
 
     def supports_text_generation(self) -> bool: ...
 
-    @property
-    def subtask_prompt_template(self) -> str: ...
+    def build_prompt(self, kind: str, **values: str) -> str: ...
 
     def generate_text(self, batch: dict[str, Any], prompt: str) -> str: ...
 
@@ -178,9 +177,9 @@ class SubtaskController:
 
         batch = build_language_batch(observation, state)
         # The checkpoint owns the wording it was trained to answer; the operator owns the
-        # goal. `replace` rather than `format`: a task may contain braces, and a template
-        # may contain chat-control tokens.
-        prompt = self.policy.subtask_prompt_template.replace("{task}", state.task)
+        # goal. Any registered kind composes the same way, so a future "memory" or
+        # "verify" prompt needs no change here beyond its name.
+        prompt = self.policy.build_prompt("subtask", task=state.task)
         subtask = self.policy.generate_text(batch, prompt)
         self.diagnostics.last_raw = subtask or ""
         if not subtask:
