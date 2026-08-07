@@ -1316,10 +1316,10 @@ def test_predict_action_chunk_with_text_pairs_same_pass_cot_with_its_chunk():
         def _run_inference(self, batch, **kwargs):
             return chunk, {"cot_text": ["Subtask: grasp the cup"]}
 
-    prediction = G05Policy.predict_action_chunk_with_text(Stub(), {})
+    action, text = G05Policy.predict_action_chunk_with_text(Stub(), {})
 
-    assert prediction.action is chunk
-    assert prediction.text == "Subtask: grasp the cup"
+    assert action is chunk
+    assert text == "Subtask: grasp the cup"
 
 
 def test_predict_action_chunk_with_text_reports_no_text_for_system1():
@@ -1331,4 +1331,4 @@ def test_predict_action_chunk_with_text_reports_no_text_for_system1():
         def _run_inference(self, batch, **kwargs):
             return torch.zeros(1, 2, 3), {}
 
-    assert G05Policy.predict_action_chunk_with_text(Stub(), {}).text is None
+    assert G05Policy.predict_action_chunk_with_text(Stub(), {})[1] is None

@@ -49,7 +49,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import ActionChunkPrediction
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -3326,7 +3325,7 @@ class G05Policy(PreTrainedPolicy):
         return action
 
     @torch.no_grad()
-    def predict_action_chunk_with_text(self, batch: dict[str, Any], **kwargs) -> ActionChunkPrediction:
+    def predict_action_chunk_with_text(self, batch: dict[str, Any], **kwargs) -> tuple[Tensor, str | None]:
         """The chunk and the System 2 chain-of-thought generated in the same pass.
 
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
@@ -3335,7 +3334,7 @@ class G05Policy(PreTrainedPolicy):
         than merely accompanied by it. System 1 emits none and reports `text=None`.
         """
         action, metadata = self._run_inference(batch)
-        return ActionChunkPrediction(action=action, text=_first_cot_text(metadata))
+        return action, _first_cot_text(metadata)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:
