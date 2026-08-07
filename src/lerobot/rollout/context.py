@@ -383,7 +383,8 @@ def build_rollout_context(
     rename_map = cfg.rename_map
     if not rename_map:
         expected_visuals = {
-            k for k, v in policy_config.input_features.items() if v.type == FeatureType.VISUAL
+            k for k, v in policy_config.input_features.items()
+            if v.type == FeatureType.VISUAL and "empty_camera_" not in k
         }
         provided_visuals = {
             f"observation.images.{k}" for k, v in robot.observation_features.items() if isinstance(v, tuple)
