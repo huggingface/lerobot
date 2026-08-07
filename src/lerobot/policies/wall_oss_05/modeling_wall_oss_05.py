@@ -738,6 +738,8 @@ class WallOSS05Policy(PreTrainedPolicy):
 
     config_class = WallOSS05Config
     name = "wall_oss_05"
+    #: Wall's trained subtask wording; the runtime fills it with the operator's goal.
+    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language.\n"}  # noqa: RUF012
 
     def __init__(
         self,
@@ -833,11 +835,6 @@ class WallOSS05Policy(PreTrainedPolicy):
             "<|im_end|>\n<|im_start|>assistant\n"
         )
         return prompt, _ACTION_TOKEN * self.config.chunk_size
-
-    @property
-    def subtask_prompt_template(self) -> str:
-        """Wall's trained subtask wording, filled with the operator's goal by the runtime."""
-        return "{task}\nPredict the next action in language.\n"
 
     def _get_text_prompt(self, instruction: str, kind: str) -> str:
         prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nObservation:"
