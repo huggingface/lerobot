@@ -44,12 +44,32 @@ OptimizerParams = (
 
 @dataclass
 class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
+    """Base configuration shared by every optimizer.
+
+    Concrete optimizers subclass this and register themselves with
+    `@OptimizerConfig.register_subclass("name")`, which is what makes `--optimizer.type=name` work on the
+    command line.
+
+    Args:
+        lr (`float`):
+            Learning rate.
+        weight_decay (`float`):
+            Weight decay (L2 penalty) applied by the optimizer.
+        grad_clip_norm (`float`):
+            Maximum gradient norm; gradients are clipped to this value before each optimizer step.
+    """
+
     lr: float
     weight_decay: float
     grad_clip_norm: float
 
     @property
     def type(self) -> str:
+        """Return the registered name this config was registered under.
+
+        Returns:
+            `str`: The name passed to `@OptimizerConfig.register_subclass`, e.g. `"adam"`.
+        """
         return self.get_choice_name(self.__class__)
 
     @property
@@ -59,12 +79,16 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @classmethod
     def default_choice_name(cls) -> str | None:
+        """Return the registered name used when `--optimizer.type` is not specified.
+
+        Returns:
+            `str | None`: `"adam"`.
+        """
         return "adam"
 
     @abc.abstractmethod
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
-        """
-        Build the optimizer. It can be a single optimizer or a dictionary of optimizers.
+        """Build the optimizer. It can be a single optimizer or a dictionary of optimizers.
 
         NOTE: Multiple optimizers are useful when you have different models to optimize.
         For example, you can have one optimizer for the policy and another one for the value function
@@ -89,6 +113,21 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
 @OptimizerConfig.register_subclass("adam")
 @dataclass
 class AdamConfig(OptimizerConfig):
+    """Configuration for [`torch.optim.Adam`](https://docs.pytorch.org/docs/stable/generated/torch.optim.Adam.html).
+
+    Args:
+        lr (`float`, *optional*, defaults to 0.001):
+            Learning rate.
+        weight_decay (`float`, *optional*, defaults to 0.0):
+            Weight decay (L2 penalty).
+        grad_clip_norm (`float`, *optional*, defaults to 10.0):
+            Maximum gradient norm; gradients are clipped to this value before each optimizer step.
+        betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.999)`):
+            Coefficients used for computing running averages of the gradient and its square.
+        eps (`float`, *optional*, defaults to 1e-08):
+            Term added to the denominator to improve numerical stability.
+    """
+
     lr: float = 1e-3
     betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
@@ -96,6 +135,15 @@ class AdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        """Build a [`torch.optim.Adam`](https://docs.pytorch.org/docs/stable/generated/torch.optim.Adam.html) instance from this config.
+
+        Args:
+            params (`OptimizerParams`):
+                Parameters to optimize, as accepted by `torch.optim.Adam`.
+
+        Returns:
+            `torch.optim.Optimizer`: The built optimizer.
+        """
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.Adam(params, **kwargs)
@@ -104,6 +152,21 @@ class AdamConfig(OptimizerConfig):
 @OptimizerConfig.register_subclass("adamw")
 @dataclass
 class AdamWConfig(OptimizerConfig):
+    """Configuration for [`torch.optim.AdamW`](https://docs.pytorch.org/docs/stable/generated/torch.optim.AdamW.html).
+
+    Args:
+        lr (`float`, *optional*, defaults to 0.001):
+            Learning rate.
+        weight_decay (`float`, *optional*, defaults to 0.01):
+            Weight decay, applied decoupled from the gradient update as in the AdamW paper.
+        grad_clip_norm (`float`, *optional*, defaults to 10.0):
+            Maximum gradient norm; gradients are clipped to this value before each optimizer step.
+        betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.999)`):
+            Coefficients used for computing running averages of the gradient and its square.
+        eps (`float`, *optional*, defaults to 1e-08):
+            Term added to the denominator to improve numerical stability.
+    """
+
     lr: float = 1e-3
     betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
@@ -111,6 +174,15 @@ class AdamWConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        """Build a [`torch.optim.AdamW`](https://docs.pytorch.org/docs/stable/generated/torch.optim.AdamW.html) instance from this config.
+
+        Args:
+            params (`OptimizerParams`):
+                Parameters to optimize, as accepted by `torch.optim.AdamW`.
+
+        Returns:
+            `torch.optim.Optimizer`: The built optimizer.
+        """
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.AdamW(params, **kwargs)
@@ -119,6 +191,23 @@ class AdamWConfig(OptimizerConfig):
 @OptimizerConfig.register_subclass("sgd")
 @dataclass
 class SGDConfig(OptimizerConfig):
+    """Configuration for [`torch.optim.SGD`](https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html).
+
+    Args:
+        lr (`float`, *optional*, defaults to 0.001):
+            Learning rate.
+        weight_decay (`float`, *optional*, defaults to 0.0):
+            Weight decay (L2 penalty).
+        grad_clip_norm (`float`, *optional*, defaults to 10.0):
+            Maximum gradient norm; gradients are clipped to this value before each optimizer step.
+        momentum (`float`, *optional*, defaults to 0.0):
+            Momentum factor.
+        dampening (`float`, *optional*, defaults to 0.0):
+            Dampening for momentum.
+        nesterov (`bool`, *optional*, defaults to `False`):
+            Whether to enable Nesterov momentum.
+    """
+
     lr: float = 1e-3
     momentum: float = 0.0
     dampening: float = 0.0
@@ -127,6 +216,15 @@ class SGDConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        """Build a [`torch.optim.SGD`](https://docs.pytorch.org/docs/stable/generated/torch.optim.SGD.html) instance from this config.
+
+        Args:
+            params (`OptimizerParams`):
+                Parameters to optimize, as accepted by `torch.optim.SGD`.
+
+        Returns:
+            `torch.optim.Optimizer`: The built optimizer.
+        """
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.SGD(params, **kwargs)
@@ -168,8 +266,7 @@ class XVLAAdamWConfig(OptimizerConfig):
     soft_prompt_warmup_lr_scale: float | None = None  # If set, start soft-prompts at this scale (e.g., 0.01)
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
-        """
-        Build AdamW optimizer with differential learning rates.
+        """Build AdamW optimizer with differential learning rates.
 
         Args:
             params: Must be a dict[str, Parameter] from dict(model.named_parameters())
@@ -239,10 +336,14 @@ class MultiAdamConfig(OptimizerConfig):
     This creates a dictionary of Adam optimizers, each with its own hyperparameters.
 
     Args:
-        lr: Default learning rate (used if not specified for a group)
-        weight_decay: Default weight decay (used if not specified for a group)
-        optimizer_groups: Dictionary mapping parameter group names to their hyperparameters
-        grad_clip_norm: Gradient clipping norm
+        lr (`float`, *optional*, defaults to 0.001):
+            Default learning rate, used for a group unless overridden in `optimizer_groups`.
+        weight_decay (`float`, *optional*, defaults to 0.0):
+            Default weight decay, used for a group unless overridden in `optimizer_groups`.
+        grad_clip_norm (`float`, *optional*, defaults to 10.0):
+            Maximum gradient norm; gradients are clipped to this value before each optimizer step.
+        optimizer_groups (`dict[str, dict[str, Any]]`, *optional*):
+            Per-group hyperparameter overrides (`lr`, `betas`, `eps`, `weight_decay`), keyed by group name.
     """
 
     lr: float = 1e-3
@@ -252,6 +353,7 @@ class MultiAdamConfig(OptimizerConfig):
 
     @property
     def builds_multiple_optimizers(self) -> bool:
+        """`bool`: Always `True`; `build()` returns a dict of optimizers, one per parameter group."""
         return True
 
     def build(self, params: OptimizerParams) -> dict[str, torch.optim.Optimizer]:
@@ -296,8 +398,10 @@ def save_optimizer_state(
     """Save optimizer state to disk (non-sharded runs; sharded runs use the DCP channel).
 
     Args:
-        optimizer: Either a single optimizer or a dictionary of optimizers.
-        save_dir: Directory to save the optimizer state.
+        optimizer (`torch.optim.Optimizer | dict[str, torch.optim.Optimizer]`):
+            Either a single optimizer or a dictionary of optimizers.
+        save_dir (`Path`):
+            Directory to save the optimizer state.
     """
     if isinstance(optimizer, dict):
         # Handle dictionary of optimizers
@@ -325,11 +429,14 @@ def load_optimizer_state(
     """Load optimizer state from disk.
 
     Args:
-        optimizer: Either a single optimizer or a dictionary of optimizers.
-        save_dir: Directory to load the optimizer state from.
+        optimizer (`torch.optim.Optimizer | dict[str, torch.optim.Optimizer]`):
+            Either a single optimizer or a dictionary of optimizers.
+        save_dir (`Path`):
+            Directory to load the optimizer state from.
 
     Returns:
-        The updated optimizer(s) with loaded state.
+        `torch.optim.Optimizer | dict[str, torch.optim.Optimizer]`: The updated optimizer(s) with loaded
+        state.
     """
     if isinstance(optimizer, dict):
         # Handle dictionary of optimizers

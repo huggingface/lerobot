@@ -1,0 +1,93 @@
+# Optimization
+
+`OptimizerConfig` and `LRSchedulerConfig` are the base configuration classes for the optimizers and learning
+rate schedulers used during training. `TrainPipelineConfig` composes one of each; see
+[`~optim.factory.make_optimizer_and_scheduler`] for how they are built from a policy's parameters.
+
+## make_optimizer_and_scheduler
+
+[[autodoc]] lerobot.optim.factory.make_optimizer_and_scheduler
+
+## OptimizerConfig
+
+[[autodoc]] lerobot.optim.OptimizerConfig
+    - type
+    - builds_multiple_optimizers
+    - default_choice_name
+    - build
+
+## AdamConfig
+
+[[autodoc]] lerobot.optim.AdamConfig
+    - build
+
+## AdamWConfig
+
+[[autodoc]] lerobot.optim.AdamWConfig
+    - build
+
+## SGDConfig
+
+[[autodoc]] lerobot.optim.SGDConfig
+    - build
+
+## MultiAdamConfig
+
+Builds a dictionary of Adam optimizers, one per parameter group — used when a policy needs separate
+optimizers for different components (e.g. actor/critic/temperature in SAC).
+
+[[autodoc]] lerobot.optim.MultiAdamConfig
+    - builds_multiple_optimizers
+    - build
+
+## XVLAAdamWConfig
+
+[[autodoc]] lerobot.optim.XVLAAdamWConfig
+    - build
+
+## save_optimizer_state
+
+[[autodoc]] lerobot.optim.save_optimizer_state
+
+## load_optimizer_state
+
+[[autodoc]] lerobot.optim.load_optimizer_state
+
+## LRSchedulerConfig
+
+[[autodoc]] lerobot.optim.LRSchedulerConfig
+    - type
+    - build
+
+## DiffuserSchedulerConfig
+
+[[autodoc]] lerobot.optim.DiffuserSchedulerConfig
+    - build
+
+## VQBeTSchedulerConfig
+
+[[autodoc]] lerobot.optim.VQBeTSchedulerConfig
+    - build
+
+## ConstantWithWarmupSchedulerConfig
+
+[[autodoc]] lerobot.optim.schedulers.ConstantWithWarmupSchedulerConfig
+    - build
+
+## CosineAnnealingWithWarmupSchedulerConfig
+
+[[autodoc]] lerobot.optim.schedulers.CosineAnnealingWithWarmupSchedulerConfig
+    - build
+
+## CosineDecayWithWarmupSchedulerConfig
+
+[[autodoc]] lerobot.optim.CosineDecayWithWarmupSchedulerConfig
+    - build
+
+## save_scheduler_state
+
+[[autodoc]] lerobot.optim.save_scheduler_state
+
+## load_scheduler_state
+
+[[autodoc]] lerobot.optim.load_scheduler_state
