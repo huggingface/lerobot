@@ -15,6 +15,7 @@
 import threading
 import time
 
+from lerobot.configs import TextKind
 from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
@@ -34,7 +35,7 @@ class FakePolicy:
     def supports_text_generation(self):
         return self.texts is not None
 
-    def generate_text(self, batch, *, kind="subtask", user_text=None):
+    def generate_text(self, batch, *, kind=TextKind.SUBTASK, user_text=None):
         self.batches.append((kind, batch))
         return self.texts.pop(0) if self.texts else ""
 
@@ -62,6 +63,7 @@ def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
     assert executed == ["a0"]
     assert list(runtime.state.action_queue) == ["a1"]
     assert "  subtask: pick cup" in logs
+    assert policy.batches[0][0] is TextKind.SUBTASK
 
 
 def test_policy_without_text_head_keeps_the_operator_instruction():
@@ -174,3 +176,10 @@ def test_policy_without_in_stream_reasoning_reports_none():
     from lerobot.policies.pretrained import PreTrainedPolicy
 
     assert PreTrainedPolicy.last_reasoning(object()) is None
+
+
+def test_text_kind_members_compare_equal_to_their_wire_strings():
+    # Policies that dispatch on strings internally keep working unchanged.
+    assert TextKind.SUBTASK == "subtask"
+    assert TextKind.VQA == "vqa"
+    assert TextKind.VQA in {"vqa", "caption", "grounding"}

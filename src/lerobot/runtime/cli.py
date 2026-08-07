@@ -23,6 +23,8 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
 
+from lerobot.configs import TextKind
+
 from .language_runtime import LanguageConditionedRuntime, build_language_batch
 
 logger = logging.getLogger("lerobot.runtime")
@@ -414,7 +416,7 @@ def _ask_runtime(runtime: Any, question: str) -> str:
     observation = runtime._current_observation()
     try:
         batch = build_language_batch(observation, runtime.state)
-        answer = runtime.policy.generate_text(batch, kind="vqa", user_text=question)
+        answer = runtime.policy.generate_text(batch, kind=TextKind.VQA, user_text=question)
     except Exception as exc:  # noqa: BLE001
         logger.warning("VQA generation failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
         print(f"[runtime] VQA failed: {type(exc).__name__}: {exc}", flush=True)
