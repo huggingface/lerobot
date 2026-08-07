@@ -109,17 +109,17 @@ class RuntimeState:
 class LanguageConditionedPolicy(Protocol):
     """The policy surface the runtime drives.
 
-    ``generate_text`` is optional: a policy without a text head runs on the operator's
-    own instruction instead of a generated subtask.
+    ``predict_subtask`` and ``generate_text`` are optional: a policy without a text head
+    runs on the operator's own instruction instead of a generated subtask.
     """
 
     def predict_action_chunk_with_text(self, batch: dict[str, Any]) -> tuple[Any, str | None]: ...
 
     def supports_text_generation(self) -> bool: ...
 
-    def generate_text(
-        self, batch: dict[str, Any], *, kind: str = ..., user_text: str | None = ...
-    ) -> str: ...
+    def predict_subtask(self, batch: dict[str, Any]) -> str: ...
+
+    def generate_text(self, batch: dict[str, Any], prompt: str) -> str: ...
 
 
 def build_language_batch(observation: dict[str, Any] | None, state: RuntimeState) -> dict[str, Any]:
@@ -174,7 +174,7 @@ class SubtaskController:
         self._chunks_until_regen = max(1, self.chunks_per_regen) - 1
 
         batch = build_language_batch(observation, state)
-        subtask = self.policy.generate_text(batch, kind="subtask")
+        subtask = self.policy.predict_subtask(batch)
         self.diagnostics.last_raw = subtask or ""
         if not subtask:
             self.diagnostics.empty += 1
