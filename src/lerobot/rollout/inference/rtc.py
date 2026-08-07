@@ -147,6 +147,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
         self._rtc_error = Event()
+        self._failure_traceback: str | None = None
         self._global_shutdown_event = shutdown_event
         self._rtc_thread: Thread | None = None
 
@@ -192,6 +193,15 @@ class RTCInferenceEngine(InferenceEngine):
     def failed(self) -> bool:
         """True if the RTC background thread exited due to an unrecoverable error."""
         return self._rtc_error.is_set()
+
+    @property
+    def failure_traceback(self) -> str | None:
+        """Traceback captured when the RTC thread died (see ``failed``).
+
+        Kept on the engine so consumers that mute console logging (the
+        interactive session) can still surface the fatal error.
+        """
+        return self._failure_traceback
 
     @property
     def action_queue(self) -> ActionQueue | None:
@@ -390,8 +400,9 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
 
         except Exception as e:
+            self._failure_traceback = traceback.format_exc()
             logger.error("Fatal error in RTC thread: %s", e)
-            logger.error(traceback.format_exc())
+            logger.error(self._failure_traceback)
             self._rtc_error.set()
             # Unblock any warmup waiters so the main loop doesn't spin forever
             self._compile_warmup_done.set()
