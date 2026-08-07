@@ -175,6 +175,56 @@ lerobot-train \
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base) (specifically trained on the Libero dataset)
 
+### Optional training-time RTC
+
+Pi05 can optionally learn action-prefix conditioning for efficient
+[Real-Time Chunking](./rtc), following
+[Training-Time Action Conditioning for Efficient Real-Time Chunking](https://arxiv.org/abs/2512.05964).
+Set `policy.rtc_training_max_delay` to the largest expected inference delay in
+controller steps:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_dataset \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.rtc_training_max_delay=10 \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/pi05_rtc \
+    --job_name=pi05_rtc
+```
+
+The default is `0`, which disables training-time RTC and leaves the standard
+Pi05 objective unchanged. The configured delay must be smaller than
+`chunk_size`. During training, Pi05 samples a clean prefix length independently
+for each example and computes flow loss only on the remaining postfix.
+
+Use the resulting checkpoint with trained RTC explicitly:
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=outputs/pi05_rtc/checkpoints/last/pretrained_model \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up the cube" \
+    --fps=50 \
+    --device=cuda
+```
+
+Set `inference.rtc.execution_horizon` between the checkpoint's
+`rtc_training_max_delay` and `chunk_size - rtc_training_max_delay`, and
+`inference.queue_threshold` to at least `rtc_training_max_delay`. A one-off
+latency spike past the trained range discards that chunk and retries; rollout
+stops with an explicit error only if the delay stays out of range. The default
+`--inference.rtc.mode=guided` remains available for ordinary checkpoints.
+
 ### Loading a checkpoint
 
 The two forms are not interchangeable:
