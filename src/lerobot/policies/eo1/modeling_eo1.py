@@ -28,6 +28,7 @@ import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
 from torch import Tensor
 
+from lerobot.configs import TextKind
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -247,7 +248,7 @@ class EO1Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Tensor],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
