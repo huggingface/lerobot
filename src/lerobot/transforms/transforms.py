@@ -32,13 +32,16 @@ class RandomSubsetApply(Transform):
     """Apply a random subset of N transformations from a list of transformations.
 
     Args:
-        transforms: list of transformations.
-        p: represents the multinomial probabilities (with no replacement) used for sampling the transform.
-            If the sum of the weights is not 1, they will be normalized. If ``None`` (default), all transforms
-            have the same probability.
-        n_subset: number of transformations to apply. If ``None``, all transforms are applied.
-            Must be in [1, len(transforms)].
-        random_order: apply transformations in a random order.
+        transforms (`Sequence`):
+            List of transformations.
+        p (`list[float] | None`, *optional*):
+            Multinomial probabilities (with no replacement) used for sampling the transform. Normalized if
+            they don't already sum to 1. `None` gives all transforms the same probability.
+        n_subset (`int | None`, *optional*):
+            Number of transformations to apply. Must be in `[1, len(transforms)]`. `None` applies all of
+            them.
+        random_order (`bool`, *optional*, defaults to `False`):
+            Whether to apply the sampled transformations in a random order.
     """
 
     def __init__(
@@ -48,6 +51,12 @@ class RandomSubsetApply(Transform):
         n_subset: int | None = None,
         random_order: bool = False,
     ) -> None:
+        """Validate and store the transform pool, sampling weights, and subset size.
+
+        Raises:
+            TypeError: If `transforms` is not a sequence, or `n_subset` is not an int or `None`.
+            ValueError: If `p`'s length doesn't match `transforms`, or `n_subset` is out of range.
+        """
         super().__init__()
         if not isinstance(transforms, Sequence):
             raise TypeError("Argument transforms should be a sequence of callables")
@@ -74,6 +83,7 @@ class RandomSubsetApply(Transform):
         self.selected_transforms: list[Callable[..., Any]] = []
 
     def forward(self, *inputs: Any) -> Any:
+        """Sample a subset of `self.transforms` and apply them in sequence to `inputs`."""
         needs_unpacking = len(inputs) > 1
 
         selected_indices = torch.multinomial(torch.tensor(self.p), self.n_subset)
@@ -89,6 +99,7 @@ class RandomSubsetApply(Transform):
         return outputs
 
     def extra_repr(self) -> str:
+        """Return the constructor arguments shown in `repr(self)`."""
         return (
             f"transforms={self.transforms}, "
             f"p={self.p}, "
@@ -108,16 +119,18 @@ class SharpnessJitter(Transform):
     A sharpness_factor of 0 gives a blurred image, 1 gives the original image while 2 increases the sharpness
     by a factor of 2.
 
-    If the input is a :class:`torch.Tensor`,
-    it is expected to have [..., 1 or 3, H, W] shape, where ... means an arbitrary number of leading dimensions.
+    If the input is a `torch.Tensor`, it is expected to have `[..., 1 or 3, H, W]` shape, where `...` means
+    an arbitrary number of leading dimensions.
 
     Args:
-        sharpness: How much to jitter sharpness. sharpness_factor is chosen uniformly from
-            [max(0, 1 - sharpness), 1 + sharpness] or the given
-            [min, max]. Should be non negative numbers.
+        sharpness (`float | collections.abc.Sequence[float]`):
+            How much to jitter sharpness. `sharpness_factor` is chosen uniformly from
+            `[max(0, 1 - sharpness), 1 + sharpness]`, or the given `[min, max]`. Values must be
+            non-negative.
     """
 
     def __init__(self, sharpness: float | Sequence[float]) -> None:
+        """Normalize `sharpness` into a `(min, max)` range to sample from on each call."""
         super().__init__()
         self.sharpness = self._check_input(sharpness)
 
@@ -138,10 +151,12 @@ class SharpnessJitter(Transform):
         return float(sharpness[0]), float(sharpness[1])
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a `sharpness_factor` uniformly from `self.sharpness`."""
         sharpness_factor = torch.empty(1).uniform_(self.sharpness[0], self.sharpness[1]).item()
         return {"sharpness_factor": sharpness_factor}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Adjust `inpt`'s sharpness by `params["sharpness_factor"]`."""
         sharpness_factor = params["sharpness_factor"]
         return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
 
@@ -153,10 +168,17 @@ class GaussianNoise(Transform):
     Common in real-robot setups where wrist cameras operate in suboptimal lighting.
 
     Args:
-        std: Range (min, max) for noise standard deviation in pixel-value scale (0-255).
+        std (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(5.0, 25.0)`):
+            Range `(min, max)` for the noise standard deviation, in pixel-value scale (0-255).
     """
 
     def __init__(self, std: float | Sequence[float] = (5.0, 25.0)) -> None:
+        """Normalize `std` into a `(min, max)` range to sample from on each call.
+
+        Raises:
+            TypeError: If `std` is not a number or a length-2 sequence.
+            ValueError: If the resulting range does not satisfy `0 <= min <= max`.
+        """
         super().__init__()
         if isinstance(std, (int, float)):
             self.std = (0.0, float(std))
@@ -168,12 +190,14 @@ class GaussianNoise(Transform):
             raise ValueError(f"std must satisfy 0 <= min <= max, but got {self.std}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a noise `std` uniformly from `self.std`, plus a seed for reproducible noise."""
         return {
             "std": torch.empty(1).uniform_(self.std[0], self.std[1]).item(),
             "seed": torch.randint(0, torch.iinfo(torch.int64).max, ()).item(),
         }
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Add Gaussian noise with `params["std"]` (in pixel-value scale) to `inpt`, if it's a float tensor."""
         if isinstance(inpt, torch.Tensor) and inpt.is_floating_point():
             generator = torch.Generator(device=inpt.device).manual_seed(params["seed"])
             noise = torch.randn(inpt.shape, device=inpt.device, dtype=inpt.dtype, generator=generator)
@@ -187,10 +211,17 @@ class MotionBlur(Transform):
     Generates a 1D averaging kernel along a random direction, applied via depthwise convolution.
 
     Args:
-        kernel_size: An odd kernel size or a range containing at least one odd kernel size.
+        kernel_size (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(3, 11)`):
+            An odd kernel size, or a `(min, max)` range containing at least one odd kernel size.
     """
 
     def __init__(self, kernel_size: int | Sequence[int] = (3, 11)) -> None:
+        """Normalize `kernel_size` into a `(min, max)` range containing at least one odd value.
+
+        Raises:
+            TypeError: If `kernel_size` is not an int or a length-2 sequence.
+            ValueError: If the resulting range does not satisfy `1 <= min <= max`, or contains no odd value.
+        """
         super().__init__()
         if isinstance(kernel_size, int):
             self.kernel_size = (kernel_size, kernel_size)
@@ -205,6 +236,7 @@ class MotionBlur(Transform):
             raise ValueError(f"kernel_size range must contain an odd value, but got {self.kernel_size}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample an odd kernel size from `self.kernel_size` and a random blur direction in degrees."""
         num_odd_sizes = (self.kernel_size[1] - self._first_odd_kernel_size) // 2 + 1
         size_index = int(torch.randint(0, num_odd_sizes, ()).item())
         ks = self._first_odd_kernel_size + 2 * size_index
@@ -212,6 +244,11 @@ class MotionBlur(Transform):
         return {"kernel_size": ks, "angle": angle}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Convolve `inpt` with a directional averaging kernel per `params`.
+
+        Raises:
+            ValueError: If `inpt` is a float tensor with fewer than 3 dimensions.
+        """
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         if inpt.ndim < 3:
@@ -241,10 +278,17 @@ class JPEGCompression(Transform):
     Models quality degradation from video compression in network-streamed camera feeds.
 
     Args:
-        quality: Range (min, max) for JPEG quality factor (lower = more artifacts).
+        quality (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(15, 75)`):
+            Range `(min, max)` for the JPEG quality factor. Lower values produce more artifacts.
     """
 
     def __init__(self, quality: int | Sequence[int] = (15, 75)) -> None:
+        """Normalize `quality` into a `(min, max)` range to sample from on each call.
+
+        Raises:
+            TypeError: If `quality` is not an int or a length-2 sequence.
+            ValueError: If the resulting range does not satisfy `1 <= min <= max <= 100`.
+        """
         super().__init__()
         if isinstance(quality, int):
             self.quality = (quality, quality)
@@ -256,9 +300,16 @@ class JPEGCompression(Transform):
             raise ValueError(f"quality must satisfy 1 <= min <= max <= 100, but got {self.quality}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a JPEG `quality` factor uniformly (as an int) from `self.quality`."""
         return {"quality": int(torch.randint(self.quality[0], self.quality[1] + 1, (1,)).item())}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Re-encode and decode `inpt` as JPEG at `params["quality"]`, introducing compression artifacts.
+
+        Raises:
+            ValueError: If `inpt` is a float tensor with fewer than 3 dimensions, or with a channel count
+                other than 1 or 3.
+        """
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         if inpt.ndim < 3:
@@ -284,9 +335,12 @@ class GaussianPatchBrightness(Transform):
     encountered in real robot workspaces with multiple light sources.
 
     Args:
-        num_patches: Range (min, max) for number of brightness patches.
-        sigma_range: Range for Gaussian sigma as fraction of image size.
-        factor_range: Range for brightness factor (< 1 darkens, > 1 brightens).
+        num_patches (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(1, 4)`):
+            Range `(min, max)` for the number of brightness patches.
+        sigma_range (`Sequence`, *optional*, defaults to `(0.05, 0.25)`):
+            Range `(min, max)` for each patch's Gaussian sigma, as a fraction of image size.
+        factor_range (`Sequence`, *optional*, defaults to `(0.4, 1.6)`):
+            Range `(min, max)` for the brightness factor; below 1 darkens, above 1 brightens.
     """
 
     def __init__(
@@ -295,6 +349,12 @@ class GaussianPatchBrightness(Transform):
         sigma_range: Sequence[float] = (0.05, 0.25),
         factor_range: Sequence[float] = (0.4, 1.6),
     ) -> None:
+        """Validate and store the patch count, size, and brightness ranges.
+
+        Raises:
+            TypeError: If any range argument is not the expected type or length.
+            ValueError: If any range does not satisfy `min <= max` within its valid bounds.
+        """
         super().__init__()
         if isinstance(num_patches, int):
             self.num_patches = (num_patches, num_patches)
@@ -316,6 +376,7 @@ class GaussianPatchBrightness(Transform):
             raise ValueError(f"factor_range must satisfy 0 <= min <= max, but got {self.factor_range}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a random number of patches, each with a random center, sigma, and brightness factor."""
         n = int(torch.randint(self.num_patches[0], self.num_patches[1] + 1, (1,)).item())
         return {
             "centers": torch.rand(n, 2).tolist(),
@@ -324,6 +385,7 @@ class GaussianPatchBrightness(Transform):
         }
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Multiply `inpt` by a mask of overlapping Gaussian brightness patches per `params`."""
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         h, w = inpt.shape[-2:]
@@ -347,10 +409,17 @@ class RandomShadow(Transform):
     Symmetric: randomly brightens or darkens to prevent BatchNorm stats shift.
 
     Args:
-        opacity: Range (min, max) for shadow/highlight opacity.
+        opacity (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(0.3, 0.6)`):
+            Range `(min, max)` for the shadow/highlight opacity.
     """
 
     def __init__(self, opacity: float | Sequence[float] = (0.3, 0.6)) -> None:
+        """Normalize `opacity` into a `(min, max)` range to sample from on each call.
+
+        Raises:
+            TypeError: If `opacity` is not a number or a length-2 sequence.
+            ValueError: If the resulting range does not satisfy `0 <= min <= max <= 1`.
+        """
         super().__init__()
         if isinstance(opacity, (int, float)):
             self.opacity = (float(opacity), float(opacity))
@@ -362,6 +431,7 @@ class RandomShadow(Transform):
             raise ValueError(f"opacity must satisfy 0 <= min <= max <= 1, but got {self.opacity}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample the shadow band's opacity, horizontal position/width, and darken-vs-brighten direction."""
         return {
             "opacity": torch.empty(1).uniform_(self.opacity[0], self.opacity[1]).item(),
             "start": torch.rand(1).item(),
@@ -370,6 +440,11 @@ class RandomShadow(Transform):
         }
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Multiply `inpt` by a soft-edged vertical band mask per `params`.
+
+        Raises:
+            ValueError: If `inpt` is a float tensor with fewer than 3 dimensions.
+        """
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         if inpt.ndim < 3:
@@ -401,10 +476,14 @@ class CoarseDropout(Transform):
     during robot manipulation.
 
     Args:
-        max_holes: Maximum number of rectangular patches to drop.
-        max_height_frac: Maximum patch height as fraction of image height.
-        max_width_frac: Maximum patch width as fraction of image width.
-        fill_value: Value to fill dropped regions with.
+        max_holes (`int`, *optional*, defaults to 8):
+            Maximum number of rectangular patches to drop.
+        max_height_frac (`float`, *optional*, defaults to 0.07):
+            Maximum patch height, as a fraction of image height.
+        max_width_frac (`float`, *optional*, defaults to 0.07):
+            Maximum patch width, as a fraction of image width.
+        fill_value (`float`, *optional*, defaults to 0.0):
+            Value to fill dropped regions with.
     """
 
     def __init__(
@@ -414,6 +493,12 @@ class CoarseDropout(Transform):
         max_width_frac: float = 0.07,
         fill_value: float = 0.0,
     ) -> None:
+        """Validate and store the dropout patch count, size limits, and fill value.
+
+        Raises:
+            TypeError: If `max_holes` is not an int.
+            ValueError: If any argument is out of its valid range.
+        """
         super().__init__()
         if not isinstance(max_holes, int):
             raise TypeError("max_holes must be an int.")
@@ -431,6 +516,7 @@ class CoarseDropout(Transform):
         self.fill_value = fill_value
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a random number of dropout patches, each with a random size and position."""
         n = int(torch.randint(1, self.max_holes + 1, (1,)).item())
         sizes = torch.rand(n, 2)
         sizes[:, 0] *= self.max_height_frac
@@ -438,6 +524,11 @@ class CoarseDropout(Transform):
         return {"sizes": sizes.tolist(), "positions": torch.rand(n, 2).tolist()}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Fill the rectangular patches described by `params` in `inpt` with `self.fill_value`.
+
+        Raises:
+            ValueError: If `inpt` is a float tensor with fewer than 3 dimensions.
+        """
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         if inpt.ndim < 3:
@@ -464,10 +555,18 @@ class GammaCorrection(Transform):
     preventing BatchNorm statistics shift.
 
     Args:
-        gamma: Range (min, max) for gamma value. Values < 1 brighten, > 1 darken.
+        gamma (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(0.5, 2.0)`):
+            Range `(min, max)` for the gamma value. Values below 1 brighten, above 1 darken.
     """
 
     def __init__(self, gamma: float | Sequence[float] = (0.5, 2.0)) -> None:
+        """Normalize `gamma` into a log-symmetric `(min, max)` range to sample from on each call.
+
+        Raises:
+            TypeError: If `gamma` is not a number or a length-2 sequence.
+            ValueError: If a single `gamma` is not positive, or the resulting range does not satisfy
+                `0 < min <= max`.
+        """
         super().__init__()
         if isinstance(gamma, (int, float)):
             gamma = float(gamma)
@@ -482,12 +581,14 @@ class GammaCorrection(Transform):
             raise ValueError(f"gamma must satisfy 0 < min <= max, but got {self.gamma}.")
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a `gamma` value log-uniformly from `self.gamma`."""
         log_lo = math.log(self.gamma[0])
         log_hi = math.log(self.gamma[1])
         gamma = math.exp(torch.empty(1).uniform_(log_lo, log_hi).item())
         return {"gamma": gamma}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Raise `inpt` to the power `params["gamma"]`, if it's a float tensor."""
         if isinstance(inpt, torch.Tensor) and inpt.is_floating_point():
             return inpt.pow(params["gamma"]).clamp(0.0, 1.0)
         return inpt
@@ -537,11 +638,18 @@ class PlanckianJitter(Transform):
     Reference: Zini et al., "Planckian Jitter", CVPR 2022 Workshop.
 
     Args:
-        temperature: A fixed color temperature or range in Kelvin. Supported values
-            are between 3000 K and 15000 K.
+        temperature (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(3000, 15000)`):
+            A fixed color temperature, or a `(min, max)` range, in Kelvin. Supported values are between
+            3000 K and 15000 K.
     """
 
     def __init__(self, temperature: int | Sequence[int] = (3_000, 15_000)) -> None:
+        """Normalize `temperature` into a `(min, max)` range to sample from on each call.
+
+        Raises:
+            TypeError: If `temperature` is not an int or a length-2 sequence.
+            ValueError: If the resulting range falls outside `[3000, 15000]` Kelvin.
+        """
         super().__init__()
         if isinstance(temperature, int):
             self.temperature = (temperature, temperature)
@@ -562,10 +670,16 @@ class PlanckianJitter(Transform):
             )
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
+        """Sample a color `temperature` in Kelvin uniformly from `self.temperature`."""
         temperature = int(torch.randint(self.temperature[0], self.temperature[1] + 1, ()).item())
         return {"temperature": temperature}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
+        """Scale `inpt`'s red/blue channels per the black-body coefficients at `params["temperature"]`.
+
+        Raises:
+            ValueError: If `inpt` is a float tensor that isn't 3-channel with at least 3 dimensions.
+        """
         if not isinstance(inpt, torch.Tensor) or not inpt.is_floating_point():
             return inpt
         if inpt.ndim < 3 or inpt.shape[-3] != 3:
@@ -613,15 +727,18 @@ _CUSTOM_TRANSFORMS: dict[str, type[Transform]] = {
 
 @dataclass
 class ImageTransformConfig:
-    """
-    For each transform, the following parameters are available:
-      weight: This represents the multinomial probability (with no replacement)
-            used for sampling the transform. If the sum of the weights is not 1,
-            they will be normalized.
-      type: The name of the class used. This is either a class available under torchvision.transforms.v2 or a
-            custom transform defined here.
-      kwargs: Lower & upper bound respectively used for sampling the transform's parameter
-            (following uniform distribution) when it's applied.
+    """Configuration for one entry in an [`~transforms.ImageTransformsConfig`]'s `tfs` mapping.
+
+    Args:
+        weight (`float`, *optional*, defaults to 1.0):
+            Multinomial probability (with no replacement) of sampling this transform. Normalized against
+            the other transforms' weights if they don't already sum to 1.
+        type (`str`, *optional*, defaults to `"Identity"`):
+            Name of the transform class to build — either a class under `torchvision.transforms.v2` or one
+            of the custom transforms in this module. Passed to
+            [`~transforms.make_transform_from_config`].
+        kwargs (`dict[str, Any]`, *optional*):
+            Keyword arguments passed to the transform's constructor.
     """
 
     weight: float = 1.0
@@ -631,11 +748,21 @@ class ImageTransformConfig:
 
 @dataclass
 class ImageTransformsConfig:
-    """
-    These transforms are all using standard torchvision.transforms.v2
-    You can find out how these transformations affect images here:
-    https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
-    We use a custom RandomSubsetApply container to sample them.
+    """Configuration for [`~transforms.ImageTransforms`], a random subset of image augmentations.
+
+    Transforms are standard [`torchvision.transforms.v2`](https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html)
+    or custom transforms from this module, sampled via [`~transforms.RandomSubsetApply`].
+
+    Args:
+        enable (`bool`, *optional*, defaults to `False`):
+            Whether to apply transforms at all. `False` disables augmentation entirely.
+        max_num_transforms (`int`, *optional*, defaults to 3):
+            Maximum number of transforms (sampled from `tfs`) applied to each frame. Must be in
+            `[1, len(tfs)]`.
+        random_order (`bool`, *optional*, defaults to `False`):
+            Whether to apply the sampled transforms in a random order, instead of the order in `tfs`.
+        tfs (`dict[str, ImageTransformConfig]`, *optional*):
+            The available transforms, keyed by name, with their sampling weight and constructor arguments.
     """
 
     # Set this flag to `true` to enable transforms during training
@@ -683,6 +810,19 @@ class ImageTransformsConfig:
 
 
 def make_transform_from_config(cfg: ImageTransformConfig) -> Transform:
+    """Instantiate the transform named by `cfg.type`, from `torchvision.transforms.v2` or this module.
+
+    Args:
+        cfg (`ImageTransformConfig`):
+            Configuration naming the transform class and its constructor arguments.
+
+    Returns:
+        `Transform`: The instantiated transform.
+
+    Raises:
+        ValueError: If `cfg.type` is not a `torchvision.transforms.v2` transform or one of this module's
+            custom transforms.
+    """
     if cfg.type in _CUSTOM_TRANSFORMS:
         return _CUSTOM_TRANSFORMS[cfg.type](**cfg.kwargs)
 
@@ -698,9 +838,20 @@ def make_transform_from_config(cfg: ImageTransformConfig) -> Transform:
 
 
 class ImageTransforms(Transform):
-    """A class to compose image transforms based on configuration."""
+    """Composes a random subset of image augmentations from an [`~transforms.ImageTransformsConfig`].
+
+    Builds each enabled transform (weight > 0) named in `cfg.tfs`, then wraps them in a
+    [`~transforms.RandomSubsetApply`] so a random subset is applied on each call. If `cfg.enable` is
+    `False` or no transforms are enabled, this is equivalent to the identity transform.
+    """
 
     def __init__(self, cfg: ImageTransformsConfig) -> None:
+        """Build the enabled transforms from `cfg` and wrap them in a random-subset sampler.
+
+        Args:
+            cfg (`ImageTransformsConfig`):
+                Configuration listing the available transforms and how many to sample per call.
+        """
         super().__init__()
         self._cfg = cfg
 
@@ -725,4 +876,5 @@ class ImageTransforms(Transform):
             )
 
     def forward(self, *inputs: Any) -> Any:
+        """Apply the sampled subset of transforms (or the identity, if none are enabled) to `inputs`."""
         return self.tf(*inputs)
