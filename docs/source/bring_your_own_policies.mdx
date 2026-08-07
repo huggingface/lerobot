@@ -222,46 +222,28 @@ lerobot-rollout \
 
 ### Policies with a text head
 
-Implement `generate_text` on the policy, next to `predict_action_chunk`:
+Implement two methods next to `predict_action_chunk`. They are split because they need different things from the caller:
 
 ```python
 # modeling_my_policy.py
 class MyPolicy(PreTrainedPolicy):
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        messages = self.build_messages(kind, batch, user_text)
-        inputs, tokenizer = self.tokenize_messages(messages, batch)
-        return self.decode(
-            inputs,
-            tokenizer=tokenizer,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
+    def predict_subtask(self, batch: dict[str, Tensor]) -> str:
+        """The next instruction to condition actions on — your trained template."""
+        return self._decode(self._subtask_prompt(batch.get("task", "")), batch)
 
-    def build_messages(self, kind, batch, user_text):
-        if kind == "subtask":
-            return [{"role": "user", "content": batch.get("task", "")}]
-        if kind == "vqa":
-            return [
-                {"role": "user", "content": batch.get("task", "")},
-                {"role": "user", "content": user_text or ""},
-            ]
-        raise ValueError(f"Unsupported text kind: {kind}")
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer an arbitrary question about the current observation."""
+        return self._decode(prompt, batch)
 ```
 
-`kind` is a plain string. The runtime only ever asks for two:
+`predict_subtask` takes no prompt on purpose. The subtask wording is part of the model contract — WALL-OSS declares its mode in that turn, and drifting from the trained phrasing is answered out of distribution. A caller cannot know it, so it is not a caller's parameter.
 
-| `kind`      | Purpose                                                         | Result                              |
-| ----------- | --------------------------------------------------------------- | ----------------------------------- |
-| `"subtask"` | The next low-level instruction to condition actions on.         | `state.language_context["subtask"]` |
-| `"vqa"`     | Answer `user_text` about the current view (the `/ask` command). | Printed to the operator.            |
+`generate_text` takes the whole prompt, which covers VQA, captioning, grounding and anything else the checkpoint can answer. The runtime calls it for `/ask`.
 
-Accept more of your own — `"caption"`, `"grounding"` — and raise on anything you do not recognise.
+| Method                         | Caller supplies | Used for                                    |
+| ------------------------------ | --------------- | ------------------------------------------- |
+| `predict_subtask(batch)`       | nothing         | `state.language_context["subtask"]`         |
+| `generate_text(batch, prompt)` | the full prompt | the `/ask` command, printed to the operator |
 
 The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
 

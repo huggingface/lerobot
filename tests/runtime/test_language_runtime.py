@@ -35,8 +35,12 @@ class FakePolicy:
     def supports_text_generation(self):
         return self.texts is not None
 
-    def generate_text(self, batch, *, kind="subtask", user_text=None):
-        self.batches.append((kind, batch))
+    def predict_subtask(self, batch):
+        self.batches.append(("subtask", batch))
+        return self.texts.pop(0) if self.texts else ""
+
+    def generate_text(self, batch, prompt):
+        self.batches.append((prompt, batch))
         return self.texts.pop(0) if self.texts else ""
 
     def predict_action_chunk(self, batch):
