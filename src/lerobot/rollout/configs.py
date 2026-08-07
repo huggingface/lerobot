@@ -241,8 +241,9 @@ class RolloutConfig:
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     # Interactive session: control the rollout from stdin with chat-style
     # commands (/start, /reset, /stop) while hardware and policy stay warm.
-    # The robot does not move until /start is received.  Currently limited to
-    # --strategy.type=base.
+    # The robot does not move until /start is received, and console logs are
+    # muted while the session runs so they don't interleave with the prompt.
+    # Currently limited to --strategy.type=base.
     interactive: bool = False
     interpolation_multiplier: int = 1
     device: str | None = None

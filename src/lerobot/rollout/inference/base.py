@@ -87,3 +87,8 @@ class InferenceEngine(abc.ABC):
     def failed(self) -> bool:
         """True if an unrecoverable error occurred in the backend."""
         return False
+
+    @property
+    def failure_traceback(self) -> str | None:
+        """Formatted traceback of the unrecoverable error, when ``failed`` is True."""
+        return None
