@@ -67,6 +67,21 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
+    # Decoding settings for policies that implement `PreTrainedPolicy.generate_text`.
+    # Sampling is supported; these are the defaults a checkpoint ships with, which is
+    # why they belong in config.json. Greedy suits a subtask head trained with
+    # cross-entropy against one target per step, but raising the temperature is a
+    # useful probe for an under-trained head stuck on a single output. The `text_`
+    # prefix keeps these distinct from action-sampling settings such as
+    # `PI0FastConfig.temperature`.
+    #
+    # Only settings every text head shares belong here. A policy needing more —
+    # top-k, repetition penalty, beam count — declares it on its own config
+    # (e.g. `text_top_k` on `WallOSS05Config`) so the base does not accumulate
+    # knobs that most policies never read.
+    text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
+    text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
+
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
@@ -163,8 +178,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        # Encode against the base class so draccus includes the choice "type" key,
+        # which `from_pretrained` needs to resolve the concrete subclass.
+        with open(save_directory / CONFIG_NAME, "w") as f:
+            json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
 
     @classmethod
     def from_pretrained(

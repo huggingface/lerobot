@@ -191,6 +191,119 @@ def make_my_policy_pre_post_processors(
 
 ---
 
+## Adding high- and low-level language control
+
+The policy API above is sufficient for training and standard evaluation. Interactive `lerobot-rollout` adds one optional method: `generate_text`. Implement it and your policy gains high-level subtask generation, `/ask` grounded VQA, and the interactive panel. Skip it and the policy still runs — on the operator's own instruction.
+
+There is nothing to register. The runtime owns the tick loop, generation cadence, pause/resume, action queues, and dispatch; the policy only turns an observation into text.
+
+During a rollout, `RuntimeState` holds the operator's task and the active language context:
+
+```text
+task ──> policy.generate_text(kind="subtask") ──> state.language_context["subtask"]
+                                                       │
+observation ──> processors ──> policy.predict_action_chunk() ──> action chunk ──> robot
+```
+
+### Policies without a text head
+
+Nothing to do. The observation provider writes the active instruction into the batch before your preprocessor runs, so `predict_action_chunk` already sees it. PI0.5 and MolmoAct2 work this way:
+
+```bash
+lerobot-rollout \
+    --language \
+    --policy.path=user/my_policy_checkpoint \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --direct_subtask
+```
+
+`--direct_subtask` makes the operator's typed text the instruction the action expert consumes. It is implied for any policy without a text head.
+
+### Policies with a text head
+
+Implement two methods next to `predict_action_chunk`. They are split because they need different things from the caller:
+
+```python
+# modeling_my_policy.py
+class MyPolicy(PreTrainedPolicy):
+    def predict_subtask(self, batch: dict[str, Tensor]) -> str:
+        """The next instruction to condition actions on — your trained template."""
+        return self._decode(self._subtask_prompt(batch.get("task", "")), batch)
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer an arbitrary question about the current observation."""
+        return self._decode(prompt, batch)
+```
+
+`predict_subtask` takes no prompt on purpose. The subtask wording is part of the model contract — WALL-OSS declares its mode in that turn, and drifting from the trained phrasing is answered out of distribution. A caller cannot know it, so it is not a caller's parameter.
+
+`generate_text` takes the whole prompt, which covers VQA, captioning, grounding and anything else the checkpoint can answer. The runtime calls it for `/ask`.
+
+| Method                         | Caller supplies | Used for                                    |
+| ------------------------------ | --------------- | ------------------------------------------- |
+| `predict_subtask(batch)`       | nothing         | `state.language_context["subtask"]`         |
+| `generate_text(batch, prompt)` | the full prompt | the `/ask` command, printed to the operator |
+
+The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
+
+### Sampling settings
+
+Decoding parameters live on the checkpoint, in [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py), so a head decodes the way it was trained:
+
+```python
+self.config.text_temperature  # 0.0 is greedy argmax
+self.config.text_top_p        # nucleus filtering threshold
+```
+
+The `text_` prefix keeps them distinct from action-sampling settings such as `PI0FastConfig.temperature`. Override them per run through the usual policy path — no runtime-specific flags:
+
+```bash
+lerobot-rollout --language --policy.path=... --policy.text_temperature=0.5
+```
+
+Temperature `0.0` is greedy argmax and is the default; any value above `0.0` enables sampling with `text_top_p`. Greedy suits a subtask head trained with cross-entropy against one target per step, but raising the temperature is a useful probe for an under-trained head stuck on a single output.
+
+Only settings every text head shares live on `PreTrainedConfig`. If your policy needs more — top-k, a repetition penalty, a beam count — declare it on **your own** config and read it there:
+
+```python
+@dataclass
+class MyPolicyConfig(PreTrainedConfig):
+    text_top_k: int = 0
+```
+
+That keeps the base config free of knobs most policies never read, and your extra settings still ride in `config.json` and stay overridable as `--policy.text_top_k=50`.
+
+### Text emitted with the action
+
+The runtime asks for actions through `predict_action_chunk_with_text`, which returns `(action_chunk, text)`. The default implementation on the base class calls your `predict_action_chunk` and reports `None` for the text, so a policy without a text head needs nothing.
+
+Override it **only** if your policy emits text and actions from one inference stream, where the action is conditioned on the text rather than merely accompanied by it:
+
+```python
+def predict_action_chunk_with_text(self, batch, **kwargs) -> tuple[Tensor, str | None]:
+    action, metadata = self._run_inference(batch)
+    return action, first_text(metadata)
+```
+
+If your text head runs as its own prefill, do not override this to echo `batch["subtask"]`. That string is already runtime state, and returning it here would claim a causal link inside this pass that does not exist. Expose `generate_text` and leave the default alone.
+
+The override must not run an extra generation pass. Whether text appears is a property of the checkpoint and its configuration, so the call costs no more than `predict_action_chunk` — a caller wanting fresh text on demand calls `generate_text`.
+
+The runtime panel shows the text on a `reasoning` line. It is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task. Returning the pair rather than caching it on the policy is what makes that safe — the runtime commits text and chunk together under one lock, so a chunk invalidated mid-inference takes its text with it.
+
+### Keep training and deployment aligned
+
+`generate_text` reconstructs prompts the model saw during training, so it is part of the model contract:
+
+- Use the same tokenizer, role formatting, special tokens, image ordering, and state encoding as training.
+- Condition actions on `batch["subtask"]`, falling back to `batch["task"]` before the first generation.
+- Return a full action chunk from `predict_action_chunk`; the runtime handles control-rate dispatch.
+- Keep optional model dependencies inside lazy imports.
+- Test it with a lightweight fake batch: the method is stateless, so it needs no runtime to exercise.
+
+---
+
 ## Path A: Out-of-tree plugin
 
 The fastest way to ship a policy: package it as a standalone Python distribution and install it alongside LeRobot. No PR required, you own the release cycle, and you can publish to PyPI under your own namespace.

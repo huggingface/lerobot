@@ -520,6 +520,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
 
+    def supports_rtc(self) -> bool:
+        return self.config.inference_action_mode == "continuous"
+
     def __init__(
         self,
         config: MolmoAct2Config,

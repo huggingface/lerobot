@@ -249,6 +249,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
+
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
@@ -280,6 +284,84 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
+
+    def supports_text_generation(self) -> bool:
+        """Whether this policy has a usable text head."""
+        return type(self).generate_text is not PreTrainedPolicy.generate_text
+
+    def predict_subtask(self, batch: dict[str, Tensor]) -> str:
+        """Predict the next low-level instruction to condition actions on.
+
+        Takes no prompt: the policy owns the template it was trained with, which is
+        model-specific down to the token — WALL-OSS declares its mode in this turn, and
+        a prompt that drifts from the trained wording is answered out of distribution.
+        A caller cannot know that wording, so it is not a caller's parameter.
+
+        Args:
+            batch: A preprocessed observation batch. The runtime puts the operator's
+                high-level goal in `batch["task"]` and the previously generated subtask,
+                if any, in `batch["subtask"]`.
+
+        Returns:
+            The next subtask, or an empty string when the head produced nothing — the
+            runtime then keeps the previous subtask and counts it in the diagnostics.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot predict subtasks. Implement `predict_subtask` to "
+            "drive it from the interactive language runtime."
+        )
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation, for policies with a text head.
+
+        The open-ended counterpart to `predict_subtask`: the caller supplies the whole
+        question, so this covers VQA, captioning, grounding and anything else the
+        checkpoint can answer. Decode with `self.config.text_temperature` and
+        `self.config.text_top_p`, so a checkpoint decodes the way it was trained.
+
+        Note that most VLA text heads are blind to proprioception — the prompt carries
+        images and language only — so answers are grounded in pixels, not robot state.
+
+        Args:
+            batch: A preprocessed observation batch, with the operator's goal in
+                `batch["task"]`.
+            prompt: The question to answer.
+
+        Returns:
+            The decoded text, or an empty string when the head produced nothing.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head. Implement `generate_text` to query it."
+        )
+
+    def predict_action_chunk_with_text(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> tuple[Tensor, str | None]:
+        """Predict an action chunk together with text generated in the same pass.
+
+        Override this only for a policy that emits text and actions from one inference
+        stream, where the action is conditioned on the text rather than merely
+        accompanied by it — G0.5's System 2 chain-of-thought is the case this exists
+        for. Everything else inherits the default and reports `text=None`.
+
+        A policy whose text head runs as its own prefill must not override this to echo
+        the subtask it was conditioned on: that string is already runtime state, and
+        returning it here would claim a causal link inside this pass that does not
+        exist. Call `generate_text` for that policy instead.
+
+        The pair is returned rather than cached on the policy so text and chunk cannot
+        drift apart. The runtime discards chunks invalidated mid-inference, and a cached
+        `last_*` attribute would leave the discarded chunk's text behind to be displayed
+        against the next one.
+
+        Costs no more than `predict_action_chunk`: whether a policy generates text in
+        its pass is a property of the checkpoint and its configuration, not of which
+        method the caller reaches for.
+
+        Returns:
+            The chunk `predict_action_chunk` would return, and its text or `None`.
+        """
+        return self.predict_action_chunk(batch, **kwargs), None
 
     def push_model_to_hub(
         self,

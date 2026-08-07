@@ -20,6 +20,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_reader import DatasetReader
+from lerobot.datasets.language import LANGUAGE_EVENTS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 # ── Loading ──────────────────────────────────────────────────────────
@@ -64,6 +65,22 @@ def test_try_load_returns_false_when_no_data(tmp_path):
     )
     assert reader.try_load() is False
     assert reader.hf_dataset is None
+
+
+def test_load_rejects_language_columns_missing_from_metadata(tmp_path, lerobot_dataset_factory):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=10, use_videos=False
+    )
+    parquet_path = next((dataset.root / "data").glob("*/*.parquet"))
+    table = pq.read_table(parquet_path)
+    language_events = pa.array([[] for _ in range(len(table))], type=pa.list_(pa.string()))
+    pq.write_table(table.append_column(LANGUAGE_EVENTS, language_events), parquet_path)
+
+    with pytest.raises(ValueError, match=r"language feature\(s\) missing from metadata.*language_events"):
+        dataset.reader.load_and_activate()
 
 
 # ── Counts ───────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ way via ``notify_observation``.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import time
@@ -60,6 +61,23 @@ _RTC_JOIN_TIMEOUT_S: float = 3.0
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
+
+
+def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
+    """Whether a policy declares RTC support and accepts the RTC call shape."""
+    supports_rtc = getattr(policy, "supports_rtc", None)
+    if not callable(supports_rtc) or not supports_rtc():
+        return False
+
+    try:
+        inspect.signature(policy.predict_action_chunk).bind(
+            object(),
+            inference_delay=0,
+            prev_chunk_left_over=None,
+        )
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:

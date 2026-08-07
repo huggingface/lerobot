@@ -41,11 +41,18 @@ from pathlib import Path
 from typing import Any, TypedDict, TypeVar, cast
 
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
@@ -204,6 +211,10 @@ class ProcessorStep(ABC):
             state: A dictionary of state tensors.
         """
         return None
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save non-tensor assets and map constructor arguments to relative paths."""
+        return {}
 
     def reset(self) -> None:
         """Resets the internal state of the processor step, if any."""
@@ -549,6 +560,22 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         pipeline_config = self.get_config()
         pipeline_state_dict = self.state_dict()
 
+        for processor_step, step_entry in zip(self.steps, pipeline_config["steps"], strict=True):
+            artifacts = processor_step.save_artifacts(save_directory)
+            if artifacts:
+                for config_key, relative_path in artifacts.items():
+                    artifact_path = Path(relative_path)
+                    if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                        raise ValueError(
+                            f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                        )
+                    if not (save_directory / artifact_path).exists():
+                        raise FileNotFoundError(
+                            f"Processor step did not save declared artifact '{relative_path}'"
+                        )
+                    step_entry["config"][config_key] = artifact_path.as_posix()
+                step_entry["artifacts"] = artifacts
+
         for state_key, step_state_dict in pipeline_state_dict.items():
             state_filename = f"{state_key}.safetensors"
             save_file(step_state_dict, save_directory / state_filename)
@@ -733,7 +760,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs, is_local_source
+            loaded_config,
+            overrides or {},
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+            is_local_source,
         )
 
         # 4. Validate that all overrides were used
@@ -866,6 +899,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     return json.load(f), Path(config_path).parent
 
             except Exception as e:
+                if cls._hub_model_requires_migration(model_id, hub_download_kwargs):
+                    revision = hub_download_kwargs.get("revision")
+                    cls._suggest_processor_migration(
+                        model_id,
+                        f"Config file '{config_filename}' not found on the Hugging Face Hub",
+                        revision=revision if isinstance(revision, str) else None,
+                    )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
@@ -922,6 +962,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any],
         model_id: str,
         base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
         is_local_source: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
@@ -930,6 +971,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         This method orchestrates the complete step construction pipeline:
 
         **For each step in loaded_config["steps"]**:
+
+        0. **Artifact Resolution** (via _resolve_artifact_paths):
+           - Resolve declared relative artifact paths against a local checkpoint
+           - Download declared artifacts when loading the pipeline from the Hub
+           - Reject absolute paths and path traversal before step construction
 
         1. **Class Resolution** (via _resolve_step_class):
            - **If "registry_name" exists**: Look up in ProcessorStepRegistry
@@ -964,6 +1010,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             overrides: User-provided parameter overrides (keyed by class/registry name)
             model_id: The model identifier (needed for Hub state file downloads)
             base_path: Local directory path for finding state files
+            config_filename: Processor config path, used as the repository-relative
+                base for state files and declared artifacts.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
             is_local_source: Whether model_id resolved to a local directory or config file.
 
@@ -976,14 +1024,79 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ImportError: If a step class cannot be imported or found in registry
             ValueError: If a step cannot be instantiated with its configuration
         """
+        loaded_config = deepcopy(loaded_config)
+        cls._resolve_artifact_paths(
+            loaded_config,
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+        )
         steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
 
         for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):
             cls._load_step_state(
-                step_instance, step_entry, model_id, base_path, hub_download_kwargs, is_local_source
+                step_instance,
+                step_entry,
+                model_id,
+                base_path,
+                config_filename,
+                hub_download_kwargs,
+                is_local_source,
             )
 
         return steps, remaining_override_keys
+
+    @classmethod
+    def _resolve_artifact_paths(
+        cls,
+        loaded_config: dict[str, Any],
+        model_id: str,
+        base_path: Path | None,
+        config_filename: str,
+        hub_download_kwargs: dict[str, Any],
+    ) -> None:
+        """Resolve declared relative processor artifacts before step construction.
+
+        Args:
+            loaded_config: Mutable processor configuration containing step artifact declarations.
+            model_id: Local checkpoint path or Hub model identifier.
+            base_path: Local directory containing the resolved processor configuration.
+            config_filename: Processor config path, whose parent is the artifact root on the Hub.
+            hub_download_kwargs: Authentication, revision, and cache arguments for Hub downloads.
+
+        Raises:
+            ValueError: If a declared artifact path is absolute or escapes the checkpoint.
+            FileNotFoundError: If a declared artifact cannot be found locally or downloaded.
+        """
+        is_local = Path(model_id).is_dir() or Path(model_id).is_file()
+
+        for step_entry in loaded_config["steps"]:
+            artifacts = step_entry.get("artifacts", {})
+            for config_key, relative_path in artifacts.items():
+                artifact_path = Path(relative_path)
+                if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                    raise ValueError(
+                        f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                    )
+
+                resolved_path = base_path / artifact_path if base_path is not None else artifact_path
+                if not resolved_path.exists() and not is_local:
+                    repository_path = Path(config_filename).parent / artifact_path
+                    snapshot_download(
+                        repo_id=model_id,
+                        repo_type="model",
+                        allow_patterns=f"{repository_path.as_posix()}/**",
+                        **hub_download_kwargs,
+                    )
+
+                if not resolved_path.exists():
+                    step_name = step_entry.get("registry_name", step_entry.get("class", "unknown"))
+                    raise FileNotFoundError(
+                        f"Missing processor artifact '{relative_path}' for step '{step_name}' "
+                        f"next to '{config_filename}'. Checkpoint artifacts are incomplete."
+                    )
+                step_entry["config"][config_key] = str(resolved_path)
 
     @classmethod
     def _build_steps_from_config(
@@ -1144,6 +1257,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         step_entry: dict[str, Any],
         model_id: str,
         base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
         is_local_source: bool = False,
     ) -> None:
@@ -1184,6 +1298,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_entry: The step configuration dictionary (may contain "state_file")
             model_id: The model identifier (used for Hub downloads if needed)
             base_path: Local directory path for finding state files (None for Hub-only)
+            config_filename: Processor config path, whose parent is used to resolve
+                repository-relative state files on the Hub.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
             is_local_source: Whether model_id resolved to a local directory or config file.
 
@@ -1209,7 +1325,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             # Download from Hub
             state_path = hf_hub_download(
                 repo_id=model_id,
-                filename=state_filename,
+                filename=(Path(config_filename).parent / state_filename).as_posix(),
                 repo_type="model",
                 **hub_download_kwargs,
             )
@@ -1331,6 +1447,62 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
+    def _hub_model_requires_migration(cls, model_id: str, hub_download_kwargs: dict[str, Any]) -> bool:
+        """Check whether a Hub repository contains a legacy LeRobot policy config.
+
+        A missing processor file is not sufficient evidence by itself: the repository
+        may be private, unavailable, or unrelated to LeRobot. This method therefore
+        fetches the policy's ``config.json`` and checks for the feature declarations
+        that identify a LeRobot policy checkpoint. Any lookup or parsing failure is
+        ignored so the original processor-file error remains visible.
+
+        Args:
+            model_id: Hugging Face Hub model repository ID.
+            hub_download_kwargs: Authentication, cache, and revision arguments used
+                for the original processor lookup.
+
+        Returns:
+            True when the repository has a legacy LeRobot policy configuration.
+        """
+        try:
+            config_path = hf_hub_download(
+                repo_id=model_id,
+                filename="config.json",
+                repo_type="model",
+                **hub_download_kwargs,
+            )
+            with open(config_path) as f:
+                config = json.load(f)
+        except Exception:
+            # This is a best-effort diagnostic called while handling the original
+            # processor lookup failure, which must remain the visible error.
+            return False
+
+        feature_types = {feature_type.value for feature_type in FeatureType}
+
+        def is_policy_feature_mapping(features: Any) -> bool:
+            return (
+                isinstance(features, dict)
+                and bool(features)
+                and all(
+                    isinstance(name, str)
+                    and isinstance(feature, dict)
+                    and feature.get("type") in feature_types
+                    and isinstance(feature.get("shape"), list)
+                    and all(isinstance(dimension, int) for dimension in feature["shape"])
+                    for name, feature in features.items()
+                )
+            )
+
+        return (
+            isinstance(config, dict)
+            and isinstance(config.get("type"), str)
+            and bool(config["type"])
+            and is_policy_feature_mapping(config.get("input_features"))
+            and is_policy_feature_mapping(config.get("output_features"))
+        )
+
+    @classmethod
     def _is_processor_config(cls, config: Any) -> bool:
         """Check if config follows DataProcessorPipeline format.
 
@@ -1403,7 +1575,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
-    def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
+    def _suggest_processor_migration(
+        cls,
+        model_path: str | Path,
+        original_error: str,
+        *,
+        revision: str | None = None,
+    ) -> None:
         """Raise migration error when we detect JSON files but no processor configs.
 
         This method is called when migration detection determines that a model
@@ -1438,6 +1616,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             model_path: Path to the model directory needing migration
             original_error: The error that triggered migration detection (for context)
+            revision: Optional Hub revision containing the legacy checkpoint.
 
         Raises:
             ProcessorMigrationError: Always raised (this method never returns normally)
@@ -1445,6 +1624,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         migration_command = (
             f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
         )
+        if revision is not None:
+            migration_command += f" --revision {revision}"
 
         raise ProcessorMigrationError(model_path, migration_command, original_error)
 
