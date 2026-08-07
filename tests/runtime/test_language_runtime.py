@@ -15,7 +15,7 @@
 import threading
 import time
 
-from lerobot.configs import TextKind
+from lerobot.configs import ActionChunkPrediction, TextKind
 from lerobot.runtime import (
     LanguageConditionedRuntime,
     RuntimeState,
@@ -28,8 +28,9 @@ from lerobot.runtime import (
 class FakePolicy:
     """Minimal stand-in for the `PreTrainedPolicy` surface the runtime drives."""
 
-    def __init__(self, texts=None):
+    def __init__(self, texts=None, chunk_text=None):
         self.texts = list(texts) if texts is not None else None
+        self.chunk_text = chunk_text
         self.batches = []
 
     def supports_text_generation(self):
@@ -43,8 +44,8 @@ class FakePolicy:
         assert batch == {"observation.state": 1}
         return ["a0", "a1"]
 
-    def last_reasoning(self):
-        return None
+    def predict_action_chunk_with_text(self, batch):
+        return ActionChunkPrediction(action=self.predict_action_chunk(batch), text=self.chunk_text)
 
 
 def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
@@ -155,7 +156,7 @@ def test_prompt_change_discards_in_flight_action_chunk():
             return ["stale"]
 
     runtime = LanguageConditionedRuntime(
-        policy=BlockingPolicy(),
+        policy=BlockingPolicy(chunk_text="stale reasoning"),
         observation_provider=lambda: {"observation.state": 1},
     )
     runtime.set_task("old task")
@@ -170,12 +171,47 @@ def test_prompt_change_discards_in_flight_action_chunk():
 
     assert not inference.is_alive()
     assert list(runtime.state.action_queue) == []
+    # The discarded chunk takes its text with it, so the panel cannot show reasoning
+    # belonging to a chunk that was never executed.
+    assert runtime.state.last_prediction is None
 
 
-def test_policy_without_in_stream_reasoning_reports_none():
+def test_accepted_chunk_publishes_its_text_for_display_only():
+    runtime = LanguageConditionedRuntime(
+        policy=FakePolicy(chunk_text="reach for the cup"),
+        observation_provider=lambda: {"observation.state": 1},
+    )
+    runtime.set_task("clean")
+
+    runtime.step_once()
+
+    assert runtime.state.last_prediction is not None
+    assert runtime.state.last_prediction.text == "reach for the cup"
+    assert runtime.state.last_prediction.action == ["a0", "a1"]
+    # Never routed through the channel that is fed back to the policy as a command.
+    assert "subtask" not in runtime.state.language_context
+
+
+def test_policy_without_a_text_head_reports_no_chunk_text():
     from lerobot.policies.pretrained import PreTrainedPolicy
 
-    assert PreTrainedPolicy.last_reasoning(object()) is None
+    class Chunker:
+        """Any policy that only implements `predict_action_chunk`."""
+
+        def predict_action_chunk(self, batch, **kwargs):
+            return ["a0"]
+
+    prediction = PreTrainedPolicy.predict_action_chunk_with_text(Chunker(), {})
+    assert prediction.action == ["a0"]
+    assert prediction.text is None
+
+
+def test_action_chunk_prediction_is_frozen():
+    import pytest
+
+    prediction = ActionChunkPrediction(action=["a0"], text="reach")
+    with pytest.raises(AttributeError):
+        prediction.text = "something else"
 
 
 def test_text_kind_members_compare_equal_to_their_wire_strings():
