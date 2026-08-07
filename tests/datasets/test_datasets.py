@@ -1553,7 +1553,10 @@ def test_valid_video_codecs_constant():
     assert "h264_qsv" in VALID_VIDEO_CODECS
     assert "hevc_videotoolbox" in VALID_VIDEO_CODECS
     assert "hevc_nvenc" in VALID_VIDEO_CODECS
-    assert len(VALID_VIDEO_CODECS) == 11
+    assert "nvv4l2h264enc" in VALID_VIDEO_CODECS
+    assert "nvv4l2h265enc" in VALID_VIDEO_CODECS
+    assert "nvv4l2av1enc" in VALID_VIDEO_CODECS
+    assert len(VALID_VIDEO_CODECS) == 14
 
 
 def test_delta_timestamps_with_episodes_filter(tmp_path, empty_lerobot_dataset_factory):

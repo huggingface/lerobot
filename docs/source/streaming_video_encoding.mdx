@@ -98,6 +98,57 @@ Use HW encoding when:
 > [!NOTE]
 > `libsvtav1` is the default because it provides the best training performance; other vcodecs can reduce CPU usage and be faster, but they typically produce larger files and may affect training time.
 
+### GStreamer Encoders
+
+The encoders above are FFmpeg encoders, reached through PyAV. Some platforms
+expose their video encoder only as GStreamer elements and have no FFmpeg
+encoder at all, so no `vcodec` value can select them. Setting
+`video_backend="gstreamer"` switches to a GStreamer pipeline for encoding. The
+output is an ordinary MP4, identical in kind to what the PyAV backend writes.
+
+NVIDIA Jetson is the current case. Its encoder is provided by the
+`nvvideo4linux2` plugin:
+
+| Encoder         | Platform      | CLI Value                                                                                  |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `nvv4l2av1enc`  | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2av1enc --dataset.rgb_encoder.video_backend=gstreamer`  |
+| `nvv4l2h265enc` | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2h265enc --dataset.rgb_encoder.video_backend=gstreamer` |
+| `nvv4l2h264enc` | NVIDIA Jetson | `--dataset.rgb_encoder.vcodec=nvv4l2h264enc --dataset.rgb_encoder.video_backend=gstreamer` |
+
+`vcodec=auto` works on this backend too and probes the GStreamer encoders
+rather than the FFmpeg ones.
+
+```bash
+lerobot-record \
+  --dataset.rgb_encoder.video_backend=gstreamer \
+  --dataset.rgb_encoder.vcodec=auto \
+  --dataset.streaming_encoding=true ...
+```
+
+> [!NOTE]
+> On Jetson, `vcodec=auto` with the default `pyav` backend selects
+> `h264_nvenc` and then fails to open it. PyAV reports that encoder as
+> available because it is compiled into the bundled FFmpeg, but Jetson's
+> encoder is not reachable through the desktop NVENC API. Use
+> `video_backend=gstreamer` there.
+
+> [!NOTE]
+> This backend requires the GStreamer Python bindings and the platform's
+> encoder plugins — on Debian/Ubuntu, `python3-gi`, `gir1.2-gstreamer-1.0` and
+> `gir1.2-gst-plugins-base-1.0`. These are system packages, so a virtualenv
+> must be created with `--system-site-packages` to see them.
+
+> [!NOTE]
+> `crf` maps to a fixed quantizer range on encoders that expose one. Encoders
+> that only accept a bitrate (such as `nvv4l2av1enc`) derive a target from
+> `crf` and the frame size; pass
+> `--dataset.rgb_encoder.extra_options='{"bitrate": 20000000}'` to set one
+> explicitly. Hardware encoders also reject frame sizes below a
+> device-specific minimum.
+
+> [!NOTE]
+> Depth features are encoded with PyAV regardless of this setting.
+
 ## 5. Troubleshooting
 
 | Symptom                                                            | Likely Cause                                 | Fix                                                                                                                                                                                                                                                                                              |
