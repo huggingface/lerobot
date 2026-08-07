@@ -60,6 +60,7 @@ class SentryStrategy(RolloutStrategy):
     config: SentryStrategyConfig
 
     def __init__(self, config: SentryStrategyConfig):
+        """See [`~rollout.RolloutStrategy.__init__`]."""
         super().__init__(config)
         self._push_executor: ThreadPoolExecutor | None = None
         self._pending_push: Future | None = None

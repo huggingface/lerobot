@@ -65,6 +65,26 @@ class SyncInferenceEngine(InferenceEngine):
         device: str | None,
         robot_type: str,
     ) -> None:
+        """Build the engine.
+
+        Args:
+            policy (`PreTrainedPolicy`):
+                The policy to run inference with.
+            preprocessor (`PolicyProcessorPipeline`):
+                Observation pre-processor pipeline.
+            postprocessor (`PolicyProcessorPipeline`):
+                Action post-processor pipeline.
+            dataset_features (`dict`):
+                Dataset feature spec, used to reorder the policy's action output.
+            ordered_action_keys (`list[str]`):
+                Action key ordering the returned tensor is mapped to.
+            task (`str`):
+                Task string passed through to the policy.
+            device (`str | None`):
+                Torch device to run inference on. Defaults to `"cpu"` when `None`.
+            robot_type (`str`):
+                Robot type string, used for `prepare_observation_for_inference`'s per-robot handling.
+        """
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor

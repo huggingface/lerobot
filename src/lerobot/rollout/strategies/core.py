@@ -46,6 +46,11 @@ class RolloutStrategy(abc.ABC):
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
+        """Store `config`; the inference engine is attached later via `_init_engine`.
+
+        Args:
+            config (`RolloutStrategyConfig`): This strategy's configuration.
+        """
         self.config = config
         self._engine: InferenceEngine | None = None
         self._interpolator: ActionInterpolator | None = None

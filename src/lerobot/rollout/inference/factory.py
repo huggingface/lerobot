@@ -54,6 +54,7 @@ class InferenceEngineConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def type(self) -> str:
+        """The registered name of this backend (e.g. `"sync"`, `"rtc"`)."""
         return self.get_choice_name(self.__class__)
 
 
@@ -66,10 +67,17 @@ class SyncInferenceConfig(InferenceEngineConfig):
 @InferenceEngineConfig.register_subclass("rtc")
 @dataclass
 class RTCInferenceConfig(InferenceEngineConfig):
-    """Real-Time Chunking: async policy inference in a background thread."""
+    """Real-Time Chunking: async policy inference in a background thread.
 
-    # Eagerly constructed so draccus exposes nested fields directly on the CLI
-    # (e.g. ``--inference.rtc.execution_horizon=...``).
+    Args:
+        rtc (`RTCConfig`, *optional*):
+            RTC-specific configuration (e.g. prefix-attention schedule, execution horizon). Eagerly
+            constructed so draccus exposes nested fields directly on the CLI (e.g.
+            `--inference.rtc.execution_horizon=...`).
+        queue_threshold (`int`, *optional*, defaults to 30):
+            Action-queue size below which the background RTC thread starts producing a new chunk.
+    """
+
     rtc: RTCConfig = field(default_factory=RTCConfig)
     queue_threshold: int = 30
 
@@ -96,7 +104,44 @@ def create_inference_engine(
     compile_warmup_inferences: int = 2,
     shutdown_event: Event | None = None,
 ) -> InferenceEngine:
-    """Instantiate the appropriate inference engine from a config object."""
+    """Instantiate the appropriate inference engine from a config object.
+
+    Args:
+        config (`InferenceEngineConfig`):
+            Backend selector (`SyncInferenceConfig` or `RTCInferenceConfig`).
+        policy (`PreTrainedPolicy`):
+            The loaded policy to run inference with.
+        preprocessor (`PolicyProcessorPipeline`):
+            Observation pre-processor pipeline.
+        postprocessor (`PolicyProcessorPipeline`):
+            Action post-processor pipeline.
+        robot_wrapper (`ThreadSafeRobot`):
+            Thread-safe robot handle, used for RTC's background thread and to resolve `robot_type`.
+        hw_features (`dict`):
+            Raw hardware observation feature spec, used by RTC to rebuild dataset frames.
+        dataset_features (`dict`):
+            Dataset feature spec, used by sync inference to reorder policy outputs.
+        ordered_action_keys (`list[str]`):
+            Action key ordering the returned tensor should be mapped to.
+        task (`str`):
+            Task string passed through to the policy.
+        fps (`float`):
+            Control loop frequency, used by RTC to size its time-per-chunk estimate.
+        device (`str | None`):
+            Torch device to run inference on.
+        use_torch_compile (`bool`, *optional*, defaults to `False`):
+            Whether to `torch.compile` the policy's action-prediction call.
+        compile_warmup_inferences (`int`, *optional*, defaults to 2):
+            Number of warmup inferences before compiled inference is considered ready.
+        shutdown_event (`Event | None`, *optional*):
+            Global shutdown event RTC sets on an unrecoverable background-thread error.
+
+    Returns:
+        InferenceEngine: The instantiated `SyncInferenceEngine` or `RTCInferenceEngine`.
+
+    Raises:
+        ValueError: If `config` is not a recognized `InferenceEngineConfig` subclass.
+    """
     logger.info("Creating inference engine: %s", config.type)
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
