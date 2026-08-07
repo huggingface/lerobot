@@ -3221,6 +3221,7 @@ cosmos3 = [
     { name = "transformers" },
 ]
 damiao = [
+    { name = "pyserial" },
     { name = "python-can" },
 ]
 dataset = [
@@ -3459,6 +3460,7 @@ notebook = [
     { name = "jupyter" },
 ]
 openarms = [
+    { name = "pyserial" },
     { name = "python-can" },
 ]
 peft = [
@@ -3531,6 +3533,7 @@ robometer = [
     { name = "transformers" },
 ]
 robstride = [
+    { name = "pyserial" },
     { name = "python-can" },
 ]
 rustypot-dep = [
@@ -3760,7 +3763,9 @@ requires-dist = [
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pynput-dep"], marker = "extra == 'hardware'" },
+    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'damiao'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'hardware'" },
+    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'robstride'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'serial-motors'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'lekiwi'" },

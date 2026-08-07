@@ -187,8 +187,9 @@ timm-dep = ["timm>=1.0.0,<1.1.0"]
 serial-motors = ["lerobot[rustypot-dep]", "lerobot[pyserial-dep]"]
 feetech = ["lerobot[serial-motors]"]
 dynamixel = ["lerobot[serial-motors]"]
-damiao = ["lerobot[can-dep]"]
-robstride = ["lerobot[can-dep]"]
+# pyserial backs python-can's "slcan" interface, the CAN transport that also works on macOS and Windows.
+damiao = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
+robstride = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
