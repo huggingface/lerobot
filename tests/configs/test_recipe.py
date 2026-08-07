@@ -88,6 +88,19 @@ def test_blend_component_weight_must_be_positive():
         TrainingRecipe(blend={"a": TrainingRecipe(weight=0.0, messages=[_minimal_target_turn()])})
 
 
+def test_recipe_route_must_be_supported():
+    with pytest.raises(ValueError, match="Unsupported recipe route"):
+        TrainingRecipe(weight=1.0, route="other", messages=[_minimal_target_turn()])
+
+
+def test_route_cannot_be_set_on_blend_recipe():
+    with pytest.raises(ValueError, match="only be set on a message recipe"):
+        TrainingRecipe(
+            route="vqa",
+            blend={"a": TrainingRecipe(weight=1.0, messages=[_minimal_target_turn()])},
+        )
+
+
 def test_blend_component_must_define_messages():
     # A bare TrainingRecipe(weight=1.0) would itself raise; build it without
     # going through __post_init__ to exercise the blend-level validator.

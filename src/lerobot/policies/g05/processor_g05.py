@@ -31,6 +31,7 @@ from transformers import AutoTokenizer
 from lerobot.configs import recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -52,7 +53,6 @@ from lerobot.processor.converters import (
 )
 from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_STATE,

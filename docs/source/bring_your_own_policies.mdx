@@ -193,38 +193,21 @@ def make_my_policy_pre_post_processors(
 
 ## Adding high- and low-level language control
 
-The policy API above is sufficient for training and standard evaluation. To use a language-conditioned policy with interactive `lerobot-rollout`, also register a runtime adapter. The adapter keeps policy-specific prompting and tokenization out of the generic control loop.
+The policy API above is sufficient for training and standard evaluation. Interactive `lerobot-rollout` adds one optional method: `generate_text`. Implement it and your policy gains high-level subtask generation, `/ask` grounded VQA, and the interactive panel. Skip it and the policy still runs — on the operator's own instruction.
 
-The runtime supports two policy shapes:
+There is nothing to register. The runtime owns the tick loop, generation cadence, pause/resume, action queues, and dispatch; the policy only turns an observation into text.
 
-| Policy shape     | Behavior                                                                | Adapter                                        |
-| ---------------- | ----------------------------------------------------------------------- | ---------------------------------------------- |
-| Low-level / flat | The operator's task or subtask directly conditions action prediction.   | Reuse `DirectTaskPolicyAdapter`.               |
-| High + low level | The policy generates subtasks or memory, then conditions actions on it. | Subclass `BaseLanguageAdapter`, as PI052 does. |
-
-During a rollout, `RuntimeState` stores the high-level task and the active language context:
+During a rollout, `RuntimeState` holds the operator's task and the active language context:
 
 ```text
-task ──> adapter.generate_text("subtask", ...) ──> state.language_context["subtask"]
+task ──> policy.generate_text(kind="subtask") ──> state.language_context["subtask"]
                                                        │
-observation ──> processors ──> adapter.select_action() ─┴─> action chunk ──> robot
+observation ──> processors ──> policy.predict_action_chunk() ──> action chunk ──> robot
 ```
 
-The generic runtime handles generation frequency, pause/resume, prompt replacement, action queues, and dispatch. The adapter only translates between that runtime contract and your policy.
+### Policies without a text head
 
-### Low-level policies
-
-If your policy already consumes the live task through its normal preprocessor and implements `predict_action_chunk`, register the shared direct adapter. PI0.5 and MolmoAct2 use this path:
-
-```python
-# src/lerobot/runtime/registry.py
-_ADAPTERS = {
-    # ...
-    "my_policy": "lerobot.runtime.adapter:DirectTaskPolicyAdapter",
-}
-```
-
-Run it with direct-subtask mode so the operator supplies the instruction used by the action policy:
+Nothing to do. The observation provider writes the active instruction into the batch before your preprocessor runs, so `predict_action_chunk` already sees it. PI0.5 and MolmoAct2 work this way:
 
 ```bash
 lerobot-rollout \
@@ -235,115 +218,78 @@ lerobot-rollout \
     --direct_subtask
 ```
 
-The rollout context builds the observation batch with the current instruction before `DirectTaskPolicyAdapter` calls `policy.predict_action_chunk(observation)`. No text-generation method is required.
+`--direct_subtask` makes the operator's typed text the instruction the action expert consumes. It is implied for any policy without a text head.
 
-### Hierarchical policies
+### Policies with a text head
 
-For a policy that generates language and actions, subclass [`BaseLanguageAdapter`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/runtime/adapter.py) and implement two methods:
-
-- `generate_text(kind, observation, state, user_text=None) -> str` generates a `subtask`, `memory`, or interjection response.
-- `select_action(observation, state)` builds the low-level prompt from the active context and returns an action chunk.
-
-This abbreviated adapter follows [`PI052PolicyAdapter`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi052/inference/pi052_adapter.py):
+Implement `generate_text` on the policy, next to `predict_action_chunk`:
 
 ```python
-# inference/my_policy_adapter.py
-from typing import Any
-
-from lerobot.runtime import RuntimeState
-from lerobot.runtime.adapter import BaseLanguageAdapter
-from lerobot.utils.constants import (
-    OBS_LANGUAGE_ATTENTION_MASK,
-    OBS_LANGUAGE_TOKENS,
-)
-
-
-class MyPolicyAdapter(BaseLanguageAdapter):
-    def select_action(self, observation: dict[str, Any], state: RuntimeState):
-        instruction = state.language_context.get("subtask") or state.task or ""
-        tokens, attention_mask = tokenize_instruction(instruction)
-
-        batch = dict(observation)
-        batch[OBS_LANGUAGE_TOKENS] = tokens
-        batch[OBS_LANGUAGE_ATTENTION_MASK] = attention_mask
-        return self.policy.predict_action_chunk(batch)
-
+# modeling_my_policy.py
+class MyPolicy(PreTrainedPolicy):
     def generate_text(
         self,
-        kind: str,
-        observation: dict[str, Any] | None,
-        state: RuntimeState,
+        batch: dict[str, Tensor],
+        *,
+        kind: str = "subtask",
         user_text: str | None = None,
     ) -> str:
-        messages = self.build_messages(kind, state, user_text)
-        batch, tokenizer = tokenize_messages(messages, observation)
-        return self.policy.select_message(
-            batch,
+        messages = self.build_messages(kind, batch, user_text)
+        inputs, tokenizer = self.tokenize_messages(messages, batch)
+        gen = self.config.generation
+        return self.decode(
+            inputs,
             tokenizer=tokenizer,
-            min_new_tokens=self.gen.min_new_tokens,
-            temperature=self.gen.temperature,
-            top_p=self.gen.top_p,
+            min_new_tokens=gen.min_new_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
         )
 
-    def build_messages(
-        self, kind: str, state: RuntimeState, user_text: str | None
-    ) -> list[dict[str, str]]:
+    def build_messages(self, kind, batch, user_text):
         if kind == "subtask":
-            return [{"role": "user", "content": state.task or ""}]
-        if kind == "memory":
+            return [{"role": "user", "content": batch.get("task", "")}]
+        if kind == "vqa":
             return [
-                {"role": "user", "content": state.task or ""},
-                {
-                    "role": "user",
-                    "content": f"Completed subtask: {state.extra.get('prior_subtask', '')}",
-                },
-            ]
-        if kind == "interjection":
-            return [
-                {"role": "user", "content": state.task or ""},
+                {"role": "user", "content": batch.get("task", "")},
                 {"role": "user", "content": user_text or ""},
             ]
         raise ValueError(f"Unsupported text kind: {kind}")
 ```
 
-`tokenize_instruction` and `tokenize_messages` are policy-specific helpers. They must reproduce the prompt format used during training; PI052, for example, adds the discretized robot state to its low-level subtask prompt and uses the same PaliGemma formatting for `select_message`.
+The runtime calls it with two kinds:
 
-`BaseLanguageAdapter` provides the default hierarchy: regenerate a subtask at action-chunk boundaries, update memory when the subtask changes, and handle user interjections. Override `_regenerate_context` only if your policy uses a different hierarchy.
+| `kind`      | Purpose                                                         | Result                              |
+| ----------- | --------------------------------------------------------------- | ----------------------------------- |
+| `"subtask"` | The next low-level instruction to condition actions on.         | `state.language_context["subtask"]` |
+| `"vqa"`     | Answer `user_text` about the current view (the `/ask` command). | Printed to the operator.            |
 
-Register the adapter with a lazy import so importing LeRobot does not load the model or its optional dependencies:
+The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
+
+### Sampling settings
+
+Decoding parameters live on the checkpoint, in [`PreTrainedConfig.generation`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py), so a head decodes the way it was trained:
 
 ```python
-# src/lerobot/runtime/registry.py
-_ADAPTERS = {
-    # ...
-    "my_policy": "lerobot.policies.my_policy.inference.my_policy_adapter:MyPolicyAdapter",
-}
+gen = self.config.generation  # min_new_tokens, temperature, top_p
 ```
 
-The key must match the policy's registered type. Once registered, the same checkpoint works through the shared entry point:
+Override them per run through the usual policy path — no runtime-specific flags:
 
 ```bash
-lerobot-rollout \
-    --language \
-    --policy.path=user/my_hierarchical_checkpoint \
-    --robot.type=so101_follower \
-    --robot.port=/dev/ttyACM0 \
-    --task="put the cup in the sink"
+lerobot-rollout --language --policy.path=... --policy.generation.temperature=0.5
 ```
 
-For RoboCasa-compatible policies, replace the robot arguments with `--sim --sim.task=<task>`. Without `--direct_subtask`, the adapter generates the low-level subtask; with it, the operator bypasses high-level generation and supplies each subtask.
+Temperature `0.0` is greedy argmax and matches most training setups. Raising `min_new_tokens` to 3-5 is a useful probe for an under-trained head whose prior at position 0 still favours EOS.
 
 ### Keep training and deployment aligned
 
-The adapter is intentionally small, but its prompts are part of the model contract:
+`generate_text` reconstructs prompts the model saw during training, so it is part of the model contract:
 
 - Use the same tokenizer, role formatting, special tokens, image ordering, and state encoding as training.
-- Condition `select_action` on `state.language_context["subtask"]`, falling back to `state.task` for direct or not-yet-generated prompts.
-- Return a full action chunk from `select_action`; the runtime handles control-rate dispatch.
+- Condition actions on `batch["subtask"]`, falling back to `batch["task"]` before the first generation.
+- Return a full action chunk from `predict_action_chunk`; the runtime handles control-rate dispatch.
 - Keep optional model dependencies inside lazy imports.
-- Test adapter selection, generated-message routing, action-batch construction, and direct-subtask behavior with a lightweight fake policy.
-
-PI052 is the complete in-tree reference: its [processor](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi052/processor_pi052.py) renders the training recipe, its [policy](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi052/modeling_pi052.py) exposes text and action generation, and its [adapter](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi052/inference/pi052_adapter.py) reconstructs those same prompts at deployment.
+- Test it with a lightweight fake batch: the method is stateless, so it needs no runtime to exercise.
 
 ---
 

@@ -43,6 +43,7 @@ blend:
   # Each camera uses a separate VQA sub-recipe for view-specific binding.
   ask_vqa_top:
     weight: 0.075
+    route: vqa
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.front)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.front)"
@@ -57,6 +58,7 @@ blend:
 
   ask_vqa_wrist:
     weight: 0.075
+    route: vqa
     bindings:
       vqa_query: "emitted_at(t, style=vqa, role=user, camera=observation.images.wrist)"
       vqa: "emitted_at(t, style=vqa, role=assistant, camera=observation.images.wrist)"

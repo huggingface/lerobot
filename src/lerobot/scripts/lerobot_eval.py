@@ -62,7 +62,7 @@ from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from pprint import pformat
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import einops
 import gymnasium as gym
@@ -82,31 +82,27 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.types import PolicyAction
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
     init_logging,
     inside_slurm,
 )
-from lerobot.utils.video_annotation import annotate_frame
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
 
 
-def _annotate_eval_frames(frames: np.ndarray, task: str | None, subtask: str | None) -> np.ndarray:
-    """Overlay the high-level task and predicted subtask onto rendered frames.
-
-    ``frames`` is ``(n_envs, H, W, C)`` uint8. Best-effort: if OpenCV isn't
-    available the frames are returned unchanged so eval never fails over a
-    visualization concern.
-    """
-    if frames.ndim != 4 or frames.shape[-1] != 3:
-        return frames
-    return np.stack([annotate_frame(frame, (("Task", task), ("Subtask", subtask))) for frame in frames])
+logger = logging.getLogger(__name__)
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -224,7 +220,9 @@ def rollout(
     policy.reset()
     for processor in (env_preprocessor, env_postprocessor, preprocessor, postprocessor):
         processor.reset()
-    observation, info = env.reset(seed=seeds)
+    # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
+    # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
+    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
     if render_callback is not None:
         render_callback(env)
 
@@ -459,13 +457,11 @@ def eval_policy(
         exc = ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
-        try:
-            from peft import PeftModel
-
-            if not isinstance(policy, PeftModel):
-                raise exc
-        except ImportError:
-            raise exc from None
+        if not _peft_available:
+            raise exc
+        require_package("peft", extra="peft")
+        if not isinstance(policy, PeftModel):
+            raise exc
 
     start = time.time()
     # Preserve the mode for direct callers. eval_policy_all scopes the mode
@@ -492,36 +488,11 @@ def eval_policy(
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            frames = np.stack([env.envs[i].render() for i in range(n_to_render_now)])  # noqa: B023
+            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
         elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
             # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
-            frames = np.stack(env.call("render")[:n_to_render_now])
-        else:
-            return
-
-        # Overlay the high-level task and (for hierarchical policies like
-        # pi052) the predicted low-level subtask onto each frame. Both are
-        # best-effort: missing values just skip that line.
-        try:
-            tasks = list(env.call("task_description"))
-        except (AttributeError, NotImplementedError):
-            try:
-                tasks = list(env.call("task"))
-            except (AttributeError, NotImplementedError):
-                tasks = None
-        subtasks = getattr(policy, "last_subtasks", None)
-        annotated = []
-        for i in range(frames.shape[0]):
-            subtask_i = subtasks[i] if subtasks is not None and i < len(subtasks) else None
-            annotated.append(
-                _annotate_eval_frames(
-                    frames[i : i + 1],
-                    tasks[i] if tasks is not None and i < len(tasks) else None,
-                    subtask_i,
-                )[0]
-            )
-        ep_frames.append(np.stack(annotated))
+            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
         video_paths: list[str] = []
@@ -598,7 +569,7 @@ def eval_policy(
         if seeds:
             all_seeds.extend(seeds)
         else:
-            all_seeds.append(None)
+            all_seeds.extend([None] * env.num_envs)
 
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
@@ -836,13 +807,13 @@ def eval_main(cfg: EvalPipelineConfig):
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
         )
-        print("Overall Aggregated Metrics:")
-        print(info["overall"])
+        logger.info("Overall Aggregated Metrics:")
+        logger.info(info["overall"])
 
         # Print per-suite stats
         for task_group, task_group_info in info.items():
-            print(f"\nAggregated Metrics for {task_group}:")
-            print(task_group_info)
+            logger.info(f"\nAggregated Metrics for {task_group}:")
+            logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
 

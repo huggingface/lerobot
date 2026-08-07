@@ -84,24 +84,29 @@ head, camera order, dimensions, normalization, and execution horizon.
 
 ### Interactive System 1 and System 2 Runtime
 
-System 1 executes the selected ActionCodec or flow chunk directly:
+G0.5 emits reasoning and actions from one inference stream, so it has no
+separate text head: it does not implement `generate_text`, and the interactive
+runtime therefore never generates a subtask for it. The operator's task is
+forwarded byte-for-byte and drives action prediction directly. G0.5 never
+samples `task_aug` text, launches a second planner, or feeds generated CoT back
+as a replacement task.
+
+`policy.runtime_system` on the checkpoint selects the path. System 1 executes
+the selected ActionCodec or flow chunk directly:
 
 ```bash
 lerobot-rollout \
   --policy.path=lerobot/g05_so101 \
-  --language --direct_subtask \
+  --language \
+  --policy.runtime_system=system1 \
   --task="pick up the cup" \
   --mode=action
 ```
 
-`--direct_subtask` explicitly selects the action-only System 1 path, even when
-the checkpoint supports System 2 with `predict_cot=true`.
-
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`. The adapter forwards the operator task byte-for-byte and
-returns CoT telemetry and the matching action chunk atomically. It never samples
-`task_aug` text, launches a second planner, or feeds generated CoT back as a
-replacement task.
+`predict_cot=true`. Call `predict_action_chunk_with_runtime` directly to read
+the CoT telemetry alongside the matching action chunk; the interactive panel
+shows the task only.
 
 ```bash
 lerobot-rollout \
@@ -130,8 +135,7 @@ lerobot-rollout \
 ```
 
 The checkpoint is non-commercial and may be private; authenticate with
-`hf auth login` before loading it. Do not add `--direct_subtask` when inspecting
-the checkpoint's native System 2 CoT telemetry.
+`hf auth login` before loading it.
 
 ## Data Requirements
 

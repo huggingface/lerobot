@@ -14,25 +14,29 @@
 
 """Policy-agnostic runtime for language-conditioned policies.
 
-Adapters registered in :mod:`lerobot.runtime.registry` are served by ``lerobot-rollout --language``.
+Served by ``lerobot-rollout --language``. Any policy implementing
+:meth:`~lerobot.policies.pretrained.PreTrainedPolicy.generate_text` gets high-level
+subtask generation; the rest run on the operator's own instruction.
 """
 
-from .adapter import BaseLanguageAdapter, GenerationConfig, LanguageDiagnostics
 from .language_runtime import (
-    LanguageConditionedPolicyAdapter,
+    LanguageConditionedPolicy,
     LanguageConditionedRuntime,
+    LanguageDiagnostics,
     RuntimeState,
+    SubtaskController,
     Tick,
     TickClock,
+    build_language_batch,
 )
 
 __all__ = [
-    "BaseLanguageAdapter",
-    "GenerationConfig",
-    "LanguageConditionedPolicyAdapter",
+    "LanguageConditionedPolicy",
     "LanguageConditionedRuntime",
     "LanguageDiagnostics",
     "RuntimeState",
+    "SubtaskController",
     "Tick",
     "TickClock",
+    "build_language_batch",
 ]
