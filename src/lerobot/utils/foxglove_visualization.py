@@ -37,6 +37,8 @@ from .constants import (
     OBS_PREFIX,
     OBS_STATE,
     OBS_STR,
+    PREDICTION_PREFIX,
+    PREDICTION_STR,
     REWARD,
     SUCCESS,
     TRUNCATED,
@@ -283,10 +285,11 @@ def _log_foxglove_image(
 def log_foxglove_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
+    prediction: dict | None = None,
     compress_images: bool = False,
 ) -> None:
     """
-    Logs observation and action data to a Foxglove WebSocket server for real-time visualization.
+    Logs observation, action and prediction data to a Foxglove WebSocket server for real-time visualization.
 
     Mirrors ``log_rerun_data`` but emits Foxglove messages over the server started by
     :func:`init_foxglove`. Data is mapped as follows:
@@ -302,6 +305,8 @@ def log_foxglove_data(
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
+        prediction: An optional dictionary of display-ready model outputs (e.g. a world model's
+            imagined video), keyed "<datatype>.<name>", logged on ``/prediction/...`` topics.
         compress_images: Whether to JPEG-compress images before logging to save bandwidth in exchange
             for CPU and quality.
     """
@@ -333,6 +338,30 @@ def log_foxglove_data(
                         log_time=now,
                     )
         _log_foxglove_scalars(_foxglove_topic(OBS_STATE), obs_scalars, log_time=now)
+
+    if prediction:
+        # Predicted outputs are keyed "<datatype>.<name>" (e.g. "images.predicted"); route images to
+        # /prediction/images/<name> and any scalars to an aggregate /prediction/state topic.
+        pred_scalars: dict[str, float] = {}
+        for k, v in prediction.items():
+            if v is None:
+                continue
+            key = k[len(PREDICTION_PREFIX) :] if str(k).startswith(PREDICTION_PREFIX) else str(k)
+            if _is_scalar(v):
+                pred_scalars[key] = float(v)
+            elif isinstance(v, np.ndarray):
+                if v.ndim == 1:
+                    pred_scalars.update(_labeled_scalars(key, v))
+                else:
+                    name = key[len("images.") :] if key.startswith("images.") else key
+                    _log_foxglove_image(
+                        f"/{PREDICTION_STR}/images/{_foxglove_safe_name(name)}",
+                        name,
+                        v,
+                        compress_images=compress_images,
+                        log_time=now,
+                    )
+        _log_foxglove_scalars(f"/{PREDICTION_STR}/state", pred_scalars, log_time=now)
 
     if action:
         action_scalars: dict[str, float] = {}

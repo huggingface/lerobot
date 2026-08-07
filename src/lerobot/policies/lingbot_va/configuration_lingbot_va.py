@@ -92,9 +92,6 @@ class LingBotVAConfig(PreTrainedConfig):
     # (un)normalization quantiles live in the checkpoint's ``policy_postprocessor.json``, not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
-    # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
-    save_predicted_video: bool = False
-
     # Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
     # quantile-(un)normalized inside the policy / dedicated processor steps.
     normalization_mapping: dict[str, NormalizationMode] = field(
