@@ -25,8 +25,7 @@ from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 @dataclass
 @ProcessorStepRegistry.register(name="rename_observations_processor")
 class RenameObservationsProcessorStep(ObservationProcessorStep):
-    """
-    A processor step that renames keys in an observation dictionary.
+    """A processor step that renames keys in an observation dictionary.
 
     This step is useful for creating a standardized data interface by mapping keys
     from an environment's format to the format expected by a LeRobot policy or
@@ -40,6 +39,7 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     rename_map: dict[str, str] = field(default_factory=dict)
 
     def observation(self, observation):
+        """Rename each key present in `rename_map`; keys not in `rename_map` are kept as-is."""
         processed_obs = {}
         for key, value in observation.items():
             if key in self.rename_map:
@@ -50,12 +50,14 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
         return processed_obs
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"rename_map": ...}`."""
         return {"rename_map": self.rename_map}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Transforms:
+        """Rename observation feature keys the same way `observation` renames observation data.
+
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
         """
@@ -67,17 +69,16 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
 
 
 def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -> dict[str, dict[str, Any]]:
-    """
-    Renames the top-level keys in a statistics dictionary using a provided mapping.
+    """Renames the top-level keys in a statistics dictionary using a provided mapping.
 
     This is a helper function typically used to keep normalization statistics
     consistent with renamed observation or action features. It performs a defensive
     deep copy to avoid modifying the original `stats` dictionary.
 
     Args:
-        stats: A nested dictionary of statistics, where top-level keys are
-               feature names (e.g., `{"observation.state": {"mean": 0.5}}`).
-        rename_map: A dictionary mapping old feature names to new feature names.
+        stats (`dict[str, dict[str, Any]]`): A nested dictionary of statistics, where top-level keys are
+            feature names (e.g., `{"observation.state": {"mean": 0.5}}`).
+        rename_map (`dict[str, str]`): A dictionary mapping old feature names to new feature names.
 
     Returns:
         A new statistics dictionary with its top-level keys renamed. Returns an

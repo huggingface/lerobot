@@ -46,6 +46,11 @@ from .rename_processor import RenameObservationsProcessorStep
 def make_default_teleop_action_processor() -> RobotProcessorPipeline[
     tuple[RobotAction, RobotObservation], RobotAction
 ]:
+    """Build a no-op teleoperator-action pipeline (an `IdentityProcessorStep`).
+
+    Returns:
+        `RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]`: The pipeline.
+    """
     teleop_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_observation_to_transition,
@@ -57,6 +62,11 @@ def make_default_teleop_action_processor() -> RobotProcessorPipeline[
 def make_default_robot_action_processor() -> RobotProcessorPipeline[
     tuple[RobotAction, RobotObservation], RobotAction
 ]:
+    """Build a no-op robot-action pipeline (an `IdentityProcessorStep`).
+
+    Returns:
+        `RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]`: The pipeline.
+    """
     robot_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_observation_to_transition,
@@ -66,6 +76,11 @@ def make_default_robot_action_processor() -> RobotProcessorPipeline[
 
 
 def make_default_robot_observation_processor() -> RobotProcessorPipeline[RobotObservation, RobotObservation]:
+    """Build a no-op robot-observation pipeline (an `IdentityProcessorStep`).
+
+    Returns:
+        `RobotProcessorPipeline[RobotObservation, RobotObservation]`: The pipeline.
+    """
     robot_observation_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
         steps=[IdentityProcessorStep()],
         to_transition=observation_to_transition,
@@ -75,6 +90,11 @@ def make_default_robot_observation_processor() -> RobotProcessorPipeline[RobotOb
 
 
 def make_default_processors():
+    """Build the three no-op default processors: teleop-action, robot-action, and robot-observation.
+
+    Returns:
+        A `(teleop_action_processor, robot_action_processor, robot_observation_processor)` tuple.
+    """
     teleop_action_processor = make_default_teleop_action_processor()
     robot_action_processor = make_default_robot_action_processor()
     robot_observation_processor = make_default_robot_observation_processor()
@@ -106,11 +126,13 @@ def make_default_policy_processor_steps(
     """Construct the canonical policy processor steps from a policy config.
 
     Args:
-        config: A `PreTrainedConfig` providing `device`, `input_features`,
+        config (`PreTrainedConfig`): A `PreTrainedConfig` providing `device`, `input_features`,
             `output_features` and `normalization_mapping`.
-        dataset_stats: Dataset statistics used for (un)normalization.
-        normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
-            their normalization stats to the policy device; most leave it unset).
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used
+            for (un)normalization.
+        normalizer_device (`torch.device | str | None`, *optional*): Device passed to
+            `NormalizerProcessorStep` (some policies pin their normalization stats to the policy device;
+            most leave it unset).
     """
     return DefaultPolicyProcessorSteps(
         rename_observations=RenameObservationsProcessorStep(rename_map={}),
@@ -164,8 +186,9 @@ def make_default_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """The pure-scaffold policy pipeline pair: Rename -> Batch -> Device -> Normalize,
-    and Unnormalize -> Device(cpu). Policies with custom steps or a different step order
+    """The pure-scaffold policy pipeline pair: Rename -> Batch -> Device -> Normalize.
+
+    And Unnormalize -> Device(cpu). Policies with custom steps or a different step order
     compose `make_default_policy_processor_steps` themselves instead.
     """
     s = make_default_policy_processor_steps(config, dataset_stats, normalizer_device=normalizer_device)

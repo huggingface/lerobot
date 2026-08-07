@@ -449,7 +449,6 @@ ignore = [
 "src/lerobot/motors/**" = ["D"]
 "src/lerobot/optim/**" = ["D"]
 "src/lerobot/policies/**" = ["D"]
-"src/lerobot/processor/**" = ["D"]
 "src/lerobot/rewards/**" = ["D"]
 "src/lerobot/rl/**" = ["D"]
 "src/lerobot/rollout/**" = ["D"]

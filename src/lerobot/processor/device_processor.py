@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This script defines a processor step for moving environment transition data to a specific torch device and casting
-its floating-point precision.
+"""This script defines a processor step for moving environment transition data to a specific torch device.
+
+It also optionally casts data to a specified floating-point precision.
 """
 
 from dataclasses import dataclass
@@ -34,11 +34,10 @@ from .pipeline import ProcessorStep, ProcessorStepRegistry
 @ProcessorStepRegistry.register("device_processor")
 @dataclass
 class DeviceProcessorStep(ProcessorStep):
-    """
-    Processor step to move all tensors within an `EnvTransition` to a specified device and optionally cast their
-    floating-point data type.
+    """Processor step to move all tensors within an `EnvTransition` to a specified device.
 
-    This is crucial for preparing data for model training or inference on hardware like GPUs.
+    Optionally casts their floating-point data type too. This is crucial for preparing data for model
+    training or inference on hardware like GPUs.
 
     **Attributes**:
         - **device** (`str`) -- The target device for tensors (e.g., "cpu", "cuda", "cuda:0").
@@ -60,8 +59,7 @@ class DeviceProcessorStep(ProcessorStep):
     }
 
     def __post_init__(self):
-        """
-        Initializes the processor by converting string configurations to torch objects.
+        """Initializes the processor by converting string configurations to torch objects.
 
         This method sets up the `torch.device`, determines if transfers can be non-blocking, and validates the
         `float_dtype` string, converting it to a `torch.dtype` object.
@@ -82,8 +80,7 @@ class DeviceProcessorStep(ProcessorStep):
             self._target_float_dtype = None
 
     def _process_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Moves a single tensor to the target device and casts its dtype.
+        """Moves a single tensor to the target device and casts its dtype.
 
         Handles multi-GPU scenarios by not moving a tensor if it's already on a different CUDA device than
         the target, which is useful when using frameworks like Accelerate.
@@ -120,8 +117,7 @@ class DeviceProcessorStep(ProcessorStep):
         return tensor
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Applies device and dtype conversion to all tensors in an environment transition.
+        """Applies device and dtype conversion to all tensors in an environment transition.
 
         It iterates through the transition, finds all `torch.Tensor` objects (including those nested in
         dictionaries like `observation`), and processes them.
@@ -169,8 +165,7 @@ class DeviceProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the serializable configuration of the processor.
+        """Returns the serializable configuration of the processor.
 
         Returns:
             A dictionary containing the device and float_dtype settings.
@@ -180,8 +175,7 @@ class DeviceProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Returns the input features unchanged.
+        """Returns the input features unchanged.
 
         Device and dtype transformations do not alter the fundamental definition of the features (e.g., shape).
 

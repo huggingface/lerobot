@@ -47,8 +47,7 @@ TELEOP_ACTION_KEY = "teleop_action"
 
 @runtime_checkable
 class HasTeleopEvents(Protocol):
-    """
-    Minimal protocol for objects that provide teleoperation events.
+    """Minimal protocol for objects that provide teleoperation events.
 
     This protocol defines the `get_teleop_events()` method, allowing processor
     steps to interact with teleoperators that support event-based controls
@@ -57,8 +56,7 @@ class HasTeleopEvents(Protocol):
     """
 
     def get_teleop_events(self) -> dict[str, Any]:
-        """
-        Get extra control events from the teleoperator.
+        """Get extra control events from the teleoperator.
 
         Returns:
             A dictionary containing control events such as:
@@ -75,8 +73,7 @@ TeleopWithEvents = TypeVar("TeleopWithEvents", bound="Teleoperator")
 
 
 def _check_teleop_with_events(teleop: "Teleoperator") -> None:
-    """
-    Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
+    """Runtime check that a teleoperator implements the `HasTeleopEvents` protocol.
 
     Args:
         teleop: The teleoperator instance to check.
@@ -94,8 +91,7 @@ def _check_teleop_with_events(teleop: "Teleoperator") -> None:
 @ProcessorStepRegistry.register("add_teleop_action_as_complementary_data")
 @dataclass
 class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
-    """
-    Adds the raw action from a teleoperator to the transition's complementary data.
+    """Adds the raw action from a teleoperator to the transition's complementary data.
 
     This is useful for human-in-the-loop scenarios where the human's input needs to
     be available to downstream processors, for example, to override a policy's action
@@ -108,8 +104,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
     teleop_device: "Teleoperator"
 
     def complementary_data(self, complementary_data: dict) -> dict:
-        """
-        Retrieves the teleoperator's action and adds it to the complementary data.
+        """Retrieves the teleoperator's action and adds it to the complementary data.
 
         Args:
             complementary_data: The incoming complementary data dictionary.
@@ -125,14 +120,14 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Complementary data isn't tracked in features; unchanged."""
         return features
 
 
 @ProcessorStepRegistry.register("add_teleop_action_as_info")
 @dataclass
 class AddTeleopEventsAsInfoStep(InfoProcessorStep):
-    """
-    Adds teleoperator control events (e.g., terminate, success) to the transition's info.
+    """Adds teleoperator control events (e.g., terminate, success) to the transition's info.
 
     This step extracts control events from teleoperators that support event-based
     interaction, making these signals available to other parts of the system.
@@ -149,8 +144,7 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
         _check_teleop_with_events(self.teleop_device)
 
     def info(self, info: dict) -> dict:
-        """
-        Retrieves teleoperator events and updates the info dictionary.
+        """Retrieves teleoperator events and updates the info dictionary.
 
         Args:
             info: The incoming info dictionary.
@@ -167,14 +161,14 @@ class AddTeleopEventsAsInfoStep(InfoProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Info isn't tracked in features; unchanged."""
         return features
 
 
 @ProcessorStepRegistry.register("image_crop_resize_processor")
 @dataclass
 class ImageCropResizeProcessorStep(ObservationProcessorStep):
-    """
-    Crops and/or resizes image observations.
+    """Crops and/or resizes image observations.
 
     This step iterates through all image keys in an observation dictionary and applies
     the specified transformations. It handles device placement, moving tensors to the
@@ -190,8 +184,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
     resize_size: tuple[int, int] | None = None
 
     def observation(self, observation: dict) -> dict:
-        """
-        Applies cropping and resizing to all images in the observation dictionary.
+        """Applies cropping and resizing to all images in the observation dictionary.
 
         Args:
             observation: The observation dictionary, potentially containing image tensors.
@@ -226,8 +219,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
         return new_observation
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary with the crop parameters and resize dimensions.
@@ -240,8 +232,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Updates the image feature shapes in the policy features dictionary if resizing is applied.
+        """Updates the image feature shapes in the policy features dictionary if resizing is applied.
 
         Args:
             features: The policy features dictionary.
@@ -264,8 +255,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register("time_limit_processor")
 class TimeLimitProcessorStep(TruncatedProcessorStep):
-    """
-    Tracks episode steps and enforces a time limit by truncating the episode.
+    """Tracks episode steps and enforces a time limit by truncating the episode.
 
     **Attributes**:
         - **max_episode_steps** (`int`) -- The maximum number of steps allowed per episode.
@@ -276,8 +266,7 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
     current_step: int = 0
 
     def truncated(self, truncated: bool) -> bool:
-        """
-        Increments the step counter and sets the truncated flag if the time limit is reached.
+        """Increments the step counter and sets the truncated flag if the time limit is reached.
 
         Args:
             truncated: The incoming truncated flag.
@@ -292,8 +281,7 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
         return truncated
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary containing the `max_episode_steps`.
@@ -309,13 +297,13 @@ class TimeLimitProcessorStep(TruncatedProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. The truncated flag isn't tracked in features; unchanged."""
         return features
 
 
 @ProcessorStepRegistry.register("gym_hil_adapter_processor")
 class GymHILAdapterProcessorStep(ProcessorStep):
-    """
-    Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
+    """Adapts the output of the `gym-hil` environment to the format expected by `lerobot` processors.
 
     This step normalizes the `transition` object by:
     1. Copying `teleop_action` from `info` to `complementary_data`.
@@ -324,6 +312,7 @@ class GymHILAdapterProcessorStep(ProcessorStep):
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """See [`~processor.ProcessorStep.__call__`]. Performs the key copies described in the class docstring."""
         info = transition.get(TransitionKey.INFO, {})
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
 
@@ -344,14 +333,14 @@ class GymHILAdapterProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A key-copying step; features are unchanged."""
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("gripper_penalty_processor")
 class GripperPenaltyProcessorStep(ProcessorStep):
-    """
-    Applies a small per-transition cost on the discrete gripper action.
+    """Applies a small per-transition cost on the discrete gripper action.
 
     Fires only when the commanded action would actually transition the gripper
     from one extreme to the other (close-while-open or open-while-closed).
@@ -371,8 +360,7 @@ class GripperPenaltyProcessorStep(ProcessorStep):
     closed_threshold: float = 0.9
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Calculates the gripper penalty and adds it to the complementary data.
+        """Calculates the gripper penalty and adds it to the complementary data.
 
         Args:
             transition: The incoming environment transition.
@@ -422,8 +410,7 @@ class GripperPenaltyProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary containing the penalty value, max gripper position,
@@ -443,14 +430,14 @@ class GripperPenaltyProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. The penalty lives in complementary data, not features; unchanged."""
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("intervention_action_processor")
 class InterventionActionProcessorStep(ProcessorStep):
-    """
-    Handles human intervention, overriding policy actions and managing episode termination.
+    """Handles human intervention, overriding policy actions and managing episode termination.
 
     When an intervention is detected (via teleoperator events in the `info` dict),
     this step replaces the policy's action with the human's teleoperated action.
@@ -466,8 +453,7 @@ class InterventionActionProcessorStep(ProcessorStep):
     terminate_on_success: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Processes the transition to handle interventions.
+        """Processes the transition to handle interventions.
 
         Args:
             transition: The incoming environment transition.
@@ -531,8 +517,7 @@ class InterventionActionProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary containing the step's configuration attributes.
@@ -545,14 +530,14 @@ class InterventionActionProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Overrides the action value, not its shape/type; unchanged."""
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register("reward_classifier_processor")
 class RewardClassifierProcessorStep(ProcessorStep):
-    """
-    Applies a pretrained reward classifier to image observations to predict success.
+    """Applies a pretrained reward classifier to image observations to predict success.
 
     This step uses a model to determine if the current state is successful, updating
     the reward and potentially terminating the episode.
@@ -584,8 +569,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
             self.reward_classifier.eval()
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Processes a transition, applying the reward classifier to its image observations.
+        """Processes a transition, applying the reward classifier to its image observations.
 
         Args:
             transition: The incoming environment transition.
@@ -633,8 +617,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary containing the step's configuration attributes.
@@ -649,4 +632,5 @@ class RewardClassifierProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. Updates reward/done, not features; unchanged."""
         return features

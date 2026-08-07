@@ -7,14 +7,249 @@ See [Introduction to Robot Processors](../introduction_processors) for the conce
 [Implement your own processor](../implement_your_own_processor) to write a step, and
 [Debug your processor pipeline](../debug_processor_pipeline) when a pipeline misbehaves.
 
-## ProcessorStep
+## Core pipeline
 
 [[autodoc]] lerobot.processor.pipeline.ProcessorStep
 
-## DataProcessorPipeline
-
 [[autodoc]] lerobot.processor.pipeline.DataProcessorPipeline
 
-## PolicyProcessorPipeline
-
 [[autodoc]] lerobot.processor.pipeline.PolicyProcessorPipeline
+
+`RobotProcessorPipeline` is a type alias for `DataProcessorPipeline[TInput, TOutput]`, used for the
+teleop-action, robot-action and robot-observation pipelines that don't go through a policy.
+
+[[autodoc]] lerobot.processor.pipeline.ProcessorKwargs
+
+[[autodoc]] lerobot.processor.pipeline.ProcessorStepRegistry
+
+[[autodoc]] lerobot.processor.pipeline.ProcessorMigrationError
+
+### Typed base steps
+
+Each subclasses `ProcessorStep` to implement one part of an `EnvTransition` (observation, action, reward,
+etc.), leaving the rest of the transition untouched by default.
+
+[[autodoc]] lerobot.processor.pipeline.ObservationProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.ActionProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.RobotActionProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.PolicyActionProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.RewardProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.DoneProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.TruncatedProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.InfoProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.ComplementaryDataProcessorStep
+
+[[autodoc]] lerobot.processor.pipeline.IdentityProcessorStep
+
+## Factory functions
+
+Build the canonical processor pipelines used by policies and robots.
+
+[[autodoc]] lerobot.processor.factory.make_default_processors
+
+[[autodoc]] lerobot.processor.factory.make_default_teleop_action_processor
+
+[[autodoc]] lerobot.processor.factory.make_default_robot_action_processor
+
+[[autodoc]] lerobot.processor.factory.make_default_robot_observation_processor
+
+[[autodoc]] lerobot.processor.factory.DefaultPolicyProcessorSteps
+
+[[autodoc]] lerobot.processor.factory.make_default_policy_processor_steps
+
+[[autodoc]] lerobot.processor.factory.make_policy_processor_pipelines
+
+[[autodoc]] lerobot.processor.factory.make_default_pre_post_processors
+
+## Batch dimension
+
+[[autodoc]] lerobot.processor.batch_processor.AddBatchDimensionProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.batch_processor.AddBatchDimensionObservationStep
+
+[[autodoc]] lerobot.processor.batch_processor.AddBatchDimensionActionStep
+
+[[autodoc]] lerobot.processor.batch_processor.AddBatchDimensionComplementaryDataStep
+
+## Device
+
+[[autodoc]] lerobot.processor.device_processor.DeviceProcessorStep
+    - all
+
+## Normalization
+
+[[autodoc]] lerobot.processor.normalize_processor.NormalizerProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.normalize_processor.UnnormalizerProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.normalize_processor.hotswap_stats
+
+## Renaming
+
+[[autodoc]] lerobot.processor.rename_processor.RenameObservationsProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.rename_processor.rename_stats
+
+## Vanilla observation processing
+
+Converts standard Gymnasium observations (`pixels`, `agent_pos`, `environment_state`) to the LeRobot format.
+
+[[autodoc]] lerobot.processor.observation_processor.VanillaObservationProcessorStep
+    - all
+
+## Environment-specific observation processing
+
+[[autodoc]] lerobot.processor.env_processor.LiberoProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.env_processor.IsaaclabArenaProcessorStep
+    - all
+
+## NumPy / PyTorch action conversion
+
+[[autodoc]] lerobot.processor.gym_action_processor.Torch2NumpyActionProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.gym_action_processor.Numpy2TorchActionProcessorStep
+    - all
+
+## Delta and relative actions
+
+[[autodoc]] lerobot.processor.delta_action_processor.MapTensorToDeltaActionDictStep
+    - all
+
+[[autodoc]] lerobot.processor.delta_action_processor.MapDeltaActionToRobotActionStep
+    - all
+
+[[autodoc]] lerobot.processor.relative_action_processor.RelativeActionsProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.relative_action_processor.AbsoluteActionsProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.relative_action_processor.to_relative_actions
+
+[[autodoc]] lerobot.processor.relative_action_processor.to_absolute_actions
+
+## Policy/robot action bridge
+
+Converts between a robot's per-motor action dict and a policy's stacked action tensor.
+
+[[autodoc]] lerobot.processor.policy_robot_bridge.RobotActionToPolicyActionProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.policy_robot_bridge.PolicyActionToRobotActionProcessorStep
+    - all
+
+## Tokenization
+
+[[autodoc]] lerobot.processor.tokenizer_processor.TokenizerProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.tokenizer_processor.ActionTokenizerProcessorStep
+    - all
+
+## Language
+
+[[autodoc]] lerobot.processor.newline_task_processor.NewLineTaskProcessorStep
+    - all
+
+`RenderMessagesStep` requires the `[dataset]` extra and is not re-exported from `lerobot.processor`; import
+it directly from `lerobot.processor.render_messages_processor`.
+
+[[autodoc]] lerobot.processor.render_messages_processor.RenderMessagesStep
+    - all
+
+## Human-in-the-loop (HIL)
+
+Steps supporting human-in-the-loop RL: teleop event/action bookkeeping, time limits, image preprocessing,
+the `gym-hil` adapter, gripper penalties, intervention handling, and a learned reward classifier.
+
+[[autodoc]] lerobot.processor.hil_processor.HasTeleopEvents
+
+[[autodoc]] lerobot.processor.hil_processor.AddTeleopActionAsComplimentaryDataStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.AddTeleopEventsAsInfoStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.ImageCropResizeProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.TimeLimitProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.GymHILAdapterProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.GripperPenaltyProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.InterventionActionProcessorStep
+    - all
+
+[[autodoc]] lerobot.processor.hil_processor.RewardClassifierProcessorStep
+    - all
+
+## Transition converters
+
+Convert between an `EnvTransition` and the raw dict formats used by robots, policies, and dataset batches.
+
+[[autodoc]] lerobot.processor.converters.create_transition
+
+[[autodoc]] lerobot.processor.converters.identity_transition
+
+[[autodoc]] lerobot.processor.converters.to_tensor
+
+[[autodoc]] lerobot.processor.converters.from_tensor_to_numpy
+
+[[autodoc]] lerobot.processor.converters.robot_action_to_transition
+
+[[autodoc]] lerobot.processor.converters.robot_action_observation_to_transition
+
+[[autodoc]] lerobot.processor.converters.observation_to_transition
+
+[[autodoc]] lerobot.processor.converters.policy_action_to_transition
+
+[[autodoc]] lerobot.processor.converters.batch_to_transition
+
+[[autodoc]] lerobot.processor.converters.transition_to_robot_action
+
+[[autodoc]] lerobot.processor.converters.transition_to_policy_action
+
+[[autodoc]] lerobot.processor.converters.transition_to_observation
+
+[[autodoc]] lerobot.processor.converters.transition_to_batch
+
+## Migrating legacy policies
+
+Standalone script to migrate a pretrained policy with built-in normalization layers to the processor
+pipeline system. See the module docstring for CLI usage.
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.extract_normalization_stats
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.detect_features_and_norm_modes
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.remove_normalization_layers
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.clean_state_dict
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.load_state_dict_with_missing_key_handling
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.convert_features_to_policy_features
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.display_migration_summary_with_warnings
+
+[[autodoc]] lerobot.processor.migrate_policy_normalization.load_model_from_hub

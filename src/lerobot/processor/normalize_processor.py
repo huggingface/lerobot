@@ -38,8 +38,7 @@ from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegis
 
 @dataclass
 class _NormalizationMixin:
-    """
-    A mixin class providing core functionality for normalization and unnormalization.
+    """A mixin class providing core functionality for normalization and unnormalization.
 
     This class manages normalization statistics (`stats`), converts them to tensors for
     efficient computation, handles device placement, and implements the logic for
@@ -102,8 +101,7 @@ class _NormalizationMixin:
     _stats_explicitly_provided: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
-        """
-        Initializes the mixin after dataclass construction.
+        """Initializes the mixin after dataclass construction.
 
         This method handles the robust deserialization of `features` and `norm_map`
         from JSON-compatible formats (where enums become strings and tuples become
@@ -157,11 +155,11 @@ class _NormalizationMixin:
     def to(
         self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
     ) -> _NormalizationMixin:
-        """
-        Moves the processor's normalization stats to the specified device.
+        """Moves the processor's normalization stats to the specified device and/or dtype.
 
         Args:
             device: The target PyTorch device.
+            dtype: The target floating-point dtype for the stats tensors.
 
         Returns:
             The instance of the class, allowing for method chaining.
@@ -175,8 +173,7 @@ class _NormalizationMixin:
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
-        """
-        Returns the normalization statistics as a flat state dictionary.
+        """Returns the normalization statistics as a flat state dictionary.
 
         All tensors are moved to the CPU before being returned, which is standard practice
         for saving state dictionaries.
@@ -192,8 +189,7 @@ class _NormalizationMixin:
         return flat
 
     def load_state_dict(self, state: dict[str, Tensor]) -> None:
-        """
-        Loads normalization statistics from a state dictionary.
+        """Loads normalization statistics from a state dictionary.
 
         The loaded tensors are moved to the processor's configured device.
 
@@ -244,8 +240,7 @@ class _NormalizationMixin:
                 self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns a serializable dictionary of the processor's configuration.
+        """Returns a serializable dictionary of the processor's configuration.
 
         This method is used when saving the processor to disk, ensuring that its
         configuration can be reconstructed later.
@@ -265,8 +260,7 @@ class _NormalizationMixin:
         return config
 
     def _normalize_observation(self, observation: RobotObservation, inverse: bool) -> dict[str, Tensor]:
-        """
-        Applies (un)normalization to all relevant features in an observation dictionary.
+        """Applies (un)normalization to all relevant features in an observation dictionary.
 
         Args:
             observation: The observation dictionary to process.
@@ -287,8 +281,7 @@ class _NormalizationMixin:
 
     def _normalize_action(self, action: Tensor, inverse: bool) -> Tensor:
         # Convert to tensor but preserve original dtype for adaptation logic
-        """
-        Applies (un)normalization to an action tensor.
+        """Applies (un)normalization to an action tensor.
 
         Args:
             action: The action tensor to process.
@@ -303,8 +296,7 @@ class _NormalizationMixin:
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
     ) -> Tensor:
-        """
-        Core logic to apply a normalization or unnormalization transformation to a tensor.
+        """Core logic to apply a normalization or unnormalization transformation to a tensor.
 
         This method selects the appropriate normalization mode based on the feature type
         and applies the corresponding mathematical operation.
@@ -425,8 +417,7 @@ class _NormalizationMixin:
 @dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
 class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
-    """
-    A processor step that applies normalization to observations and actions in a transition.
+    """A processor step that applies normalization to observations and actions in a transition.
 
     This class uses the logic from `_NormalizationMixin` to perform forward normalization
     (e.g., scaling data to have zero mean and unit variance, or to the range [-1, 1]).
@@ -444,8 +435,7 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         eps: float = 1e-8,
         device: torch.device | str | None = None,
     ) -> NormalizerProcessorStep:
-        """
-        Creates a `NormalizerProcessorStep` instance using statistics from a `LeRobotDataset`.
+        """Creates a `NormalizerProcessorStep` instance using statistics from a `LeRobotDataset`.
 
         Args:
             dataset: The dataset from which to extract normalization statistics.
@@ -468,6 +458,11 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Normalize the transition's observation and action in place (a copy of the transition).
+
+        Raises:
+            ValueError: If the transition has an action that is not a `PolicyAction`.
+        """
         new_transition = transition.copy()
 
         # Handle observation normalization.
@@ -493,14 +488,14 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A value transformation; features are unchanged."""
         return features
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="unnormalizer_processor")
 class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
-    """
-    A processor step that applies unnormalization to observations and actions.
+    """A processor step that applies unnormalization to observations and actions.
 
     This class inverts the normalization process, scaling data back to its original
     range. It is typically used in the post-processing pipeline to convert a policy's
@@ -517,8 +512,7 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         *,
         device: torch.device | str | None = None,
     ) -> UnnormalizerProcessorStep:
-        """
-        Creates an `UnnormalizerProcessorStep` using statistics from a `LeRobotDataset`.
+        """Creates an `UnnormalizerProcessorStep` using statistics from a `LeRobotDataset`.
 
         Args:
             dataset: The dataset from which to extract normalization statistics.
@@ -532,6 +526,11 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats, device=device)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Unnormalize the transition's observation and action in place (a copy of the transition).
+
+        Raises:
+            ValueError: If the transition has an action that is not a `PolicyAction`.
+        """
         new_transition = transition.copy()
 
         # Handle observation unnormalization.
@@ -554,14 +553,14 @@ class UnnormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A value transformation; features are unchanged."""
         return features
 
 
 def hotswap_stats(
     policy_processor: PolicyProcessorPipeline, stats: dict[str, dict[str, Any]]
 ) -> PolicyProcessorPipeline:
-    """
-    Replaces normalization statistics in an existing `PolicyProcessorPipeline` instance.
+    """Replaces normalization statistics in an existing `PolicyProcessorPipeline` instance.
 
     This function creates a deep copy of the provided pipeline and updates the
     statistics of any `NormalizerProcessorStep` or `UnnormalizerProcessorStep` it
@@ -570,8 +569,8 @@ def hotswap_stats(
     pipeline.
 
     Args:
-        policy_processor: The policy processor pipeline to modify.
-        stats: The new dictionary of normalization statistics to apply.
+        policy_processor (`PolicyProcessorPipeline`): The policy processor pipeline to modify.
+        stats (`dict[str, dict[str, Any]]`): The new dictionary of normalization statistics to apply.
 
     Returns:
         A new `PolicyProcessorPipeline` instance with the updated statistics.
