@@ -154,6 +154,7 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
     dataset_meta: Any | None
+    trust_remote_code: bool | None
 
 
 def make_pre_post_processors(
