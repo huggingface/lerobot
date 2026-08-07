@@ -251,14 +251,12 @@ class EO1Policy(PreTrainedPolicy):
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
-        gen = self.config.generation
         outputs = self.generate_texts(
             batch,
             kind=kind,
             user_text=user_text,
-            min_new_tokens=gen.min_new_tokens,
-            temperature=gen.temperature,
-            top_p=gen.top_p,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
         )
         if len(outputs) != 1:
             raise ValueError(f"The interactive runtime expected one EO-1 text output, got {len(outputs)}.")
