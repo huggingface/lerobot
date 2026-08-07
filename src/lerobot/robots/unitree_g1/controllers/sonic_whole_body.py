@@ -44,7 +44,7 @@ from lerobot.teleoperators.pico_headset.smpl_constants import (
 )
 from lerobot.utils.import_utils import _onnxruntime_available, require_package
 
-from ..g1_utils import MUJOCO_TO_ISAACLAB, KEYBOARD_KEYS_FIELD, G1_29_JointIndex, lowstate_to_obs
+from ..g1_utils import KEYBOARD_KEYS_FIELD, MUJOCO_TO_ISAACLAB, G1_29_JointIndex, lowstate_to_obs
 from .sonic_pipeline import (
     CONTROL_DT,
     DEBUG_PRINT_EVERY,
@@ -168,10 +168,10 @@ def _wb34_to_reference(wb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     29-DoF SONIC reference.
     """
     ref_mj = np.zeros(29, np.float32)  # MuJoCo / Unitree-SDK grouped order
-    ref_mj[0:6] = wb[16:22]   # left leg
+    ref_mj[0:6] = wb[16:22]  # left leg
     ref_mj[6:12] = wb[22:28]  # right leg
     ref_mj[12:15] = wb[28:31]  # waist
-    ref_mj[15:22] = wb[0:7]   # left arm
+    ref_mj[15:22] = wb[0:7]  # left arm
     ref_mj[22:29] = wb[8:15]  # right arm
     ref = ref_mj[MUJOCO_TO_ISAACLAB].astype(np.float32)  # -> IsaacLab order for SONIC
     roll, pitch = float(wb[31]), float(wb[32])
