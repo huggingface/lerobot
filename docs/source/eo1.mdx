@@ -86,7 +86,7 @@ EO-1 exposes the Qwen backbone's native text generation using the same batched
 images and task field used for action inference:
 
 ```python
-answers = policy.generate_text(
+answers = policy.generate_texts(
     batch,
     kind="vqa",
     user_text="Which object is closest to the gripper?",
@@ -96,6 +96,10 @@ answers = policy.generate_text(
 Use `kind="caption"` for a scene description, `kind="grounding"` for a spatial
 query, or `kind="subtask"` for a language-level next action. Text is generated
 by EO-1 itself; no separate VLM is loaded.
+
+`generate_texts` is the batched form. `generate_text` is the single-sample
+method the interactive language runtime calls; it decodes with the sampling
+settings stored on the checkpoint in `config.generation`.
 
 With the interactive language runtime, EO-1 can generate a subtask and rebuild
 its action prompt from that current subtask:

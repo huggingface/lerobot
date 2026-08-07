@@ -243,8 +243,29 @@ class EO1Policy(PreTrainedPolicy):
             "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
         }
 
-    @torch.no_grad()
     def generate_text(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Single-sample text generation, as the interactive language runtime calls it."""
+        gen = self.config.generation
+        outputs = self.generate_texts(
+            batch,
+            kind=kind,
+            user_text=user_text,
+            min_new_tokens=gen.min_new_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
+        )
+        if len(outputs) != 1:
+            raise ValueError(f"The interactive runtime expected one EO-1 text output, got {len(outputs)}.")
+        return outputs[0]
+
+    @torch.no_grad()
+    def generate_texts(
         self,
         batch: dict[str, Any],
         *,
@@ -255,9 +276,9 @@ class EO1Policy(PreTrainedPolicy):
         temperature: float = 0.0,
         top_p: float = 1.0,
     ) -> list[str]:
-        """Generate EO-1 captions, VQA answers, subtasks, or interjection responses."""
+        """Generate EO-1 captions, VQA answers, or subtasks for a whole batch."""
         self.eval()
-        allowed_kinds = {"vqa", "caption", "grounding", "text", "subtask", "interjection", "memory"}
+        allowed_kinds = {"vqa", "caption", "grounding", "text", "subtask"}
         if kind not in allowed_kinds:
             raise ValueError(f"Unsupported EO-1 text kind: {kind!r}.")
 
@@ -269,8 +290,6 @@ class EO1Policy(PreTrainedPolicy):
                 prompts = ["Describe the image in one sentence."] * batch_size
             elif kind == "subtask":
                 prompts = [f"{task}\nPredict the next action in language." for task in tasks]
-            elif kind == "memory":
-                prompts = [f"{task}\nSummarize the completed robot work." for task in tasks]
             else:
                 prompts = tasks
         elif isinstance(user_text, str):

@@ -23,8 +23,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
 
-from .adapter import GenerationConfig
-from .language_runtime import LanguageConditionedPolicyAdapter, LanguageConditionedRuntime
+from .language_runtime import LanguageConditionedRuntime, build_language_batch
 
 logger = logging.getLogger("lerobot.runtime")
 
@@ -122,15 +121,6 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         help="High-level subtask generation rate.",
     )
     p.add_argument(
-        "--disable_memory",
-        action="store_true",
-        help=(
-            "Skip the memory-note generation on subtask change. Use for "
-            "subtask-only checkpoints (no memory head) — avoids a wasted LM "
-            "decode and a meaningless memory line."
-        ),
-    )
-    p.add_argument(
         "--fp8",
         action="store_true",
         help=(
@@ -159,35 +149,9 @@ def _parse_args(argv: list[str] | None = None, *, prog: str | None = None) -> ar
         default=None,
         help="Stop after N ticks (debug / smoke-test).",
     )
-    p.add_argument(
-        "--text_min_new_tokens",
-        type=int,
-        default=0,
-        help=(
-            "Debug knob for under-trained checkpoints: force the LM head "
-            "to emit at least N non-EOS tokens before EOS is allowed. "
-            "Use when the head's prior at position 0 still favours EOS "
-            "(short training run on a chat-pretrained backbone). 3-5 "
-            "is usually enough to reveal whether the model has real "
-            "subtask-token mass under the EOS argmax."
-        ),
-    )
-    p.add_argument(
-        "--text_temperature",
-        type=float,
-        default=0.0,
-        help=(
-            "Sampling temperature for high-level text gen. 0 = greedy "
-            "argmax (default, matches training). Set 0.3-0.7 with an "
-            "under-trained checkpoint to escape stuck-at-EOS argmax."
-        ),
-    )
-    p.add_argument(
-        "--text_top_p",
-        type=float,
-        default=1.0,
-        help="Nucleus filtering for high-level text gen.",
-    )
+    # Sampling settings live on the checkpoint (``PreTrainedConfig.generation``) so a
+    # head decodes the way it was trained. Override per run with the usual policy
+    # path, e.g. ``--policy.generation.temperature=0.5``.
     p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging.")
     args, unknown = p.parse_known_args(raw_argv)
     unsupported = [arg for arg in unknown if not arg.startswith(("--robot.", "--policy."))]
@@ -239,12 +203,18 @@ def _load_policy(
     *,
     fp8: bool = False,
     device: str | None = None,
+    cli_overrides: list[str] | None = None,
 ) -> Any:
-    """Load a local or Hub policy for the language-only REPL."""
+    """Load a local or Hub policy for the language-only REPL.
+
+    ``cli_overrides`` are ``--policy.``-prefixed arguments with the prefix stripped, so
+    settings such as ``--policy.generation.temperature`` apply here exactly as they do
+    on the rollout path.
+    """
     from lerobot.configs import PreTrainedConfig  # noqa: PLC0415
     from lerobot.policies.factory import get_policy_class  # noqa: PLC0415
 
-    cfg = PreTrainedConfig.from_pretrained(policy_path)
+    cfg = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides or [])
     cfg.pretrained_path = policy_path
 
     # Optional device override — some checkpoints ship device=cpu.
@@ -430,7 +400,7 @@ def _clear_action_queue(runtime: Any) -> None:
 
 
 def _ask_runtime(runtime: Any, question: str) -> str:
-    """Pause action dispatch and ask the adapter a grounded VQA question."""
+    """Pause action dispatch and ask the policy a grounded VQA question."""
     question = question.strip()
     if not question:
         print("[runtime] usage: /ask <question>", flush=True)
@@ -438,13 +408,13 @@ def _ask_runtime(runtime: Any, question: str) -> str:
     runtime.state["mode"] = "paused"
     runtime.state["action_deadline"] = None
     _clear_action_queue(runtime)
-    generate_text = getattr(runtime.policy_adapter, "generate_text", None)
-    if not callable(generate_text):
-        print("[runtime] this policy adapter does not support text generation", flush=True)
+    if not runtime.policy.supports_text_generation():
+        print("[runtime] this policy has no text head", flush=True)
         return ""
     observation = runtime._current_observation()
     try:
-        answer = generate_text("vqa", observation, runtime.state, user_text=question)
+        batch = build_language_batch(observation, runtime.state)
+        answer = runtime.policy.generate_text(batch, kind="vqa", user_text=question)
     except Exception as exc:  # noqa: BLE001
         logger.warning("VQA generation failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
         print(f"[runtime] VQA failed: {type(exc).__name__}: {exc}", flush=True)
@@ -532,7 +502,7 @@ def _make_state_panel_renderer(
     panel_label: str = "Runtime",
     scrollback: list[str] | None = None,
 ) -> Callable[[list[str] | None], None]:
-    """Return a closure that prints the task/subtask/plan/memory panel.
+    """Return a closure that prints the task/subtask panel.
 
     Used by ``_run_repl`` for the no-robot language REPL.
     """
@@ -558,7 +528,7 @@ def _make_state_panel_renderer(
             "task": st.get("task"),
             **(st.get("language_context") or {}),
         }
-        for key in ("task", "subtask", "plan", "memory"):
+        for key in ("task", "subtask"):
             value = display_values.get(key)
             if value:
                 console.print(f"  [bold cyan]{key:<8}[/] {value}")
@@ -573,18 +543,14 @@ def _make_state_panel_renderer(
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
         # Surface repeated or empty generations as overfitting diagnostics.
-        diag = getattr(runtime.policy_adapter, "diag", None)
-        if diag is not None:
-            raw_subtask = diag.last_raw.get("subtask")
-            sub_rep = int(diag.repeat)
-            sub_empty = int(diag.empty.get("subtask", 0))
-            if raw_subtask is not None or sub_rep or sub_empty:
-                raw_display = (raw_subtask or "(empty)")[:80]
-                color = "yellow" if (sub_rep >= 3 or sub_empty >= 3) else "dim"
-                console.print(
-                    f"  [{color}]subtask diag    repeat:{sub_rep}  empty:{sub_empty}  "
-                    f"last_raw: {raw_display!r}[/]"
-                )
+        diag = runtime.subtask.diagnostics
+        if diag.last_raw or diag.repeat or diag.empty:
+            raw_display = (diag.last_raw or "(empty)")[:80]
+            color = "yellow" if (diag.repeat >= 3 or diag.empty >= 3) else "dim"
+            console.print(
+                f"  [{color}]subtask diag    repeat:{diag.repeat}  empty:{diag.empty}  "
+                f"last_raw: {raw_display!r}[/]"
+            )
         console.rule(style="cyan")
         # Show recent generation warnings and speech oldest-first.
         if scrollback:
@@ -631,18 +597,15 @@ def _silence_noisy_loggers() -> None:
 def run(
     argv: list[str] | None = None,
     *,
-    adapter_factory: Callable[[Any, GenerationConfig], LanguageConditionedPolicyAdapter] | None = None,
     panel_label: str | None = None,
     prog: str = "lerobot-rollout",
 ) -> int:
     """Run the interactive language-conditioned runtime CLI.
 
-    ``adapter_factory`` turns ``(policy, GenerationConfig)`` into a
-    :class:`LanguageConditionedPolicyAdapter` (typically the adapter class).
-    When ``None`` it is resolved from :mod:`lerobot.runtime.registry` by the
-    loaded policy's type, so the ``lerobot-rollout`` entry
-    point serves every registered policy. ``panel_label`` defaults to the
-    policy type.
+    Any policy works here: those implementing
+    :meth:`~lerobot.policies.pretrained.PreTrainedPolicy.generate_text` get high-level
+    subtask generation, the rest run on the operator's own instruction.
+    ``panel_label`` defaults to the policy type.
     """
     args = _parse_args(argv, prog=prog)
     logging.basicConfig(
@@ -659,20 +622,21 @@ def run(
         rollout_ctx = _build_language_rollout_context(args)
         policy = rollout_ctx.policy.policy
     else:
+        from lerobot.configs import parser  # noqa: PLC0415
+
         print(f"[runtime] loading policy from {args.policy_path}", flush=True)
         policy = _load_policy(
             args.policy_path,
             fp8=args.fp8,
             device=args.policy_device,
+            cli_overrides=parser.get_cli_overrides("policy", args.raw_argv),
         )
 
     policy_type = getattr(policy.config, "type", None)
-    if adapter_factory is None:
-        from .registry import get_language_adapter_factory  # noqa: PLC0415
-
-        adapter_factory = get_language_adapter_factory(policy_type)
     if panel_label is None:
         panel_label = str(policy_type or "runtime").upper()
+    if args.direct_subtask and not policy.supports_text_generation():
+        logger.info("--direct_subtask is redundant: %s has no text head.", policy_type)
 
     # Default to idle until the operator supplies a command.
     startup_mode = args.mode or "paused"
@@ -708,23 +672,16 @@ def run(
             rerun_log=rerun_log,
             get_task=_live_task,
         )
-    # Generation settings belong to the adapter rather than mutable runtime state.
-    gen_config = GenerationConfig(
-        min_new_tokens=int(args.text_min_new_tokens or 0),
-        temperature=float(args.text_temperature or 0.0),
-        top_p=float(args.text_top_p or 1.0),
-        chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
-        enable_memory=not bool(getattr(args, "disable_memory", False)),
-        enable_subtask=not args.direct_subtask,
-    )
     runtime = LanguageConditionedRuntime(
-        policy_adapter=adapter_factory(policy, gen_config),
+        policy=policy,
         observation_provider=observation_provider,
         action_executor=robot_executor,
         event_collector=None,
         chunk_hz=args.chunk_hz,
         ctrl_hz=args.ctrl_hz,
         high_level_hz=args.high_level_hz,
+        chunks_per_regen=max(1, int(args.subtask_chunks_per_gen or 1)),
+        generate_subtask=not args.direct_subtask,
     )
     # Let the robot observation provider read the live task/subtask each frame.
     runtime_box["rt"] = runtime
@@ -813,12 +770,9 @@ def _run_robot_interactive(
                 runtime.set_task(line)
                 runtime.state.set_context("subtask", line if direct_subtask else None)
                 _clear_action_queue(runtime)
-                adapter = getattr(runtime, "policy_adapter", None)
-                if adapter is not None and hasattr(adapter, "_chunks_until_regen"):
-                    adapter._chunks_until_regen = 0
-                gate = getattr(runtime, "_language_gate", None)
-                if gate is not None and hasattr(gate, "rearm"):
-                    gate.rearm()
+                # Regenerate for the new goal instead of waiting out the throttle.
+                runtime.subtask.rearm()
+                runtime._language_gate.rearm()
                 runtime.state["mode"] = "action"
                 print(f"[running] {line}", flush=True)
     except KeyboardInterrupt:
@@ -881,17 +835,11 @@ def _run_repl(
                     break
                 continue
 
-            # A bare (non-slash) line is a user interjection — needs a
-            # task to be meaningful.
-            if not runtime.state.get("task"):
-                print(
-                    "[runtime] no task yet — use /action <your task>",
-                    flush=True,
-                )
-                _redraw(last_logs)
-                continue
-            runtime.state["recent_interjection"] = line
-            runtime.state.emit("user_interjection")
+            # A bare (non-slash) line replaces the task, matching the robot loop.
+            runtime.set_task(line)
+            runtime.state.set_context("subtask", None)
+            runtime.subtask.rearm()
+            runtime._language_gate.rearm()
 
             last_logs = runtime.step_once() or []
             _redraw(last_logs)
