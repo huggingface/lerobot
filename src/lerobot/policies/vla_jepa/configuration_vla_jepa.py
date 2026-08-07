@@ -84,6 +84,12 @@ class VLAJEPAConfig(PreTrainedConfig):
     world_model_loss_weight: float = 0.1
     jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
+    # If True, recompute the world-model context (predictor input) causally: one extra V-JEPA2 pass
+    # per context position using only that position's frame prefix, instead of slicing it out of the
+    # single shared pass. The shared pass lets bidirectional attention leak future frames into the
+    # context (see #4153); the JEPA target keeps seeing the full clip either way. Costs `t_enc_ctx`
+    # extra encoder calls; default False preserves the legacy behavior and existing checkpoints.
+    causal_world_model_context: bool = False
 
     resize_images_to: tuple[int, int] | None = None
     binarize_gripper_action: bool = True
