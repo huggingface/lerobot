@@ -84,7 +84,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -242,7 +242,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -344,7 +344,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -451,7 +451,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -552,7 +552,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -660,7 +660,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -766,7 +766,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
@@ -870,7 +870,7 @@ jobs:
 
       - name: Login to Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}

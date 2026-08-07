@@ -104,7 +104,7 @@ jobs:
       - name: Publish to TestPyPI for pre-releases
         # True for tags like 'v0.2.0-rc1'
         if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
           verbose: true
@@ -112,7 +112,7 @@ jobs:
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           verbose: true
           print-hash: true
@@ -137,7 +137,7 @@ jobs:
           git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
           speech-dispatcher libgeos-dev portaudio19-dev
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
         with:
           enable-cache: true # zizmor: ignore[cache-poisoning]
           version: ${{ env.UV_VERSION }}
