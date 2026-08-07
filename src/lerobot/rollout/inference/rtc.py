@@ -140,6 +140,9 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
+        # Bumped by reset() (under _obs_lock) so chunks whose inference started
+        # before a reset are discarded instead of merged into the fresh queue.
+        self._reset_epoch = 0
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
@@ -235,13 +238,26 @@ class RTCInferenceEngine(InferenceEngine):
         self._policy_active.set()
 
     def reset(self) -> None:
-        """Reset the policy, processors, and action queue."""
+        """Reset the policy, processors, and action queue.
+
+        Call while the engine is paused (both DAgger transitions and the
+        interactive session do): the RTC thread may still be finishing an
+        inference started before the pause, so ``reset`` also drops the last
+        published observation — it can be arbitrarily stale by the time the
+        engine resumes (e.g. the robot was returned to its initial position
+        in the meantime), and a chunk computed from it would jerk the robot
+        toward the old pose — and bumps the reset epoch so any in-flight
+        chunk is discarded instead of merged into the cleared queue.
+        """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
         if self._action_queue is not None:
             self._action_queue.clear()
+        with self._obs_lock:
+            self._obs_holder["obs"] = None
+            self._reset_epoch += 1
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -281,6 +297,7 @@ class RTCInferenceEngine(InferenceEngine):
                 queue = self._action_queue
                 with self._obs_lock:
                     obs = self._obs_holder.get("obs")
+                    epoch_before = self._reset_epoch
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
@@ -339,7 +356,12 @@ class RTCInferenceEngine(InferenceEngine):
                         else:
                             latency_tracker.add(new_latency)
 
-                        queue.merge(original, processed, new_delay, idx_before)
+                        with self._obs_lock:
+                            epoch_unchanged = epoch_before == self._reset_epoch
+                        if epoch_unchanged:
+                            queue.merge(original, processed, new_delay, idx_before)
+                        else:
+                            logger.info("Discarding action chunk computed before an engine reset")
 
                         if (
                             is_warmup
