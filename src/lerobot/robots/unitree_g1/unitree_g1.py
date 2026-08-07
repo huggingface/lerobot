@@ -231,9 +231,12 @@ class UnitreeG1(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        # Controllers may contribute their own proprio features (e.g. SONIC's token state).
-        controller_ft = getattr(self.controller, "observation_ft", {})
-        return {**self._motors_ft, **controller_ft, **self._cameras_ft}
+        # A controller advertising its own proprio state (SONIC's 64-D token echo) replaces the
+        # raw joint positions rather than extending them, the way action_features hands the
+        # action space over to the controller.
+        controller_ft = getattr(self.controller, "observation_ft", None)
+        proprio_ft = self._motors_ft if controller_ft is None else dict(controller_ft)
+        return {**proprio_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
