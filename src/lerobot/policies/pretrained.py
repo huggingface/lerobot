@@ -30,7 +30,7 @@ from safetensors.torch import load_model as load_model_as_safetensor, save_model
 from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
-from lerobot.configs import PreTrainedConfig, TextKind
+from lerobot.configs import ActionChunkPrediction, PreTrainedConfig, TextKind
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -323,15 +323,34 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             "the interactive language runtime."
         )
 
-    def last_reasoning(self) -> str | None:
-        """Text this policy emitted in-stream during its last action prediction.
+    def predict_action_chunk_with_text(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> ActionChunkPrediction:
+        """Predict an action chunk together with text generated in the same pass.
 
-        For policies that produce reasoning and actions from one inference pass, so the
-        runtime can display it. This is read-only telemetry: unlike a generated subtask
-        it never re-enters the observation batch, so it cannot replace the operator's
-        task. Returns `None` for policies that emit nothing.
+        Override this only for a policy that emits text and actions from one inference
+        stream, where the action is conditioned on the text rather than merely
+        accompanied by it — G0.5's System 2 chain-of-thought is the case this exists
+        for. Everything else inherits the default and reports `text=None`.
+
+        A policy whose text head runs as its own prefill must not override this to echo
+        the subtask it was conditioned on: that string is already runtime state, and
+        returning it here would claim a causal link inside this pass that does not
+        exist. Call `generate_text` for that policy instead.
+
+        The pair is returned rather than cached on the policy so text and chunk cannot
+        drift apart. The runtime discards chunks invalidated mid-inference, and a cached
+        `last_*` attribute would leave the discarded chunk's text behind to be displayed
+        against the next one.
+
+        Costs no more than `predict_action_chunk`: whether a policy generates text in
+        its pass is a property of the checkpoint and its configuration, not of which
+        method the caller reaches for.
+
+        Returns:
+            The chunk `predict_action_chunk` would return, and its text or `None`.
         """
-        return None
+        return ActionChunkPrediction(action=self.predict_action_chunk(batch, **kwargs))
 
     def push_model_to_hub(
         self,
