@@ -329,12 +329,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Substitute with `str.replace`, not `str.format`: an operator's task may contain
         braces, and a template may contain chat-control tokens.
 
-        The default is generic and works with any text head. Override it whenever the
-        checkpoint was trained on specific wording — that phrasing will outperform this,
-        and for a model that declares its mode in this turn it is the difference between
-        an in-distribution answer and a guess.
+        The default is the wording the WALL-OSS and EO-1 family were trained on, which
+        more released checkpoints recognise than a generic English sentence would. Override
+        it whenever your checkpoint was trained differently — for a model that declares
+        its mode in this very turn, the exact phrasing is the difference between an
+        in-distribution answer and a guess, down to the trailing newline.
         """
-        return "predict next subtask, given this high level goal: {task}"
+        return "{task}\nPredict the next action in language."
 
     def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
         """Answer `prompt` about the current observation, for policies with a text head.
