@@ -22,7 +22,8 @@ import dataclasses
 import logging
 import sys
 import time
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,7 @@ from lerobot.common.train_utils import (
     load_training_state,
     push_checkpoint_to_hub,
     save_checkpoint,
+    should_save_checkpoint,
     update_last_checkpoint,
 )
 from lerobot.common.wandb_utils import WandBLogger
@@ -57,7 +59,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -68,7 +70,26 @@ from lerobot.utils.utils import (
     inside_slurm,
 )
 
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftModel
+else:
+    PeftModel = None
+
 from .lerobot_eval import eval_policy_all
+
+
+@contextmanager
+def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, Any]]]:
+    """Create evaluation environments for one run and always dispose of them."""
+    envs = make_env(
+        cfg.env,
+        n_envs=cfg.eval.batch_size,
+        use_async_envs=cfg.eval.use_async_envs,
+    )
+    try:
+        yield envs
+    finally:
+        close_envs(envs)
 
 
 def _dataloader_worker_kwargs(cfg: TrainPipelineConfig) -> dict[str, Any]:
@@ -207,8 +228,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.job.is_remote:
         return submit_to_hf(cfg)
 
-    from lerobot.utils.import_utils import require_package
-
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
     from accelerate.utils import DistributedDataParallelKwargs, DistributedType
@@ -224,9 +243,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
-        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32/absent -> launcher default).
+        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32 -> full precision).
+        has_policy_dtype = hasattr(cfg.trainable_config, "dtype")
         policy_dtype = getattr(cfg.trainable_config, "dtype", None)
         mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
+        # Policies without a `dtype` field fall back to `use_amp`, which would otherwise be
+        # silently ignored here while lerobot-eval honors it. Follow torch.autocast's default
+        # for the configured device so training and evaluation use the same precision.
+        if not has_policy_dtype and getattr(cfg.trainable_config, "use_amp", False):
+            device_type = torch.device(cfg.trainable_config.device).type
+            autocast_dtype = torch.get_autocast_dtype(device_type)
+            mixed_precision = {torch.bfloat16: "bf16", torch.float16: "fp16"}[autocast_dtype]
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision=mixed_precision,
@@ -277,14 +304,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if not is_main_process:
         dataset, eval_dataset = make_train_eval_datasets(cfg)
 
-    # Create environment used for evaluating checkpoints during training on simulation data.
-    # On real-world data, no need to create an environment as evaluations are done outside train.py,
-    # using the eval.py instead, with gym_dora environment and dora-rs.
-    eval_env = None
-    if cfg.env_eval_freq > 0 and cfg.env is not None and is_main_process:
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
-
     if cfg.is_reward_model_training:
         if is_main_process:
             logging.info("Creating reward model")
@@ -312,7 +331,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if cfg.peft is not None:
         if cfg.is_reward_model_training:
             raise ValueError("PEFT is only supported for policy training. ")
-        from peft import PeftModel
+        require_package("peft", extra="peft")
 
         if isinstance(policy, PeftModel):
             logging.info("PEFT adapter already loaded from checkpoint, skipping wrap_with_peft.")
@@ -338,7 +357,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         preprocessor_overrides = {
             "device_processor": {"device": device.type},
             "normalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": {**policy.config.input_features, **policy.config.output_features},
                 "norm_map": policy.config.normalization_mapping,
             },
@@ -346,11 +364,17 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         }
         postprocessor_overrides = {
             "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
                 "features": policy.config.output_features,
                 "norm_map": policy.config.normalization_mapping,
             },
         }
+        # On resume, the checkpoint's saved processor stats are authoritative: they may have
+        # been adapted by the policy (e.g. EVO1 pads state/action stats to max_state_dim),
+        # and force-feeding raw dataset stats over them crashes normalization (#4006).
+        # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
+        if not cfg.resume:
+            preprocessor_overrides["normalizer_processor"]["stats"] = dataset.meta.stats
+            postprocessor_overrides["unnormalizer_processor"]["stats"] = dataset.meta.stats
         if getattr(active_cfg, "use_relative_actions", False):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
@@ -601,7 +625,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
+        is_saving_step = should_save_checkpoint(step, cfg.save_freq, cfg.steps)
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 
@@ -692,7 +716,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             if is_main_process:
                 step_id = get_step_identifier(step, cfg.steps)
                 logging.info(f"Eval policy at step {step}")
-                with torch.no_grad(), accelerator.autocast():
+                with _make_eval_envs(cfg) as eval_env, torch.no_grad(), accelerator.autocast():
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
@@ -739,9 +763,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     if is_main_process:
         progbar.close()
-
-    if eval_env:
-        close_envs(eval_env)
 
     is_fsdp = accelerator.distributed_type == DistributedType.FSDP
     model_state_dict = accelerator.get_state_dict(policy) if is_fsdp else None

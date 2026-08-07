@@ -46,7 +46,7 @@ WALL-OSS exposes native text generation using the same batched images and task
 field used for action inference:
 
 ```python
-answers = policy.generate_text(
+answers = policy.generate_texts(
     batch,
     kind="vqa",
     user_text="Which object is closest to the right gripper?",
@@ -56,6 +56,10 @@ answers = policy.generate_text(
 Use `kind="caption"` for scene descriptions, `kind="grounding"` for spatial
 queries, or `kind="subtask"` for WALL-OSS's language-level next action. The
 text comes from the policy's own Qwen vision-language expert.
+
+`generate_texts` is the batched form. `generate_text` is the single-sample
+method the interactive language runtime calls; it decodes with the sampling
+settings stored on the checkpoint in `config.generation`.
 
 The interactive language runtime can generate a subtask and then condition
 WALL-OSS action prediction on it:

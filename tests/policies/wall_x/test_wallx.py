@@ -26,6 +26,7 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
+from lerobot.configs.policies import GenerationConfig  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
@@ -83,6 +84,7 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
 def _make_unloaded_policy(**config_values):
     policy = WallXPolicy.__new__(WallXPolicy)
     torch.nn.Module.__init__(policy)
+    config_values.setdefault("generation", GenerationConfig())
     policy.config = SimpleNamespace(chunk_size=3, **config_values)
     return policy
 
@@ -186,12 +188,12 @@ def test_policy_exposes_text_generation(monkeypatch):
     inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
     monkeypatch.setattr(policy, "_build_text_inputs", lambda *args, **kwargs: inputs)
 
-    output = policy.generate_text(
-        {"observation.state": torch.zeros(1, 7), "task": ["pick up the cup"]},
-        kind="subtask",
-    )
+    batch = {"observation.state": torch.zeros(1, 7), "task": ["pick up the cup"]}
 
-    assert output == ["move toward the cup"]
+    assert policy.generate_texts(batch, kind="subtask") == ["move toward the cup"]
+    # The runtime contract is the single-sample form, decoding with `config.generation`.
+    assert policy.generate_text(batch, kind="subtask") == "move toward the cup"
+    assert policy.supports_text_generation()
 
 
 @require_cuda

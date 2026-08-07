@@ -24,7 +24,6 @@ import sys
 import time
 from collections.abc import Iterator
 from copy import copy, deepcopy
-from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import TYPE_CHECKING, Any
@@ -61,14 +60,16 @@ def init_logging(
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
 
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
-        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+    class LeRobotFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            record.lerobot_location = f"{record.pathname}:{record.lineno}"[-15:]
+            record.lerobot_pid = f"[PID: {os.getpid()}] " if display_pid else ""
+            return super().format(record)
 
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+    formatter = LeRobotFormatter(
+        "%(levelname)s %(lerobot_pid)s%(asctime)s %(lerobot_location)15s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)
@@ -133,10 +134,13 @@ def say(text: str, blocking: bool = False):
     else:
         raise RuntimeError("Unsupported operating system for text-to-speech.")
 
-    if blocking:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    try:
+        if blocking:
+            subprocess.run(cmd, check=True, timeout=5)
+        else:
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logging.warning("Text-to-speech command failed: %s | Error: %s", cmd, e)
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):

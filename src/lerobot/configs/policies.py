@@ -38,6 +38,26 @@ logger = getLogger(__name__)
 
 
 @dataclass
+class GenerationConfig:
+    """Sampling settings for a policy's text head, mirroring ``transformers.GenerationConfig``.
+
+    These ride along in ``config.json`` because they are a property of the trained
+    checkpoint: a head trained with greedy decoding degrades under sampling. Policies
+    without a text head simply never read them.
+
+    Args:
+        min_new_tokens: Force at least this many non-EOS tokens before EOS is allowed. Useful
+            for under-trained heads whose prior at position 0 still favours EOS.
+        temperature: Sampling temperature. ``0.0`` is greedy argmax.
+        top_p: Nucleus filtering threshold.
+    """
+
+    min_new_tokens: int = 0
+    temperature: float = 0.0
+    top_p: float = 1.0
+
+
+@dataclass
 class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
     """
     Base configuration class for policy models.
@@ -66,6 +86,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
+
+    # Sampling settings for policies that implement `PreTrainedPolicy.generate_text`.
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
@@ -163,8 +186,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):
-            draccus.dump(self, f, indent=4)
+        # Encode against the base class so draccus includes the choice "type" key,
+        # which `from_pretrained` needs to resolve the concrete subclass.
+        with open(save_directory / CONFIG_NAME, "w") as f:
+            json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
 
     @classmethod
     def from_pretrained(

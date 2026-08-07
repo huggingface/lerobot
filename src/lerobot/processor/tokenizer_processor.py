@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvTransition, RobotObservation, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     ACTION_CODE_TOKEN_MASK,
     ACTION_TOKEN_MASK,
@@ -294,6 +294,15 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             config["tokenizer_name"] = self.tokenizer_name
 
         return config
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the tokenizer so object-provided instances reload without overrides."""
+        artifact_path = Path("tokenizer")
+        save_pretrained = getattr(self.input_tokenizer, "save_pretrained", None)
+        if save_pretrained is None:
+            raise TypeError("Tokenizer must implement save_pretrained() to save a portable pipeline.")
+        save_pretrained(save_directory / artifact_path)
+        return {"tokenizer_name": artifact_path.as_posix()}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

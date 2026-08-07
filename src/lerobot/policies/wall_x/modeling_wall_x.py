@@ -2336,6 +2336,28 @@ class WallXPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def generate_text(
         self,
+        batch: dict[str, Tensor],
+        *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Single-sample text generation, as the interactive language runtime calls it."""
+        gen = self.config.generation
+        outputs = self.generate_texts(
+            batch,
+            kind=kind,
+            user_text=user_text,
+            min_new_tokens=gen.min_new_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
+        )
+        if len(outputs) != 1:
+            raise ValueError(f"The interactive runtime expected one WALL-OSS output, got {len(outputs)}.")
+        return outputs[0]
+
+    @torch.no_grad()
+    def generate_texts(
+        self,
         batch: dict[str, Any],
         *,
         kind: str = "vqa",
@@ -2345,12 +2367,10 @@ class WallXPolicy(PreTrainedPolicy):
         temperature: float = 0.0,
         top_p: float = 1.0,
     ) -> list[str]:
-        """Generate WALL-OSS text for VQA, grounding, and language subtasks."""
+        """Generate WALL-OSS text for VQA, grounding, and language subtasks over a batch."""
         self.eval()
-        if kind not in {"vqa", "caption", "grounding", "text", "subtask", "interjection"}:
-            raise ValueError(
-                "kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask', 'interjection'."
-            )
+        if kind not in {"vqa", "caption", "grounding", "text", "subtask"}:
+            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask'.")
         inputs = self._build_text_inputs(batch, kind=kind, user_text=user_text)
         prompt_length = inputs.input_ids.shape[1]
         sampling = temperature > 0
