@@ -23,6 +23,7 @@ require_package("av", extra="dataset")
 from .aggregate import aggregate_datasets
 from .compute_stats import DEFAULT_QUANTILES, aggregate_stats, get_feature_stats
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
+from .distributed import DistributedEpisodeResult, DistributedEpisodeSpec, DistributedWritePlan
 from .dataset_tools import (
     add_features,
     convert_image_to_video_dataset,
@@ -63,6 +64,9 @@ __all__ = [
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",
+    "DistributedEpisodeResult",
+    "DistributedEpisodeSpec",
+    "DistributedWritePlan",
     "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
     "LANGUAGE_EVENTS",
