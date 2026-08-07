@@ -35,20 +35,18 @@ class FakePolicy:
     def supports_text_generation(self):
         return self.texts is not None
 
-    def predict_subtask(self, batch):
-        self.batches.append(("subtask", batch))
-        return self.texts.pop(0) if self.texts else ""
+    @property
+    def subtask_prompt_template(self):
+        return "predict next subtask, given this high level goal: {task}"
 
     def generate_text(self, batch, prompt):
         self.batches.append((prompt, batch))
         return self.texts.pop(0) if self.texts else ""
 
-    def predict_action_chunk(self, batch):
+    def predict_action_chunk(self, batch, *, with_text=False):
         assert batch == {"observation.state": 1}
-        return ["a0", "a1"]
-
-    def predict_action_chunk_with_text(self, batch):
-        return self.predict_action_chunk(batch), self.chunk_text
+        chunk = ["a0", "a1"]
+        return (chunk, self.chunk_text) if with_text else chunk
 
 
 def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
@@ -67,7 +65,8 @@ def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
     assert executed == ["a0"]
     assert list(runtime.state.action_queue) == ["a1"]
     assert "  subtask: pick cup" in logs
-    assert policy.batches[0][0] == "subtask"
+    # The runtime filled the policy's own template with the operator's goal.
+    assert policy.batches[0][0] == "predict next subtask, given this high level goal: clean"
 
 
 def test_policy_without_text_head_keeps_the_operator_instruction():
@@ -153,10 +152,10 @@ def test_prompt_change_discards_in_flight_action_chunk():
     release = threading.Event()
 
     class BlockingPolicy(FakePolicy):
-        def predict_action_chunk(self, batch):
+        def predict_action_chunk(self, batch, *, with_text=False):
             started.set()
             assert release.wait(timeout=2)
-            return ["stale"]
+            return (["stale"], self.chunk_text) if with_text else ["stale"]
 
     runtime = LanguageConditionedRuntime(
         policy=BlockingPolicy(chunk_text="stale reasoning"),
@@ -193,15 +192,28 @@ def test_accepted_chunk_publishes_its_text_for_display_only():
     assert "subtask" not in runtime.state.language_context
 
 
-def test_policy_without_a_text_head_reports_no_chunk_text():
+def test_policy_ignoring_with_text_still_drives_the_runtime():
+    """Only an in-stream policy honours the flag; the rest return a bare chunk."""
+
+    class Chunker(FakePolicy):
+        def predict_action_chunk(self, batch, **kwargs):
+            return ["a0", "a1"]
+
+    runtime = LanguageConditionedRuntime(
+        policy=Chunker(),
+        observation_provider=lambda: {"observation.state": 1},
+    )
+    runtime.set_task("clean")
+
+    runtime.step_once()
+
+    assert list(runtime.state.action_queue) == ["a1"]
+    assert runtime.state.last_chunk_text is None
+
+
+def test_default_subtask_template_carries_the_high_level_goal():
     from lerobot.policies.pretrained import PreTrainedPolicy
 
-    class Chunker:
-        """Any policy that only implements `predict_action_chunk`."""
-
-        def predict_action_chunk(self, batch, **kwargs):
-            return ["a0"]
-
-    action, text = PreTrainedPolicy.predict_action_chunk_with_text(Chunker(), {})
-    assert action == ["a0"]
-    assert text is None
+    template = PreTrainedPolicy.subtask_prompt_template.fget(object())
+    assert "{task}" in template
+    assert template.replace("{task}", "clear the table").endswith("clear the table")
