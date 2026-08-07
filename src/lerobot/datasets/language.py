@@ -36,6 +36,7 @@ CORE_STYLES = {
     "vqa",
     "trace",
     "task_aug",
+    "ecot",
 }
 # Project-local styles can be registered at import time by appending to
 # ``EXTENDED_STYLES`` before ``column_for_style`` is called. Anything added
@@ -46,7 +47,12 @@ CORE_STYLES = {
 EXTENDED_STYLES: set[str] = set()
 STYLE_REGISTRY = CORE_STYLES | EXTENDED_STYLES
 
-PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug"}
+# ``ecot`` is the dense Embodied Chain-of-Thought reasoning-trace style: a
+# structured {scene_perception, object_identification, task_plan,
+# subtask_decomposition} blob that describes the scene/task at a cognitive
+# level (not pixel coordinates), so it is camera-agnostic and persistent —
+# one row stays active from its anchor until the next, like plan/memory.
+PERSISTENT_STYLES = {"subtask", "plan", "memory", "motion", "task_aug", "ecot"}
 EVENT_ONLY_STYLES = {"interjection", "vqa", "trace"}
 
 # Styles whose ``content`` is grounded in a specific camera view. Rows of these
