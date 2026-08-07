@@ -289,31 +289,81 @@ Robot reset — holding at initial position. /start to run.
 
 With `--use_torch_compile=true`, a switch whose instruction tokenizes to a different length can trigger a recompilation on the next forward pass, pausing inference for as long as the original warm-up took. Prefer leaving compilation off for sessions where you expect to re-instruct the policy often.
 
-**Console logs are muted while the session runs** so they don't interleave with what you're typing; they resume when it ends. A fatal inference error is still printed. Run without `--interactive` to watch the live log.
+**Logs below ERROR are muted while the session runs** so routine output doesn't interleave with what you're typing; errors and fatal inference failures still show, and normal logging resumes when the session ends. The gate is process-wide (it also withholds INFO/WARNING from any file handler you attached for the duration). Run without `--interactive` to watch the live log.
 
-Interactive sessions currently require `--strategy.type=base`: the recording strategies finalize their dataset when their loop exits, so they cannot be restarted by `/start`, and their keyboard controls would compete for the same terminal.
+Sessions work over SSH and on headless machines — the command reader uses the terminal (or pipe) directly and needs no display server.
+
+**Recording while interactive.** `--strategy.type=sentry` also supports `--interactive=true`: the session records continuously while you steer it. Each `/start`…`/reset` segment saves complete episodes plus one final partial episode, the dataset stays open until shutdown, and **frames are labeled with the live task** — a `/subtask` changes both the policy conditioning and the recorded label from the same frame onwards.
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_cube_sessions \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+The other recording strategies (episodic, DAgger, highlight) are not supported: they bind their own keyboard controls, which would compete with the command prompt for the same terminal.
+
+### Programmatic control
+
+Everything the CLI session does is available as a library API: `RolloutController` exposes thread-safe `start()` / `reset()` / `stop()` / `set_task()` methods plus a `RolloutEvent` callback, with no stdin, printing, or log muting attached — embed it in your own application, network server, or notebook:
+
+```python
+from threading import Event, Thread
+
+from lerobot.rollout import (
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+    build_rollout_context,
+    create_strategy,
+)
+
+parent = Event()  # your application's shutdown signal
+ctx = build_rollout_context(cfg, LinkedEvent(parent))  # loads policy, connects robot
+strategy = create_strategy(cfg.strategy)
+strategy.setup(ctx)
+
+controller = RolloutController(strategy, ctx, on_event=print)  # or your own observer
+serve_thread = Thread(target=controller.serve)  # serve() blocks; run it where you like
+serve_thread.start()
+
+controller.start()                        # robot starts executing the policy
+controller.set_task("grab the red cube")  # re-instruct mid-run
+controller.reset()                        # stop movement, return home, stay warm
+controller.stop()                         # end serve()
+
+serve_thread.join()
+strategy.teardown(ctx)  # teardown stays with the caller
+```
+
+Set `play_sounds=False` in the config unless you want the vocal announcements, and note that `build_rollout_context` requires the shutdown event to be a `LinkedEvent` (the controller ends run segments through its local flag; your `parent` event still forces a full shutdown). `InteractiveSession` itself is a thin front-end over this controller — commands map 1:1 onto its methods.
 
 ---
 
 ## Common Flags
 
-| Flag                              | Description                                                                                                                           | Default |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                                                | --      |
-| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                                                     | --      |
-| `--robot.port`                    | Serial port for the robot                                                                                                             | --      |
-| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                      | --      |
-| `--fps`                           | Control loop frequency                                                                                                                | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                                                                                    | 0       |
-| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                   | auto    |
-| `--task`                          | Task description (used when no dataset is provided)                                                                                   | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                                                                                               | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                                           | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                                                                                           | 1       |
-| `--interactive`                   | Chat-style stdin session (see [Interactive Sessions](#interactive-sessions)); the robot stays idle until `/start`. Base strategy only | false   |
-| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                                                  | false   |
-| `--resume`                        | Resume a previous recording session                                                                                                   | false   |
-| `--play_sounds`                   | Vocal synthesis for events                                                                                                            | true    |
+| Flag                              | Description                                                                                                                                   | Default |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                                                        | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                                                             | --      |
+| `--robot.port`                    | Serial port for the robot                                                                                                                     | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                              | --      |
+| `--fps`                           | Control loop frequency                                                                                                                        | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite)                                                                                                            | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                           | auto    |
+| `--task`                          | Task description (used when no dataset is provided)                                                                                           | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                                                                                                       | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                                                   | --      |
+| `--interpolation_multiplier`      | Action interpolation factor                                                                                                                   | 1       |
+| `--interactive`                   | Chat-style stdin session (see [Interactive Sessions](#interactive-sessions)); the robot stays idle until `/start`. Base and sentry strategies | false   |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                                                          | false   |
+| `--resume`                        | Resume a previous recording session                                                                                                           | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                                                                                                    | true    |
 
 ---
 

@@ -38,6 +38,11 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
+from .controller import (
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+)
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
@@ -50,8 +55,6 @@ from .inference import (
 from .interactive import (
     InteractiveCommand,
     InteractiveSession,
-    LinkedEvent,
-    StdinCommandListener,
     parse_command,
 )
 from .strategies import (
@@ -88,12 +91,13 @@ __all__ = [
     "RTCInferenceEngine",
     "RolloutConfig",
     "RolloutContext",
+    "RolloutController",
+    "RolloutEvent",
     "RolloutStrategy",
     "RolloutStrategyConfig",
     "RuntimeContext",
     "SentryStrategy",
     "SentryStrategyConfig",
-    "StdinCommandListener",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
     "build_rollout_context",

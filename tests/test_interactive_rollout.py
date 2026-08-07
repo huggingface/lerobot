@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the interactive rollout session (--interactive=true)."""
+"""Tests for interactive rollout control: the programmatic RolloutController
+and the stdin-driven InteractiveSession (--interactive=true)."""
 
 from __future__ import annotations
 
@@ -35,7 +36,8 @@ from lerobot.rollout import (  # noqa: E402
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
-    StdinCommandListener,
+    RolloutController,
+    RolloutEvent,
     parse_command,
 )
 
@@ -146,68 +148,15 @@ def test_linked_event_wait_wakes_on_parent_set():
 
 
 # ---------------------------------------------------------------------------
-# StdinCommandListener
-# ---------------------------------------------------------------------------
-
-
-def test_stdin_listener_reads_lines_and_eof():
-    lines: list[str] = []
-    eof = Event()
-
-    with _pipe_stream() as (reader, writer):
-        listener = StdinCommandListener(lines.append, on_eof=eof.set, stream=reader)
-        listener.start()
-        writer.write("/start\n")
-        writer.write("   \n")  # blank lines are skipped
-        writer.write("/help\n")
-        writer.flush()
-        assert _wait_for(lambda: len(lines) == 2)
-        assert lines == ["/start", "/help"]
-
-        writer.close()
-        assert _wait_for(eof.is_set)
-        listener.stop()
-
-
-def test_stdin_listener_handler_errors_do_not_kill_reader():
-    lines: list[str] = []
-
-    def flaky(line: str) -> None:
-        if line == "/boom":
-            raise RuntimeError("boom")
-        lines.append(line)
-
-    with _pipe_stream() as (reader, writer):
-        listener = StdinCommandListener(flaky, stream=reader)
-        listener.start()
-        writer.write("/boom\n/start\n")
-        writer.flush()
-        assert _wait_for(lambda: lines == ["/start"])
-        listener.stop()
-
-
-def test_stdin_listener_blocking_fallback():
-    """Streams without a file descriptor (e.g. StringIO) use the blocking readline path."""
-    lines: list[str] = []
-    eof = Event()
-    listener = StdinCommandListener(lines.append, on_eof=eof.set, stream=io.StringIO("/start\n\n/help\n"))
-    assert not listener._use_select
-    listener.start()
-    assert _wait_for(eof.is_set)
-    assert lines == ["/start", "/help"]
-    listener.stop()
-
-
-# ---------------------------------------------------------------------------
-# InteractiveSession
+# Shared fakes
 # ---------------------------------------------------------------------------
 
 
 class _FakeEngine(InferenceEngine):
     """Real task-holder semantics with mocked lifecycle methods.
 
-    Subclassing the ABC (instead of using a bare MagicMock) means the
-    session tests exercise the actual ``set_task``/``task`` plumbing.
+    Subclassing the ABC (instead of using a bare MagicMock) means these
+    tests exercise the actual ``set_task``/``task`` plumbing.
     ``failed``/``failure_traceback`` shadow the base properties as plain
     class attributes so tests can assign them.
     """
@@ -232,8 +181,8 @@ class _FakeEngine(InferenceEngine):
         self.get_action = MagicMock(return_value=None)
 
 
-def _make_session(input_stream, run_behavior=None):
-    """Build a session around a mock strategy and a minimal fake context."""
+def _make_ctx(run_behavior=None):
+    """A mock strategy plus the minimal fake context the controller needs."""
     parent = Event()
     stop_event = LinkedEvent(parent)
     engine = _FakeEngine()
@@ -255,7 +204,224 @@ def _make_session(input_stream, run_behavior=None):
             time.sleep(0.005)
 
     strategy.run.side_effect = run_behavior or default_run
+    return ctx, strategy, engine, parent, run_started
 
+
+# ---------------------------------------------------------------------------
+# RolloutController (the programmatic API)
+# ---------------------------------------------------------------------------
+
+
+def _make_controller(run_behavior=None):
+    ctx, strategy, engine, parent, run_started = _make_ctx(run_behavior)
+    events: list[RolloutEvent] = []
+    controller = RolloutController(strategy, ctx, on_event=events.append)
+    return controller, events, strategy, engine, parent, run_started
+
+
+def _serve_thread(controller) -> Thread:
+    thread = Thread(target=controller.serve, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_controller_requires_linked_event():
+    ctx = SimpleNamespace(runtime=SimpleNamespace(shutdown_event=Event()))
+    with pytest.raises(TypeError, match="LinkedEvent"):
+        RolloutController(MagicMock(), ctx)
+
+
+def test_controller_start_reset_stop_flow_and_events():
+    controller, events, strategy, engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+
+    # Idle until start(): the strategy loop must not run on its own.
+    time.sleep(0.05)
+    strategy.run.assert_not_called()
+    assert not controller.running
+
+    assert controller.start() is True
+    assert _wait_for(run_started.is_set)
+    assert controller.running
+    assert strategy.reset_control_state.call_count == 1
+    assert RolloutEvent.SEGMENT_STARTED in events
+
+    # reset() ends the segment, pauses the engine, returns the robot home.
+    controller.reset()
+    assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+    assert engine.pause.call_count >= 1
+    assert thread.is_alive()
+    assert _wait_for(lambda: RolloutEvent.RESET_DONE in events)
+    assert RolloutEvent.RESET_STARTED in events
+
+    # start() again runs a fresh segment with freshly reset control state.
+    run_started.clear()
+    assert controller.start() is True
+    assert _wait_for(run_started.is_set)
+    assert strategy.run.call_count == 2
+    assert strategy.reset_control_state.call_count == 2
+
+    # stop() ends serve(); teardown stays with the caller.
+    controller.stop()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    strategy.teardown.assert_not_called()
+    assert events[-1] is RolloutEvent.STOPPED
+
+
+def test_controller_start_rejected_during_segment_startup():
+    """A start() racing the segment startup must be rejected, not queued.
+
+    Otherwise the re-armed request survives the whole segment and the robot
+    would start again, uncommanded, when the segment ends on its own.
+    """
+    ctx, strategy, _engine, _parent, run_started = _make_ctx()
+    in_startup = Event()
+    startup_gate = Event()
+
+    def slow_reset_control_state():
+        in_startup.set()
+        startup_gate.wait(timeout=2.0)
+
+    strategy.reset_control_state.side_effect = slow_reset_control_state
+    controller = RolloutController(strategy, ctx)
+    thread = _serve_thread(controller)
+
+    assert controller.start() is True
+    assert _wait_for(in_startup.is_set)
+    # The serve thread is inside reset_control_state: the segment counts as
+    # running for concurrent callers even though strategy.run hasn't begun.
+    assert controller.start() is False
+    startup_gate.set()
+    assert _wait_for(run_started.is_set)
+
+    # Ending the segment must not trigger a phantom second segment.
+    controller.reset()
+    assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+    time.sleep(0.05)
+    assert strategy.run.call_count == 1
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_start_returns_false_while_running():
+    controller, _events, strategy, _engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+
+    assert controller.start() is True
+    assert _wait_for(run_started.is_set)
+    assert controller.start() is False
+    time.sleep(0.05)
+    assert strategy.run.call_count == 1
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_set_task_and_reset_restores_launch_task():
+    controller, _events, strategy, engine, _parent, _run_started = _make_controller()
+    thread = _serve_thread(controller)
+    initial = controller.initial_task
+
+    # reset() with the launch task still in place reports no restore.
+    assert controller.reset() is False
+    assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+
+    assert controller.set_task("fold the towel") is True
+    assert controller.task == "fold the towel"
+    assert engine.task == "fold the towel"
+    assert controller.set_task("fold the towel") is False
+
+    assert controller.reset() is True  # the task had been changed
+    assert controller.task == initial
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_engine_failure_emits_event():
+    def failing_run(c):
+        c.policy.inference.failed = True
+        c.policy.inference.failure_traceback = "RuntimeError: boom-traceback"
+        c.runtime.shutdown_event.set()
+
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller(failing_run)
+    thread = _serve_thread(controller)
+    controller.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    strategy.return_to_initial_position.assert_not_called()
+    assert RolloutEvent.ENGINE_FAILED in events
+    assert controller.failed
+    assert controller.failure_traceback == "RuntimeError: boom-traceback"
+
+
+def test_controller_segment_ended_event_on_natural_end():
+    def finite_run(c):
+        return None  # e.g. --duration elapsed
+
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller(finite_run)
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(lambda: RolloutEvent.SEGMENT_ENDED in events)
+    assert thread.is_alive()  # back to idle, not shut down
+    assert not controller.running
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_reset_skipped_without_initial_position():
+    ctx, strategy, _engine, _parent, _run_started = _make_ctx()
+    ctx.hardware.initial_position = {}
+    events: list[RolloutEvent] = []
+    controller = RolloutController(strategy, ctx, on_event=events.append)
+    thread = _serve_thread(controller)
+
+    controller.reset()
+    assert _wait_for(lambda: RolloutEvent.RESET_SKIPPED in events)
+    strategy.return_to_initial_position.assert_not_called()
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_callback_errors_do_not_kill_serve():
+    ctx, strategy, _engine, _parent, run_started = _make_ctx()
+
+    def broken_observer(event):
+        raise RuntimeError("observer boom")
+
+    controller = RolloutController(strategy, ctx, on_event=broken_observer)
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    controller.stop()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_controller_works_without_event_callback():
+    ctx, strategy, _engine, _parent, _run_started = _make_ctx()
+    controller = RolloutController(strategy, ctx)
+    thread = _serve_thread(controller)
+    controller.start()
+    controller.stop()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# InteractiveSession (the stdin CLI front-end)
+# ---------------------------------------------------------------------------
+
+
+def _make_session(input_stream, run_behavior=None):
+    """Build a session around a mock strategy and a minimal fake context."""
+    ctx, strategy, engine, parent, run_started = _make_ctx(run_behavior)
     session = InteractiveSession(strategy, ctx, input_stream=input_stream)
     return session, strategy, engine, parent, run_started
 
@@ -480,56 +646,59 @@ def test_session_commands_via_stream():
         assert strategy.run.call_count == 1
 
 
-def test_session_mutes_console_logging_and_restores_on_exit():
+def test_session_mutes_logs_below_error_and_restores_on_exit():
     import warnings
 
-    root = logging.getLogger()
-    console_handler = logging.StreamHandler(io.StringIO())
-    console_handler.setLevel(logging.INFO)
-    root.addHandler(console_handler)
     # Libraries like transformers attach their own console handler with
-    # propagate=False; those must be muted too.
+    # propagate=False; the process-wide logging.disable gate covers those too.
+    lib_stream = io.StringIO()
     lib_logger = logging.getLogger("test_interactive_fake_lib")
     lib_logger.propagate = False
-    lib_handler = logging.StreamHandler(io.StringIO())
-    lib_handler.setLevel(logging.WARNING)
+    lib_logger.setLevel(logging.DEBUG)
+    lib_handler = logging.StreamHandler(lib_stream)
+    lib_handler.setLevel(logging.INFO)
     lib_logger.addHandler(lib_handler)
     n_warning_filters = len(warnings.filters)
     try:
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(
-                lambda: console_handler.level == logging.CRITICAL + 1
-                and lib_handler.level == logging.CRITICAL + 1
-            )
+            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
+
+            lib_logger.info("muted-info")
+            lib_logger.warning("muted-warning")
+            lib_logger.error("visible-error")  # errors must surface mid-session
+
             session._handle_line("/stop")
             thread.join(timeout=2.0)
-        assert console_handler.level == logging.INFO
-        assert lib_handler.level == logging.WARNING
+
+        output = lib_stream.getvalue()
+        assert "muted-info" not in output
+        assert "muted-warning" not in output
+        assert "visible-error" in output
+
+        # Everything is restored once the session ends.
+        assert logging.root.manager.disable == logging.NOTSET
         assert len(warnings.filters) == n_warning_filters
+        lib_logger.info("post-session-info")
+        assert "post-session-info" in lib_stream.getvalue()
     finally:
-        root.removeHandler(console_handler)
         lib_logger.removeHandler(lib_handler)
 
 
-def test_session_does_not_mute_file_log_handlers(tmp_path):
-    root = logging.getLogger()
-    file_handler = logging.FileHandler(tmp_path / "session.log")
-    file_handler.setLevel(logging.INFO)
-    root.addHandler(file_handler)
+def test_session_restores_preexisting_disable_level():
+    """An embedding application's own logging.disable level survives the session."""
+    logging.disable(logging.DEBUG)
     try:
         with _pipe_stream() as (reader, _writer):
-            session, _strategy, _engine, _parent, run_started = _make_session(reader)
+            session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            session._handle_line("/start")
-            assert _wait_for(run_started.is_set)
-            assert file_handler.level == logging.INFO
+            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
             session._handle_line("/stop")
             thread.join(timeout=2.0)
+        assert logging.root.manager.disable == logging.DEBUG
     finally:
-        root.removeHandler(file_handler)
-        file_handler.close()
+        logging.disable(logging.NOTSET)
 
 
 def test_session_drives_real_base_strategy():
@@ -628,7 +797,7 @@ def test_session_subtask_strips_quotes_and_works_while_running():
         session._handle_line('/subtask "fold the towel"')
         assert engine.task == "fold the towel"
         time.sleep(0.05)
-        assert session._running.is_set()
+        assert session.controller.running
 
         session._handle_line("/stop")
         thread.join(timeout=2.0)
@@ -770,19 +939,163 @@ def test_drop_queued_actions_clears_both_queue_conventions():
 
 
 # ---------------------------------------------------------------------------
+# Sentry strategy: restartable run() segments + live task labels
+# ---------------------------------------------------------------------------
+
+
+def _make_sentry(monkeypatch):
+    from lerobot.rollout import SentryStrategy, SentryStrategyConfig
+
+    # Keep setup independent of camera features and never rotate episodes
+    # mid-test; frame assembly is not under test here.
+    monkeypatch.setattr("lerobot.rollout.strategies.sentry.estimate_max_episode_seconds", lambda *a, **k: 1e9)
+    monkeypatch.setattr(
+        "lerobot.rollout.strategies.sentry.send_next_action", lambda *a, **k: {"joint.pos": 0.5}
+    )
+    monkeypatch.setattr("lerobot.rollout.strategies.sentry.build_dataset_frame", lambda *a, **k: {})
+
+    engine = _FakeEngine()
+    dataset = MagicMock()
+    robot = MagicMock()
+    robot.get_observation.return_value = {"joint.pos": 0.0}
+    stop_event = Event()
+
+    def identity(x):
+        return x
+
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                play_sounds=False,
+                fps=200.0,
+                duration=0.0,
+                use_torch_compile=False,
+                interpolation_multiplier=1,
+                display_data=False,
+                return_to_initial_position=False,
+                task="pick up the cube",
+                dataset=SimpleNamespace(push_to_hub=False, tags=None, private=False),
+            ),
+            shutdown_event=stop_event,
+        ),
+        policy=SimpleNamespace(inference=engine),
+        hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
+        processors=SimpleNamespace(
+            teleop_action_processor=identity,
+            robot_action_processor=identity,
+            robot_observation_processor=identity,
+        ),
+        data=SimpleNamespace(dataset=dataset, dataset_features={}, hw_features={}, ordered_action_keys=[]),
+    )
+
+    strategy = SentryStrategy(SentryStrategyConfig())
+    strategy.setup(ctx)
+    return strategy, ctx, dataset, engine, stop_event
+
+
+def test_sentry_run_is_restartable_and_finalizes_only_in_teardown(monkeypatch):
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+
+    # Segment 1.
+    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+    thread.start()
+    assert _wait_for(lambda: dataset.add_frame.call_count >= 2)
+    stop_event.set()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+    # The segment saved its partial episode but left the dataset open.
+    assert dataset.save_episode.call_count == 1
+    dataset.finalize.assert_not_called()
+
+    # Segment 2: run() is restartable on the same instance.
+    stop_event.clear()
+    frames_before = dataset.add_frame.call_count
+    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+    thread.start()
+    assert _wait_for(lambda: dataset.add_frame.call_count >= frames_before + 2)
+    stop_event.set()
+    thread.join(timeout=2.0)
+    assert dataset.save_episode.call_count == 2
+    dataset.finalize.assert_not_called()
+
+    # Only teardown finalizes.
+    strategy.teardown(ctx)
+    dataset.finalize.assert_called_once()
+
+
+def test_sentry_labels_frames_with_live_engine_task(monkeypatch):
+    strategy, ctx, dataset, engine, stop_event = _make_sentry(monkeypatch)
+
+    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+    thread.start()
+    assert _wait_for(lambda: dataset.add_frame.call_count >= 2)
+
+    # A live task change (e.g. /subtask through the controller) relabels
+    # recorded frames from that moment on.
+    engine.set_task("fold the towel")
+    assert _wait_for(
+        lambda: any(call.args[0]["task"] == "fold the towel" for call in dataset.add_frame.call_args_list)
+    )
+    stop_event.set()
+    thread.join(timeout=2.0)
+
+    tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
+    assert tasks[0] == "pick up the cube"
+    assert tasks[-1] == "fold the towel"
+
+    strategy.teardown(ctx)
+
+
+def test_sentry_discards_tail_episode_when_final_save_fails(monkeypatch):
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+    dataset.save_episode.side_effect = ValueError("disk full mid-write")
+
+    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+    thread.start()
+    assert _wait_for(lambda: dataset.add_frame.call_count >= 1)
+    stop_event.set()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+    # The failed tail save must not leave a half-written streaming encode for
+    # teardown's finalize to flush, nor a half-mutated episode buffer that
+    # would crash the first add_frame of a restarted segment.
+    dataset.writer.cancel_pending_videos.assert_called_once()
+    assert dataset.writer.episode_buffer is None
+    dataset.finalize.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
 
 
-def test_interactive_requires_base_strategy():
+def test_interactive_rejects_keyboard_bound_strategies():
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import HighlightStrategyConfig, RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    with pytest.raises(ValueError, match="--interactive=true supports"):
+        RolloutConfig(
+            robot=MockRobotConfig(),
+            strategy=HighlightStrategyConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test", single_task="test"),
+            interactive=True,
+        )
+
+
+def test_interactive_allows_sentry():
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.rollout import RolloutConfig, SentryStrategyConfig
     from tests.mocks.mock_robot import MockRobotConfig
 
-    with pytest.raises(ValueError, match="--interactive=true currently supports only"):
-        RolloutConfig(
-            robot=MockRobotConfig(),
-            strategy=SentryStrategyConfig(),
-            dataset=DatasetRecordConfig(repo_id="user/rollout_test", single_task="test"),
-            interactive=True,
-        )
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(),
+        strategy=SentryStrategyConfig(),
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test", single_task="test"),
+        policy=SimpleNamespace(device="cpu"),  # stands in for a PreTrainedConfig
+        interactive=True,
+    )
+    assert cfg.interactive is True
+    assert cfg.dataset.streaming_encoding is True  # sentry forces streaming
