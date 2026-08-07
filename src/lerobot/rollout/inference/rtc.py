@@ -124,13 +124,13 @@ class RTCInferenceEngine(InferenceEngine):
         rtc_queue_threshold: int = 30,
         shutdown_event: Event | None = None,
     ) -> None:
+        super().__init__(task=task)
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._rtc_config = rtc_config
         self._hw_features = hw_features
-        self._task = task
         self._fps = fps
         self._device = device or "cpu"
         self._use_torch_compile = use_torch_compile
@@ -268,6 +268,9 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
+        # The queue was just cleared, so a pending task change has nothing
+        # stale left to blend against.
+        self._discard_task_change()
 
     # ------------------------------------------------------------------
     # Action production (called from main thread)
@@ -321,11 +324,24 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
+                        task, task_changed = self._take_task()
+                        if task_changed:
+                            # No queue flush on purpose: dropping the queued
+                            # actions would leave the robot without commands for
+                            # a full inference latency.  With RTC blending on
+                            # (the default) this chunk — already conditioned on
+                            # the new instruction — is merged over the previous
+                            # chunk's leftover prefix, so the switch lands within
+                            # one inference and the transition stays continuous.
+                            # With blending disabled the queue drains first, so
+                            # it lands up to one chunk later.
+                            logger.info("Task changed to '%s' — applied from this chunk on", task)
+
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
-                            obs_batch, policy_device, self._task, self._robot.robot_type
+                            obs_batch, policy_device, task, self._robot.robot_type
                         )
-                        obs_batch["task"] = [self._task]
+                        obs_batch["task"] = [task]
 
                         preprocessed = self._preprocessor(obs_batch)
 

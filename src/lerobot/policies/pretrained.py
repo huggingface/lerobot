@@ -29,6 +29,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -209,6 +210,29 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Does things like clearing caches.
         """
         raise NotImplementedError
+
+    def drop_queued_actions(self) -> None:
+        """Discard actions precomputed by earlier ``select_action`` calls.
+
+        Chunking policies answer most control ticks from a queue filled by an
+        earlier forward pass, so a mid-episode change to the conditioning —
+        e.g. a new language instruction — would otherwise only take effect
+        once that queue drains (up to ``chunk_size`` ticks).  Dropping the
+        queue forces a fresh forward pass on the next ``select_action``.
+
+        Unlike :meth:`reset` this keeps the rest of the episode state (e.g.
+        observation history), so it does not perturb policies that condition
+        on it.  Call it from the thread that calls ``select_action``: it
+        mutates the same queues that thread pops from.
+
+        Policies that keep no action queue inherit a no-op.
+        """
+        queues = getattr(self, "_queues", None)
+        if isinstance(queues, dict) and ACTION in queues:
+            queues[ACTION].clear()
+        action_queue = getattr(self, "_action_queue", None)
+        if action_queue is not None:
+            action_queue.clear()
 
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""

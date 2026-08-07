@@ -241,25 +241,79 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
 ---
 
+## Interactive Sessions
+
+Add `--interactive=true` to drive the rollout from the terminal instead of starting immediately. Hardware connects and the policy loads as usual, but **the robot stays still until you type `/start`** — useful when you want to position the scene first, re-instruct the policy between attempts, or run several takes without paying the load time again.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+| Command           | Action                                                                                                                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`          | Start (or restart) the policy control loop                                                                                                                                         |
+| `/subtask <text>` | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/reset`          | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
+| `/stop`           | End the session and run the normal shutdown routines                                                                                                                               |
+| `/help`           | List the commands                                                                                                                                                                  |
+
+```text
+> /start
+Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
+> /subtask put the cube in the box
+Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /reset
+Task restored to 'pick up the cube'
+Resetting — returning the robot to its initial position...
+Robot reset — holding at initial position. /start to run.
+> /stop
+```
+
+`Ctrl-C` still shuts down as usual, and closing stdin (`Ctrl-D`, or the end of a piped script) ends the session — so a piped script must keep stdin open for the intended duration:
+
+```bash
+(printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
+```
+
+**How `/subtask` reaches the policy.** The stdin reader publishes the new instruction to the inference engine, which picks it up on its own inference thread, so nothing is mutated across threads while the robot is moving. How quickly the behavior changes depends on the backend:
+
+- **Sync** (`--inference.type=sync`) — precomputed chunk actions are dropped, so the new instruction applies on the very next control tick. Without this a chunking policy would keep executing up to `chunk_size` stale actions (seconds of the old behavior). Only the queued actions are discarded, so observation history and the rest of the episode state are preserved.
+- **RTC** (`--inference.type=rtc`) — the next chunk is generated under the new instruction and merged over the previous chunk's leftover prefix, so the switch lands within one inference and the motion stays continuous. The queue is deliberately not cleared: that would leave the robot without commands for a full inference latency. (With blending turned off via `--inference.rtc.enabled=false` the queued chunk drains first, so the switch lands up to one chunk later.)
+
+With `--use_torch_compile=true`, a switch whose instruction tokenizes to a different length can trigger a recompilation on the next forward pass, pausing inference for as long as the original warm-up took. Prefer leaving compilation off for sessions where you expect to re-instruct the policy often.
+
+**Console logs are muted while the session runs** so they don't interleave with what you're typing; they resume when it ends. A fatal inference error is still printed. Run without `--interactive` to watch the live log.
+
+Interactive sessions currently require `--strategy.type=base`: the recording strategies finalize their dataset when their loop exits, so they cannot be restarted by `/start`, and their keyboard controls would compete for the same terminal.
+
+---
+
 ## Common Flags
 
-| Flag                              | Description                                                                                                     | Default |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
-| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                          | --      |
-| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                               | --      |
-| `--robot.port`                    | Serial port for the robot                                                                                       | --      |
-| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                | --      |
-| `--fps`                           | Control loop frequency                                                                                          | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                                                              | 0       |
-| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                             | auto    |
-| `--task`                          | Task description (used when no dataset is provided)                                                             | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                                                                         | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                     | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                                                                     | 1       |
-| `--interactive`                   | Chat-style stdin session (`/start`, `/reset`, `/stop`); the robot stays idle until `/start`. Base strategy only | false   |
-| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                            | false   |
-| `--resume`                        | Resume a previous recording session                                                                             | false   |
-| `--play_sounds`                   | Vocal synthesis for events                                                                                      | true    |
+| Flag                              | Description                                                                                                                           | Default |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                                                | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                                                     | --      |
+| `--robot.port`                    | Serial port for the robot                                                                                                             | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                      | --      |
+| `--fps`                           | Control loop frequency                                                                                                                | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite)                                                                                                    | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                   | auto    |
+| `--task`                          | Task description (used when no dataset is provided)                                                                                   | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                                                                                               | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                                           | --      |
+| `--interpolation_multiplier`      | Action interpolation factor                                                                                                           | 1       |
+| `--interactive`                   | Chat-style stdin session (see [Interactive Sessions](#interactive-sessions)); the robot stays idle until `/start`. Base strategy only | false   |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                                                  | false   |
+| `--resume`                        | Resume a previous recording session                                                                                                   | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                                                                                            | true    |
 
 ---
 

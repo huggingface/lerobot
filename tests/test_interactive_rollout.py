@@ -25,11 +25,13 @@ from threading import Event, Thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.rollout import (  # noqa: E402
+    InferenceEngine,
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
@@ -201,13 +203,40 @@ def test_stdin_listener_blocking_fallback():
 # ---------------------------------------------------------------------------
 
 
+class _FakeEngine(InferenceEngine):
+    """Real task-holder semantics with mocked lifecycle methods.
+
+    Subclassing the ABC (instead of using a bare MagicMock) means the
+    session tests exercise the actual ``set_task``/``task`` plumbing.
+    ``failed``/``failure_traceback`` shadow the base properties as plain
+    class attributes so tests can assign them.
+    """
+
+    failed = False
+    failure_traceback = None
+
+    # Declared here to satisfy the ABC; the instances below shadow them.
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def reset(self) -> None: ...
+    def get_action(self, obs_frame=None): ...
+
+    def __init__(self, task: str = "pick up the cube") -> None:
+        super().__init__(task=task)
+        self.start = MagicMock()
+        self.stop = MagicMock()
+        self.reset = MagicMock()
+        self.pause = MagicMock()
+        self.resume = MagicMock()
+        self.notify_observation = MagicMock()
+        self.get_action = MagicMock(return_value=None)
+
+
 def _make_session(input_stream, run_behavior=None):
     """Build a session around a mock strategy and a minimal fake context."""
     parent = Event()
     stop_event = LinkedEvent(parent)
-    engine = MagicMock()
-    engine.failed = False
-    engine.failure_traceback = None
+    engine = _FakeEngine()
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(
             cfg=SimpleNamespace(play_sounds=False),
@@ -509,8 +538,7 @@ def test_session_drives_real_base_strategy():
 
     parent = Event()
     stop_event = LinkedEvent(parent)
-    engine = MagicMock()
-    engine.failed = False
+    engine = _FakeEngine()
     engine.get_action.return_value = None  # no action ready; the loop still ticks
 
     robot = MagicMock()
@@ -564,6 +592,181 @@ def test_session_drives_real_base_strategy():
         session._handle_line("/stop")
         thread.join(timeout=2.0)
         assert not thread.is_alive()
+
+
+def test_session_subtask_sets_and_reports_task(capsys):
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/subtask grab the red cube")
+        assert engine.task == "grab the red cube"
+
+        # No argument reports the current task without changing it.
+        session._handle_line("/subtask")
+        assert engine.task == "grab the red cube"
+
+        # Re-issuing the same task is reported as a no-op.
+        session._handle_line("/subtask grab the red cube")
+        out = capsys.readouterr().out
+        assert "Current task: 'grab the red cube'" in out
+        assert "Task unchanged: 'grab the red cube'" in out
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_subtask_strips_quotes_and_works_while_running():
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/start")
+        assert _wait_for(run_started.is_set)
+
+        # Switching mid-run must not interrupt the control loop.
+        session._handle_line('/subtask "fold the towel"')
+        assert engine.task == "fold the towel"
+        time.sleep(0.05)
+        assert session._running.is_set()
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_subtask_after_reset_is_not_clobbered():
+    """A /subtask issued right after /reset must win — both writes are ordered by command order."""
+    with _pipe_stream() as (reader, writer):
+        session, strategy, engine, _parent, run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        writer.write("/start\n")
+        writer.flush()
+        assert _wait_for(run_started.is_set)
+
+        # Arrives as one chunk, so both handlers run back-to-back on the
+        # listener thread while the segment is still unwinding.
+        writer.write("/reset\n/subtask put the cube in the box\n")
+        writer.flush()
+        assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+        time.sleep(0.1)
+        assert engine.task == "put the cube in the box"
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_reset_restores_initial_task():
+    with _pipe_stream() as (reader, _writer):
+        session, strategy, engine, _parent, _run_started = _make_session(reader)
+        initial = engine.task
+        thread = _start_session_thread(session)
+
+        session._handle_line("/subtask fold the towel")
+        assert engine.task == "fold the towel"
+
+        session._handle_line("/reset")
+        assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
+        assert engine.task == initial
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# InferenceEngine task holder (the /subtask plumbing)
+# ---------------------------------------------------------------------------
+
+
+def test_engine_task_holder_tracks_changes():
+    engine = _FakeEngine("pick up the cube")
+    assert engine.task == "pick up the cube"
+    # No change yet: nothing for the inference thread to flush.
+    assert engine._take_task() == ("pick up the cube", False)
+
+    assert engine.set_task("fold the towel") is True
+    assert engine.task == "fold the towel"
+    # The change edge is delivered once, then consumed.
+    assert engine._take_task() == ("fold the towel", True)
+    assert engine._take_task() == ("fold the towel", False)
+
+    # Setting the same value is a no-op and raises no edge.
+    assert engine.set_task("fold the towel") is False
+    assert engine._take_task() == ("fold the towel", False)
+
+
+def test_engine_discard_task_change():
+    engine = _FakeEngine("a")
+    engine.set_task("b")
+    engine._discard_task_change()
+    assert engine._take_task() == ("b", False)
+
+
+def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
+    """A /subtask switch must reach the policy and drop stale queued actions."""
+    import torch
+
+    from lerobot.rollout.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.select_action.return_value = torch.zeros(1, 2)
+
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=lambda action: action,
+        dataset_features={
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        ordered_action_keys=["j1.pos", "j2.pos"],
+        task="pick up the cube",
+        device="cpu",
+        robot_type="mock",
+    )
+
+    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert policy.drop_queued_actions.call_count == 0
+    assert policy.select_action.call_args[0][0]["task"] == "pick up the cube"
+
+    engine.set_task("fold the towel")
+    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    # Precomputed chunk actions are dropped so the new task applies immediately,
+    # without the wider episode reset (which would perturb observation history).
+    assert policy.drop_queued_actions.call_count == 1
+    assert policy.reset.call_count == 0
+    assert policy.select_action.call_args[0][0]["task"] == "fold the towel"
+
+    # Only the first call after a switch flushes.
+    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert policy.drop_queued_actions.call_count == 1
+
+
+def test_drop_queued_actions_clears_both_queue_conventions():
+    """PreTrainedPolicy.drop_queued_actions covers both action-queue idioms in the repo."""
+    from collections import deque
+
+    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.utils.constants import ACTION
+
+    # PreTrainedPolicy's metaclass demands a config_class, so exercise the
+    # method against stand-ins carrying each queue idiom.
+    flush = PreTrainedPolicy.drop_queued_actions
+
+    queues_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
+        _queues={ACTION: deque([1, 2, 3]), "observation.state": deque([9])}
+    )
+    flush(queues_policy)
+    assert len(queues_policy._queues[ACTION]) == 0
+    # Other episode state is intentionally left alone.
+    assert len(queues_policy._queues["observation.state"]) == 1
+
+    action_queue_policy = SimpleNamespace(_action_queue=deque([1, 2, 3]))  # act / pi0 / groot style
+    flush(action_queue_policy)
+    assert len(action_queue_policy._action_queue) == 0
+
+    # Queue-less policies inherit a no-op.
+    flush(SimpleNamespace())
 
 
 # ---------------------------------------------------------------------------

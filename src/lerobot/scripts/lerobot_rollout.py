@@ -45,8 +45,9 @@ Usage examples
         --task="pick up cube" --duration=30
 
     # Base mode — interactive session: the robot stays idle until /start is
-    # typed; /reset returns it to the initial position (hardware and policy
-    # stay warm); /stop shuts down gracefully
+    # typed; /subtask <text> re-instructs the policy mid-run; /reset returns
+    # it to the initial position (hardware and policy stay warm); /stop shuts
+    # down gracefully
     lerobot-rollout \\
         --strategy.type=base \\
         --policy.path=lerobot/act_koch_real \\
