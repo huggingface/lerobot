@@ -26,7 +26,6 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
-from lerobot.configs.policies import GenerationConfig  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.wall_x import (
@@ -84,7 +83,8 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
 def _make_unloaded_policy(**config_values):
     policy = WallXPolicy.__new__(WallXPolicy)
     torch.nn.Module.__init__(policy)
-    config_values.setdefault("generation", GenerationConfig())
+    config_values.setdefault("text_temperature", 0.0)
+    config_values.setdefault("text_top_p", 1.0)
     policy.config = SimpleNamespace(chunk_size=3, **config_values)
     return policy
 
