@@ -232,33 +232,42 @@ class MyPolicy(PreTrainedPolicy):
         return self._decode(prompt, batch)
 ```
 
-That one method covers everything: VQA and `/ask`, captioning, grounding, and subtask prediction. Subtask prediction is not a separate method — the runtime composes the prompt itself, by filling your `subtask_prompt_template` with the operator's high-level goal and calling `generate_text` with the result.
+That one method covers everything: VQA and `/ask`, captioning, grounding, and subtask prediction. Subtask prediction is not a separate method — the runtime composes the prompt itself and calls `generate_text` with the result.
 
-The base class ships a default, so a policy with a text head can predict subtasks with no extra code:
+### Registering prompt templates
 
-```python
-"{task}\nPredict the next action in language."
-```
-
-That is the wording the WALL-OSS and EO-1 family were trained on, which more released checkpoints recognise than a generic English sentence would.
-
-Override it whenever your checkpoint was trained differently. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess — down to the trailing newline:
+Declare the prompts your checkpoint was trained to answer in a `PROMPT_TEMPLATES` dict, keyed by kind:
 
 ```python
-@property
-def subtask_prompt_template(self) -> str:
-    return "{task}\nPredict the next action in language.\n"  # note the trailing newline
+class MyPolicy(PreTrainedPolicy):
+    PROMPT_TEMPLATES = {
+        "subtask": "{task}\nPredict the next action in language.\n",  # note the trailing newline
+    }
 ```
 
-Override it explicitly even when your wording matches the default. The default may be retuned later, and a policy that pins its own template will not silently follow.
+Lookups fall back to the base defaults, so you list only the kinds you change. The base ships `"subtask"` with the wording the WALL-OSS and EO-1 family were trained on, which more released checkpoints recognise than a sentence written for the occasion — so a policy with a text head predicts subtasks with no extra code at all.
 
-The runtime substitutes with `str.replace`, not `str.format`, so a template may contain chat-control tokens and an operator's task may contain braces.
+Declare your own anyway when the wording matters. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess, down to the trailing newline. And a policy that pins its own template will not silently follow if the default is retuned later.
 
-| Piece                          | Owned by     | Used for                                  |
-| ------------------------------ | ------------ | ----------------------------------------- |
-| `subtask_prompt_template`      | the policy   | filled with `{task}` by the runtime       |
-| `generate_text(batch, prompt)` | the policy   | every text call, subtask and `/ask` alike |
-| the high-level goal            | the operator | substituted into the template             |
+Callers fill a template through `build_prompt`, which substitutes with `str.replace` rather than `str.format` — templates carry chat-control tokens, and a task may contain braces that `format` would choke on:
+
+```python
+prompt = policy.build_prompt("subtask", task="clear the table")
+subtask = policy.generate_text(batch, prompt)
+```
+
+Adding a kind is a dict entry and nothing else. A `"memory"` prompt taking two values needs no change to the base class or the runtime:
+
+```python
+PROMPT_TEMPLATES = {"memory": "Given the goal {task}, summarise what is already done: {history}"}
+```
+
+| Piece                          | Owned by   | Used for                                  |
+| ------------------------------ | ---------- | ----------------------------------------- |
+| `PROMPT_TEMPLATES`             | the policy | the trained wording, per kind             |
+| `build_prompt(kind, **values)` | the base   | filling a template                        |
+| `generate_text(batch, prompt)` | the policy | every text call, subtask and `/ask` alike |
+| the values                     | the caller | the high-level goal, a question, history  |
 
 The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
 
