@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 
@@ -117,6 +118,15 @@ class RobotClientConfig:
     # Policies typically output K actions at max, but we can use less to avoid wasting bandwidth (as actions
     # would be aggregated on the client side anyway, depending on the value of `chunk_size_threshold`)
     actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk"})
+    policy_config_overrides: dict[str, Any] = field(
+        default_factory=dict,
+        metadata={
+            "help": (
+                "Policy-specific config overrides sent to the server. For direct MolmoAct2 HF checkpoints, "
+                "use this to pass norm_tag and inference_action_mode."
+            )
+        },
+    )
 
     # Task instruction for the robot to execute (e.g., 'fold my tshirt')
     task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
@@ -192,6 +202,7 @@ class RobotClientConfig:
             "server_address": self.server_address,
             "policy_type": self.policy_type,
             "pretrained_name_or_path": self.pretrained_name_or_path,
+            "policy_config_overrides": self.policy_config_overrides,
             "policy_device": self.policy_device,
             "client_device": self.client_device,
             "chunk_size_threshold": self.chunk_size_threshold,

@@ -204,12 +204,16 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     policy_class = get_policy_class(policy_config.type)
 
     if not policy_config.use_peft:
+        if not policy_config.pretrained_path:
+            return policy_class(config=policy_config)
         return policy_class.from_pretrained(
             policy_config.pretrained_path,
             config=policy_config,
             revision=pretrained_revision,
         )
 
+    if not policy_config.pretrained_path:
+        raise ValueError("Rollout PEFT loading requires --policy.path.")
     require_package("peft", extra="peft")
 
     peft_path = policy_config.pretrained_path
@@ -242,7 +246,7 @@ def build_rollout_context(
     is_rtc = isinstance(cfg.inference, RTCInferenceConfig)
 
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
-    logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
+    logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path or cfg.policy.type)
     policy_config = cfg.policy
 
     if hasattr(policy_config, "compile_model"):

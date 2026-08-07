@@ -24,7 +24,7 @@ from lerobot.optim import (
     LRSchedulerConfig,
     OptimizerConfig,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from ..rtc.configuration_rtc import RTCConfig
 
@@ -43,7 +43,7 @@ class MolmoAct2Config(PreTrainedConfig):
     n_action_steps: int = 30
 
     action_mode: str = "both"
-    inference_action_mode: str | None = None
+    inference_action_mode: str | None = "continuous"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = None
@@ -88,19 +88,18 @@ class MolmoAct2Config(PreTrainedConfig):
     joint_signs: list[float] | None = None
     joint_offsets: list[float] | None = None
 
-    # Default is full finetuning with gradients from the action expert flowing into the VLM.
-    enable_lora_vlm: bool = False
+    # Controls only the VLM side. The action expert is always fully fine-tuned.
+    train_mode_vlm: str = "lora"
     lora_rank: int = 64
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_bias: str = "none"
-    enable_lora_action_expert: bool = False
     enable_knowledge_insulation: bool = False
     freeze_embedding: bool = True
-    train_action_expert_only: bool = False
     gradient_checkpointing: bool = False
 
     model_dtype: str = "bfloat16"
+    llm_residual_dropout: float = 0.1
     softmax_auxiliary_loss: bool = True
     softmax_auxiliary_loss_scale: float = 1e-4
     discrete_loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -150,12 +149,13 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("MolmoAct2 action_mode='discrete' cannot run continuous inference.")
         if self.inference_action_mode == "discrete" and self.action_mode == "continuous":
             raise ValueError("MolmoAct2 action_mode='continuous' cannot run discrete inference.")
-        if self.train_action_expert_only and self.action_mode != "continuous":
-            raise ValueError("MolmoAct2 train_action_expert_only requires action_mode='continuous'.")
-        if self.train_action_expert_only and self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 train_action_expert_only is incompatible with enable_lora_vlm.")
-        if self.enable_lora_action_expert and not self.enable_lora_vlm:
-            raise ValueError("MolmoAct2 enable_lora_action_expert requires enable_lora_vlm.")
+        if self.train_mode_vlm not in {"fft", "lora", "freeze"}:
+            raise ValueError(
+                f"Unsupported train_mode_vlm={self.train_mode_vlm!r}. "
+                "Expected one of {'fft', 'lora', 'freeze'}."
+            )
+        if self.train_mode_vlm == "freeze" and self.action_mode != "continuous":
+            raise ValueError("MolmoAct2 train_mode_vlm='freeze' requires action_mode='continuous'.")
         if self.chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {self.chunk_size}.")
         if self.n_action_steps < 1:
@@ -169,6 +169,10 @@ class MolmoAct2Config(PreTrainedConfig):
         if self.model_dtype not in {"float32", "bfloat16", "float16"}:
             raise ValueError(
                 f"Unsupported model_dtype={self.model_dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
+            )
+        if not 0 <= self.llm_residual_dropout <= 1:
+            raise ValueError(
+                f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}."
             )
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
@@ -255,3 +259,33 @@ class MolmoAct2Config(PreTrainedConfig):
                 shape=(self.expected_max_action_dim,),
             )
             self.output_features[ACTION] = action_feature
+
+    @staticmethod
+    def _policy_feature_from_async_feature(key: str, feature: dict[str, Any]) -> PolicyFeature | None:
+        shape = feature.get("shape")
+        if shape is None:
+            return None
+        shape = tuple(int(dim) for dim in shape)
+        if key == OBS_STATE:
+            return PolicyFeature(type=FeatureType.STATE, shape=shape)
+        if key.startswith(f"{OBS_IMAGES}."):
+            if len(shape) == 3 and shape[-1] in {1, 3, 4}:
+                shape = (shape[-1], shape[0], shape[1])
+            return PolicyFeature(type=FeatureType.VISUAL, shape=shape)
+        return None
+
+    def apply_async_lerobot_features(self, lerobot_features: dict[str, Any]) -> None:
+        """Fill missing input feature shapes from async robot specs."""
+        input_features = dict(self.input_features or {})
+        for key, feature in lerobot_features.items():
+            if key in input_features or not isinstance(feature, dict):
+                continue
+            policy_feature = self._policy_feature_from_async_feature(key, feature)
+            if policy_feature is not None:
+                input_features[key] = policy_feature
+        self.input_features = input_features
+
+    def async_processor_pretrained_path(self, pretrained_path: str) -> str | None:
+        if getattr(self, "_uses_original_hf_checkpoint", False):
+            return None
+        return pretrained_path

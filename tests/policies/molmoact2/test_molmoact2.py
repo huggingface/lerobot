@@ -58,7 +58,7 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
     make_molmoact2_pre_post_processors,
 )
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 
 def test_molmoact2_policy_registration():
@@ -71,6 +71,7 @@ def test_molmoact2_policy_registration():
     assert cfg.freeze_embedding is True
     assert cfg.per_episode_seed is False
     assert cfg.eval_seed is None
+    assert cfg.inference_action_mode == "continuous"
     assert cfg.normalize_language is True
     assert cfg.get_scheduler_preset().num_decay_steps == 100_000
     assert cfg.action_delta_indices == list(range(cfg.chunk_size))
@@ -92,6 +93,91 @@ def test_molmoact2_checkpoint_download_ignores_remote_python(monkeypatch):
 
     assert checkpoint_location == "/tmp/downloaded-molmoact2"
     assert download_kwargs["ignore_patterns"] == ["*.py", "*.pyc", "__pycache__/*"]
+
+
+def test_norm_tag_metadata_populates_state_action_and_image_features(monkeypatch):
+    def fake_load_hf_norm_metadata_for_tag(*args, **kwargs):
+        del args, kwargs
+        return {
+            "action_horizon": 10,
+            "n_action_steps": 10,
+            "state_stats": {"mean": [0.0] * 9},
+            "action_stats": {"q01": [0.0] * 7},
+            "camera_keys": ["image", "wrist_image"],
+            "setup_type": "single-arm tabletop",
+            "control_mode": "delta end-effector pose",
+        }
+
+    monkeypatch.setattr(
+        molmoact2_modeling,
+        "_load_hf_norm_metadata_for_tag",
+        fake_load_hf_norm_metadata_for_tag,
+    )
+
+    cfg = MolmoAct2Config(checkpoint_path="allenai/MolmoAct2-LIBERO", norm_tag="libero")
+    molmoact2_modeling._apply_norm_tag_metadata(cfg)
+
+    assert cfg.chunk_size == 10
+    assert cfg.n_action_steps == 10
+    assert cfg.input_features[OBS_STATE] == PolicyFeature(type=FeatureType.STATE, shape=(9,))
+    assert cfg.output_features[ACTION] == PolicyFeature(type=FeatureType.ACTION, shape=(7,))
+    assert cfg.image_keys == ["image", "wrist_image"]
+    assert cfg.setup_type == "single-arm tabletop"
+    assert cfg.control_mode == "delta end-effector pose"
+
+
+def test_molmoact2_from_pretrained_supports_original_hf_checkpoint(monkeypatch):
+    def fake_apply_norm_tag_metadata(config):
+        config.chunk_size = 10
+        config.n_action_steps = 10
+        config.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(9,))
+        config.input_features[f"{OBS_IMAGES}.image"] = PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(3, 224, 224),
+        )
+        config.output_features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(7,))
+
+    monkeypatch.setattr(molmoact2_modeling, "_is_lerobot_policy_checkpoint", lambda *args, **kwargs: False)
+    monkeypatch.setattr(molmoact2_modeling, "_apply_norm_tag_metadata", fake_apply_norm_tag_metadata)
+
+    def fake_load_hf_model(self):
+        self.model = SimpleNamespace(model=SimpleNamespace())
+
+    monkeypatch.setattr(MolmoAct2Policy, "_load_hf_model", fake_load_hf_model)
+
+    policy = MolmoAct2Policy.from_pretrained(
+        "allenai/MolmoAct2-LIBERO",
+        norm_tag="libero",
+        inference_action_mode="continuous",
+        train_mode_vlm="fft",
+    )
+
+    assert policy.config.checkpoint_path == "allenai/MolmoAct2-LIBERO"
+    assert policy.config.norm_tag == "libero"
+    assert policy.config.input_features[OBS_STATE].shape == (9,)
+    assert policy.config.output_features[ACTION].shape == (7,)
+    assert policy.training is False
+
+
+def test_async_feature_specs_fill_missing_molmoact2_input_features():
+    cfg = MolmoAct2Config(
+        checkpoint_path="allenai/MolmoAct2-LIBERO",
+        norm_tag="libero",
+        inference_action_mode="continuous",
+    )
+
+    cfg.apply_async_lerobot_features(
+        {
+            OBS_STATE: {"shape": [9]},
+            f"{OBS_IMAGES}.image": {"shape": [480, 640, 3]},
+        }
+    )
+
+    assert cfg.input_features[OBS_STATE] == PolicyFeature(type=FeatureType.STATE, shape=(9,))
+    assert cfg.input_features[f"{OBS_IMAGES}.image"] == PolicyFeature(
+        type=FeatureType.VISUAL,
+        shape=(3, 480, 640),
+    )
 
 
 def test_molmoact2_scheduler_auto_scales_to_training_steps():
@@ -367,12 +453,12 @@ def test_molmoact2_explicit_image_keys_stay_strict():
         step._resolve_image_keys(observation)
 
 
-def test_enable_lora_vlm_builds_policy_local_peft_config():
+def test_train_mode_vlm_lora_builds_policy_local_peft_config():
     pytest.importorskip("peft")
     policy_cfg = MolmoAct2Config(
         checkpoint_path="/tmp/not-a-real-checkpoint",
         device="cpu",
-        enable_lora_vlm=True,
+        train_mode_vlm="lora",
         lora_rank=64,
         push_to_hub=False,
     )
@@ -411,7 +497,7 @@ def test_cuda_graph_managers_are_inference_only():
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(train_action_expert_only=False, enable_inference_cuda_graph=True)
+    policy.config = SimpleNamespace(train_mode_vlm="fft", enable_inference_cuda_graph=True)
     policy.model = DummyModel()
 
     policy.train()
@@ -428,7 +514,7 @@ def test_cuda_graph_managers_are_inference_only():
     assert policy.model.depth_decode_cuda_graph_manager.enabled is False
 
 
-def test_lora_action_expert_target_is_opt_in():
+def test_lora_targets_exclude_action_expert():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(
@@ -436,24 +522,18 @@ def test_lora_action_expert_target_is_opt_in():
         lora_alpha=16,
         lora_dropout=0.05,
         lora_bias="none",
-        enable_lora_action_expert=False,
     )
 
     targets = policy._get_default_peft_targets()["target_modules"]
 
     assert "transformer|vision_backbone" in targets
     assert "action_expert" not in targets
-
-    policy.config.enable_lora_action_expert = True
-    targets = policy._get_default_peft_targets()["target_modules"]
-
-    assert "action_expert" in targets
     assert "state_encoder" not in targets
     assert "state_norm" not in targets
     assert "kv_proj" not in targets
 
 
-def test_enable_lora_vlm_wraps_loaded_hf_model_locally():
+def test_train_mode_vlm_lora_wraps_loaded_hf_model_locally():
     pytest.importorskip("peft")
 
     class DummyInnerModel(torch.nn.Module):
@@ -481,8 +561,7 @@ def test_enable_lora_vlm_wraps_loaded_hf_model_locally():
         lora_alpha=4,
         lora_dropout=0.0,
         lora_bias="none",
-        enable_lora_action_expert=False,
-        train_action_expert_only=False,
+        train_mode_vlm="lora",
         enable_inference_cuda_graph=False,
     )
     policy.model = DummyHFModel()
@@ -524,15 +603,17 @@ def test_lora_vlm_unfreezes_action_expert_base_weights():
     assert all("action_expert" in name for name in trainable)
 
 
-def test_train_action_expert_only_requires_continuous_action_mode():
+def test_train_mode_vlm_freeze_requires_continuous_action_mode():
     with pytest.raises(ValueError, match="requires action_mode='continuous'"):
-        MolmoAct2Config(action_mode="both", train_action_expert_only=True)
+        MolmoAct2Config(action_mode="both", train_mode_vlm="freeze")
 
-    with pytest.raises(ValueError, match="incompatible with enable_lora_vlm"):
-        MolmoAct2Config(action_mode="continuous", train_action_expert_only=True, enable_lora_vlm=True)
+    cfg = MolmoAct2Config(action_mode="continuous", train_mode_vlm="freeze")
+    assert cfg.train_mode_vlm == "freeze"
 
-    cfg = MolmoAct2Config(action_mode="continuous", train_action_expert_only=True)
-    assert cfg.train_action_expert_only
+
+def test_train_mode_vlm_rejects_unknown_value():
+    with pytest.raises(ValueError, match="Unsupported train_mode_vlm"):
+        MolmoAct2Config(train_mode_vlm="frozen")
 
 
 def test_molmoact2_sequence_length_is_inferred_from_fixed_token_budget():
@@ -556,7 +637,7 @@ def test_molmoact2_sequence_length_is_inferred_from_fixed_token_budget():
     )
 
 
-def test_train_action_expert_only_freezes_non_action_expert_params():
+def test_train_mode_vlm_freeze_freezes_non_action_expert_params():
     class DummyBackbone(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -575,10 +656,10 @@ def test_train_action_expert_only_freezes_non_action_expert_params():
 
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(train_action_expert_only=True)
+    policy.config = SimpleNamespace(train_mode_vlm="freeze")
     policy.model = DummyModel()
 
-    policy._freeze_non_action_expert_parameters()
+    policy._freeze_vlm_parameters()
     policy.train()
 
     assert policy.model.model.action_expert.training
@@ -809,14 +890,15 @@ def test_select_action_uses_single_full_batch_queue():
     assert torch.equal(second, torch.tensor([[2.0], [4.0]]))
 
 
-def test_inference_action_mode_is_explicit_and_has_no_action_mode_alias():
+def test_inference_action_mode_defaults_to_continuous_and_has_no_action_mode_alias():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
-    policy.config = MolmoAct2Config(action_mode="both", inference_action_mode=None)
+    policy.config = MolmoAct2Config(action_mode="both")
     policy._checkpoint_action_mode = None
 
-    with pytest.raises(ValueError, match="inference_action_mode.*explicitly"):
-        policy._resolve_inference_action_mode(None)
+    assert policy._resolve_inference_action_mode(None) == "continuous"
+    policy.config = MolmoAct2Config(action_mode="both", inference_action_mode=None)
+    assert policy._resolve_inference_action_mode(None) == "continuous"
     with pytest.raises(TypeError, match="unexpected keyword argument 'action_mode'"):
         policy.predict_action_chunk({}, action_mode="continuous")
 
@@ -966,7 +1048,7 @@ def test_action_padding_marks_only_real_dimensions():
     step.max_action_dim = 32
     action = torch.ones(2, 3, 7)
 
-    padded, horizon_is_pad, dim_is_pad = step._pad_action(action, None)
+    padded, horizon_is_pad, dim_is_pad = step._pad_action(action)
 
     assert padded.shape == (2, 3, 32)
     assert torch.equal(padded[..., :7], action)

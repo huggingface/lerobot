@@ -31,18 +31,22 @@ import logging
 import os
 import types
 from collections import deque
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import CONFIG_NAME
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _peft_available,
     _scipy_available,
@@ -181,6 +185,20 @@ def _load_hf_norm_metadata_for_tag(
     return metadata
 
 
+def _stats_dim(stats: Any) -> int | None:
+    if not isinstance(stats, dict):
+        return None
+    for key in ("q01", "q99", "mean", "std", "min", "max"):
+        values = stats.get(key)
+        if values is None:
+            continue
+        try:
+            return int(len(values))
+        except TypeError:
+            continue
+    return None
+
+
 def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
     """Populate config fields from the checkpoint's norm-tag metadata."""
     if not str(config.norm_tag or "").strip():
@@ -195,10 +213,24 @@ def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
         config.chunk_size = int(metadata["action_horizon"])
     if metadata.get("n_action_steps") is not None:
         config.n_action_steps = int(metadata["n_action_steps"])
+    state_dim = _stats_dim(metadata.get("state_stats"))
+    if state_dim is not None and OBS_STATE not in config.input_features:
+        config.input_features[OBS_STATE] = PolicyFeature(
+            type=FeatureType.STATE,
+            shape=(state_dim,),
+        )
+    action_dim = _stats_dim(metadata.get("action_stats"))
+    if action_dim is not None and ACTION not in config.output_features:
+        config.output_features[ACTION] = PolicyFeature(
+            type=FeatureType.ACTION,
+            shape=(action_dim,),
+        )
     if not config.setup_type and metadata.get("setup_type") is not None:
         config.setup_type = str(metadata["setup_type"])
     if not config.control_mode and metadata.get("control_mode") is not None:
         config.control_mode = str(metadata["control_mode"])
+    if not config.image_keys and isinstance(metadata.get("camera_keys"), list):
+        config.image_keys = [str(key) for key in metadata["camera_keys"]]
 
 
 def _saved_policy_action_mode(config: MolmoAct2Config) -> str | None:
@@ -274,10 +306,7 @@ def _resolve_inference_action_mode(
     if requested_mode is None:
         requested_mode = config.inference_action_mode
     if requested_mode is None:
-        raise ValueError(
-            "MolmoAct2 inference requires `inference_action_mode` to be set explicitly "
-            "to either 'continuous' or 'discrete'."
-        )
+        requested_mode = "continuous"
     if requested_mode not in {"continuous", "discrete"}:
         raise ValueError("MolmoAct2 inference_action_mode must be either 'continuous' or 'discrete'.")
     if requested_mode == "continuous" and training_mode == "discrete":
@@ -318,6 +347,41 @@ def _strict_load_safetensors_weights(model: torch.nn.Module, checkpoint_location
         f"MolmoAct2 checkpoint at {checkpoint_location} must contain {SAFE_WEIGHTS_NAME} "
         f"or {SAFE_WEIGHTS_INDEX_NAME}."
     )
+
+
+def _is_lerobot_policy_checkpoint(
+    pretrained_name_or_path: str | os.PathLike,
+    *,
+    revision: str | None = None,
+    force_download: bool = False,
+    local_files_only: bool = False,
+    cache_dir: str | os.PathLike | None = None,
+) -> bool:
+    model_id = str(pretrained_name_or_path)
+    config_file: str | None = None
+    if os.path.isdir(model_id):
+        candidate = os.path.join(model_id, CONFIG_NAME)
+        if os.path.exists(candidate):
+            config_file = candidate
+    else:
+        try:
+            config_file = hf_hub_download(
+                repo_id=model_id,
+                filename=CONFIG_NAME,
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                token=_hf_token(),
+                local_files_only=local_files_only,
+            )
+        except (HfHubHTTPError, FileNotFoundError, OSError):
+            return False
+
+    if config_file is None:
+        return False
+    with suppress(OSError, json.JSONDecodeError), open(config_file, encoding="utf-8") as f:
+        return json.load(f).get("type") == "molmoact2"
+    return False
 
 
 def _sample_beta_timesteps(
@@ -484,9 +548,19 @@ def _extract_discrete_token_bins(
 
 def _weighted_mean(values: Tensor, weights: Tensor | None) -> Tensor:
     if weights is None:
-        return values.mean()
-    weights = weights.to(device=values.device, dtype=values.dtype)
-    return torch.dot(values, weights) / weights.sum().clamp_min(1.0)
+        numerator = values.sum()
+        denominator = values.new_tensor(float(values.numel()))
+    else:
+        weights = weights.to(device=values.device, dtype=values.dtype)
+        numerator = torch.dot(values, weights)
+        denominator = weights.sum()
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
+        denominator = denominator.detach().clone()
+        torch.distributed.all_reduce(denominator, op=torch.distributed.ReduceOp.SUM)
+        denominator = denominator / world_size
+    return numerator / denominator.clamp_min(1.0)
 
 
 def _weighted_per_example(
@@ -523,6 +597,59 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | os.PathLike,
+        *,
+        config: MolmoAct2Config | None = None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | os.PathLike | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        strict: bool = False,
+        **kwargs,
+    ) -> MolmoAct2Policy:
+        if config is not None or _is_lerobot_policy_checkpoint(
+            pretrained_name_or_path,
+            revision=revision,
+            force_download=force_download,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        ):
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                strict=strict,
+                **kwargs,
+            )
+
+        config_kwargs = dict(kwargs)
+        async_lerobot_features = config_kwargs.pop("async_lerobot_features", None)
+        config_kwargs.setdefault("checkpoint_path", str(pretrained_name_or_path))
+        if revision is not None:
+            config_kwargs.setdefault("checkpoint_revision", revision)
+        if force_download:
+            config_kwargs.setdefault("checkpoint_force_download", True)
+        policy_config = cls.config_class(**config_kwargs)
+        if isinstance(async_lerobot_features, dict):
+            policy_config.apply_async_lerobot_features(async_lerobot_features)
+        policy_config._uses_original_hf_checkpoint = True
+        policy = cls(policy_config)
+        policy.to(policy_config.device)
+        policy.eval()
+        return policy
+
     def __init__(
         self,
         config: MolmoAct2Config,
@@ -544,7 +671,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.action_tokenizer: Any | None = None
         self._load_hf_model()
         _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
-        if self.config.enable_lora_vlm:
+        if self.config.train_mode_vlm == "lora":
             self._apply_lora_adapters()
         self.init_rtc_processor()
 
@@ -563,6 +690,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             checkpoint_location,
             token=_hf_token(),
         )
+        text_config = getattr(hf_config, "text_config", None)
+        if text_config is not None and hasattr(text_config, "residual_dropout"):
+            text_config.residual_dropout = float(self.config.llm_residual_dropout)
         self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
             checkpoint_location,
             config=hf_config,
@@ -603,8 +733,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         if self.config.freeze_embedding:
             self._freeze_input_embeddings()
-        if self.config.train_action_expert_only:
-            self._freeze_non_action_expert_parameters()
+        if self.config.train_mode_vlm == "freeze":
+            self._freeze_vlm_parameters()
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         self.train(self.training)
@@ -664,14 +794,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if vision_backbone is not None:
             vision_backbone.gradient_checkpointing = True
 
-    def _freeze_non_action_expert_parameters(self) -> None:
+    def _freeze_vlm_parameters(self) -> None:
         trainable_params = 0
         for name, param in self.named_parameters():
             param.requires_grad = "action_expert" in name
             if param.requires_grad:
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("train_action_expert_only=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='freeze', but no action_expert parameters were found.")
 
     def _unfreeze_action_expert_parameters(self) -> None:
         trainable_params = 0
@@ -680,11 +810,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 param.requires_grad_(True)
                 trainable_params += param.numel()
         if trainable_params == 0:
-            raise RuntimeError("enable_lora_vlm=true, but no action_expert parameters were found.")
+            raise RuntimeError("train_mode_vlm='lora', but no action_expert parameters were found.")
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if getattr(self.config, "train_action_expert_only", False) and hasattr(self, "model"):
+        if getattr(self.config, "train_mode_vlm", "fft") == "freeze" and hasattr(self, "model"):
             self._hf_model().eval()
             self._action_expert().train(mode)
         self._set_inference_cuda_graph_enabled(not mode)
@@ -715,8 +845,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 "freeze_embedding=true would also freeze lm_head because input embeddings and lm_head "
                 "share parameters in this checkpoint."
             )
-        for param in embedding_params:
-            param.requires_grad = False
+        for embeddings in embedding_modules:
+            base_embedding = getattr(embeddings, "embedding", None)
+            if isinstance(base_embedding, torch.nn.Parameter):
+                base_embedding.requires_grad = False
+            elif isinstance(base_embedding, torch.nn.Module):
+                for param in base_embedding.parameters():
+                    param.requires_grad = False
+            else:
+                for param in embeddings.parameters():
+                    param.requires_grad = False
 
     def get_optim_params(self) -> list[dict[str, Any]]:
         """Return optimizer param groups with per-component learning rates."""
@@ -738,9 +876,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 vlm_params.append(param)
 
-        vlm_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_lr
-        vit_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_vit_lr
-        connector_lr = 5e-5 if self.config.enable_lora_vlm else self.config.optimizer_connector_lr
+        vlm_lora = self.config.train_mode_vlm == "lora"
+        vlm_lr = 5e-5 if vlm_lora else self.config.optimizer_lr
+        vit_lr = 5e-5 if vlm_lora else self.config.optimizer_vit_lr
+        connector_lr = 5e-5 if vlm_lora else self.config.optimizer_connector_lr
 
         groups: list[dict[str, Any]] = []
         if vlm_params:
@@ -888,9 +1027,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
         timesteps: Tensor | None = None,
         noise: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
-        action_expert = self._backbone()._require_action_expert()
-        action_dtype = next(action_expert.parameters()).dtype
-        actions = actions.to(dtype=action_dtype)
+        # Match the original MolmoAct2 fp32+AMP training path: normalized actions,
+        # sampled flow noise, timesteps, and the velocity target are kept in fp32.
+        # Autocast still handles the action expert matmuls when the model weights
+        # are loaded in bf16 by the LeRobot training stack.
+        actions = actions.to(dtype=torch.float32)
         batch_size = int(actions.shape[0])
         device = actions.device
         num_flow_timesteps = max(1, int(self.config.num_flow_timesteps))
@@ -906,12 +1047,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     alpha=self.config.flow_matching_beta_alpha,
                     beta=self.config.flow_matching_beta_beta,
                 )
-                .to(dtype=action_dtype)
+                .to(dtype=actions.dtype)
                 .view(batch_size, num_flow_timesteps)
             )
         else:
             expected_timesteps_shape = (batch_size, num_flow_timesteps)
-            timesteps = timesteps.to(device=device, dtype=action_dtype)
+            timesteps = timesteps.to(device=device, dtype=actions.dtype)
             if tuple(timesteps.shape) != expected_timesteps_shape:
                 raise ValueError(
                     f"flow timesteps must have shape {expected_timesteps_shape}, got {tuple(timesteps.shape)}."
@@ -1038,6 +1179,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         device = actions.device
         xt_flat = xt.reshape(batch_size * num_flow_timesteps, actions.shape[1], actions.shape[2])
         timesteps_flat = timesteps.reshape(batch_size * num_flow_timesteps)
+        action_expert_dtype = action_expert.action_embed.weight.dtype
 
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
@@ -1057,7 +1199,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         valid_action = None
         if action_attention_mask is not None:
-            valid_action = action_attention_mask.to(device=device, dtype=actions.dtype).unsqueeze(-1)
+            valid_action = action_attention_mask.to(device=device, dtype=action_expert_dtype).unsqueeze(-1)
             valid_action = _expand_mask(valid_action, num_flow_timesteps)
 
         rope_cache = None
@@ -1065,25 +1207,25 @@ class MolmoAct2Policy(PreTrainedPolicy):
             rope_cache = action_expert.blocks[0].self_attn.rope.build_cache(
                 seq_len=actions.shape[1],
                 device=device,
-                dtype=actions.dtype,
+                dtype=action_expert_dtype,
             )
 
         cross_mask = action_expert._build_cross_attention_mask(
             encoder_attention_mask,
             batch_size,
-            actions.dtype,
+            action_expert_dtype,
         )
         cross_mask = _expand_mask(cross_mask, num_flow_timesteps)
         self_mask = action_expert._build_self_attention_mask(
             action_attention_mask,
             actions.shape[1],
             device,
-            actions.dtype,
+            action_expert_dtype,
         )
         self_mask = _expand_mask(self_mask, num_flow_timesteps)
 
         conditioning = self._action_time_conditioning(action_expert, timesteps_flat)
-        action_hidden = action_expert.action_embed(xt_flat)
+        action_hidden = action_expert.action_embed(xt_flat.to(dtype=action_expert_dtype))
         if valid_action is not None:
             action_hidden = action_hidden * valid_action
 
@@ -1178,7 +1320,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             pred_velocity = pred_velocity * valid_action
         pred_velocity = pred_velocity.reshape(
             batch_size, num_flow_timesteps, actions.shape[1], actions.shape[2]
-        )
+        ).to(dtype=target_velocity.dtype)
 
         loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")
         loss = _apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
@@ -1726,22 +1868,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _lora_target_modules(self, *, prefix: str) -> str:
         vlm_linear_leaves = "w1|w2|w3|wq|wk|wv|wo|att_proj|attn_out|ff_proj|ff_out|patch_embedding"
-        target_modules = rf"{prefix}\.(transformer|vision_backbone)\.(?:.*\.)?({vlm_linear_leaves})$"
-        if self.config.enable_lora_action_expert:
-            action_expert_linear_paths = (
-                r"time_embed\.(1|3)|"
-                r"action_embed|context_k_proj|context_v_proj|"
-                r"blocks\.\d+\.self_attn\.(qkv|out_proj)|"
-                r"blocks\.\d+\.cross_attn\.(q_proj|out_proj)|"
-                r"blocks\.\d+\.mlp\.(up_proj|gate_proj|down_proj)|"
-                r"blocks\.\d+\.modulation\.linear|"
-                r"final_layer\.(modulation\.linear|linear)"
-            )
-            target_modules = (
-                f"({target_modules}|"
-                rf"{prefix}\.action_expert\.({action_expert_linear_paths})$)"
-            )
-        return target_modules
+        return rf"{prefix}\.(transformer|vision_backbone)\.(?:.*\.)?({vlm_linear_leaves})$"
 
     def _build_inner_lora_config(self):
         require_package("peft", extra="molmoact2")
@@ -1757,8 +1884,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for param in self.model.parameters():
             param.requires_grad_(False)
         self.model = get_peft_model(self.model, peft_config)
-        if not self.config.enable_lora_action_expert:
-            self._unfreeze_action_expert_parameters()
+        self._unfreeze_action_expert_parameters()
         self.train(self.training)
 
     def _validate_peft_config(self, peft_config) -> None:
