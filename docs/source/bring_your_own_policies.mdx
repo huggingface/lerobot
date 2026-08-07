@@ -226,12 +226,15 @@ Implement `generate_text` on the policy, next to `predict_action_chunk`:
 
 ```python
 # modeling_my_policy.py
+from lerobot.configs import TextKind
+
+
 class MyPolicy(PreTrainedPolicy):
     def generate_text(
         self,
         batch: dict[str, Tensor],
         *,
-        kind: str = "subtask",
+        kind: TextKind = TextKind.SUBTASK,
         user_text: str | None = None,
     ) -> str:
         messages = self.build_messages(kind, batch, user_text)
@@ -244,9 +247,9 @@ class MyPolicy(PreTrainedPolicy):
         )
 
     def build_messages(self, kind, batch, user_text):
-        if kind == "subtask":
+        if kind == TextKind.SUBTASK:
             return [{"role": "user", "content": batch.get("task", "")}]
-        if kind == "vqa":
+        if kind == TextKind.VQA:
             return [
                 {"role": "user", "content": batch.get("task", "")},
                 {"role": "user", "content": user_text or ""},
@@ -254,12 +257,14 @@ class MyPolicy(PreTrainedPolicy):
         raise ValueError(f"Unsupported text kind: {kind}")
 ```
 
-The runtime calls it with two kinds:
+`kind` comes from [`TextKind`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/types.py), one shared catalog so callers and implementations cannot drift:
 
-| `kind`      | Purpose                                                         | Result                              |
-| ----------- | --------------------------------------------------------------- | ----------------------------------- |
-| `"subtask"` | The next low-level instruction to condition actions on.         | `state.language_context["subtask"]` |
-| `"vqa"`     | Answer `user_text` about the current view (the `/ask` command). | Printed to the operator.            |
+| `TextKind` | Purpose                                                         | Result                              |
+| ---------- | --------------------------------------------------------------- | ----------------------------------- |
+| `SUBTASK`  | The next low-level instruction to condition actions on.         | `state.language_context["subtask"]` |
+| `VQA`      | Answer `user_text` about the current view (the `/ask` command). | Printed to the operator.            |
+
+The members are `str` subclasses, so `kind == "subtask"` and `kind in {"subtask", "vqa"}` both work if your policy already dispatches on strings internally.
 
 The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
 
@@ -279,6 +284,16 @@ lerobot-rollout --language --policy.path=... --policy.text_temperature=0.5
 ```
 
 Temperature `0.0` is greedy argmax and is the default; any value above `0.0` enables sampling with `text_top_p`. Greedy suits a subtask head trained with cross-entropy against one target per step, but raising the temperature is a useful probe for an under-trained head stuck on a single output.
+
+Only settings every text head shares live on `PreTrainedConfig`. If your policy needs more — top-k, a repetition penalty, a beam count — declare it on **your own** config and read it there:
+
+```python
+@dataclass
+class MyPolicyConfig(PreTrainedConfig):
+    text_top_k: int = 0
+```
+
+That keeps the base config free of knobs most policies never read, and your extra settings still ride in `config.json` and stay overridable as `--policy.text_top_k=50`.
 
 ### Reasoning emitted with the action
 

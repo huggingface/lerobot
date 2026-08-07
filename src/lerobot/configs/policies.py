@@ -74,6 +74,11 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # useful probe for an under-trained head stuck on a single output. The `text_`
     # prefix keeps these distinct from action-sampling settings such as
     # `PI0FastConfig.temperature`.
+    #
+    # Only settings every text head shares belong here. A policy needing more —
+    # top-k, repetition penalty, beam count — declares it on its own config
+    # (e.g. `text_top_k` on `WallOSS05Config`) so the base does not accumulate
+    # knobs that most policies never read.
     text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
     text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
 
