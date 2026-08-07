@@ -1,0 +1,118 @@
+# Rollout
+
+`lerobot.rollout` is the policy deployment engine behind [`lerobot-rollout`](../inference): it wires up a
+policy, an inference backend, and a pluggable recording strategy, then runs the robot control loop. See
+[Policy Deployment (lerobot-rollout)](../inference) for CLI usage and [Real-Time Chunking (RTC)](../rtc)
+for the async inference backend.
+
+## RolloutConfig
+
+Top-level configuration for the `lerobot-rollout` CLI.
+
+[[autodoc]] lerobot.rollout.RolloutConfig
+
+## Strategies
+
+Strategies implement the control loop and are selected via `--strategy.type=<name>`.
+
+[[autodoc]] lerobot.rollout.RolloutStrategy
+    - setup
+    - run
+    - teardown
+
+[[autodoc]] lerobot.rollout.RolloutStrategyConfig
+
+[[autodoc]] lerobot.rollout.BaseStrategy
+    - all
+
+[[autodoc]] lerobot.rollout.BaseStrategyConfig
+
+[[autodoc]] lerobot.rollout.SentryStrategy
+    - all
+
+[[autodoc]] lerobot.rollout.SentryStrategyConfig
+
+[[autodoc]] lerobot.rollout.HighlightStrategy
+    - all
+
+[[autodoc]] lerobot.rollout.HighlightStrategyConfig
+
+[[autodoc]] lerobot.rollout.EpisodicStrategy
+    - all
+
+[[autodoc]] lerobot.rollout.EpisodicStrategyConfig
+
+[[autodoc]] lerobot.rollout.DAggerStrategy
+    - all
+
+[[autodoc]] lerobot.rollout.DAggerStrategyConfig
+
+[[autodoc]] lerobot.rollout.DAggerKeyboardConfig
+
+[[autodoc]] lerobot.rollout.DAggerPedalConfig
+
+## create_strategy
+
+[[autodoc]] lerobot.rollout.create_strategy
+
+## Inference backends
+
+Inference backends produce actions during the control loop and are selected via
+`--inference.type=<name>`.
+
+[[autodoc]] lerobot.rollout.InferenceEngine
+    - start
+    - stop
+    - reset
+    - get_action
+    - notify_observation
+    - pause
+    - resume
+
+[[autodoc]] lerobot.rollout.InferenceEngineConfig
+
+[[autodoc]] lerobot.rollout.SyncInferenceEngine
+    - all
+
+[[autodoc]] lerobot.rollout.SyncInferenceConfig
+
+[[autodoc]] lerobot.rollout.RTCInferenceEngine
+    - all
+
+[[autodoc]] lerobot.rollout.RTCInferenceConfig
+
+## create_inference_engine
+
+[[autodoc]] lerobot.rollout.create_inference_engine
+
+## build_rollout_context
+
+Wires up policy, processors, hardware, dataset, and inference engine before strategy dispatch.
+
+[[autodoc]] lerobot.rollout.build_rollout_context
+
+## RolloutContext
+
+[[autodoc]] lerobot.rollout.RolloutContext
+
+[[autodoc]] lerobot.rollout.RuntimeContext
+
+[[autodoc]] lerobot.rollout.HardwareContext
+
+[[autodoc]] lerobot.rollout.PolicyContext
+
+[[autodoc]] lerobot.rollout.ProcessorContext
+
+[[autodoc]] lerobot.rollout.DatasetContext
+
+## ThreadSafeRobot
+
+[[autodoc]] lerobot.rollout.robot_wrapper.ThreadSafeRobot
+    - all
+
+## RolloutRingBuffer
+
+Memory-bounded ring buffer used by the Highlight strategy for on-demand recording.
+
+[[autodoc]] lerobot.rollout.ring_buffer.RolloutRingBuffer
+    - all

@@ -105,6 +105,7 @@ class DAggerEvents:
     """
 
     def __init__(self) -> None:
+        """Create a fresh events container, starting in the `AUTONOMOUS` phase."""
         self._lock = Lock()
         self._phase = DAggerPhase.AUTONOMOUS
         self._pending_transition: str | None = None
@@ -123,6 +124,7 @@ class DAggerEvents:
 
     @phase.setter
     def phase(self, value: DAggerPhase) -> None:
+        """Set the current phase directly, bypassing `_DAGGER_TRANSITIONS` validation."""
         with self._lock:
             self._phase = value
 
@@ -207,6 +209,7 @@ def _init_dagger_pedal(events: DAggerEvents, cfg: DAggerPedalConfig):
     }
 
     def on_press(code: str) -> None:
+        """Apply a resolved pedal code to the DAgger events."""
         if code in code_to_event:
             events.request_transition(code_to_event[code])
         if code == cfg.upload:
@@ -239,6 +242,7 @@ class DAggerStrategy(RolloutStrategy):
     config: DAggerStrategyConfig
 
     def __init__(self, config: DAggerStrategyConfig):
+        """See [`~rollout.RolloutStrategy.__init__`]."""
         super().__init__(config)
         self._listener = None
         self._pedal_thread = None
