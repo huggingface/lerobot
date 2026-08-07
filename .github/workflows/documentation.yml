@@ -60,10 +60,14 @@ jobs:
       github.repository == 'huggingface/lerobot'
     permissions:
       contents: read
-    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@6108e850ae1cf2f71bb0815a600bcd50c39abfa7  # main
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@931031bf2b54aabb134ceb54980a6a2860a00f11  # main
     with:
       commit_sha: ${{ github.sha }}
       package: lerobot
+      # The shared workflow builds its venv with the runner's system Python, which is 3.10 on
+      # ubuntu-22.04. lerobot requires >=3.12, so without this the install fails during setup —
+      # before `pre_command` below ever runs. Added upstream in huggingface/doc-builder#808.
+      python_version: "3.12"
       # doc-builder ships a mock-deps registry entry for lerobot, so the reusable workflow takes its
       # "light install" path: `pip install ./lerobot --no-deps` plus a handful of real dependencies.
       # That is not enough to import lerobot — draccus runs `register_subclass` at import time and
@@ -92,11 +96,12 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@6108e850ae1cf2f71bb0815a600bcd50c39abfa7  # main
+    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@931031bf2b54aabb134ceb54980a6a2860a00f11  # main
     with:
       commit_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.number }}
       package: lerobot
       # See the comment on build_main_docs. The PR workflow passes its own `--version pr_<n>`, so no
       # additional_args are needed here.
+      python_version: "3.12"
       pre_command: uv pip install "./lerobot[dataset]"
