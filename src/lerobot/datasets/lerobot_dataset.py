@@ -15,8 +15,11 @@
 # limitations under the License.
 import contextlib
 import logging
+import shutil
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
+from uuid import uuid4
 
 import datasets
 import torch
@@ -30,6 +33,15 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import DatasetReader
 from .dataset_writer import DatasetWriter
+from .distributed import (
+    DistributedEpisodeResult,
+    DistributedEpisodeSpec,
+    DistributedWritePlan,
+    DistributedWriteSession,
+    publish_distributed_metadata,
+    validate_distributed_results,
+    write_distributed_metadata,
+)
 from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
@@ -448,6 +460,85 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         self._require_writer("save_episode")
         self.writer.save_episode(episode_data, parallel_encoding)
+
+    def save_distributed_episode(
+        self, spec: DistributedEpisodeSpec, parallel_encoding: bool = True
+    ) -> DistributedEpisodeResult:
+        """Write the worker-owned artifact for one preallocated episode."""
+        self._require_writer("save_distributed_episode")
+        if not getattr(self, "_is_distributed_writer", False):
+            raise RuntimeError(
+                "save_distributed_episode() requires LeRobotDataset.open_distributed_writer()."
+            )
+        result = self.writer.save_distributed_episode(spec, parallel_encoding)
+        if self._distributed_write_session is not None:
+            self._distributed_write_session.record_result(result)
+        return result
+
+    def start_distributed_episode(self, spec: DistributedEpisodeSpec) -> None:
+        """Bind the worker's frame staging directory to a preallocated episode."""
+        self._require_writer("start_distributed_episode")
+        if not getattr(self, "_is_distributed_writer", False):
+            raise RuntimeError(
+                "start_distributed_episode() requires LeRobotDataset.open_distributed_writer()."
+            )
+        self.writer.start_distributed_episode(spec)
+
+    def create_distributed_write_session(self, plan: DistributedWritePlan) -> DistributedWriteSession:
+        """Persist a new distributed write plan for explicit recovery after interruption."""
+        self._require_writer("create_distributed_write_session")
+        if self.meta.total_episodes or self.meta.total_frames:
+            raise ValueError("Distributed write sessions require a newly created empty dataset.")
+        if set(plan.video_keys) != set(self.meta.video_keys):
+            raise ValueError(
+                "Distributed write plan video_keys must match the dataset video feature keys: "
+                f"{sorted(plan.video_keys)!r} != {sorted(self.meta.video_keys)!r}."
+            )
+        return DistributedWriteSession.create(
+            self.root,
+            plan,
+            data_path_template=self.meta.data_path,
+            video_path_template=self.meta.video_path,
+            camera_keys=tuple(self.meta.camera_keys),
+            depth_keys=tuple(self.meta.depth_keys),
+        )
+
+    @classmethod
+    def resume_distributed_write_session(cls, root: str | Path) -> DistributedWriteSession:
+        """Load persisted distributed progress and expose specs still requiring execution."""
+        return DistributedWriteSession.resume(root)
+
+    def commit_distributed_results(
+        self, plan: DistributedWritePlan, results: list[DistributedEpisodeResult]
+    ) -> None:
+        """Validate worker artifacts and atomically publish their global metadata."""
+        self._require_writer("commit_distributed_results")
+        if self.meta.total_episodes or self.meta.total_frames:
+            raise ValueError("Distributed commits require a newly created empty dataset.")
+        if set(plan.video_keys) != set(self.meta.video_keys):
+            raise ValueError(
+                "Distributed write plan video_keys must match the dataset video feature keys: "
+                f"{sorted(plan.video_keys)!r} != {sorted(self.meta.video_keys)!r}."
+            )
+        ordered_results = validate_distributed_results(
+            self.root,
+            self.meta.data_path,
+            self.meta.video_path,
+            plan,
+            results,
+        )
+        staging_root = self.root / f".distributed-metadata-{uuid4().hex}"
+        try:
+            write_distributed_metadata(
+                staging_root,
+                deepcopy(self.meta.info),
+                plan,
+                ordered_results,
+            )
+            publish_distributed_metadata(self.root, staging_root)
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
+        self.meta._load_metadata()
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
         """Discard the current episode buffer without saving.
@@ -910,3 +1001,37 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._is_finalized = False
 
         return obj
+
+    @classmethod
+    def open_distributed_writer(
+        cls,
+        repo_id: str,
+        root: str | Path,
+        *,
+        rgb_encoder: RGBEncoderConfig | None = None,
+        depth_encoder: DepthEncoderConfig | None = None,
+        encoder_threads: int | None = None,
+        session: DistributedWriteSession | None = None,
+    ) -> "LeRobotDataset":
+        """Open a worker writer for a newly created, still-empty dataset."""
+        root = Path(root)
+        if session is not None and session.root != root:
+            raise ValueError(f"Distributed session root {session.root} does not match writer root {root}.")
+        dataset = cls.resume(
+            repo_id,
+            root=root,
+            batch_encoding_size=1,
+            rgb_encoder=rgb_encoder,
+            depth_encoder=depth_encoder,
+            encoder_threads=encoder_threads,
+            streaming_encoding=False,
+        )
+        if dataset.meta.total_episodes or dataset.meta.total_frames:
+            dataset.finalize()
+            raise ValueError(
+                "Distributed workers only support a newly created empty dataset; "
+                "distributed append is not supported."
+            )
+        dataset._is_distributed_writer = True
+        dataset._distributed_write_session = session
+        return dataset
