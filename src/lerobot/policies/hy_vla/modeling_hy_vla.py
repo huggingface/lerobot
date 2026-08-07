@@ -1796,6 +1796,8 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     config_class = HyVLAConfig
     name = "hy_vla"
+    #: Hy's chat suffix already marks where the assistant turn begins, so the goal alone.
+    PROMPT_TEMPLATES = {"subtask": "{task}"}  # noqa: RUF012
 
     def __init__(self, config: HyVLAConfig, **_: Any):
         super().__init__(config)
@@ -2082,11 +2084,6 @@ class HyVLAPolicy(PreTrainedPolicy):
         if actions.shape[-2] != 2 * horizon:
             raise RuntimeError(f"Expected {2 * horizon} rel/abs tokens, got {actions.shape[-2]}.")
         return torch.cat((actions[:, :horizon], actions[:, horizon:]), dim=-1)
-
-    @property
-    def subtask_prompt_template(self) -> str:
-        """Hy's chat suffix marks where the assistant turn begins, so the goal alone suffices."""
-        return "{task}"
 
     @torch.no_grad()
     def generate_text(
