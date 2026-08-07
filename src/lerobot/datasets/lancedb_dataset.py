@@ -52,8 +52,8 @@ FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
 META_TABLE = "meta"
 VIDEO_BLOB_COLUMN = "video_bytes"
-# Byte-index columns on the videos table Map a frame window to its byte ranges so a batch's
-# bytes fetch can be batched . Keyframe columns assume constant frame rate. mp4-only
+# Byte-index columns on the videos table: map a frame window to its byte ranges so a
+# batch's video fetch can be batched. Assume constant frame rate; mp4-only.
 VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "kf_positions")
 # ffmpeg reads more bytes than the frames requested. Padding each prefetched range
 # to cover those known reads keeps them off the slow fallback path.
@@ -584,11 +584,9 @@ class LanceDBDataset(torch.utils.data.Dataset):
         plans = self._plan_batch(indices)
         rows, row_pos = self._batch_rows(plans)
 
-        # Video prep (byte-index, header ranges, decoder creation, frame-window
-        # fetch) needs only the batch's files and frame indices, so it overlaps
-        # the frames-table fetch. Decoders read frames via the container index and
-        # fall back to a ranged read for any byte the prefetch missed, so a wrong
-        # speculative range costs a re-fetch, never a wrong frame.
+        # Video prep (byte-index, header ranges, decoder creation, frame-window fetch)
+        # needs only the batch's files, so it overlaps the frames-table fetch. A wrong
+        # speculative range costs a re-fetch via the ranged-read fallback, never a wrong frame.
         prepared_future = None
         if self.meta.video_keys:
             windows = self._plan_file_windows(plans)
