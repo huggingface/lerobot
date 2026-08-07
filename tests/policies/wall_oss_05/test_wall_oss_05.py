@@ -440,17 +440,26 @@ def test_factory_uses_distinct_policy_type():
     assert config.normalization_mapping["ACTION"] is NormalizationMode.QUANTILES
 
 
-def test_noncanonical_dimensions_are_rejected():
-    config = _config(
+def _dimension_config(state_dim: int, action_dim: int):
+    return _config(
         input_features={
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(16,)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
             "observation.images.face_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
             "observation.images.right_wrist_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
         },
-        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
     )
-    with pytest.raises(ValueError, match="canonical 26D"):
-        WallOSS05Policy(config, load_model=False)
+
+
+def test_narrow_dimensions_are_padded_to_the_26d_contract():
+    # Native robot widths below 26D are zero-padded rather than rejected, so a 6D
+    # OMX arm rolls out without a CLI dim override.
+    WallOSS05Policy(_dimension_config(state_dim=16, action_dim=12), load_model=False)
+
+
+def test_dimensions_exceeding_the_26d_contract_are_rejected():
+    with pytest.raises(ValueError, match="cannot exceed the fixed 26D contract"):
+        WallOSS05Policy(_dimension_config(state_dim=32, action_dim=32), load_model=False)
 
 
 def test_task_passthrough_does_not_rewrite():
