@@ -1,0 +1,250 @@
+# 视频编码参数
+
+当启用视频存储时，LeRobot 将每个相机流存储为 **MP4** 文件，而不是每个时间步保存一个图像文件。视频编码在时间上压缩，与大量 PNG 相比通常可以减少数据集大小和 I/O，同时保持 MP4 — 一种每个播放器和加载器都能理解的格式。
+
+将帧编码为 MP4 是一个完整的 FFmpeg 管道：编码器选择、像素格式、GOP/关键帧、质量与速度的权衡，以及可选的额外编码器标志。这些参数大多可通过 `rgb_encoder`（一个嵌套的 `RGBEncoderConfig`（`lerobot.configs.video.RGBEncoderConfig`））由用户调节，通过 PyAV 传递。
+
+你可以通过 CLI 使用 `--dataset.rgb_encoder.<field>` 设置这些参数（例如使用 `lerobot-record` 或 `lerobot-rollout`）。相同的配置块适用于该运行中的每个相机视频流。
+
+> [!TIP]
+> 视频存储必须开启才能使 `rgb_encoder` 生效 —
+> Python API 中 `use_videos=True`，或 CLI 上 `--dataset.video=true`（录制默认值）。视频关闭时，输入保持为图像，`rgb_encoder` 被忽略。
+
+关于帧**何时**被写入 vs 编码（流式 vs episode 后）、队列和其他顶级 `--dataset.*` 开关的详细信息，请参阅[流式视频编码](./streaming_video_encoding)。有关编码参数对比和实验，请参阅[视频基准测试 Space](https://huggingface.co/spaces/lerobot/video-benchmark)。
+
+---
+
+## 示例
+
+```bash
+lerobot-record \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --robot.id=black \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.num_episodes=2 \
+    --dataset.single_task="Grab the cube" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.preset=fast \
+    --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2} \
+    --display_data=true
+```
+
+---
+
+## 调优参数
+
+> [!WARNING]
+> 默认值经过调优以平衡**压缩比**、**视觉质量**和**解码/寻道速度**，适用于典型的机器人数据集。更改它们可能同时影响录制（CPU 负载、丢帧）和训练（解码吞吐量、图像质量）。
+>
+> 只有在有明确理由时才覆盖这些参数，并在依赖新设置之前衡量对管道的影响。
+
+以下所有标志在 CLI 上以 `--dataset.rgb_encoder.` 为前缀。
+
+| 参数            | 类型             | 默认值        | 描述                                                                                                                                                                                              |
+| --------------- | ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vcodec`        | `str`            | `"libsvtav1"` | 视频编码器名称。`"auto"` 从固定偏好列表中选择第一个可用的硬件编码器，回退到 `libsvtav1`。                                                                                                         |
+| `pix_fmt`       | `str`            | `"yuv420p"`   | 输出像素格式。必须由你的 FFmpeg 构建中所选编码器支持。                                                                                                                                            |
+| `g`             | `int`            | `2`           | GOP 大小 — 每 `g` 帧一个关键帧。作为 FFmpeg 选项 `g` 发出。                                                                                                                                       |
+| `crf`           | `int` 或 `float` | `30`          | 抽象质量值，按编码器映射（参见[映射](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/video.py#L197)）。值越低 → 质量越高 / 输出越大（映射单调时）。                              |
+| `preset`        | `int` 或 `str`   | `12` \*       | 编码器速度预设；含义取决于编码器。<br/>\* 未设置且 `vcodec=libsvtav1` 时，LeRobot 默认为 `12`。                                                                                                    |
+| `fast_decode`   | `int`            | `0`           | `libsvtav1`：`0–2`，通过 `svtav1-params` 传递。<br/>`h264` / `hevc`（软件）：如果 `>0`，设置 `tune=fastdecode`。<br/>其他编码器：通常不使用。                                                        |
+| `video_backend` | `str`            | `"pyav"`      | 目前视频编码仅实现了 `"pyav"`。                                                                                                                                                                    |
+| `extra_options` | `dict`           | `{}`          | 在上述结构化字段之后合并的额外 FFmpeg 或编码器特定选项。不能覆盖这些字段已设置的键。                                                                                                              |
+
+---
+
+## 深度流
+
+深度图（Intel RealSense、Reachy 2）作为**自己的视频流**与 RGB 流一起存储。原始深度（`uint16` 毫米或 `float32` 米）无法通过 8 位编码器，因此 LeRobot **量化**每张图为 12 位编码（`[0, 4095]`）— 默认使用对数方式，以匹配深度传感器的 `1/depth` 误差分布 — 然后将其打包到高比特深度像素格式（`gray12le`）并用 12 位编码器编码。
+
+<div style="margin:28px 0;padding:14px 0;">
+  <div style="margin:0 auto;display:flex;flex-wrap:wrap;justify-content:center;align-items:stretch;gap:6px;font-family:'Source Sans 3',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:600;color:#1B1B1D;">
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#DBEAFE;color:#1D4ED8;border-radius:9px;padding:8px 12px;">
+      <span>原始深度</span>
+      <span style="font-size:11px;font-weight:400;color:#3B6FD4;white-space:nowrap;">
+        uint16 mm
+        <br />
+        float32 m
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <div style="border:2px dashed #C4B5FD;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:stretch;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#7E22CE;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        录制时
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>裁剪</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          到 [depth_min,
+          <br />
+          depth_max]
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>量化</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          12 位编码 0–4095
+          <br />
+          对数（默认）或线性
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>打包</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          到 gray12le
+          <br />
+          平面
+        </span>
+      </span>
+      <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+        →
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#F3E8FF;color:#7E22CE;border-radius:9px;padding:8px 12px;">
+        <span>编码</span>
+        <span style="font-size:11px;font-weight:400;color:#9061C2;white-space:nowrap;">
+          HEVC
+          <br />
+          Main 12
+        </span>
+      </span>
+    </div>
+    <span style="display:flex;align-items:center;font-size:16px;color:#C3CBD9;">
+      →
+    </span>
+    <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#FEF3C7;color:#B45309;border-radius:9px;padding:8px 12px;">
+      <span>MP4</span>
+      <span style="font-size:11px;font-weight:400;color:#C77D18;white-space:nowrap;">
+        存储的
+        <br />
+        流
+      </span>
+    </span>
+    <span style="display:flex;align-items:center;font-size:16px;color:#34A06B;">
+      →
+    </span>
+    <div style="border:2px dashed #6EE7B7;border-radius:13px;padding:18px 12px 12px;position:relative;display:flex;align-items:center;gap:6px;">
+      <span style="position:absolute;top:-10px;left:12px;background:#fff;padding:0 6px;font-size:11px;font-weight:700;color:#047857;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">
+        加载时
+      </span>
+      <span style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:2px;background:#D1FAE5;color:#047857;border-radius:9px;padding:8px 12px;">
+        <span>反量化</span>
+        <span style="font-size:11px;font-weight:400;color:#059669;white-space:nowrap;">
+          到 mm / m
+        </span>
+      </span>
+    </div>
+  </div>
+</div>
+
+通过并行的 **`depth_encoder`** 配置块（`DepthEncoderConfig`）配置深度管道。它共享所有 `RGBEncoderConfig` 字段（`vcodec`、`pix_fmt`、`crf` 等），并添加四个量化器旋钮，通过 `--dataset.depth_encoder.<field>` 设置：
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.depth_min=0.05 \
+    --dataset.depth_encoder.depth_max=5.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+| 参数            | 类型    | 默认值                              | 描述                                                                                                             |
+| --------------- | ------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `vcodec`        | `str`   | `"hevc"`                            | HEVC Main 12（支持 12 位的编码器，MP4 兼容）。                                                                   |
+| `extra_options` | `dict`  | `{"x265-params": "lossless=1"}`     | **深度默认无损**（精确往返）；`crf` 被忽略。传递 `extra_options={}` 并设置 `crf` 以获得更小的有损流。              |
+| `pix_fmt`       | `str`   | `"gray12le"`                        | 用于携带量化编码的单通道 12 位像素格式。                                                                          |
+| `depth_min`     | `float` | `0.01`                              | 映射到量子 `0` 的深度（米）。低于此值的在解码时裁剪。                                                             |
+| `depth_max`     | `float` | `10.0`                              | 映射到量子 `4095` 的深度（米）。高于此值的在解码时裁剪。                                                          |
+| `shift`         | `float` | `3.5`                               | 对数量化中使用的预对数偏移（米），用于零附近的数值稳定性。必须满足 `depth_min + shift > 0`。                       |
+| `use_log`       | `bool`  | `True`                              | 如果为 `true`，在对数空间量化（推荐用于典型深度传感器）。设为 `false` 使用均匀/线性量化。                          |
+
+> [!TIP]
+> `depth_min`、`depth_max` 和 `shift` 始终以**米**为单位解释，无论输入深度的单位如何。输入自动检测：整数数组（如直接从 RealSense 获取的 `uint16` 毫米）被视为毫米，浮点数组被视为米。
+> 选择 `depth_min` / `depth_max` 以覆盖传感器的实际工作范围 — 该范围外的量子会饱和，这可能会破坏边界处的细节。
+
+深度特征在 `meta/info.json` 中标记为 `"is_depth_map": true`，其量化器设置（`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）被持久化 — 这使得深度在加载时能被**反量化回物理单位**。
+
+### 加载时的输出单位
+
+`depth_encoder` 是**录制时**的关注点。_加载_时深度图反量化到的单位（例如训练期间）由读取时标志 `--dataset.depth_output_unit` 单独设置：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=<my_username>/<my_dataset_name> \
+    --dataset.depth_output_unit=m \
+    --policy.type=act
+```
+
+| 参数                | 类型  | 默认值 | 描述                                                          |
+| ------------------- | ----- | ------ | ------------------------------------------------------------- |
+| `depth_output_unit` | `str` | `"mm"` | 加载时深度图反量化到的物理单位：`"mm"`（毫米）或 `"m"`（米）。 |
+
+> [!TIP]
+> 这纯粹是解码时的展示选择 — 它**不会**改变存储的视频或其元数据，因此同一数据集可以作为 `mm` 或 `m` 读取而无需重新编码。对没有深度相机的数据集没有影响。
+
+---
+
+## 数据集元数据中的持久化
+
+在视频流的第一个 episode 编码后，编码器配置被**持久化到数据集元数据**（`meta/info.json`）中每个视频特征下，与从文件本身探测的值一起。对于视频特征 `observation.images.<camera>`，`info.json` 中的布局为：
+
+```json
+{
+  "features": {
+    "observation.images.laptop": {
+      "dtype": "video",
+      "shape": [480, 640, 3],
+      "info": {
+        "video.height": 480,
+        "video.width": 640,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.fps": 30,
+        "video.channels": 3,
+        "is_depth_map": false,
+        "video.g": 2,
+        "video.crf": 30,
+        "video.preset": "fast",
+        "video.fast_decode": 0,
+        "video.video_backend": "pyav",
+        "video.extra_options": { "tune": "film", "profile:v": "high", "bf": 2 }
+      }
+    }
+  }
+}
+```
+
+两个来源贡献了 `info` 块：
+
+| 来源            | 来源位置                                            | 字段                                                                                                                    |
+| --------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **流派生**      | 使用 PyAV 从编码的 MP4 回读。                       | `video.height`、`video.width`、`video.codec`、`video.pix_fmt`、`video.fps`、`video.channels`、`is_depth_map`、`audio.*` |
+| **编码器派生**  | 取自 `RGBEncoderConfig` / `DepthEncoderConfig`。    | `video.g`、`video.crf`、`video.preset`、`video.fast_decode`、`video.video_backend`、`video.extra_options`               |
+
+> [!IMPORTANT]
+> 此块仅从**第一个** episode 填充**一次**。它假设数据集中的每个 episode 都使用相同的 `rgb_encoder` 编码。不支持在录制过程中更改编码器设置 — `info.json` 只会反映第一个 episode 使用的参数。
+
+---
+
+## 合并数据集
+
+使用 `merge_datasets` 聚合数据集时，视频文件按原样连接（不重新编码），`info.json` 中的编码器字段按键合并：
+
+| 合并规则       | 字段                                                                               | 行为                                                                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **必须匹配**   | `video.codec`、`video.pix_fmt`、`video.height`、`video.width`、`video.fps`         | 流派生字段必须在来源之间匹配，否则 FFmpeg 的 concat demuxer 会失败。                                                                              |
+| **松散合并**   | `video.g`、`video.crf`、`video.preset`、`video.fast_decode`、`video.extra_options` | 编码器调优字段。如果所有来源一致，保留该值；如果不一致，设为 `null`（`video.extra_options` 为 `{}`）并记录警告。                                   |
