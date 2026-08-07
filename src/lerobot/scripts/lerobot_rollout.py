@@ -44,10 +44,11 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
 
-    # Base mode — interactive session: the robot stays idle until /start is
-    # typed; /subtask <text> re-instructs the policy mid-run; /reset returns
-    # it to the initial position (hardware and policy stay warm); /stop shuts
-    # down gracefully
+    # Interactive session (base or sentry strategy): the robot stays idle
+    # until /start is typed; /subtask <text> re-instructs the policy mid-run;
+    # /reset returns it to the initial position (hardware and policy stay
+    # warm); /stop shuts down gracefully.  With --strategy.type=sentry the
+    # session also records continuously, labeling frames with the live task.
     lerobot-rollout \\
         --strategy.type=base \\
         --policy.path=lerobot/act_koch_real \\
