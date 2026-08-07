@@ -101,6 +101,7 @@ class RLAlgorithm(HubMixin, abc.ABC):
 
     @optimization_step.setter
     def optimization_step(self, value: int) -> None:
+        """Set the current learner optimization step."""
         self._optimization_step = int(value)
 
     def get_weights(self) -> dict[str, Any]:

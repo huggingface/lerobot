@@ -24,8 +24,8 @@ def make_algorithm_config(algorithm_type: str, **kwargs) -> RLAlgorithmConfig:
     """Instantiate an `RLAlgorithmConfig` from its registered type name.
 
     Args:
-        algorithm_type: Registry key of the algorithm (e.g. ``"sac"``).
-        **kwargs: Keyword arguments forwarded to the config class constructor.
+        algorithm_type (`str`): Registry key of the algorithm (e.g. `"sac"`).
+        kwargs (`Any`, *optional*): Keyword arguments forwarded to the config class constructor.
 
     Returns:
         An instance of the matching ``RLAlgorithmConfig`` subclass.
@@ -44,14 +44,13 @@ def make_algorithm_config(algorithm_type: str, **kwargs) -> RLAlgorithmConfig:
 
 
 def get_algorithm_class(name: str) -> type[RLAlgorithm]:
-    """
-    Retrieves an RL algorithm class by its registered name.
+    """Retrieves an RL algorithm class by its registered name.
 
     This function uses dynamic imports to avoid loading all algorithm classes into
     memory at once, improving startup time and reducing dependencies.
 
     Args:
-        name: The name of the algorithm. Supported names are "sac".
+        name (`str`): The name of the algorithm. Supported names are "sac".
 
     Returns:
         The algorithm class corresponding to the given name.
@@ -70,8 +69,7 @@ def get_algorithm_class(name: str) -> type[RLAlgorithm]:
 
 
 def make_algorithm(cfg: RLAlgorithmConfig, policy: torch.nn.Module) -> RLAlgorithm:
-    """
-    Instantiate an RL algorithm.
+    """Instantiate an RL algorithm.
 
     This factory function looks up the :class:`RLAlgorithm` subclass that matches
     ``cfg.type`` and instantiates it with the provided policy. It also enforces
@@ -79,8 +77,8 @@ def make_algorithm(cfg: RLAlgorithmConfig, policy: torch.nn.Module) -> RLAlgorit
     normally handled by :meth:`TrainRLServerPipelineConfig.validate`).
 
     Args:
-        cfg: The algorithm configuration. Must have ``policy_config`` set.
-        policy: The policy module the algorithm will train.
+        cfg (`RLAlgorithmConfig`): The algorithm configuration. Must have `policy_config` set.
+        policy (`torch.nn.Module`): The policy module the algorithm will train.
 
     Returns:
         An instantiated :class:`RLAlgorithm`.

@@ -215,4 +215,6 @@
     title: Environments
   - local: api/configs
     title: Configuration
+  - local: api/rl
+    title: Reinforcement Learning
   title: "API Reference"

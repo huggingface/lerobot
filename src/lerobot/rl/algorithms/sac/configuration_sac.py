@@ -39,52 +39,73 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
     update loop. The policy-side (actor + observation encoder) lives in
     :class:`~lerobot.policies.gaussian_actor.GaussianActorConfig` and is
     referenced via :attr:`policy_config`.
+
+    Args:
+        actor_lr (`float`, *optional*, defaults to 0.0003):
+            Learning rate for the actor network.
+        critic_lr (`float`, *optional*, defaults to 0.0003):
+            Learning rate for the critic network.
+        temperature_lr (`float`, *optional*, defaults to 0.0003):
+            Learning rate for the temperature parameter.
+        discount (`float`, *optional*, defaults to 0.99):
+            Discount factor for the Bellman update.
+        use_backup_entropy (`bool`, *optional*, defaults to `True`):
+            Whether to use backup entropy in the Bellman target.
+        critic_target_update_weight (`float`, *optional*, defaults to 0.005):
+            Polyak-averaging weight for the critic target update.
+        num_critics (`int`, *optional*, defaults to 2):
+            Number of critics in the ensemble.
+        num_subsample_critics (`int | None`, *optional*):
+            Number of critics to subsample from the ensemble for each Bellman target computation.
+            `None` uses the full ensemble.
+        critic_network_kwargs (`CriticNetworkConfig`, *optional*):
+            Configuration for the (continuous-action) critic network architecture.
+        discrete_critic_network_kwargs (`CriticNetworkConfig`, *optional*):
+            Configuration for the discrete-action critic network architecture.
+        temperature_init (`float`, *optional*, defaults to 1.0):
+            Initial value of the entropy temperature.
+        target_entropy (`float | None`, *optional*):
+            Target entropy for automatic temperature tuning. If `None`, defaults to `-|A|/2` where
+            `|A|` is the total action dimension (continuous + 1 if there is a discrete action head).
+        utd_ratio (`int`, *optional*, defaults to 1):
+            Update-to-data ratio. Set to `>1` to enable extra critic updates per env step.
+        policy_update_freq (`int`, *optional*, defaults to 1):
+            Frequency of policy updates, in units of critic updates.
+        grad_clip_norm (`float`, *optional*, defaults to 40.0):
+            Gradient-clipping norm applied during optimization.
+        use_torch_compile (`bool`, *optional*, defaults to `False`):
+            Whether to `torch.compile` the algorithm's forward passes. Currently disabled by default.
+        policy_config (`PreTrainedConfig | None`, *optional*):
+            The policy (actor) config this algorithm trains. Populated via `from_policy_config` or by
+            `TrainRLServerPipelineConfig.validate` before the algorithm is constructed.
     """
 
     # Optimizer learning rates
-    # Learning rate for the actor network
     actor_lr: float = 3e-4
-    # Learning rate for the critic network
     critic_lr: float = 3e-4
-    # Learning rate for the temperature parameter
     temperature_lr: float = 3e-4
 
     # Bellman update
-    # Discount factor for the SAC algorithm
     discount: float = 0.99
-    # Whether to use backup entropy for the SAC algorithm
     use_backup_entropy: bool = True
-    # Weight for the critic target update
     critic_target_update_weight: float = 0.005
 
     # Critic ensemble
-    # Number of critics in the ensemble
     num_critics: int = 2
-    # Number of subsampled critics for training
     num_subsample_critics: int | None = None
-    # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
-    # Configuration for the discrete critic network
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
 
     # Temperature / entropy
-    # Initial temperature value
     temperature_init: float = 1.0
-    # Target entropy for automatic temperature tuning. If ``None``, defaults to
-    # ``-|A|/2`` where ``|A|`` is the total action dimension (continuous + 1 if
-    # there is a discrete action head).
     target_entropy: float | None = None
 
     # Update loop
-    # Update-to-data ratio. Set to >1 to enable extra critic updates per env step.
     utd_ratio: int = 1
-    # Frequency of policy updates
     policy_update_freq: int = 1
-    # Gradient clipping norm for the SAC algorithm
     grad_clip_norm: float = 40.0
 
     # Optimizations
-    # torch.compile is currently disabled by default
     use_torch_compile: bool = False
 
     # Policy config

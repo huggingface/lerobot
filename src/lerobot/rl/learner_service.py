@@ -44,10 +44,10 @@ SHUTDOWN_TIMEOUT = 10
 
 
 class LearnerService(_ServicerBase):
-    """
-    Implementation of the LearnerService gRPC service
-    This service is used to send parameters to the Actor and receive transitions and interactions from the Actor
-    check transport.proto for the gRPC service definition
+    """Implementation of the LearnerService gRPC service.
+
+    Sends policy parameters to the actor and receives transitions and interactions from it; see
+    `transport.proto` for the gRPC service definition.
     """
 
     def __init__(
@@ -59,6 +59,19 @@ class LearnerService(_ServicerBase):
         interaction_message_queue: Queue,
         queue_get_timeout: float = 0.001,
     ):
+        """Create the servicer.
+
+        Args:
+            shutdown_event (`Event`): Set to stop `StreamParameters`'s push loop.
+            parameters_queue (`Queue`): Queue of serialized policy weights, drained and streamed to
+                the actor by `StreamParameters`.
+            seconds_between_pushes (`float`): Minimum interval between successive parameter pushes.
+            transition_queue (`Queue`): Queue filled by `SendTransitions` with received transitions.
+            interaction_message_queue (`Queue`): Queue filled by `SendInteractions` with received
+                interaction messages.
+            queue_get_timeout (`float`, *optional*, defaults to 0.001): Timeout used when polling
+                `parameters_queue`.
+        """
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
         self.seconds_between_pushes = seconds_between_pushes
@@ -69,6 +82,17 @@ class LearnerService(_ServicerBase):
     def StreamParameters(  # noqa: N802
         self, request: "services_pb2.Empty", context: "grpc.ServicerContext"
     ):
+        """GRPC server-streaming RPC: push the latest policy parameters to the actor.
+
+        Runs until `shutdown_event` is set, pushing at most once every `seconds_between_pushes`.
+
+        Args:
+            request (`services_pb2.Empty`): Unused; required by the gRPC service signature.
+            context (`grpc.ServicerContext`): gRPC call context.
+
+        Yields:
+            Chunks of a `services_pb2.Parameters` message, produced by `send_bytes_in_chunks`.
+        """
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
@@ -104,6 +128,16 @@ class LearnerService(_ServicerBase):
         return services_pb2.Empty()
 
     def SendTransitions(self, request_iterator, _context: "grpc.ServicerContext"):  # noqa: N802
+        """GRPC client-streaming RPC: receive transition chunks from the actor into `transition_queue`.
+
+        Args:
+            request_iterator: Stream of `services_pb2.Transition` chunks sent by the actor's
+                `transitions_stream`.
+            _context (`grpc.ServicerContext`): gRPC call context.
+
+        Returns:
+            services_pb2.Empty: Acknowledgement sent once the actor closes the stream.
+        """
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive transitions from the Actor")
 
@@ -118,6 +152,16 @@ class LearnerService(_ServicerBase):
         return services_pb2.Empty()
 
     def SendInteractions(self, request_iterator, _context: "grpc.ServicerContext"):  # noqa: N802
+        """GRPC client-streaming RPC: receive interaction-message chunks into `interaction_message_queue`.
+
+        Args:
+            request_iterator: Stream of `services_pb2.InteractionMessage` chunks sent by the actor's
+                `interactions_stream`.
+            _context (`grpc.ServicerContext`): gRPC call context.
+
+        Returns:
+            services_pb2.Empty: Acknowledgement sent once the actor closes the stream.
+        """
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive interactions from the Actor")
 
@@ -132,4 +176,5 @@ class LearnerService(_ServicerBase):
         return services_pb2.Empty()
 
     def Ready(self, request: "services_pb2.Empty", context: "grpc.ServicerContext"):  # noqa: N802
+        """GRPC health check: returns immediately, confirming the learner server is up."""
         return services_pb2.Empty()

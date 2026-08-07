@@ -31,8 +31,7 @@ from lerobot.utils.constants import OBS_STATE
 @dataclass
 @ProcessorStepRegistry.register("joint_velocity_processor")
 class JointVelocityProcessorStep(ObservationProcessorStep):
-    """
-    Calculates and appends joint velocity information to the observation state.
+    """Calculates and appends joint velocity information to the observation state.
 
     This step computes the velocity of each joint by calculating the finite
     difference between the current and the last observed joint positions. The
@@ -50,8 +49,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
     last_joint_positions: torch.Tensor | None = None
 
     def observation(self, observation: dict) -> dict:
-        """
-        Computes joint velocities and adds them to the observation state.
+        """Computes joint velocities and adds them to the observation state.
 
         Args:
             observation: The input observation dictionary, expected to contain
@@ -89,8 +87,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
         return new_observation
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the configuration of the step for serialization.
+        """Returns the configuration of the step for serialization.
 
         Returns:
             A dictionary containing the time step `dt`.
@@ -106,8 +103,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Updates the `observation.state` feature to reflect the added velocities.
+        """Updates the `observation.state` feature to reflect the added velocities.
 
         This method doubles the size of the first dimension of the `observation.state`
         shape to account for the concatenation of position and velocity vectors.
@@ -132,8 +128,7 @@ class JointVelocityProcessorStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register("current_processor")
 class MotorCurrentProcessorStep(ObservationProcessorStep):
-    """
-    Reads motor currents from a robot and appends them to the observation state.
+    """Reads motor currents from a robot and appends them to the observation state.
 
     This step queries the robot's hardware interface to get the present current
     for each motor and concatenates this information to the existing state vector.
@@ -146,8 +141,7 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
     robot: Robot | None = None
 
     def observation(self, observation: dict) -> dict:
-        """
-        Fetches motor currents and adds them to the observation state.
+        """Fetches motor currents and adds them to the observation state.
 
         Args:
             observation: The input observation dictionary.
@@ -184,8 +178,7 @@ class MotorCurrentProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Updates the `observation.state` feature to reflect the added motor currents.
+        """Updates the `observation.state` feature to reflect the added motor currents.
 
         This method increases the size of the first dimension of the `observation.state`
         shape by the number of motors in the robot.

@@ -13,8 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-Actor server runner for distributed HILSerl robot policy training.
+"""Actor server runner for distributed HILSerl robot policy training.
 
 This script implements the actor component of the distributed HILSerl architecture.
 It executes the policy in the robot environment, collects experience,
@@ -119,6 +118,16 @@ from .train_rl import TrainRLServerPipelineConfig
 
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
+    """CLI entry point for the HILSerl actor server.
+
+    Connects to the learner server over gRPC, then launches (as threads or processes, depending on
+    `cfg.policy.concurrency.multiprocessing_context`) the background workers that receive updated
+    policy parameters and stream transitions/interactions back to the learner, while running the
+    policy-environment interaction loop (`act_with_policy`) on the main thread/process.
+
+    Args:
+        cfg (`TrainRLServerPipelineConfig`): Parsed from the CLI.
+    """
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     cfg.validate()
@@ -234,18 +243,19 @@ def act_with_policy(
     transitions_queue: Queue,
     interactions_queue: Queue,
 ):
-    """
-    Executes policy interaction within the environment.
+    """Executes policy interaction within the environment.
 
     This function rolls out the policy in the environment, collecting interaction data and pushing it to a queue for streaming to the learner.
     Once an episode is completed, updated network parameters received from the learner are retrieved from a queue and loaded into the network.
 
     Args:
-        cfg: Configuration settings for the interaction process.
-        shutdown_event: Event to check if the process should shutdown.
-        parameters_queue: Queue to receive updated network parameters from the learner.
-        transitions_queue: Queue to send transitions to the learner.
-        interactions_queue: Queue to send interactions to the learner.
+        cfg (`TrainRLServerPipelineConfig`): Training configuration.
+        shutdown_event (`Event`): Set to stop the policy loop.
+        parameters_queue (`Queue`): Queue of serialized learner weights, drained via
+            `update_policy_parameters`.
+        transitions_queue (`Queue`): Queue transitions are pushed to for streaming to the learner.
+        interactions_queue (`Queue`): Queue interaction messages are pushed to for streaming to the
+            learner.
     """
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -440,7 +450,8 @@ def establish_learner_connection(
     Args:
         stub (services_pb2_grpc.LearnerServiceStub): The stub to use for the connection.
         shutdown_event (Event): The event to check if the connection should be established.
-        attempts (int): The number of attempts to establish the connection.
+        attempts (int, *optional*, defaults to 30): The number of attempts to establish the connection.
+
     Returns:
         bool: True if the connection is established, False otherwise.
     """
@@ -473,7 +484,6 @@ def learner_service_client(
     Returns:
         tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]: The stub and the channel.
     """
-
     channel = grpc.insecure_channel(
         f"{host}:{port}",
         grpc_channel_options(),
@@ -496,8 +506,8 @@ def receive_policy(
         cfg (TrainRLServerPipelineConfig): The configuration for the actor.
         parameters_queue (Queue): The queue to receive the parameters.
         shutdown_event (Event): The event to check if the process should shutdown.
-        learner_client (services_pb2_grpc.LearnerServiceStub | None): Optional pre-created stub.
-        grpc_channel (grpc.Channel | None): Optional pre-created channel.
+        learner_client (services_pb2_grpc.LearnerServiceStub | None, *optional*): Optional pre-created stub.
+        grpc_channel (grpc.Channel | None, *optional*): Optional pre-created channel.
     """
     logging.info("[ACTOR] Start receiving parameters from the Learner")
     if not use_threads(cfg):
@@ -557,10 +567,9 @@ def send_transitions(
         cfg (TrainRLServerPipelineConfig): The configuration for the actor.
         transitions_queue (Queue): The queue to receive the transitions.
         shutdown_event (Event): The event to check if the process should shutdown.
-        learner_client (services_pb2_grpc.LearnerServiceStub | None): Optional pre-created stub.
-        grpc_channel (grpc.Channel | None): Optional pre-created channel.
+        learner_client (services_pb2_grpc.LearnerServiceStub | None, *optional*): Optional pre-created stub.
+        grpc_channel (grpc.Channel | None, *optional*): Optional pre-created channel.
     """
-
     if not use_threads(cfg):
         # Create a process-specific log file
         log_dir = os.path.join(cfg.output_dir, "logs")
@@ -612,10 +621,9 @@ def send_interactions(
         cfg (TrainRLServerPipelineConfig): The configuration for the actor.
         interactions_queue (Queue): The queue to receive the interactions.
         shutdown_event (Event): The event to check if the process should shutdown.
-        learner_client (services_pb2_grpc.LearnerServiceStub | None): Optional pre-created stub.
-        grpc_channel (grpc.Channel | None): Optional pre-created channel.
+        learner_client (services_pb2_grpc.LearnerServiceStub | None, *optional*): Optional pre-created stub.
+        grpc_channel (grpc.Channel | None, *optional*): Optional pre-created channel.
     """
-
     if not use_threads(cfg):
         # Create a process-specific log file
         log_dir = os.path.join(cfg.output_dir, "logs")
@@ -657,6 +665,17 @@ def transitions_stream(
     transitions_queue: Queue,
     timeout: float,
 ) -> "Generator[Any, None, services_pb2.Empty]":
+    """GRPC client-streaming generator that forwards queued transitions to the learner.
+
+    Args:
+        shutdown_event (`Event`): Set to stop streaming and return.
+        transitions_queue (`Queue`): Queue of serialized transition batches, filled by
+            `push_transitions_to_transport_queue`.
+        timeout (`float`): Seconds to wait for a queue item before checking `shutdown_event` again.
+
+    Yields:
+        Chunks of a `services_pb2.Transition` message, produced by `send_bytes_in_chunks`.
+    """
     while not shutdown_event.is_set():
         try:
             message = transitions_queue.get(block=True, timeout=timeout)
@@ -676,6 +695,16 @@ def interactions_stream(
     interactions_queue: Queue,
     timeout: float,
 ) -> "Generator[Any, None, services_pb2.Empty]":
+    """GRPC client-streaming generator that forwards queued interaction messages to the learner.
+
+    Args:
+        shutdown_event (`Event`): Set to stop streaming and return.
+        interactions_queue (`Queue`): Queue of serialized interaction messages.
+        timeout (`float`): Seconds to wait for a queue item before checking `shutdown_event` again.
+
+    Yields:
+        Chunks of a `services_pb2.InteractionMessage`, produced by `send_bytes_in_chunks`.
+    """
     while not shutdown_event.is_set():
         try:
             message = interactions_queue.get(block=True, timeout=timeout)
@@ -718,12 +747,11 @@ def update_policy_parameters(algorithm: RLAlgorithm, parameters_queue: Queue, de
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):
-    """Send transitions to learner in smaller chunks to avoid network issues.
+    """Move `transitions` to CPU, check for NaNs, and enqueue them for the learner.
 
     Args:
-        transitions: List of transitions to send
-        message_queue: Queue to send messages to learner
-        chunk_size: Size of each chunk to send
+        transitions (`list`): Transitions to send, as produced by the actor's rollout loop.
+        transitions_queue (`Queue`): Queue drained by `transitions_stream`.
     """
     transition_to_send_to_learner = []
     for transition in transitions:
@@ -760,6 +788,13 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
 
 
 def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
+    """Log a warning if `policy_fps` is below the environment's target `cfg.env.fps`.
+
+    Args:
+        policy_fps (`float`): Measured policy loop frequency.
+        cfg (`TrainRLServerPipelineConfig`): Provides the target `cfg.env.fps` to compare against.
+        interaction_step (`int`): Current interaction step, included in the warning message.
+    """
     if policy_fps < cfg.env.fps:
         logging.warning(
             f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
@@ -767,6 +802,7 @@ def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConf
 
 
 def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
+    """Whether the actor's background workers should run as threads instead of processes."""
     return cfg.policy.concurrency.actor == "threads"
 
 

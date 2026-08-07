@@ -1,0 +1,87 @@
+# Reinforcement Learning
+
+`lerobot.rl` is the distributed actor/learner reinforcement-learning stack behind
+[Train a Robot with RL](../hilserl) (HIL-SERL) and [Train RL in Simulation](../hilserl_sim). Algorithms,
+the replay buffer, data sources, and the trainer are gRPC-free and usable standalone; the actor/learner
+entry points (`actor`, `learner`, `learner_service`) additionally require `pip install 'lerobot[hilserl]'`.
+
+## TrainRLServerPipelineConfig
+
+Top-level configuration for both the `lerobot-actor` and `lerobot-learner` CLIs.
+
+[[autodoc]] lerobot.rl.train_rl.TrainRLServerPipelineConfig
+
+## RLAlgorithm
+
+Abstract base every RL algorithm subclasses.
+
+[[autodoc]] lerobot.rl.algorithms.base.RLAlgorithm
+
+## RLAlgorithmConfig
+
+[[autodoc]] lerobot.rl.algorithms.configs.RLAlgorithmConfig
+
+## TrainingStats
+
+[[autodoc]] lerobot.rl.algorithms.configs.TrainingStats
+
+## make_algorithm
+
+[[autodoc]] lerobot.rl.algorithms.factory.make_algorithm
+
+## make_algorithm_config
+
+[[autodoc]] lerobot.rl.algorithms.factory.make_algorithm_config
+
+## get_algorithm_class
+
+[[autodoc]] lerobot.rl.algorithms.factory.get_algorithm_class
+
+## SAC
+
+[[autodoc]] lerobot.rl.algorithms.sac.sac_algorithm.SACAlgorithm
+    - all
+
+[[autodoc]] lerobot.rl.algorithms.sac.configuration_sac.SACAlgorithmConfig
+
+## ReplayBuffer
+
+In-memory replay buffer of transitions, sampled in batches for off-policy training.
+
+[[autodoc]] lerobot.rl.buffer.ReplayBuffer
+    - all
+
+[[autodoc]] lerobot.rl.buffer.BatchTransition
+
+## DataMixer
+
+Abstract interface for combining online and offline data sources into training batches.
+
+[[autodoc]] lerobot.rl.data_sources.DataMixer
+    - all
+
+[[autodoc]] lerobot.rl.data_sources.OnlineOfflineMixer
+    - all
+
+## RLTrainer
+
+Unified training-step orchestrator: holds the algorithm, a `DataMixer`, and an optional preprocessor.
+
+[[autodoc]] lerobot.rl.trainer.RLTrainer
+    - all
+
+## Actor / learner CLIs
+
+The distributed actor and learner processes communicate over gRPC; see [Train a Robot with
+RL](../hilserl) for the full workflow.
+
+[[autodoc]] lerobot.rl.actor.actor_cli
+
+[[autodoc]] lerobot.rl.learner.train_cli
+
+[[autodoc]] lerobot.rl.learner_service.LearnerService
+    - all
+
+## eval_policy
+
+[[autodoc]] lerobot.rl.eval_policy.eval_policy
