@@ -386,6 +386,9 @@ class DatasetWriter:
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
+            # Post-save cleanup deliberately does not go through clear_episode_buffer():
+            # staging frames of video cameras must survive here — the (possibly batched)
+            # encoder still needs them and deletes them once each video is written.
             if len(self._meta.image_keys) > 0:
                 self._delete_camera_frame_dirs(self._meta.image_keys)
             self.episode_buffer = self._create_episode_buffer()

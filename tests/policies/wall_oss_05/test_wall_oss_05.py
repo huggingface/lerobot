@@ -378,7 +378,7 @@ def test_policy_text_generation_decodes_native_model_tokens():
         "attention_mask": torch.tensor([[1]]),
     }
 
-    output = policy.generate_text(
+    output = policy.generate_texts(
         {"task": "locate cup"},
         kind="vqa",
         user_text="Where is it?",
@@ -387,6 +387,11 @@ def test_policy_text_generation_decodes_native_model_tokens():
 
     assert output == ["the cup is left"]
     assert policy.model.kwargs["max_new_tokens"] == 8
+    # The runtime contract is the single-sample form, decoding with `config.generation`.
+    assert policy.generate_text({"task": "locate cup"}, kind="vqa", user_text="Where is it?") == (
+        "the cup is left"
+    )
+    assert policy.supports_text_generation()
     assert policy.model.kwargs["eos_token_id"] == 2
 
 

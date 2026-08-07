@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RuntimeState:
-    """Explicit state shared by the runtime and policy adapter."""
+    """Explicit state shared by the runtime loop and the interactive command handlers."""
 
     task: str = ""
     language_context: dict[str, str] = field(default_factory=dict)
@@ -101,16 +101,85 @@ class RuntimeState:
                 self.extra[key] = value
 
 
-class LanguageConditionedPolicyAdapter(Protocol):
-    """Runtime policy contract, implemented directly or through ``BaseLanguageAdapter``."""
+class LanguageConditionedPolicy(Protocol):
+    """The policy surface the runtime drives.
 
-    def select_action(self, observation: dict[str, Any], state: RuntimeState) -> Any: ...
+    ``generate_text`` is optional: a policy without a text head runs on the operator's
+    own instruction instead of a generated subtask.
+    """
 
-    def update_language_state(self, observation: dict[str, Any] | None, state: RuntimeState) -> None: ...
+    def predict_action_chunk(self, batch: dict[str, Any]) -> Any: ...
 
-    def handle_interjection(
-        self, user_text: str, observation: dict[str, Any] | None, state: RuntimeState
-    ) -> None: ...
+    def supports_text_generation(self) -> bool: ...
+
+    def generate_text(
+        self, batch: dict[str, Any], *, kind: str = ..., user_text: str | None = ...
+    ) -> str: ...
+
+
+def build_language_batch(observation: dict[str, Any] | None, state: RuntimeState) -> dict[str, Any]:
+    """Add the live language context to ``observation`` for a text-head call."""
+    batch = dict(observation or {})
+    batch["task"] = state.task
+    subtask = state.language_context.get("subtask")
+    if subtask:
+        batch["subtask"] = subtask
+    return batch
+
+
+@dataclass
+class LanguageDiagnostics:
+    """Generation counters surfaced by the runtime panel."""
+
+    last_raw: str = ""
+    empty: int = 0
+    repeat: int = 0
+
+
+@dataclass
+class SubtaskController:
+    """Throttled subtask regeneration on top of a policy's text head.
+
+    Owns the cadence so the policy stays a stateless ``generate_text`` call.
+    """
+
+    policy: Any
+    chunks_per_regen: int = 1
+    enabled: bool = True
+    diagnostics: LanguageDiagnostics = field(default_factory=LanguageDiagnostics)
+    _chunks_until_regen: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        # Disable generation for a policy that has no text head: the operator's
+        # instruction is then the subtask, which is direct-subtask mode.
+        if self.enabled and not self.policy.supports_text_generation():
+            self.enabled = False
+
+    def rearm(self) -> None:
+        """Regenerate on the next update, e.g. after the operator changes the task."""
+        self._chunks_until_regen = 0
+
+    def update(self, observation: dict[str, Any] | None, state: RuntimeState) -> None:
+        """Regenerate the subtask, at most once every ``chunks_per_regen`` chunks."""
+        if not self.enabled:
+            return
+        if self._chunks_until_regen > 0:
+            self._chunks_until_regen -= 1
+            return
+        self._chunks_until_regen = max(1, self.chunks_per_regen) - 1
+
+        batch = build_language_batch(observation, state)
+        subtask = self.policy.generate_text(batch, kind="subtask")
+        self.diagnostics.last_raw = subtask or ""
+        if not subtask:
+            self.diagnostics.empty += 1
+            if self.diagnostics.empty == 1 or self.diagnostics.empty % 5 == 0:
+                state.log(f"  [info] subtask gen returned empty (x{self.diagnostics.empty})")
+            return
+        if state.set_context("subtask", subtask, label="subtask"):
+            self.diagnostics.repeat = 0
+        else:
+            self.diagnostics.repeat += 1
 
 
 @dataclass
@@ -161,7 +230,7 @@ class _RateGate:
 class LanguageConditionedRuntime:
     """Generic tick loop for language-conditioned robot policies."""
 
-    policy_adapter: LanguageConditionedPolicyAdapter
+    policy: LanguageConditionedPolicy
     observation_provider: Callable[[], dict[str, Any] | None] | None = None
     action_executor: Callable[[Any], None] | None = None
     event_collector: Callable[[RuntimeState], None] | None = None
@@ -169,8 +238,11 @@ class LanguageConditionedRuntime:
     ctrl_hz: float = 50.0
     high_level_hz: float = 1.0
     max_rate_hz: float = 50.0
+    chunks_per_regen: int = 1
+    generate_subtask: bool = True
 
     state: RuntimeState = field(default_factory=RuntimeState)
+    subtask: SubtaskController = field(init=False)
     _chunk_gate: _RateGate = field(init=False)
     _ctrl_gate: _RateGate = field(init=False)
     _language_gate: _RateGate = field(init=False)
@@ -178,13 +250,14 @@ class LanguageConditionedRuntime:
     _last_dispatch_seconds: float | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        self.subtask = SubtaskController(
+            self.policy,
+            chunks_per_regen=self.chunks_per_regen,
+            enabled=self.generate_subtask,
+        )
         self._chunk_gate = _RateGate(self.chunk_hz)
         self._ctrl_gate = _RateGate(self.ctrl_hz)
         self._language_gate = _RateGate(self.high_level_hz)
-
-    @property
-    def policy(self) -> Any:
-        return getattr(self.policy_adapter, "policy", self.policy_adapter)
 
     def set_task(self, task: str) -> None:
         with self.state.lock:
@@ -224,7 +297,6 @@ class LanguageConditionedRuntime:
         if self.state.stop:
             return
         self.maybe_update_language_state(force=force_rates)
-        self.maybe_handle_user_events()
         self.maybe_enqueue_action_chunk(force=force_rates)
         self.dispatch_action(force=force_rates)
         self.state.events.clear()
@@ -248,22 +320,10 @@ class LanguageConditionedRuntime:
             return
         observation = self._current_observation()
         try:
-            self.policy_adapter.update_language_state(observation, self.state)
+            self.subtask.update(observation, self.state)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("language update failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
-            self.state.log(f"  [warn] language update failed: {type(exc).__name__}: {exc}")
-
-    def maybe_handle_user_events(self) -> None:
-        if self.state.take_event("user_interjection"):
-            self._handle_user_interjection()
-
-    def _handle_user_interjection(self) -> None:
-        text = str(self.state.extra.get("recent_interjection") or "")
-        if not text:
-            return
-        observation = self._current_observation()
-        self.policy_adapter.handle_interjection(text, observation, self.state)
-        self.state.extra["recent_interjection"] = None
+            logger.warning("subtask generation failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
+            self.state.log(f"  [warn] subtask generation failed: {type(exc).__name__}: {exc}")
 
     def maybe_enqueue_action_chunk(self, *, force: bool = False) -> None:
         with self.state.lock:
@@ -278,10 +338,14 @@ class LanguageConditionedRuntime:
         if observation is None:
             return
         try:
-            chunk = self.policy_adapter.select_action(observation, self.state)
+            # The observation provider already conditions the batch on the active
+            # subtask, so the policy needs nothing beyond its usual inference call.
+            chunk = self.policy.predict_action_chunk(observation)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("select_action failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
-            self.state.log(f"  [warn] select_action failed: {type(exc).__name__}: {exc}")
+            logger.warning(
+                "predict_action_chunk failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG)
+            )
+            self.state.log(f"  [warn] predict_action_chunk failed: {type(exc).__name__}: {exc}")
             return
         with self.state.lock:
             if (

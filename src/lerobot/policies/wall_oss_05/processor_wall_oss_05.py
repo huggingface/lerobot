@@ -21,6 +21,7 @@ from typing import Any
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -31,7 +32,6 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 from .configuration_wall_oss_05 import WallOSS05Config

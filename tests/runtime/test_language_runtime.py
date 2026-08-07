@@ -15,33 +15,39 @@
 import threading
 import time
 
-from lerobot.runtime import LanguageConditionedRuntime, Tick
+from lerobot.runtime import (
+    LanguageConditionedRuntime,
+    RuntimeState,
+    SubtaskController,
+    Tick,
+    build_language_batch,
+)
 
 
-class FakeAdapter:
-    def __init__(self):
-        self.updated = False
-        self.interjections = []
+class FakePolicy:
+    """Minimal stand-in for the `PreTrainedPolicy` surface the runtime drives."""
 
-    def select_action(self, observation, state):
-        assert observation == {"observation.state": 1}
-        assert state.task == "clean"
+    def __init__(self, texts=None):
+        self.texts = list(texts) if texts is not None else None
+        self.batches = []
+
+    def supports_text_generation(self):
+        return self.texts is not None
+
+    def generate_text(self, batch, *, kind="subtask", user_text=None):
+        self.batches.append((kind, batch))
+        return self.texts.pop(0) if self.texts else ""
+
+    def predict_action_chunk(self, batch):
+        assert batch == {"observation.state": 1}
         return ["a0", "a1"]
 
-    def update_language_state(self, observation, state):
-        self.updated = True
-        state.set_context("subtask", "pick cup", label="subtask")
 
-    def handle_interjection(self, user_text, observation, state):
-        self.interjections.append(user_text)
-        state.set_context("plan", "new plan", label="plan")
-
-
-def test_runtime_tick_updates_language_enqueues_and_dispatches_action():
-    adapter = FakeAdapter()
+def test_runtime_tick_generates_subtask_enqueues_and_dispatches_action():
+    policy = FakePolicy(["pick cup"])
     executed = []
     runtime = LanguageConditionedRuntime(
-        policy_adapter=adapter,
+        policy=policy,
         observation_provider=lambda: {"observation.state": 1},
         action_executor=executed.append,
     )
@@ -49,41 +55,102 @@ def test_runtime_tick_updates_language_enqueues_and_dispatches_action():
 
     logs = runtime.step_once()
 
-    assert adapter.updated
     assert runtime.state.language_context["subtask"] == "pick cup"
     assert executed == ["a0"]
     assert list(runtime.state.action_queue) == ["a1"]
     assert "  subtask: pick cup" in logs
 
 
-def test_runtime_handles_user_interjection():
-    adapter = FakeAdapter()
+def test_policy_without_text_head_keeps_the_operator_instruction():
+    policy = FakePolicy(texts=None)
     runtime = LanguageConditionedRuntime(
-        policy_adapter=adapter,
+        policy=policy,
         observation_provider=lambda: {"observation.state": 1},
     )
     runtime.set_task("clean")
-    runtime.state.extra["recent_interjection"] = "please say ok"
-    runtime.state.emit("user_interjection")
 
     runtime.step_once()
 
-    assert "please say ok" in adapter.interjections
-    assert runtime.state.language_context["plan"] == "new plan"
+    assert not runtime.subtask.enabled
+    assert "subtask" not in runtime.state.language_context
+    assert policy.batches == []
+
+
+def test_generation_batch_carries_task_and_active_subtask():
+    state = RuntimeState(task="clean the table")
+    state.set_context("subtask", "pick the red cup")
+
+    batch = build_language_batch({"observation.state": 1}, state)
+
+    assert batch == {
+        "observation.state": 1,
+        "task": "clean the table",
+        "subtask": "pick the red cup",
+    }
+
+
+def test_subtask_throttled_to_one_generation_per_n_chunks():
+    policy = FakePolicy(["pick the first cup", "pick the second cup"])
+    controller = SubtaskController(policy, chunks_per_regen=2)
+    state = RuntimeState(task="clean")
+
+    controller.update(None, state)  # generates
+    assert state.language_context["subtask"] == "pick the first cup"
+    controller.update(None, state)  # throttled
+    assert state.language_context["subtask"] == "pick the first cup"
+    controller.update(None, state)  # generates again
+    assert state.language_context["subtask"] == "pick the second cup"
+
+
+def test_rearm_regenerates_before_the_throttle_elapses():
+    policy = FakePolicy(["first", "second"])
+    controller = SubtaskController(policy, chunks_per_regen=5)
+    state = RuntimeState(task="clean")
+
+    controller.update(None, state)
+    controller.rearm()
+    controller.update(None, state)
+
+    assert state.language_context["subtask"] == "second"
+
+
+def test_empty_generation_leaves_the_previous_subtask_in_place():
+    policy = FakePolicy(["pick the cup", ""])
+    controller = SubtaskController(policy)
+    state = RuntimeState(task="clean")
+
+    controller.update(None, state)
+    controller.update(None, state)
+
+    assert state.language_context["subtask"] == "pick the cup"
+    assert controller.diagnostics.empty == 1
+    assert any("subtask gen returned empty" in line for line in state.log_lines)
+
+
+def test_repeated_generation_counts_as_a_diagnostic():
+    policy = FakePolicy(["pick the cup", "pick the cup"])
+    controller = SubtaskController(policy)
+    state = RuntimeState(task="clean")
+
+    controller.update(None, state)
+    controller.update(None, state)
+
+    assert controller.diagnostics.repeat == 1
+    assert controller.diagnostics.last_raw == "pick the cup"
 
 
 def test_prompt_change_discards_in_flight_action_chunk():
     started = threading.Event()
     release = threading.Event()
 
-    class BlockingAdapter(FakeAdapter):
-        def select_action(self, observation, state):
+    class BlockingPolicy(FakePolicy):
+        def predict_action_chunk(self, batch):
             started.set()
             assert release.wait(timeout=2)
             return ["stale"]
 
     runtime = LanguageConditionedRuntime(
-        policy_adapter=BlockingAdapter(),
+        policy=BlockingPolicy(),
         observation_provider=lambda: {"observation.state": 1},
     )
     runtime.set_task("old task")

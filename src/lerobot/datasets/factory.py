@@ -29,6 +29,7 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .streaming_dataset import StreamingLeRobotDataset
+from .utils import resolve_episode_indices
 
 
 def resolve_delta_timestamps(
@@ -66,17 +67,6 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def _resolve_episodes(
-    episodes: list[int] | None, exclude_episodes: list[int] | None, total_episodes: int
-) -> list[int] | None:
-    """Apply an episode exclusion list on top of an optional allowlist."""
-    if not exclude_episodes:
-        return episodes
-    base = episodes if episodes is not None else list(range(total_episodes))
-    excluded = set(exclude_episodes)
-    return [episode for episode in base if episode not in excluded]
-
-
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
@@ -95,13 +85,20 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
     if isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
-            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+            cfg.dataset.repo_id,
+            root=cfg.dataset.root,
+            revision=cfg.dataset.revision,
+            repo_type=cfg.dataset.repo_type,
         )
         delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
-        episodes = _resolve_episodes(
-            cfg.dataset.episodes, cfg.dataset.exclude_episodes, ds_meta.total_episodes
+        episodes = resolve_episode_indices(
+            cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
         )
         if not cfg.dataset.streaming:
+            if cfg.dataset.repo_type == "bucket":
+                raise ValueError(
+                    "repo_type='bucket' is streaming-only: set dataset.streaming=true to train from an HF Storage Bucket."
+                )
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -125,6 +122,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 max_num_shards=cfg.num_workers,
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
+                repo_type=cfg.dataset.repo_type,
             )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")

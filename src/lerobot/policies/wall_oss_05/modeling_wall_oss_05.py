@@ -1319,6 +1319,27 @@ class WallOSS05Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Any],
         *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Single-sample text generation, as the interactive language runtime calls it."""
+        gen = self.config.generation
+        outputs = self.generate_texts(
+            batch,
+            kind=kind,
+            user_text=user_text,
+            min_new_tokens=gen.min_new_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
+        )
+        if len(outputs) != 1:
+            raise ValueError(f"The interactive runtime expected one Wall text output, got {len(outputs)}.")
+        return outputs[0]
+
+    def generate_texts(
+        self,
+        batch: dict[str, Any],
+        *,
         kind: str = "vqa",
         user_text: str | list[str] | None = None,
         max_new_tokens: int = 100,
@@ -1326,13 +1347,11 @@ class WallOSS05Policy(PreTrainedPolicy):
         temperature: float = 0.0,
         top_p: float = 1.0,
     ) -> list[str]:
-        """Generate Wall text for VQA, grounding, or language subtasks."""
+        """Generate Wall text for VQA, grounding, or language subtasks over a batch."""
         if self.processor is None or not hasattr(self, "model"):
             raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
-        if kind not in {"vqa", "caption", "grounding", "text", "subtask", "interjection"}:
-            raise ValueError(
-                "kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask', 'interjection'."
-            )
+        if kind not in {"vqa", "caption", "grounding", "text", "subtask"}:
+            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask'.")
         inputs = self._build_text_model_inputs(batch, kind=kind, user_text=user_text)
         output_ids = self.model.generate_text(
             **inputs,

@@ -93,11 +93,11 @@ deploying a saved LeRobot checkpoint.
 
 ### Text and VQA
 
-`WallOSS05Policy.generate_text` accepts the same batched observation used for
+`WallOSS05Policy.generate_texts` accepts the same batched observation used for
 action inference. Supply a question for VQA or grounding:
 
 ```python
-answers = policy.generate_text(
+answers = policy.generate_texts(
     batch,
     kind="vqa",
     user_text="Which object is closest to the right gripper?",
@@ -108,6 +108,10 @@ Use `kind="caption"` for scene descriptions, `kind="grounding"` for spatial
 queries, or `kind="subtask"` to produce Wall's trained language-level next
 action. Text generation uses the checkpoint's tied Qwen vocabulary head and
 vision-language expert; it does not call a separate VLM.
+
+`generate_texts` is the batched form. `generate_text` is the single-sample
+method the interactive language runtime calls; it decodes with the sampling
+settings stored on the checkpoint in `config.generation`.
 
 The language runtime can generate a subtask and then condition Wall's action
 prediction on it:
