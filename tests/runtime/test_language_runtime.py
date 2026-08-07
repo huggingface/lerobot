@@ -39,6 +39,9 @@ class FakePolicy:
     def subtask_prompt_template(self):
         return "predict next subtask, given this high level goal: {task}"
 
+    # A policy overriding the template is what the runtime must respect, so the fake
+    # deliberately does not use the base default.
+
     def generate_text(self, batch, prompt):
         self.batches.append((prompt, batch))
         return self.texts.pop(0) if self.texts else ""
@@ -211,9 +214,12 @@ def test_policy_ignoring_with_text_still_drives_the_runtime():
     assert runtime.state.last_chunk_text is None
 
 
-def test_default_subtask_template_carries_the_high_level_goal():
+def test_default_subtask_template_is_the_trained_wall_oss_wording():
+    """Pinned on purpose: editing it silently changes what every inheriting policy asks."""
     from lerobot.policies.pretrained import PreTrainedPolicy
 
     template = PreTrainedPolicy.subtask_prompt_template.fget(object())
-    assert "{task}" in template
-    assert template.replace("{task}", "clear the table").endswith("clear the table")
+    assert template == "{task}\nPredict the next action in language."
+    assert template.replace("{task}", "clear the table") == (
+        "clear the table\nPredict the next action in language."
+    )
