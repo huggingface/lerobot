@@ -104,11 +104,20 @@ lerobot-rollout \
 ```
 
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`. The interactive panel shows the chain-of-thought on a
-`reasoning` line via `last_reasoning`, and `predict_action_chunk_with_runtime`
-returns the full telemetry alongside the matching action chunk. The reasoning is
-display-only: it never re-enters the observation batch, so it cannot replace the
-operator's task.
+`predict_cot=true`. `predict_action_chunk_with_text` returns the chain-of-thought
+generated in the same pass as the chunk it belongs to:
+
+```python
+prediction = policy.predict_action_chunk_with_text(batch)
+print(prediction.text)  # "Subtask: grasp the cup ..."
+prediction.action  # the chunk that reasoning produced
+```
+
+The interactive panel shows it on a `reasoning` line, and
+`predict_action_chunk_with_runtime` returns the full telemetry when you want the
+generated token ids too. The reasoning is display-only: it never re-enters the
+observation batch, so it cannot replace the operator's task. System 1 emits none
+and reports `text=None`.
 
 ```bash
 lerobot-rollout \

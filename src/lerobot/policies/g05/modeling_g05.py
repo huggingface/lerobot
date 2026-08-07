@@ -49,6 +49,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import ActionChunkPrediction
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -3306,14 +3307,7 @@ class G05Policy(PreTrainedPolicy):
         if system_mode == "system2":
             metadata_keys = ("cot_text", "generated_ids", *metadata_keys)
         metadata = {key: result[key] for key in metadata_keys if key in result}
-        # Keep the same-pass reasoning for `last_reasoning` so the runtime can display
-        # it without routing it through the subtask channel, which would replace the
-        # operator's task on the next prompt.
-        self._last_cot_text = _first_cot_text(metadata)
         return action, metadata
-
-    # Set by `_run_inference`; System 1 leaves it None.
-    _last_cot_text: str | None = None
 
     def predict_action_chunk_with_runtime(
         self,
@@ -3331,9 +3325,17 @@ class G05Policy(PreTrainedPolicy):
         action, _ = self._run_inference(batch)
         return action
 
-    def last_reasoning(self) -> str | None:
-        """System 2 chain-of-thought from the pass that produced the last action chunk."""
-        return self._last_cot_text
+    @torch.no_grad()
+    def predict_action_chunk_with_text(self, batch: dict[str, Any], **kwargs) -> ActionChunkPrediction:
+        """The chunk and the System 2 chain-of-thought generated in the same pass.
+
+        G0.5 emits reasoning and actions from one inference stream: `_generate_text`
+        extends the prefill cache with the CoT tokens and the flow head then runs on
+        that extended cache, so the action really is conditioned on this text rather
+        than merely accompanied by it. System 1 emits none and reports `text=None`.
+        """
+        action, metadata = self._run_inference(batch)
+        return ActionChunkPrediction(action=action, text=_first_cot_text(metadata))
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:
