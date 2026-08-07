@@ -16,6 +16,8 @@
 
 """Hy-VLA action-training smoke tests."""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 from torch import nn
@@ -27,6 +29,9 @@ from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAPolicy
 
 
 class _CapturingTokenizer:
+    eos_token_id = 1
+    pad_token_id = 0
+
     def __init__(self):
         self.received = None
 
@@ -39,15 +44,20 @@ class _CapturingTokenizer:
             "attention_mask": torch.ones(batch, length, dtype=torch.long),
         }
 
+    def decode(self, token_ids, **kwargs):
+        return "decoded"
+
 
 class _FakeFlow(nn.Module):
     def __init__(self):
         super().__init__()
         self.scale = nn.Parameter(torch.tensor(0.25))
 
-    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time):
+    def forward(
+        self, images, image_masks, tokens, language_masks, state, actions, noise, time, text_labels=None
+    ):
         target = actions[..., :20]
-        return (self.scale * torch.ones_like(target) - target).square()
+        return (self.scale * torch.ones_like(target) - target).square(), None
 
 
 class _IndexedLossFlow(nn.Module):
@@ -55,9 +65,11 @@ class _IndexedLossFlow(nn.Module):
         super().__init__()
         self.anchor = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, images, image_masks, tokens, language_masks, state, actions, noise, time):
+    def forward(
+        self, images, image_masks, tokens, language_masks, state, actions, noise, time, text_labels=None
+    ):
         losses = torch.arange(actions.shape[-1], device=actions.device, dtype=actions.dtype)
-        return losses.expand_as(actions) + self.anchor * 0
+        return losses.expand_as(actions) + self.anchor * 0, None
 
 
 def _lightweight_policy() -> HyVLAPolicy:
@@ -187,3 +199,120 @@ def test_mem_history_matches_author_cadence_and_zero_padding():
     stacked = policy._with_inference_history(batch)
     for key in keys:
         torch.testing.assert_close(stacked[key][0, :, 0, 0, 0], torch.tensor([0.0, 0.0, 1.0]))
+
+
+class _TextLossFlow(nn.Module):
+    """Flow stub that also reports a fixed text loss, as co-training does."""
+
+    def __init__(self, text_loss: float):
+        super().__init__()
+        self.anchor = nn.Parameter(torch.tensor(0.0))
+        self.text_loss = torch.tensor(text_loss)
+        self.seen_labels = None
+
+    def forward(
+        self, images, image_masks, tokens, language_masks, state, actions, noise, time, text_labels=None
+    ):
+        self.seen_labels = text_labels
+        target = actions[..., :20]
+        flow = torch.ones_like(target) + self.anchor * 0
+        return flow, (self.text_loss if text_labels is not None else None)
+
+
+def _text_batch(batch_size: int = 1, *, labels: torch.Tensor | None = None) -> dict:
+    policy_config = HyVLAConfig(device="cpu")
+    horizon = policy_config.chunk_size
+    batch = {
+        **{key: torch.zeros(batch_size, 3, 8, 8) for key in policy_config.image_features},
+        "observation.state": torch.zeros(batch_size, 32),
+        "action": torch.zeros(batch_size, horizon, 32),
+        "task": ["pick the cup"] * batch_size,
+    }
+    if labels is not None:
+        batch["text_labels"] = labels
+    return batch
+
+
+def test_text_loss_joins_the_flow_objective_under_its_configured_weight():
+    policy = _lightweight_policy()
+    policy.config.flow_loss_weight = 2.0
+    policy.config.text_loss_weight = 0.25
+    policy.model = _TextLossFlow(text_loss=4.0)
+
+    labels = torch.tensor([[-100, 7, 9]])
+    loss, metrics = policy.forward(_text_batch(labels=labels))
+
+    # flow is all-ones so its mean is 1.0: 2.0 * 1.0 + 0.25 * 4.0
+    assert loss.item() == pytest.approx(3.0)
+    assert metrics["flow_loss"].item() == pytest.approx(1.0)
+    assert metrics["text_loss"].item() == pytest.approx(4.0)
+    assert torch.equal(policy.model.seen_labels, labels)
+
+
+def test_action_only_batch_reports_no_text_loss():
+    policy = _lightweight_policy()
+    policy.model = _TextLossFlow(text_loss=4.0)
+
+    loss, metrics = policy.forward(_text_batch())
+
+    assert "text_loss" not in metrics
+    assert policy.model.seen_labels is None
+    assert loss.item() == pytest.approx(1.0)
+
+
+def test_text_supervision_rejects_per_sample_reduction():
+    policy = _lightweight_policy()
+    policy.model = _TextLossFlow(text_loss=4.0)
+
+    with pytest.raises(ValueError, match="reduction='mean'"):
+        policy.forward(_text_batch(labels=torch.tensor([[-100, 7, 9]])), reduction="none")
+
+
+def test_text_cross_entropy_supervises_only_labelled_next_tokens():
+    from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAFlowMatching
+
+    model = object.__new__(HyVLAFlowMatching)
+    nn.Module.__init__(model)
+    head = nn.Linear(2, 5, bias=False)
+    model.dual_tower = SimpleNamespace(vlm=SimpleNamespace(language_model=SimpleNamespace(lm_head=head)))
+    # Prefix is [image token, lang0, lang1, lang2]; only the language tail is read.
+    prefix_out = torch.tensor([[[9.0, 9.0], [0.5, -0.5], [1.0, 0.25], [-0.25, 0.75]]])
+    lang_tokens = torch.zeros(1, 3, dtype=torch.long)
+    labels = torch.tensor([[-100, 3, -100]])
+
+    loss = model.text_cross_entropy(prefix_out, lang_tokens, labels)
+
+    expected = torch.nn.functional.cross_entropy(
+        head(prefix_out[:, -3:][:, :-1][torch.tensor([[True, False]])]), torch.tensor([3])
+    )
+    assert loss.item() == pytest.approx(expected.item())
+    assert model.text_cross_entropy(prefix_out, lang_tokens, None) is None
+    assert model.text_cross_entropy(prefix_out, lang_tokens, torch.full((1, 3), -100)) is None
+
+
+def test_generate_text_dispatches_kinds_and_reuses_the_hy_prefix():
+    policy = _lightweight_policy()
+    captured = {}
+
+    def fake_generate_text_tokens(images, image_masks, tokens, language_masks, **kwargs):
+        captured.update(kwargs)
+        captured["tokens"] = tokens
+        return torch.tensor([[5, 6]])
+
+    policy.model.generate_text_tokens = fake_generate_text_tokens
+    batch = _text_batch()
+
+    subtask = policy.generate_text(batch, kind="subtask")
+    assert subtask == "decoded"
+    assert captured["max_new_tokens"] == policy.config.text_max_new_tokens
+    # The task went through Hy's own tokenizer path, so the chat suffix is applied.
+    assert policy.language_tokenizer.received == ["pick the cup" + policy.config.task_suffix]
+
+    policy.generate_text(batch, kind="vqa", user_text="which cup is closest?")
+    assert policy.language_tokenizer.received == ["which cup is closest?" + policy.config.task_suffix]
+
+    with pytest.raises(ValueError, match="kind 'subtask' or 'vqa'"):
+        policy.generate_text(batch, kind="caption")
+
+    # No instruction means nothing to condition on, so no decode is attempted.
+    assert policy.generate_text({**batch, "task": [""]}, kind="subtask") == ""

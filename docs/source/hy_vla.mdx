@@ -67,6 +67,36 @@ Use `lerobot/hy_vla_umi` for UMI-compatible fine-tuning and
 not interchange their image-history, action-representation, or decoding
 settings.
 
+### Text generation
+
+Hy-VLA is a dual-tower model: a VLM tower and an action expert. The expert never
+produces vocabulary logits, so its language-modelling head is dropped at load —
+in the released checkpoints it is randomly initialized and unused. The **VLM
+tower keeps its own head**, tied to the embedding matrix, and `generate_text`
+drives it:
+
+```python
+subtask = policy.generate_text(batch, kind="subtask")
+answer = policy.generate_text(batch, kind="vqa", user_text="Which cup is closest?")
+```
+
+Decoding runs through Hy's own `embed_prefix`, so the images, modality masks and
+visual-segment attention match training rather than a generic chat prompt.
+
+<Tip warning={true}>
+
+Text quality on the released action fine-tunes is **unverified**. An action
+fine-tune can erode language badly enough to make the head unusable even though
+it is architecturally intact — Being-H0.5's RoboCasa checkpoint is a documented
+case. Check the output on your checkpoint before relying on it, and co-train with
+`text_loss_weight` if you need the head to survive your own fine-tune.
+
+</Tip>
+
+Text runs as its own prefill: Hy does not produce language alongside an action
+chunk, so `predict_action_chunk_with_text` stays at the base default and reports
+no text. Use `generate_text` instead.
+
 ## Training
 
 Hy-VLA supports the standard LeRobot training pipeline:
@@ -182,11 +212,31 @@ are implementing and validating a new adapter.
 | `execution_horizon`        | Number of physical actions served before the policy samples a new chunk.       |
 | `action_decode_mode`       | Decodes relative, absolute, or blended actions when supported by a checkpoint. |
 | `attention_implementation` | Selects the attention backend; published checkpoints default to `eager`.       |
+| `flow_loss_weight`         | Weight on the continuous flow-action loss. Default `1.0`.                      |
+| `text_loss_weight`         | Weight on assistant-token cross-entropy. Default `0.01`.                       |
+| `text_max_new_tokens`      | Decode budget for `generate_text`. Default `64`.                               |
+
+### Joint text and flow training
+
+When a batch carries `text_labels`, the VLM tower's hidden states over the
+language span — already produced by the pass the flow objective needs — are
+projected through the tied vocabulary head and supervised with next-token
+cross-entropy. The cost is one projection over the labelled positions; there is
+no second forward pass.
+
+Labels align to the language tokens and use `-100` wherever the loss must not
+apply: image tokens, the task prompt, and right padding. An action-only batch
+carries no labels and trains exactly as before.
+
+Text is weighted well below flow by default. Its job is to stop the language head
+drifting during an action fine-tune, not to compete with control.
 
 ## Limitations
 
 - The released checkpoints are bimanual policies and expect the documented
   dual-arm state and action contract.
+- `generate_text` is wired to the VLM tower's head, but text quality on the
+  released action fine-tunes has not been measured.
 - The integration includes the model runtime and standard LeRobot training
   path, but not the author's dataset-preparation pipeline or distributed
   launcher.

@@ -1459,8 +1459,16 @@ class HyVLAFlowMatching(nn.Module):
         actions,
         noise=None,
         time=None,
-    ) -> Tensor:
-        """Compute the per-element flow-matching action loss."""
+        text_labels=None,
+    ) -> tuple[Tensor, Tensor | None]:
+        """Compute the per-element flow-matching action loss, plus optional text loss.
+
+        The VLM tower's hidden states over the language span come out of the same
+        forward pass the flow objective already needs, so supervising them costs one
+        vocabulary projection over the labelled positions and nothing more. Returns
+        ``(flow_losses, text_loss)``, with ``text_loss`` ``None`` when no labels are
+        supplied — which is every action-only batch.
+        """
         (
             prefix_embs,
             prefix_pad_masks,
@@ -1493,7 +1501,7 @@ class HyVLAFlowMatching(nn.Module):
         # Adjust visual-segment attention according to the configured scope.
         self._apply_visual_segment_mask(att_2d_masks, image_idx_ranges, image_full_ranges)
 
-        (_, suffix_out), _, _, _ = self.dual_tower.forward(
+        (prefix_out, suffix_out), _, _, _ = self.dual_tower.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
@@ -1503,9 +1511,116 @@ class HyVLAFlowMatching(nn.Module):
             modality_masks=[modality_mask_prefix, modality_mask_suffix],
         )
 
+        text_loss = self.text_cross_entropy(prefix_out, lang_tokens, text_labels)
+
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         v_t = self.action_out_proj(suffix_out)
-        return F.mse_loss(u_t.float(), v_t.float(), reduction="none")
+        return F.mse_loss(u_t.float(), v_t.float(), reduction="none"), text_loss
+
+    def text_cross_entropy(
+        self,
+        prefix_out: Tensor,
+        lang_tokens: Tensor,
+        text_labels: Tensor | None,
+    ) -> Tensor | None:
+        """Next-token cross-entropy over the labelled assistant positions.
+
+        ``prefix_out`` covers the whole prefix — image tokens then language tokens — so
+        the language span is its last ``lang_tokens.shape[1]`` positions. Labels are
+        aligned to ``lang_tokens`` and use ``-100`` everywhere the loss must not apply:
+        image tokens, the task prompt, and right padding.
+        """
+        if text_labels is None:
+            return None
+        shifted_labels = text_labels[:, 1:]
+        loss_mask = shifted_labels != -100
+        if not loss_mask.any():
+            return None
+        language_out = prefix_out[:, -lang_tokens.shape[1] :]
+        head = self.dual_tower.vlm.language_model.lm_head
+        supervised = language_out[:, :-1][loss_mask].to(head.weight.dtype)
+        logits = head(supervised).float()
+        return F.cross_entropy(logits, shifted_labels[loss_mask].to(logits.device))
+
+    @torch.no_grad()
+    def generate_text_tokens(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        *,
+        max_new_tokens: int,
+        eos_token_ids: set[int],
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+    ) -> Tensor:
+        """Decode from the VLM tower, reusing Hy's own prefix construction.
+
+        Driving ``embed_prefix`` rather than the VLM's stock ``generate`` keeps the image
+        handling, modality masks and visual-segment attention identical to training, so
+        the prompt the head sees is the prompt it was trained on. Only the VLM tower runs;
+        the action expert is left out of ``inputs_embeds`` entirely.
+        """
+        (
+            prefix_embs,
+            prefix_pad_masks,
+            prefix_att_masks,
+            modality_mask_prefix,
+            image_idx_ranges,
+            image_full_ranges,
+        ) = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+
+        att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        self._apply_visual_segment_mask(att_2d_masks, image_idx_ranges, image_full_ranges)
+
+        (prefix_out, _), past_key_values, _, _ = self.dual_tower.forward(
+            attention_mask=att_2d_masks,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+            fill_kv_cache=True,
+            modality_masks=[modality_mask_prefix, None],
+        )
+
+        head = self.dual_tower.vlm.language_model.lm_head
+        embed_tokens = self.dual_tower.vlm.language_model.model.embed_tokens
+        batch_size = prefix_embs.shape[0]
+        device = prefix_embs.device
+        generated = torch.empty((batch_size, 0), dtype=torch.long, device=device)
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        offset = int(prefix_pad_masks.sum(dim=1).max().item())
+        hidden = prefix_out[:, -1:]
+
+        for _ in range(max_new_tokens):
+            logits = head(hidden[:, -1].to(head.weight.dtype)).float()
+            next_token = _sample_next_token(logits, temperature=temperature, top_p=top_p)
+            # A finished row keeps emitting its stop token so the batch stays aligned.
+            eos = next(iter(sorted(eos_token_ids)))
+            next_token = torch.where(finished, torch.full_like(next_token, eos), next_token)
+            generated = torch.cat([generated, next_token[:, None]], dim=1)
+            for token_id in eos_token_ids:
+                finished |= next_token == token_id
+            if bool(finished.all()):
+                break
+
+            step_embs = embed_tokens(next_token[:, None]).to(prefix_embs.dtype)
+            step_positions = torch.full(
+                (batch_size, 1), offset + generated.shape[1] - 1, dtype=torch.long, device=device
+            )
+            (hidden, _), past_key_values, _, _ = self.dual_tower.forward(
+                attention_mask=None,
+                position_ids=step_positions,
+                past_key_values=past_key_values,
+                inputs_embeds=[step_embs, None],
+                use_cache=True,
+                fill_kv_cache=False,
+                modality_masks=[torch.zeros_like(step_positions), None],
+            )
+
+        return generated
 
     # @torch.compile(mode="reduce-overhead")
     def sample_actions(
@@ -1658,6 +1773,22 @@ def _pad_last(value: Tensor, dimension: int) -> Tensor:
     output = value.new_zeros(*value.shape[:-1], dimension)
     output[..., : value.shape[-1]] = value
     return output
+
+
+def _sample_next_token(logits: Tensor, *, temperature: float, top_p: float) -> Tensor:
+    """Greedy at ``temperature == 0``, else nucleus sampling."""
+    if temperature <= 0:
+        return logits.argmax(dim=-1)
+    scaled = logits / temperature
+    if top_p >= 1:
+        return torch.multinomial(scaled.softmax(dim=-1), num_samples=1).squeeze(-1)
+    ordered, order = scaled.sort(dim=-1, descending=True)
+    cumulative = ordered.softmax(dim=-1).cumsum(dim=-1)
+    # Keep the first token past the threshold so the kept set is never empty.
+    drop = cumulative - ordered.softmax(dim=-1) >= top_p
+    ordered = ordered.masked_fill(drop, -torch.inf)
+    picked = torch.multinomial(ordered.softmax(dim=-1), num_samples=1)
+    return order.gather(-1, picked).squeeze(-1)
 
 
 class HyVLAPolicy(PreTrainedPolicy):
@@ -1897,7 +2028,7 @@ class HyVLAPolicy(PreTrainedPolicy):
         images, image_masks, tokens, language_masks = self._prepare_model_inputs(batch)
         state = self.prepare_state(batch)
         actions = self.prepare_action(batch)
-        flow_losses = self.model(
+        flow_losses, text_loss = self.model(
             images,
             image_masks,
             tokens,
@@ -1906,6 +2037,7 @@ class HyVLAPolicy(PreTrainedPolicy):
             actions,
             noise,
             time,
+            batch.get("text_labels"),
         )
         flow_losses = flow_losses[..., : self.config.model_action_dim]
         action_mask = batch.get(f"{ACTION}.mask")
@@ -1927,10 +2059,21 @@ class HyVLAPolicy(PreTrainedPolicy):
             flow_loss = flow_loss_per_sample.mean()
         else:
             raise ValueError(f"Unsupported reduction {reduction!r}.")
-        return flow_loss, {
-            "loss": flow_loss,
-            "flow_loss": flow_loss.detach(),
-        }
+
+        metrics: dict[str, Tensor | float] = {"flow_loss": flow_loss.detach()}
+        loss = self.config.flow_loss_weight * flow_loss
+        if text_loss is not None:
+            # Per-sample reduction has no meaning for a loss pooled over scattered
+            # token positions, so text supervision only joins a scalar objective.
+            if reduction == "none":
+                raise ValueError(
+                    "Hy-VLA text supervision requires reduction='mean'; "
+                    "per-sample reduction cannot attribute pooled token loss."
+                )
+            loss = loss + self.config.text_loss_weight * text_loss
+            metrics["text_loss"] = text_loss.detach()
+        metrics["loss"] = loss.detach() if isinstance(loss, Tensor) else loss
+        return loss, metrics
 
     def _pair_relative_absolute(self, actions: Tensor) -> Tensor:
         if self.config.action_representation == "relative":
@@ -1939,6 +2082,64 @@ class HyVLAPolicy(PreTrainedPolicy):
         if actions.shape[-2] != 2 * horizon:
             raise RuntimeError(f"Expected {2 * horizon} rel/abs tokens, got {actions.shape[-2]}.")
         return torch.cat((actions[:, :horizon], actions[:, horizon:]), dim=-1)
+
+    @torch.no_grad()
+    def generate_text(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Decode from the VLM tower's tied vocabulary head.
+
+        Hy's action expert never produces vocabulary logits, so its head is dropped at
+        load. The VLM tower keeps its own, tied to the embedding matrix, and this drives
+        it through Hy's normal prefix construction so the prompt matches training.
+
+        Text runs as its own prefill: it is not produced alongside an action chunk, so
+        `predict_action_chunk_with_text` is deliberately left at the base default.
+        """
+        self.eval()
+        if kind == "subtask":
+            prompt = batch.get("task") or ""
+        elif kind == "vqa":
+            prompt = user_text or ""
+        else:
+            raise ValueError(f"Hy-VLA supports kind 'subtask' or 'vqa', got {kind!r}.")
+        if isinstance(prompt, list | tuple):
+            if len(prompt) != 1:
+                raise ValueError("Hy-VLA text generation is single-sample.")
+            prompt = prompt[0]
+        if not prompt:
+            return ""
+
+        model_batch = self._with_inference_history(batch) if self.config.use_video_encoder else batch
+        images, image_masks = self.prepare_images(model_batch)
+        tokens, language_masks = self.prepare_language({**model_batch, "task": [prompt]})
+
+        eos_token_ids = {
+            token_id
+            for token_id in (
+                self.language_tokenizer.eos_token_id,
+                self.language_tokenizer.pad_token_id,
+            )
+            if token_id is not None
+        }
+        if not eos_token_ids:
+            raise ValueError("Hy-VLA text generation needs a tokenizer stop token.")
+
+        generated = self.model.generate_text_tokens(
+            images,
+            image_masks,
+            tokens,
+            language_masks,
+            max_new_tokens=self.config.text_max_new_tokens,
+            eos_token_ids=eos_token_ids,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
+        )
+        return self.language_tokenizer.decode(generated[0].tolist(), skip_special_tokens=True).strip()
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:

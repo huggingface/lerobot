@@ -25,6 +25,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -33,7 +34,6 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_hy_vla import HyVLAConfig

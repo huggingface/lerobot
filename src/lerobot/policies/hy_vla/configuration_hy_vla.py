@@ -51,6 +51,14 @@ class HyVLAConfig(PreTrainedConfig):
     tokenizer_max_length: int = 64
     task_suffix: str = "<｜hy_Assistant｜>"
 
+    # Joint text + flow supervision. The VLM tower keeps its tied vocabulary head,
+    # so assistant tokens can be supervised alongside the flow objective. Text is
+    # weighted well below flow: it exists to keep the language head from drifting
+    # during an action fine-tune, not to compete with control.
+    flow_loss_weight: float = 1.0
+    text_loss_weight: float = 0.01
+    text_max_new_tokens: int = 64
+
     proj_width: int = 1024
     num_steps: int = 10
     use_cache: bool = True
@@ -120,6 +128,12 @@ class HyVLAConfig(PreTrainedConfig):
             raise ValueError("Hy-VLA requires at least 20 state/action channels before padding.")
         if self.num_steps <= 0:
             raise ValueError("num_steps must be positive.")
+        if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
+            raise ValueError("Hy-VLA loss weights must be non-negative.")
+        if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
+            raise ValueError("At least one Hy-VLA training loss must be enabled.")
+        if self.text_max_new_tokens < 1:
+            raise ValueError("text_max_new_tokens must be at least 1.")
         if self.embodiment not in {"umi_dual_arm", "robotwin_dual_arm"}:
             raise ValueError(
                 "Hy-VLA supports only the released UMI and RoboTwin dual-arm embodiments; "
