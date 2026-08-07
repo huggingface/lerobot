@@ -290,14 +290,8 @@ def _resolve_bindings(
     bindings: dict[str, LanguageRow | str | None] = {
         "task": _resolve_task(task, dataset_ctx, persistent=persistent, sample_idx=sample_idx),
     }
-    declared = recipe.bindings or {}
-    specs = {**DEFAULT_BINDINGS, **declared}
-    # Only resolve bindings the recipe consumes: an unreferenced default may be
-    # unresolvable, e.g. the camera-less ``vqa`` default on multi-camera frames.
-    needed = recipe.referenced_binding_names() | set(declared)
+    specs = {**DEFAULT_BINDINGS, **(recipe.bindings or {})}
     for name, spec in specs.items():
-        if name not in needed:
-            continue
         bindings[name] = _resolve_spec(spec, persistent=persistent, events=events, t=t)
     return bindings
 
