@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from lerobot.configs import TextKind
+from lerobot.configs import ActionChunkPrediction, TextKind
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,11 @@ class RuntimeState:
     tick: Tick | None = None
     actions_dispatched: int = 0
     action_deadline: float | None = None
+    # The most recent chunk the runtime accepted, with its text. Display-only, and
+    # deliberately not in `language_context`: `build_language_batch` feeds that dict
+    # back to the policy as the next command, so reasoning routed through it would
+    # silently replace the operator's task.
+    last_prediction: ActionChunkPrediction | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     revision: int = 0
     lock: Any = field(default_factory=threading.RLock, repr=False)
@@ -110,7 +115,7 @@ class LanguageConditionedPolicy(Protocol):
     own instruction instead of a generated subtask.
     """
 
-    def predict_action_chunk(self, batch: dict[str, Any]) -> Any: ...
+    def predict_action_chunk_with_text(self, batch: dict[str, Any]) -> ActionChunkPrediction: ...
 
     def supports_text_generation(self) -> bool: ...
 
@@ -342,12 +347,14 @@ class LanguageConditionedRuntime:
         try:
             # The observation provider already conditions the batch on the active
             # subtask, so the policy needs nothing beyond its usual inference call.
-            chunk = self.policy.predict_action_chunk(observation)
+            prediction = self.policy.predict_action_chunk_with_text(observation)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "predict_action_chunk failed: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG)
+                "predict_action_chunk_with_text failed: %s",
+                exc,
+                exc_info=logger.isEnabledFor(logging.DEBUG),
             )
-            self.state.log(f"  [warn] predict_action_chunk failed: {type(exc).__name__}: {exc}")
+            self.state.log(f"  [warn] predict_action_chunk_with_text failed: {type(exc).__name__}: {exc}")
             return
         with self.state.lock:
             if (
@@ -358,7 +365,10 @@ class LanguageConditionedRuntime:
             ):
                 logger.info("Discarded an action chunk invalidated during inference.")
                 return
-            self._enqueue_chunk(chunk)
+            self._enqueue_chunk(prediction.action)
+            # Commit the text with its chunk, so a discarded chunk takes its text with it
+            # rather than leaving it to be displayed against whichever chunk lands next.
+            self.state.last_prediction = prediction
 
     def _enqueue_chunk(self, chunk: Any) -> None:
         if chunk is None:

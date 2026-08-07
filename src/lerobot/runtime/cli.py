@@ -544,10 +544,10 @@ def _make_state_panel_renderer(
         dispatched = int(st.get("actions_dispatched") or 0)
         console.print(f"  [dim]queued actions: {queue_len}    dispatched: {dispatched}[/]")
 
-        # Read-only telemetry from policies that emit reasoning with the action chunk.
-        reasoning = runtime.policy.last_reasoning()
-        if reasoning:
-            console.print(f"  [bold cyan]{'reasoning':<8}[/] {reasoning}")
+        # Read-only telemetry: the text belonging to the chunk the runtime last accepted.
+        prediction = runtime.state.last_prediction
+        if prediction is not None and prediction.text:
+            console.print(f"  [bold cyan]{'reasoning':<8}[/] {prediction.text}")
 
         # Surface repeated or empty generations as overfitting diagnostics.
         diag = runtime.subtask.diagnostics
