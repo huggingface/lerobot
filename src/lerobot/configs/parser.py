@@ -96,6 +96,7 @@ def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> lis
 
 
 def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
+    """Return the value of `--{arg_name}=value` or `--{arg_name} value` in `args` (`sys.argv[1:]` if `None`)."""
     if args is None:
         args = sys.argv[1:]
     option = f"--{arg_name}"
@@ -115,7 +116,7 @@ def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, 
 
     Args:
         plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
-        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
+        args (`Sequence[str]`): A sequence of command-line arguments to parse.
 
     Returns:
         dict: A dictionary containing the parsed plugin arguments where:
@@ -156,7 +157,7 @@ def load_plugin(plugin_path: str) -> None:
     registered with their parents using the `register_subclass` decorator.
 
     Args:
-        plugin_path (str): The Python package path to the plugin (e.g. "mypackage.plugins.myplugin")
+        plugin_path (str): The Python package path to the plugin, e.g. "mypackage.plugins.myplugin".
 
     Raises:
         PluginLoadError: If the plugin cannot be loaded due to import errors or if the package path is invalid.
@@ -180,6 +181,7 @@ def load_plugin(plugin_path: str) -> None:
         ) from e
 
     def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
+        """Iterate the direct submodules of `ns_pkg`, yielding their fully-qualified names."""
         return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
 
     try:
@@ -192,6 +194,7 @@ def load_plugin(plugin_path: str) -> None:
 
 
 def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
+    """Return `--{field_name}.path`'s value from CLI `args`, or from a YAML/JSON config if not on the CLI."""
     result = parse_arg(f"{field_name}.{PATH_KEY}", args)
     if result is None:
         result = _config_path_args.get(field_name)
@@ -199,21 +202,24 @@ def get_path_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 
 
 def get_yaml_overrides(field_name: str) -> list[str]:
+    """Return the CLI-style overrides extracted from `field_name`'s YAML/JSON config path block, if any."""
     return _config_yaml_overrides.get(field_name, [])
 
 
 def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | None:
+    """Return `--{field_name}.type`'s value from CLI `args` (`sys.argv[1:]` if `None`)."""
     return parse_arg(f"{field_name}.{draccus.CHOICE_TYPE_KEY}", args)
 
 
 def _register_scoped_actions(
     wrapper: Wrapper, parser: SuppressingArgumentParser, cli_args: Sequence[str]
 ) -> None:
-    """Like draccus's own Wrapper.register_actions, but for a ChoiceType field only recurses into
-    the already-selected subclass (per CLI `.type` args), instead of every registered choice.
+    """Like draccus's own Wrapper.register_actions, but only recurses a ChoiceType field's subclasses.
 
-    This mirrors draccus 0.11.x's internal wrapper traversal because its public parser eagerly registers
-    every choice before parsing the command line. Keep this in sync when updating draccus.
+    Only the already-selected subclass (per CLI `.type` args) is recursed into, instead of every
+    registered choice. This mirrors draccus 0.11.x's internal wrapper traversal because its public
+    parser eagerly registers every choice before parsing the command line. Keep this in sync when
+    updating draccus.
     """
     if isinstance(wrapper, ChoiceWrapper):
         group = parser.add_argument_group(title=wrapper.title, description=wrapper.description)
@@ -253,8 +259,10 @@ def _register_scoped_actions(
 
 
 def print_scoped_help(config_class: type, cli_args: Sequence[str]) -> None:
-    """Prints --help output scoped to the choices already resolved on the CLI (e.g. --env.type=pusht),
-    instead of draccus's default of expanding every registered subclass of every ChoiceType field."""
+    """Prints --help output scoped to the choices already resolved on the CLI (e.g. --env.type=pusht).
+
+    Instead of draccus's default of expanding every registered subclass of every ChoiceType field.
+    """
     parser = SuppressingArgumentParser(formatter_class=SimpleHelpFormatter)
     parser.add_argument(
         f"--{draccus.utils.CONFIG_ARG}", type=str, help="Path for a config file to parse with draccus"
@@ -264,6 +272,7 @@ def print_scoped_help(config_class: type, cli_args: Sequence[str]) -> None:
 
 
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
+    """Return `args` with `--{field_to_filter}` (and its value, if separate) removed."""
     if args is None:
         return []
     option = f"--{field_to_filter}"
@@ -285,12 +294,11 @@ def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[
 
 
 def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | None = None) -> list[str]:
-    """
-    Filters command-line arguments related to fields with specific path arguments.
+    """Filters command-line arguments related to fields with specific path arguments.
 
     Args:
         fields_to_filter (str | list[str]): A single str or a list of str whose arguments need to be filtered.
-        args (Sequence[str] | None): The sequence of command-line arguments to be filtered.
+        args (Sequence[str] | None, *optional*): The sequence of command-line arguments to be filtered.
             Defaults to None.
 
     Returns:
@@ -380,19 +388,22 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
 
 
 def wrap(config_path: Path | None = None) -> Callable[[F], F]:
-    """
-    HACK: Similar to draccus.wrap but does three additional things:
-        - Will remove '.path' arguments from CLI in order to process them later on.
-        - If a 'config_path' is passed and the main config class has a 'from_pretrained' method, will
-          initialize it from there to allow to fetch configs from the hub directly
-        - Will load plugins specified in the CLI arguments. These plugins will typically register
-            their own subclasses of config classes, so that draccus can find the right class to instantiate
-            from the CLI '.type' arguments
+    """HACK: Similar to draccus.wrap but does three additional things.
+
+    - Will remove '.path' arguments from CLI in order to process them later on.
+    - If a 'config_path' is passed and the main config class has a 'from_pretrained' method, will
+      initialize it from there to allow to fetch configs from the hub directly
+    - Will load plugins specified in the CLI arguments. These plugins will typically register
+        their own subclasses of config classes, so that draccus can find the right class to instantiate
+        from the CLI '.type' arguments
     """
 
     def wrapper_outer(fn: F) -> F:
+        """Wrap `fn` so its first argument is resolved from the CLI/config instead of passed directly."""
+
         @wraps(fn)
         def wrapper_inner(*args: Any, **kwargs: Any) -> Any:
+            """Build `fn`'s config argument from the CLI/config file (unless already given), then call `fn`."""
             argspec = inspect.getfullargspec(fn)
             argtype = argspec.annotations[argspec.args[0]]
             if len(args) > 0 and type(args[0]) is argtype:

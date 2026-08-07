@@ -27,35 +27,65 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DatasetConfig:
-    # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
-    # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
-    # "dataset_index" into the returned item. The index mapping is made according to the order in which the
-    # datasets are provided.
+    """A dataset to train on. `TrainPipelineConfig.dataset` may be a list of these, concatenated together.
+
+    Only data keys common between multiple datasets are kept. Each dataset gets an additional transform
+    that inserts the `"dataset_index"` into the returned item, with the index mapping made according to
+    the order in which the datasets are provided.
+
+    Args:
+        repo_id (`str`): The Hub repo ID (or local dataset name, if `root` is set) to load.
+        repo_type (`str`, *optional*, defaults to `"dataset"`): Hub repository type: `"dataset"` (the
+            default) or `"bucket"` for an HF Storage Bucket streamed over `hf://buckets/`. Buckets are
+            streaming-only, so `"bucket"` requires `streaming=True`.
+        root (`str | None`, *optional*): Root directory for a concrete local dataset tree (e.g.
+            `'dataset/path'`). If `None`, local datasets are looked up under `$HF_LEROBOT_HOME/repo_id` and
+            Hub downloads use a revision-safe cache under `$HF_LEROBOT_HOME/hub`.
+        episodes (`list[int] | None`, *optional*): Episode indices to include. If `None`, all episodes are
+            used.
+        exclude_episodes (`list[int] | None`, *optional*): Episode indices to drop (e.g. corrupt or
+            heterogeneous ones). Applied on top of `episodes`.
+        image_transforms (`ImageTransformsConfig`, *optional*): Image augmentation settings applied at load
+            time.
+        revision (`str | None`, *optional*): Hub revision (commit hash, branch, or tag) to load.
+        use_imagenet_stats (`bool`, *optional*, defaults to `True`): Whether to use ImageNet normalization
+            statistics for visual features instead of the dataset's own.
+        video_backend (`str`, *optional*): The video decoding backend to use.
+        return_uint8 (`bool`, *optional*, defaults to `False`): When `True`, RGB video frames are returned
+            as `uint8` tensors (0-255) instead of `float32` (0.0-1.0). This reduces memory and speeds up
+            DataLoader IPC. The training pipeline handles the conversion.
+        depth_output_unit (`str`, *optional*, defaults to `"mm"`): Physical unit depth maps are dequantized
+            to at load time: `"mm"` (millimeters) or `"m"` (metres). Has no effect on datasets without depth
+            cameras.
+        streaming (`bool`, *optional*, defaults to `False`): Stream the dataset instead of downloading it
+            locally.
+        eval_split (`float`, *optional*, defaults to 0.0): Fraction of episodes held out per task for
+            offline evaluation (0.0 = disabled).
+    """
+
     repo_id: str
-    # Hub repository type: "dataset" (default) or "bucket" for an HF Storage Bucket streamed over
-    # hf://buckets/. Buckets are streaming-only, so "bucket" requires streaming=true.
     repo_type: str = "dataset"
-    # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
-    # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
     episodes: list[int] | None = None
-    # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
     exclude_episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_video_backend)
-    # When True, RGB video frames are returned as uint8 tensors (0-255) instead of float32 (0.0-1.0).
-    # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
-    # Physical unit depth maps are dequantized to at load time: "mm" (millimeters) or "m" (metres).
-    # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
-    # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
 
     def __post_init__(self) -> None:
+        """Validate `repo_type`/`streaming`/`depth_output_unit`/`eval_split`/`episodes`/`exclude_episodes`.
+
+        Raises:
+            ValueError: If `repo_type` isn't `"dataset"` or `"bucket"`; if `repo_type="bucket"` is combined
+                with `streaming=False` or a nonzero `eval_split`; if `depth_output_unit` isn't a recognized
+                unit; if `eval_split` is outside `[0.0, 1.0)`; or if `episodes` contains negative or
+                duplicate indices.
+        """
         if self.repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {self.repo_type!r}")
         if self.repo_type == "bucket" and not self.streaming:
@@ -92,35 +122,63 @@ class DatasetConfig:
 
 @dataclass
 class WandBConfig:
+    """Weights & Biases logging settings for `lerobot-train`.
+
+    Args:
+        enable (`bool`, *optional*, defaults to `False`): Whether to log this run to Weights & Biases.
+        disable_artifact (`bool`, *optional*, defaults to `False`): Set to `True` to disable saving an
+            artifact despite `save_checkpoint=True`.
+        project (`str`, *optional*, defaults to `"lerobot"`): The WandB project to log to.
+        entity (`str | None`, *optional*): The WandB entity (team or username) to log under.
+        notes (`str | None`, *optional*): Notes attached to the WandB run.
+        run_id (`str | None`, *optional*): An existing WandB run id to resume logging into.
+        mode (`str | None`, *optional*): WandB mode: `"online"`, `"offline"`, or `"disabled"`. Defaults to
+            `"online"`.
+        add_tags (`bool`, *optional*, defaults to `True`): If `True`, save the training configuration as
+            tags on the WandB run.
+    """
+
     enable: bool = False
-    # Set to true to disable saving an artifact despite training.save_checkpoint=True
     disable_artifact: bool = False
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
-    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    mode: str | None = None
+    add_tags: bool = True
 
 
 @dataclass
 class EvalConfig:
+    """Settings for the periodic in-training simulation-environment evaluation.
+
+    Args:
+        n_episodes (`int`, *optional*, defaults to 50): Number of episodes to run per evaluation.
+        batch_size (`int`, *optional*, defaults to 0): The number of environments to use in a
+            `gym.vector.VectorEnv`. `0` auto-tunes based on available CPU cores and `n_episodes`.
+        use_async_envs (`bool`, *optional*, defaults to `True`): Whether to use asynchronous environments
+            (multiprocessing). Automatically downgraded to a `SyncVectorEnv` when `batch_size` is 1.
+        recording (`bool`, *optional*, defaults to `False`): Whether to record eval rollouts as a LeRobot
+            dataset on disk.
+        recording_repo_id (`str | None`, *optional*): If set, push recorded eval datasets to the Hub under
+            this repo id (one repo per task, suffixed by task and env index). Requires `recording=True`.
+        recording_private (`bool`, *optional*, defaults to `False`): Whether the pushed recording
+            repositories should be private.
+    """
+
     n_episodes: int = 50
-    # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
-    # Set to 0 for auto-tuning based on available CPU cores and n_episodes.
     batch_size: int = 0
-    # `use_async_envs` specifies whether to use asynchronous environments (multiprocessing).
-    # Defaults to True; automatically downgraded to SyncVectorEnv when batch_size=1.
     use_async_envs: bool = True
-    # Whether to record eval rollouts as a LeRobot dataset on disk.
     recording: bool = False
-    # If set, push recorded eval datasets to the Hub under this repo id (one repo per task,
-    # suffixed by task and env index). Requires recording=true.
     recording_repo_id: str | None = None
-    # Whether the pushed recording repositories should be private.
     recording_private: bool = False
 
     def __post_init__(self) -> None:
+        """Validate `recording_repo_id`/`recording`, and resolve/cap `batch_size`.
+
+        Raises:
+            ValueError: If `recording_repo_id` is set without `recording=True`.
+        """
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
         if self.batch_size == 0:
@@ -194,54 +252,66 @@ class EMAConfig:
 
 @dataclass
 class PeftConfig:
-    # PEFT offers many fine-tuning methods, layer adapters being the most common and currently also the most
-    # effective methods so we'll focus on those in this high-level config interface.
+    """PEFT (parameter-efficient fine-tuning) settings, e.g. LoRA adapters.
 
-    # Either a string (module name suffix or 'all-linear'), a list of module name suffixes or a regular expression
-    # describing module names to target with the configured PEFT method. Some policies have a default value for this
-    # so that you don't *have* to choose which layers to adapt but it might still be worthwhile depending on your case.
+    PEFT offers many fine-tuning methods, layer adapters being the most common and currently also the
+    most effective methods so we'll focus on those in this high-level config interface.
+
+    Args:
+        target_modules (`list[str] | str | None`, *optional*): Either a string (module name suffix or
+            `'all-linear'`), a list of module name suffixes, or a regular expression describing module
+            names to target with the configured PEFT method. Some policies have a default value for this
+            so that you don't *have* to choose which layers to adapt, but it might still be worthwhile
+            depending on your case.
+        full_training_modules (`list[str] | None`, *optional*): Names/suffixes of modules to fully
+            fine-tune and store alongside adapter weights. Useful for layers that are not part of a
+            pre-trained model (e.g., action state projections). Depending on the policy this defaults to
+            layers that are newly created in pre-trained policies. If you're fine-tuning an already trained
+            policy you might want to set this to `[]`. Corresponds to PEFT's `modules_to_save`.
+        method_type (`str`, *optional*, defaults to `"LORA"`): The PEFT (adapter) method to apply to the
+            policy. Needs to be a valid PEFT type.
+        init_type (`str | None`, *optional*): Adapter initialization method. Look at the specific PEFT
+            adapter documentation for defaults.
+        r (`int`, *optional*, defaults to 16): We expect that all PEFT adapters are in some way doing
+            rank-decomposition, therefore this parameter specifies the rank used for the adapter. In
+            general a higher rank means more trainable parameters and closer to full fine-tuning.
+        lora_alpha (`int | None`, *optional*): Alpha parameter for LoRA scaling (`scaling = lora_alpha /
+            r`). In general, a higher alpha means stronger adaptation signal. If `None`, the PEFT library
+            defaults to `alpha=8`, which may dampen high-rank adapters. Common values are `r` (`alpha ==
+            rank`) or `2*r`.
+    """
+
     target_modules: list[str] | str | None = None
-
-    # Names/suffixes of modules to fully fine-tune and store alongside adapter weights. Useful for layers that are
-    # not part of a pre-trained model (e.g., action state projections). Depending on the policy this defaults to layers
-    # that are newly created in pre-trained policies. If you're fine-tuning an already trained policy you might want
-    # to set this to `[]`. Corresponds to PEFT's `modules_to_save`.
     full_training_modules: list[str] | None = None
-
-    # The PEFT (adapter) method to apply to the policy. Needs to be a valid PEFT type.
     method_type: str = "LORA"
-
-    # Adapter initialization method. Look at the specific PEFT adapter documentation for defaults.
     init_type: str | None = None
-
-    # We expect that all PEFT adapters are in some way doing rank-decomposition therefore this parameter specifies
-    # the rank used for the adapter. In general a higher rank means more trainable parameters and closer to full
-    # fine-tuning.
     r: int = 16
-
-    # Alpha parameter for LoRA scaling (scaling = lora_alpha / r).
-    # In general, a higher alpha means stronger adaptation signal.
-    # If None, the PEFT library defaults to alpha=8, which may dampen high-rank adapters.
-    # Common values are r (alpha == rank) or 2*r.
     lora_alpha: int | None = None
 
 
 @dataclass
 class JobConfig:
-    # Where training runs. None (omitted) or "local" runs on this machine.
-    # Any other value is an HF Jobs flavor and submits the run to HF Jobs.
-    # List available flavors + pricing with `hf jobs hardware` command.
+    """Where and how a training run executes: locally, or dispatched to an HF Jobs flavor.
+
+    Args:
+        target (`str | None`, *optional*): Where training runs. `None` (omitted) or `"local"` runs on this
+            machine. Any other value is an HF Jobs flavor and submits the run to HF Jobs. List available
+            flavors and pricing with the `hf jobs hardware` command.
+        image (`str`, *optional*, defaults to `"huggingface/lerobot-gpu:latest"`): Runtime image for the
+            remote job (ignored for local runs).
+        timeout (`str | None`, *optional*, defaults to `"2d"`): Max wall-clock for the remote job as an HF
+            Jobs duration string (e.g. `"2h"`). HF Jobs itself defaults to `"2d"`; we pass an explicit,
+            generous cap instead. Set a smaller value to fail fast, or a larger one for long runs.
+        detach (`bool`, *optional*, defaults to `False`): Submit and exit instead of streaming the job logs
+            in the foreground.
+        tags (`list[str]`, *optional*): Extra tags attached to the HF job and to any dataset this run
+            pushes to the Hub. A `"lerobot"` tag is always added; e.g. `--job.tags '["lelab"]'` adds more.
+    """
+
     target: str | None = None
-    # Runtime image for the remote job (ignored for local runs).
     image: str = "huggingface/lerobot-gpu:latest"
-    # Max wall-clock for the remote job as an HF Jobs duration string (e.g. "2h").
-    # Defaults to "2d": We pass an explicit, generous cap instead. Set a smaller
-    # value to fail fast, or a larger one for long runs.
     timeout: str | None = "2d"
-    # Submit and exit instead of streaming the job logs in the foreground.
     detach: bool = False
-    # Extra tags attached to the HF job and to any dataset this run pushes to the
-    # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
     tags: list[str] = field(default_factory=list)
 
     # Two entry points to the same predicate: the staticmethod tests a raw target string
