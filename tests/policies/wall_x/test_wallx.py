@@ -293,3 +293,30 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_subtask_prompt_is_token_exact_with_the_trained_template():
+    """WALL-OSS declares its mode in the user turn, so the template must match upstream."""
+    from lerobot.policies.wall_x.utils import get_wallx_normal_text
+
+    img_keys = ["observation.images.face_view"]
+    upstream, generated_subtask = get_wallx_normal_text(
+        {"instruction": "clear the table", "subtask_generation": "pick the cup"},
+        action_chunk_size=1,
+        frame_idx=0,
+        priority_order=None,
+        img_keys=list(img_keys),
+        generate_subtask_ratio=1.0,
+    )
+    assert generated_subtask
+
+    ours = WallXPolicy._format_text_prompt(
+        SimpleNamespace(_observation_prompt=WallXPolicy._observation_prompt.__get__(object())),
+        "clear the table",
+        "subtask",
+        list(img_keys),
+    )
+
+    # Compare the user turn only: upstream appends its own assistant target, ours ends
+    # at the generation prompt.
+    assert ours.split("<|im_start|>assistant")[0] == upstream.split("<|im_start|>assistant")[0]

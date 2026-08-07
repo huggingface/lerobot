@@ -1980,8 +1980,12 @@ class WallXPolicy(PreTrainedPolicy):
         return text, predicts_action
 
     def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
+        # Token-exact with the subtask branch of `get_wallx_normal_text`, down to the
+        # newline before `<|im_end|>`: WALL-OSS declares its mode in this user turn, so
+        # a prompt that drifts from the trained template is answered out of
+        # distribution.
         if kind == "subtask":
-            instruction = f"{instruction}\nPredict the next action in language."
+            instruction = f"{instruction}\nPredict the next action in language.\n"
         return (
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
             f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"
