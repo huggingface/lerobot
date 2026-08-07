@@ -68,12 +68,14 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     use_peft: bool = False
 
     # Decoding settings for policies that implement `PreTrainedPolicy.generate_text`.
-    # They ride along in config.json because they are a property of the trained
-    # checkpoint: a head trained with greedy decoding degrades under sampling. The
-    # `text_` prefix keeps them distinct from action-sampling settings such as
+    # Sampling is supported; these are the defaults a checkpoint ships with, which is
+    # why they belong in config.json. Greedy suits a subtask head trained with
+    # cross-entropy against one target per step, but raising the temperature is a
+    # useful probe for an under-trained head stuck on a single output. The `text_`
+    # prefix keeps these distinct from action-sampling settings such as
     # `PI0FastConfig.temperature`.
-    text_temperature: float = 0.0  # 0.0 is greedy argmax
-    text_top_p: float = 1.0  # nucleus filtering threshold
+    text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
+    text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
