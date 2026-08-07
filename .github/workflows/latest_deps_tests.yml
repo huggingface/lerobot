@@ -53,7 +53,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v8.3.2 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@v9.0.0 # zizmor: ignore[unpinned-uses]
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
@@ -115,7 +115,7 @@ jobs:
           speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v8.3.2 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@v9.0.0 # zizmor: ignore[unpinned-uses]
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
@@ -168,7 +168,7 @@ jobs:
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.4.0 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@v4.6.0 # zizmor: ignore[unpinned-uses]
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
