@@ -18,6 +18,7 @@ import pytest
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.being_h05.configuration_being_h05 import ROBOCASA_CAMERA_KEYS, BeingH05Config
 from lerobot.policies.being_h05.processor_being_h05 import (
     ACTION_SLOTS,
@@ -30,7 +31,6 @@ from lerobot.policies.being_h05.processor_being_h05 import (
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION
 
 

@@ -877,6 +877,22 @@ def _create_attention_mask(
     )
 
 
+_RUNTIME_MAX_NEW_TOKENS = {"subtask": 32, "vqa": 96}
+
+
+def _runtime_prompt(kind: str, batch: dict[str, Any], user_text: str | None) -> str:
+    """Build the interactive-runtime prompt for one text `kind`."""
+    task = str(batch.get("task") or "")
+    if kind == "vqa":
+        return (user_text or task).strip()
+    if kind == "subtask":
+        return (
+            f"The robot's task is: {task}\n"
+            "What is the next concise, executable subtask? Answer with only the subtask."
+        )
+    raise ValueError(f"Unsupported Being-H0.5 text kind: {kind!r}.")
+
+
 class BeingH05Policy(PreTrainedPolicy):
     """Native LeRobot implementation of the released Being-H0.5 architecture."""
 
@@ -1033,7 +1049,35 @@ class BeingH05Policy(PreTrainedPolicy):
         return torch.multinomial(logits.softmax(dim=-1), num_samples=1).squeeze(-1)
 
     @torch.no_grad()
+    def supports_text_generation(self) -> bool:
+        """The released RoboCasa action fine-tune does not retain usable text generation."""
+        return "robocasa" not in str(getattr(self.config, "author_model_id", "") or "").lower()
+
     def generate_text(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: str = "subtask",
+        user_text: str | None = None,
+    ) -> str:
+        """Single-sample text generation, as the interactive language runtime calls it."""
+        if not self.supports_text_generation():
+            raise RuntimeError(
+                "The released Being-H0.5 RoboCasa action fine-tune does not retain usable text "
+                "generation; use lerobot/being_h05_base for VQA."
+            )
+        gen = self.config.generation
+        generated = self.generate_texts(
+            batch,
+            _runtime_prompt(kind, batch, user_text),
+            max_new_tokens=_RUNTIME_MAX_NEW_TOKENS.get(kind, 64),
+            min_new_tokens=gen.min_new_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
+        )
+        return generated[0].strip() if generated else ""
+
+    def generate_texts(
         self,
         batch: dict[str, Any],
         prompts: str | Sequence[str],

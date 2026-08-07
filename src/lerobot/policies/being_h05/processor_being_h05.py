@@ -27,13 +27,13 @@ from torchvision.transforms import InterpolationMode, functional as tvf
 
 from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature, recipe as recipe_module
 from lerobot.configs.recipe import TrainingRecipe
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
 
 from .configuration_being_h05 import BeingH05Config
 

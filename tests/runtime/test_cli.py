@@ -40,6 +40,12 @@ def test_parse_args_rejects_removed_dataset_replay_flags():
         _parse_args(["--policy.path=checkpoint", "--dataset.repo_id=dataset"])
 
 
+@pytest.mark.parametrize("flag", ["--sim", "--sim.task=CloseFridge"])
+def test_parse_args_rejects_removed_simulation_flags(flag):
+    with pytest.raises(SystemExit):
+        _parse_args(["--policy.path=checkpoint", flag])
+
+
 def test_rollout_runtime_io_uses_context_processors():
     robot = MagicMock()
     robot.robot_type = "mock_robot"
@@ -77,11 +83,12 @@ def test_rollout_runtime_io_uses_context_processors():
 
 
 def test_ask_runtime_pauses_and_routes_current_observation(capsys):
-    adapter = MagicMock()
-    adapter.generate_text.return_value = "The mug is beside the bowl."
+    policy = MagicMock()
+    policy.supports_text_generation.return_value = True
+    policy.generate_text.return_value = "The mug is beside the bowl."
     runtime = SimpleNamespace(
-        state=RuntimeState(mode="action"),
-        policy_adapter=adapter,
+        state=RuntimeState(mode="action", task="clear the table"),
+        policy=policy,
         _current_observation=lambda: {"image": "current"},
     )
     runtime.state.action_queue.extend([1, 2])
@@ -91,10 +98,32 @@ def test_ask_runtime_pauses_and_routes_current_observation(capsys):
     assert answer == "The mug is beside the bowl."
     assert runtime.state.mode == "paused"
     assert not runtime.state.action_queue
-    adapter.generate_text.assert_called_once_with(
-        "vqa",
-        {"image": "current"},
-        runtime.state,
+    policy.generate_text.assert_called_once_with(
+        {"image": "current", "task": "clear the table"},
+        kind="vqa",
         user_text="What is beside the bowl?",
     )
     assert "[policy] The mug is beside the bowl." in capsys.readouterr().out
+
+
+def test_ask_runtime_reports_a_policy_without_a_text_head(capsys):
+    policy = MagicMock()
+    policy.supports_text_generation.return_value = False
+    runtime = SimpleNamespace(
+        state=RuntimeState(mode="action"),
+        policy=policy,
+        _current_observation=lambda: {"image": "current"},
+    )
+
+    assert _ask_runtime(runtime, "What is beside the bowl?") == ""
+    assert "no text head" in capsys.readouterr().out
+    policy.generate_text.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--text_temperature=0.5", "--text_top_p=0.9", "--text_min_new_tokens=3", "--disable_memory"],
+)
+def test_parse_args_rejects_flags_replaced_by_the_policy_config(flag):
+    with pytest.raises(SystemExit):
+        _parse_args(["--policy.path=checkpoint", flag])

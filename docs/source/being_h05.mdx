@@ -31,7 +31,7 @@ attention, connector, semantic packing, and flow-action modules live in
 - Loading the released base and RoboCasa checkpoints from the Hub.
 - Training and fine-tuning through `lerobot-train`.
 - Inference through `predict_action_chunk` and `select_action`.
-- Grounded text generation through `generate_text`.
+- Grounded text generation through `generate_text` and `generate_texts`.
 - Interactive task planning and VQA through the language runtime adapter.
 - Three ordered camera inputs and natural-language task instructions.
 - Fixed semantic 200D state and action representations with validity masks.
@@ -234,7 +234,7 @@ supports greedy decoding by default and optional temperature and top-p
 sampling:
 
 ```python
-answer = policy.generate_text(
+answer = policy.generate_texts(
     processed_observation,
     "What object is next to the bowl?",
     max_new_tokens=64,
@@ -244,7 +244,12 @@ answer = policy.generate_text(
 `processed_observation` is the output of the Being-H0.5 preprocessor and must
 contain `being_h05.pixel_values` and `being_h05.image_valid`.
 
-The policy is also registered with LeRobot's interactive language runtime:
+`generate_texts` takes an explicit prompt. `generate_text` is the single-sample
+method the interactive language runtime calls: it builds the prompt from the
+batch for `kind="subtask"` or `kind="vqa"` and decodes with the sampling
+settings stored on the checkpoint in `config.generation`.
+
+The policy also works with LeRobot's interactive language runtime:
 
 ```bash
 lerobot-rollout \
