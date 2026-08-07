@@ -140,6 +140,59 @@ class EvalConfig:
 
 
 @dataclass
+class EMAConfig:
+    """Exponential moving average (EMA) of the policy weights.
+
+    Standard practice for diffusion-style policies (Chi et al. 2023, "Diffusion Policy", section V.D):
+    the reference implementation enables it in every config and evaluates the EMA weights. Off by
+    default here because it keeps a second full copy of the parameters in memory.
+
+    The decay follows the warmup schedule from diffusers' `EMAModel`:
+    `decay_t = 1 - (1 + t / inv_gamma) ** -power`, clamped to `[min_decay, max_decay]`.
+    The defaults mirror the reference implementation. Alternatively, set `decay` for a constant
+    decay at every step, as used by openpi for pi0/pi05 (`ema_decay=0.99`).
+    """
+
+    enable: bool = False
+    # Constant decay coefficient (openpi-style, e.g. 0.99 for pi0/pi05). When set, the warmup
+    # schedule below is bypassed and the shadow uses this decay at every step.
+    decay: float | None = None
+    # Number of optimizer steps during which the shadow stays a hard copy of the live weights.
+    update_after_step: int = 0
+    # Warmup schedule parameters (see class docstring).
+    inv_gamma: float = 1.0
+    power: float = 0.75
+    min_decay: float = 0.0
+    max_decay: float = 0.9999
+    # Evaluate the EMA weights (instead of the live ones) during periodic env eval.
+    # Offline eval-loss (--eval_steps) always uses the live weights: it runs on every rank
+    # while the EMA shadow only lives on the main process.
+    use_for_eval: bool = True
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.min_decay <= self.max_decay <= 1.0):
+            raise ValueError(
+                "Expected 0 <= ema.min_decay <= ema.max_decay <= 1, got "
+                f"min_decay={self.min_decay} and max_decay={self.max_decay}."
+            )
+        if self.inv_gamma <= 0:
+            raise ValueError(f"ema.inv_gamma must be positive, got {self.inv_gamma}.")
+        if self.power <= 0:
+            raise ValueError(f"ema.power must be positive, got {self.power}.")
+        if self.update_after_step < 0:
+            raise ValueError(f"ema.update_after_step must be >= 0, got {self.update_after_step}.")
+        if self.decay is not None:
+            if not 0.0 <= self.decay <= 1.0:
+                raise ValueError(f"ema.decay must be in [0, 1], got {self.decay}.")
+            # Keep the literals in sync with the field defaults above.
+            if self.min_decay != 0.0 or self.max_decay != 0.9999:
+                raise ValueError(
+                    "ema.decay (constant decay) and ema.min_decay/ema.max_decay (schedule clamp) are "
+                    "mutually exclusive: set one or the other."
+                )
+
+
+@dataclass
 class PeftConfig:
     # PEFT offers many fine-tuning methods, layer adapters being the most common and currently also the most
     # effective methods so we'll focus on those in this high-level config interface.
