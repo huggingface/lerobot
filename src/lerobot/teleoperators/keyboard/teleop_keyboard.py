@@ -42,6 +42,31 @@ if PYNPUT_AVAILABLE:
         logging.info("Could not import pynput keyboard backend: %s", e)
 
 
+def _normalize_key(key: Any) -> Any:
+    key_char = getattr(key, "char", None)
+    return key_char if key_char is not None else key
+
+
+def _key_variants(*names: str) -> tuple[Any, ...]:
+    if keyboard is None:
+        return ()
+
+    return tuple(
+        key for name in names if (key := getattr(keyboard.Key, name, None)) is not None
+    )
+
+
+def _release_key_variants(key: Any) -> tuple[Any, ...]:
+    for variants in (
+        _key_variants("shift", "shift_l", "shift_r"),
+        _key_variants("ctrl", "ctrl_l", "ctrl_r"),
+    ):
+        if key in variants:
+            return variants
+
+    return (key,)
+
+
 class KeyboardTeleop(Teleoperator):
     """
     Teleop class to use keyboard inputs for control.
@@ -104,16 +129,15 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def _on_press(self, key):
-        if hasattr(key, "char"):
-            key = key.char
+        key = _normalize_key(key)
         self.event_queue.put((key, True))
 
     def _on_release(self, key):
-        if hasattr(key, "char"):
-            key = key.char
-        self.event_queue.put((key, False))
+        key = _normalize_key(key)
+        for key_variant in _release_key_variants(key):
+            self.event_queue.put((key_variant, False))
 
-        if key == keyboard.Key.esc:
+        if keyboard is not None and key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
 
@@ -185,6 +209,9 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
+            if not val:
+                continue
+
             if key == keyboard.Key.up:
                 delta_y = -int(val)
             elif key == keyboard.Key.down:
@@ -193,16 +220,16 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 delta_x = int(val)
             elif key == keyboard.Key.right:
                 delta_x = -int(val)
-            elif key == keyboard.Key.shift:
+            elif key in _key_variants("shift", "shift_l"):
                 delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
+            elif key in _key_variants("shift_r"):
                 delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
+            elif key in _key_variants("ctrl_r"):
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
                 gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
+            elif key in _key_variants("ctrl", "ctrl_l"):
                 gripper_action = int(val) - 1
-            elif val:
+            else:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
@@ -252,13 +279,13 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.left,
             keyboard.Key.right,
             keyboard.Key.shift,
+            *_key_variants("shift_l"),
             keyboard.Key.shift_r,
+            *_key_variants("ctrl"),
             keyboard.Key.ctrl_r,
             keyboard.Key.ctrl_l,
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
-
-        self.current_pressed.clear()
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False
