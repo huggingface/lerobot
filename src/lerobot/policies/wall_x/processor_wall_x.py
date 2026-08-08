@@ -14,13 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 from typing import Any
 
 import torch
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature, recipe as recipe_module
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -31,7 +29,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 
-from .configuration_wall_x import WallXConfig
+from .configuration_wall_x import WallXConfig, _load_recipe
 
 
 def make_wall_x_pre_post_processors(
@@ -66,7 +64,11 @@ def make_wall_x_pre_post_processors(
 
     language_steps = []
     if config.recipe_path:
-        language_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+        # Re-resolve the path here, not only in `WallXConfig.__post_init__`: a caller
+        # may set `recipe_path` after construction, and training must render the
+        # same recipe the checkpoint prompts itself with (`config.recipe`).
+        config.recipe = _load_recipe(config.recipe_path)
+        language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps = [
         steps.rename_observations,
@@ -120,12 +122,3 @@ class WallXTaskProcessor(ComplementaryDataProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)

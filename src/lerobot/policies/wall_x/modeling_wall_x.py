@@ -1855,8 +1855,6 @@ class WallXPolicy(PreTrainedPolicy):
 
     config_class = WallXConfig
     name = "wall_x"
-    #: WALL-OSS's trained subtask wording; the runtime fills it with the operator's goal.
-    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language.\n"}  # noqa: RUF012
 
     def __init__(self, config: WallXConfig, **kwargs):
         require_package("transformers", extra="wallx")
@@ -1981,12 +1979,13 @@ class WallXPolicy(PreTrainedPolicy):
         return text, predicts_action
 
     def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
-        # Token-exact with the subtask branch of `get_wallx_normal_text`, down to the
+        # The subtask wording comes from the checkpoint's recipe (config.recipe),
+        # token-exact with the subtask branch of `get_wallx_normal_text` down to the
         # newline before `<|im_end|>`: WALL-OSS declares its mode in this user turn, so
         # a prompt that drifts from the trained template is answered out of
         # distribution.
         if kind == "subtask":
-            instruction = f"{instruction}\nPredict the next action in language.\n"
+            instruction = self.build_prompt("subtask", task=instruction)
         return (
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
             f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"

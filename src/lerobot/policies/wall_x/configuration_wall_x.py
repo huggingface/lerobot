@@ -13,10 +13,48 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs import (
+    FeatureType,
+    NormalizationMode,
+    PolicyFeature,
+    PreTrainedConfig,
+    recipe as recipe_module,
+)
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+
+def _wall_x_default_recipe() -> TrainingRecipe:
+    """WALL-OSS's trained subtask wording — token-exact, down to the trailing newline."""
+    return TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="user",
+                content="${task}\nPredict the next action in language.\n",
+                stream="high_level",
+            ),
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            ),
+        ]
+    )
+
+
+def _load_recipe(path_str: str) -> TrainingRecipe:
+    """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
+    path = Path(path_str)
+    if not path.is_absolute() and not path.exists():
+        candidate = Path(recipe_module.__file__).resolve().parent / path
+        if candidate.exists():
+            path = candidate
+    return TrainingRecipe.from_yaml(path)
 
 
 @PreTrainedConfig.register_subclass("wall_x")
@@ -66,8 +104,14 @@ class WallXConfig(PreTrainedConfig):
     # otherwise falls back to the native per-chunk SDPA implementation.
     vision_attn_implementation: str = "auto"
 
-    # Optional language-recipe supervision.
+    # Optional language-recipe supervision. Setting `recipe_path` opts training in
+    # and loads the YAML into `recipe` (relative paths resolve against
+    # src/lerobot/configs/recipes/).
     recipe_path: str | None = None
+    # WALL-X's language contract: defaults to the WALL-OSS trained subtask wording;
+    # a fine-tune with `recipe_path` replaces it, and the checkpoint then prompts
+    # itself with the recipe it was trained on.
+    recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _wall_x_default_recipe())
     tokenizer_max_length: int = 768
     flow_loss_weight: float = 1.0
     text_loss_weight: float = 0.01
@@ -85,6 +129,15 @@ class WallXConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        if self.recipe_path is not None:
+            try:
+                self.recipe = _load_recipe(self.recipe_path)
+            except FileNotFoundError:
+                if self.recipe is None:
+                    raise
+                # A reloaded checkpoint already carries its recipe inline; a stale
+                # path only matters on the training machine that set it.
 
         # Input validation
         if self.n_action_steps > self.chunk_size:
