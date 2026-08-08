@@ -48,6 +48,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     omx_leader,
     openarm_mini,
+    openarm_v1_dynamixel,
     rebot_102_leader,
     so_leader,
 )

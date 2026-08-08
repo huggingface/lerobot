@@ -103,6 +103,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_openarm_mini import BiOpenArmMini
 
         return BiOpenArmMini(config)
+    elif config.type == "openarm_v1_dynamixel":
+        from .openarm_v1_dynamixel import OpenArmV1Dynamixel
+
+        return OpenArmV1Dynamixel(config)
     elif config.type == "rebot_102_leader":
         from .rebot_102_leader import RebotArm102Leader
 
