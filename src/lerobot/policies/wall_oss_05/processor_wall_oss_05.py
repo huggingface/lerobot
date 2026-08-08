@@ -17,13 +17,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import torch
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature, recipe as recipe_module
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
@@ -41,7 +39,7 @@ from lerobot.processor import (
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_wall_oss_05 import WallOSS05Config
+from .configuration_wall_oss_05 import WallOSS05Config, _load_recipe
 
 
 @ProcessorStepRegistry.register(name="wall_oss_05_task_passthrough")
@@ -253,15 +251,6 @@ def reconcile_wall_oss_05_processors(
     return preprocessor, postprocessor
 
 
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
-
-
 def make_wall_oss_05_pre_post_processors(
     config: WallOSS05Config,
     dataset_stats: dict | None = None,
@@ -274,7 +263,11 @@ def make_wall_oss_05_pre_post_processors(
     steps = make_default_policy_processor_steps(config, dataset_stats)
     language_steps = []
     if config.recipe_path:
-        language_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+        # Re-resolve the path here, not only in `WallOSS05Config.__post_init__`: a
+        # caller may set `recipe_path` after construction, and training must render
+        # the same recipe the checkpoint prompts itself with (`config.recipe`).
+        config.recipe = _load_recipe(config.recipe_path)
+        language_steps.append(RenderMessagesStep(recipe=config.recipe))
     native_dim_holder: dict[str, int] = {}
     return make_policy_processor_pipelines(
         input_steps=[

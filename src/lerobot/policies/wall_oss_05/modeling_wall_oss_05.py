@@ -738,8 +738,6 @@ class WallOSS05Policy(PreTrainedPolicy):
 
     config_class = WallOSS05Config
     name = "wall_oss_05"
-    #: Wall's trained subtask wording; the runtime fills it with the operator's goal.
-    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language.\n"}  # noqa: RUF012
 
     def __init__(
         self,
@@ -842,7 +840,9 @@ class WallOSS05Policy(PreTrainedPolicy):
             label = _CAMERA_LABELS.get(camera_name, camera_name.replace("_", " "))
             prompt += f" {label}: <|vision_start|>{_IMAGE_TOKEN}<|vision_end|>"
         if kind == "subtask":
-            prompt += f"\nInstruction: {instruction}\nPredict the next action in language.\n"
+            # The wording comes from the checkpoint's recipe (config.recipe),
+            # token-exact with the trained subtask turn.
+            prompt += f"\nInstruction: {self.build_prompt('subtask', task=instruction)}"
         else:
             prompt += f"\nQuestion: {instruction}\n"
         return prompt + "<|im_end|>\n<|im_start|>assistant\n"
