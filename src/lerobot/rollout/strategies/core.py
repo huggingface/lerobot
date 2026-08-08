@@ -56,11 +56,14 @@ class RolloutStrategy(abc.ABC):
         """Attach the inference engine and action interpolator, then start the backend.
 
         Creates an :class:`ActionInterpolator` from the config's
-        ``interpolation_multiplier`` and starts the inference engine.
-        Call this from ``setup()`` so strategies share identical
-        initialisation without duplicating code.
+        ``interpolation_multiplier`` and ``interpolation_rotation_dims``, and
+        starts the inference engine. Call this from ``setup()`` so strategies
+        share identical initialisation without duplicating code.
         """
-        self._interpolator = ActionInterpolator(multiplier=ctx.runtime.cfg.interpolation_multiplier)
+        self._interpolator = ActionInterpolator(
+            multiplier=ctx.runtime.cfg.interpolation_multiplier,
+            rotation_dims=ctx.runtime.cfg.interpolation_rotation_dims or None,
+        )
         self._engine = ctx.policy.inference
         logger.info("Starting inference engine...")
         self._engine.reset()

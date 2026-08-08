@@ -18,7 +18,12 @@ Provides configurable Nx control rate by interpolating between consecutive actio
 Useful with RTC and action-chunking policies to reduce jerkiness.
 """
 
+import math
+
+import torch
 from torch import Tensor
+
+_ROTVEC_EPS = 1e-8
 
 
 class ActionInterpolator:
@@ -31,6 +36,13 @@ class ActionInterpolator:
         prev_action -> [1/3 interpolated, 2/3 interpolated, current_action]
 
     This effectively multiplies the control rate for smoother motion.
+
+    Action dimensions holding rotation vectors (axis-angle) cannot be
+    linearly interpolated directly: two rotvecs can encode (nearly) the same
+    rotation while lying ~2*pi apart in vector space (`r` and its antipodal
+    twin `(|r| - 2*pi) * r/|r|`), and the straight line between them sweeps
+    through the identity rotation. Pass ``rotation_dims`` to canonicalize such
+    dimensions to the twin nearest the previous action before interpolating.
 
     Usage:
         interpolator = ActionInterpolator(multiplier=2)  # 2x control rate
@@ -46,15 +58,27 @@ class ActionInterpolator:
             robot.send_action(action)
     """
 
-    def __init__(self, multiplier: int = 1):
+    def __init__(self, multiplier: int = 1, rotation_dims: list[int] | None = None):
         """Initialize the interpolator.
 
         Args:
             multiplier: Control rate multiplier (1 = no interpolation, 2 = 2x, 3 = 3x, etc.)
+            rotation_dims: Optional flat list of action indices that hold rotation
+                vectors, grouped in consecutive (wx, wy, wz) triplets, e.g.
+                ``[3, 4, 5]`` for a single end-effector or ``[3, 4, 5, 10, 11, 12]``
+                for a bimanual setup. When None (default), all dimensions are
+                interpolated linearly as before.
         """
         if multiplier < 1:
             raise ValueError(f"multiplier must be >= 1, got {multiplier}")
+        if rotation_dims is not None and len(rotation_dims) % 3 != 0:
+            raise ValueError(
+                f"rotation_dims must contain (wx, wy, wz) triplets, got {len(rotation_dims)} indices"
+            )
         self.multiplier = multiplier
+        self._rotation_triplets = (
+            [rotation_dims[i : i + 3] for i in range(0, len(rotation_dims), 3)] if rotation_dims else []
+        )
         self._prev: Tensor | None = None
         self._buffer: list[Tensor] = []
         self._idx = 0
@@ -74,6 +98,29 @@ class ActionInterpolator:
         """Check if a new action is needed from the queue."""
         return self._idx >= len(self._buffer)
 
+    def _canonicalize_rotvecs(self, action: Tensor) -> Tensor:
+        """Replace each rotation-vector triplet with its antipodal twin when closer to the previous action.
+
+        A rotation vector ``r`` and its twin ``(|r| - 2*pi) * r/|r|`` encode the
+        same rotation. Interpolating toward whichever lies closer to the previous
+        rotvec keeps the interpolated path on the short arc instead of sweeping
+        through the identity rotation.
+        """
+        if not self._rotation_triplets or self._prev is None:
+            return action
+        action = action.clone()
+        for triplet in self._rotation_triplets:
+            r = action[..., triplet]
+            norm = torch.linalg.vector_norm(r, dim=-1, keepdim=True)
+            twin = (norm - 2 * math.pi) * r / norm.clamp_min(_ROTVEC_EPS)
+            prev_r = self._prev[..., triplet]
+            twin_is_closer = torch.linalg.vector_norm(twin - prev_r, dim=-1, keepdim=True) < (
+                torch.linalg.vector_norm(r - prev_r, dim=-1, keepdim=True)
+            )
+            use_twin = (norm > _ROTVEC_EPS) & twin_is_closer
+            action[..., triplet] = torch.where(use_twin, twin, r)
+        return action
+
     def add(self, action: Tensor) -> None:
         """Add a new action and compute interpolated sequence.
 
@@ -81,6 +128,7 @@ class ActionInterpolator:
             action: New action tensor from policy/queue (already on CPU).
         """
         if self.multiplier > 1 and self._prev is not None:
+            action = self._canonicalize_rotvecs(action)
             self._buffer = []
             for i in range(1, self.multiplier + 1):
                 t = i / self.multiplier
