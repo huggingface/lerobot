@@ -1,0 +1,51 @@
+# TLabel Tactile Features -> LeRobot Dataset Feature Mapping
+# Default configuration for tlabel -> lerobot conversion
+#
+# Customize this file to include only the features you need,
+# or to remap TLabel dimensions to different LeRobot feature keys.
+#
+# Usage:
+#   python convert_tlabel_to_lerobot.py \
+#       --input-dir ./data/ \
+#       --repo-id user/dataset \
+#       --config config/tlabel_default_features.yaml
+
+observation.tactile.contact:
+  dtype: float32
+  shape: [1]
+  names: [contact]
+
+observation.tactile.force:
+  dtype: float32
+  shape: [3]
+  names: [magnitude, direction, peak]
+
+observation.tactile.deformation:
+  dtype: float32
+  shape: [2]
+  names: [magnitude, rate]
+
+observation.tactile.slip:
+  dtype: float32
+  shape: [2]
+  names: [entropy, event]
+
+observation.tactile.texture:
+  dtype: float32
+  shape: [1]
+  names: [energy]
+
+observation.tactile.contact_geometry:
+  dtype: float32
+  shape: [3]
+  names: [area, centroid_x, centroid_y]
+
+observation.tactile.field:
+  dtype: float32
+  shape: [4]
+  names: [normal_mag, normal_var, shear_mag, shear_dir]
+
+observation.tactile.dynamics:
+  dtype: float32
+  shape: [3]
+  names: [delta_normal, delta_shear, friction_cone]
