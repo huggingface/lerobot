@@ -14,6 +14,7 @@
 import pytest
 import torch
 
+from lerobot.optim.factory import apply_loraplus_lr_ratio
 from lerobot.optim.optimizers import (
     AdamConfig,
     AdamWConfig,
@@ -240,3 +241,60 @@ def test_save_and_load_empty_multi_optimizer_state(base_params_dict, tmp_path):
         torch.testing.assert_close(
             optimizer.state_dict()["param_groups"], loaded_optimizers[name].state_dict()["param_groups"]
         )
+
+
+class _DummyLoRA(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.base = torch.nn.Linear(4, 4)  # frozen base weights
+        self.q_lora_A = torch.nn.Linear(4, 2, bias=False)
+        self.q_lora_B = torch.nn.Linear(2, 4, bias=False)
+        self.v_lora_A = torch.nn.Linear(4, 2, bias=False)
+        self.v_lora_B = torch.nn.Linear(2, 4, bias=False)
+        self.base.requires_grad_(False)
+
+
+def test_apply_loraplus_lr_ratio_single_group():
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable, lr=lr)
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+
+    # The B matrices are pulled into their own group at lr * ratio; A matrices keep the base lr.
+    assert sorted(g["lr"] for g in optimizer.param_groups) == [lr, lr * ratio]
+    b_group = next(g for g in optimizer.param_groups if g["lr"] == lr * ratio)
+    a_group = next(g for g in optimizer.param_groups if g["lr"] == lr)
+    b_ids = {id(p) for p in b_group["params"]}
+    a_ids = {id(p) for p in a_group["params"]}
+    assert {id(model.q_lora_B.weight), id(model.v_lora_B.weight)} == b_ids
+    assert {id(model.q_lora_A.weight), id(model.v_lora_A.weight)} == a_ids
+
+
+def test_apply_loraplus_lr_ratio_composes_with_named_groups():
+    # Presets like XVLAAdamWConfig build their own groups with different per-group lrs. LoRA+ should
+    # layer on top: within each group the B matrices get that group's lr * ratio, A keeps the base.
+    model = _DummyLoRA()
+    lr = 1e-4
+    ratio = 16.0
+
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": [model.q_lora_A.weight, model.q_lora_B.weight], "lr": lr, "name": "q"},
+            {"params": [model.v_lora_A.weight, model.v_lora_B.weight], "lr": lr * 0.1, "name": "v"},
+        ]
+    )
+    apply_loraplus_lr_ratio(optimizer, model, ratio)
+
+    assert sorted(g["lr"] for g in optimizer.param_groups) == sorted(
+        [lr, lr * ratio, lr * 0.1, lr * 0.1 * ratio]
+    )
+
+
+def test_apply_loraplus_lr_ratio_rejects_non_positive():
+    model = _DummyLoRA()
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    with pytest.raises(ValueError):
+        apply_loraplus_lr_ratio(optimizer, model, 0.0)
