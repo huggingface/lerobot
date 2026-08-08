@@ -18,15 +18,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import torch
 from PIL import Image
 from torchvision.transforms import InterpolationMode, functional as tvf
 
-from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature, recipe as recipe_module
-from lerobot.configs.recipe import TrainingRecipe
+from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ProcessorStep,
@@ -35,7 +33,7 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 
-from .configuration_being_h05 import BeingH05Config
+from .configuration_being_h05 import BeingH05Config, _load_recipe
 
 STATE_SLOTS = {
     "eef_position": (0, 3),
@@ -378,7 +376,11 @@ def make_being_h05_pre_post_processors(
     if config.recipe_path:
         from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: PLC0415
 
-        input_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+        # Re-resolve the path here, not only in `BeingH05Config.__post_init__`: a
+        # caller may set `recipe_path` after construction, and training must render
+        # the same recipe the checkpoint prompts itself with (`config.recipe`).
+        config.recipe = _load_recipe(config.recipe_path)
+        input_steps.append(RenderMessagesStep(recipe=config.recipe))
     input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
     output_steps = [BeingH05SemanticUnpackStep()]
     if normalize_actions:
@@ -391,12 +393,3 @@ def make_being_h05_pre_post_processors(
         input_steps=input_steps,
         output_steps=output_steps,
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path_str
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)

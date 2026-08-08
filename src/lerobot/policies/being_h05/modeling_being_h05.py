@@ -33,7 +33,6 @@ from torch.nn.attention.flex_attention import (
     or_masks,
 )
 
-from lerobot.configs import TextKind
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -881,16 +880,14 @@ def _create_attention_mask(
 _RUNTIME_MAX_NEW_TOKENS = {"subtask": 32, "vqa": 96}
 
 
-def _runtime_prompt(kind: str, batch: dict[str, Any], user_text: str | None) -> str:
+def _runtime_prompt(policy: BeingH05Policy, kind: str, batch: dict[str, Any], user_text: str | None) -> str:
     """Build the interactive-runtime prompt for one text `kind`."""
     task = str(batch.get("task") or "")
     if kind == "vqa":
         return (user_text or task).strip()
     if kind == "subtask":
-        return (
-            f"The robot's task is: {task}\n"
-            "What is the next concise, executable subtask? Answer with only the subtask."
-        )
+        # The wording comes from the checkpoint's recipe (config.recipe).
+        return policy.build_prompt("subtask", task=task)
     raise ValueError(f"Unsupported Being-H0.5 text kind: {kind!r}.")
 
 
@@ -1058,7 +1055,7 @@ class BeingH05Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Any],
         *,
-        kind: TextKind = TextKind.SUBTASK,
+        kind: str = "subtask",
         user_text: str | None = None,
     ) -> str:
         """Single-sample text generation, as the interactive language runtime calls it."""
@@ -1069,7 +1066,7 @@ class BeingH05Policy(PreTrainedPolicy):
             )
         generated = self.generate_texts(
             batch,
-            _runtime_prompt(kind, batch, user_text),
+            _runtime_prompt(self, kind, batch, user_text),
             max_new_tokens=_RUNTIME_MAX_NEW_TOKENS.get(kind, 64),
             temperature=self.config.text_temperature,
             top_p=self.config.text_top_p,
