@@ -14,22 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 
 import numpy as np
-import onnx
 import onnxruntime as ort
 from huggingface_hub import hf_hub_download
 
 from ..g1_utils import (
+    G1_MOTOR_MODELS,
     REMOTE_AXES,
+    STIFF_JOINT_INDICES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
+    compute_pd_gains,
     get_gravity_orientation,
 )
 
 logger = logging.getLogger(__name__)
+
+# Holosoma runs the hip-pitch joints (left=0, right=6) at the softer 7520_14 gain rather than
+# the 7520_22 default; every other joint uses the derived motor-physics gains.
+_HOLOSOMA_MOTOR_MODELS = list(G1_MOTOR_MODELS)
+_HOLOSOMA_MOTOR_MODELS[0] = _HOLOSOMA_MOTOR_MODELS[6] = "7520_14"
+_KP, _KD = compute_pd_gains(_HOLOSOMA_MOTOR_MODELS, STIFF_JOINT_INDICES)
 
 DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
 DEFAULT_ANGLES[[0, 6]] = -0.312  # Hip pitch
@@ -61,15 +68,16 @@ POLICY_FILES = {
 def load_policy(
     repo_id: str = DEFAULT_HOLOSOMA_REPO_ID,
     policy_type: str = "fastsac",
-) -> tuple[ort.InferenceSession, np.ndarray, np.ndarray]:
-    """Load Holosoma locomotion policy and extract KP/KD from metadata.
+) -> ort.InferenceSession:
+    """Load the Holosoma locomotion policy.
 
     Args:
         repo_id: Hugging Face Hub repo ID
         policy_type: Either "fastsac" (default) or "ppo"
 
     Returns:
-        (policy, kp, kd) tuple
+        The ONNX Runtime inference session. PD gains are not read from the checkpoint --
+        they are derived from motor physics (see ``_KP`` / ``_KD`` above).
     """
     if policy_type not in POLICY_FILES:
         raise ValueError(f"Unknown policy type: {policy_type}. Choose from: {list(POLICY_FILES.keys())}")
@@ -81,18 +89,7 @@ def load_policy(
     policy = ort.InferenceSession(policy_path)
     logger.info(f"Policy loaded: {policy.get_inputs()[0].shape} → {policy.get_outputs()[0].shape}")
 
-    # Extract KP/KD from ONNX metadata
-    model = onnx.load(policy_path, load_external_data=False)
-    metadata = {prop.key: prop.value for prop in model.metadata_props}
-
-    if "kp" not in metadata or "kd" not in metadata:
-        raise ValueError("ONNX model must contain 'kp' and 'kd' in metadata")
-
-    kp = np.array(json.loads(metadata["kp"]), dtype=np.float32)
-    kd = np.array(json.loads(metadata["kd"]), dtype=np.float32)
-    logger.info(f"Loaded KP/KD from ONNX ({len(kp)} joints)")
-
-    return policy, kp, kd
+    return policy
 
 
 class HolosomaLocomotionController:
@@ -101,8 +98,9 @@ class HolosomaLocomotionController:
     control_dt = CONTROL_DT  # Expose for unitree_g1.py
 
     def __init__(self):
-        # Load policy and gains
-        self.policy, self.kp, self.kd = load_policy()
+        self.policy = load_policy()
+        self.kp = _KP.copy()
+        self.kd = _KD.copy()
 
         self.default_angles = DEFAULT_ANGLES
         self.cmd = np.zeros(3, dtype=np.float32)

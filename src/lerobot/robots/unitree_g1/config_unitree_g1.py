@@ -19,29 +19,14 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
+from .g1_utils import G1_MOTOR_MODELS, STIFF_JOINT_INDICES, compute_pd_gains
 
-_GAINS: dict[str, dict[str, list[float]]] = {
-    "left_leg": {
-        "kp": [150, 150, 150, 300, 40, 40],
-        "kd": [2, 2, 2, 4, 2, 2],
-    },  # pitch, roll, yaw, knee, ankle_pitch, ankle_roll
-    "right_leg": {"kp": [150, 150, 150, 300, 40, 40], "kd": [2, 2, 2, 4, 2, 2]},
-    "waist": {"kp": [250, 250, 250], "kd": [5, 5, 5]},  # yaw, roll, pitch
-    "left_arm": {"kp": [50, 50, 80, 80], "kd": [3, 3, 3, 3]},  # shoulder_pitch/roll/yaw, elbow
-    "left_wrist": {"kp": [40, 40, 40], "kd": [1.5, 1.5, 1.5]},  # roll, pitch, yaw
-    "right_arm": {"kp": [50, 50, 80, 80], "kd": [3, 3, 3, 3]},
-    "right_wrist": {"kp": [40, 40, 40], "kd": [1.5, 1.5, 1.5]},
-}
-
-
-def _build_gains() -> tuple[list[float], list[float]]:
-    """Build kp and kd lists from body-part groupings."""
-    kp = [v for g in _GAINS.values() for v in g["kp"]]
-    kd = [v for g in _GAINS.values() for v in g["kd"]]
-    return kp, kd
-
-
-_DEFAULT_KP, _DEFAULT_KD = _build_gains()
+# Default PD gains are derived from Unitree motor physics (armature + target natural
+# frequency; see g1_utils.compute_pd_gains) rather than hand-tuned. Controllers may tweak
+# individual joints on top of these.
+_kp, _kd = compute_pd_gains(G1_MOTOR_MODELS, STIFF_JOINT_INDICES)
+_DEFAULT_KP: list[float] = _kp.tolist()
+_DEFAULT_KD: list[float] = _kd.tolist()
 
 
 @RobotConfig.register_subclass("unitree_g1")
