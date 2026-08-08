@@ -18,13 +18,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs import recipe as recipe_module
-from lerobot.configs.recipe import TrainingRecipe
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
@@ -40,7 +37,7 @@ from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from .configuration_eo1 import EO1Config
+from .configuration_eo1 import EO1Config, _load_recipe
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
@@ -366,7 +363,11 @@ def make_eo1_pre_post_processors(
 
     language_steps: list[ProcessorStep] = []
     if config.recipe_path:
-        language_steps.append(RenderMessagesStep(recipe=_load_recipe(config.recipe_path)))
+        # Re-resolve the path here, not only in `EO1Config.__post_init__`: a caller
+        # may set `recipe_path` after construction, and training must render the
+        # same recipe the checkpoint prompts itself with (`config.recipe`).
+        config.recipe = _load_recipe(config.recipe_path)
+        language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,
@@ -390,15 +391,6 @@ def make_eo1_pre_post_processors(
     ]
 
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
 
 
 def _say_tool_texts(tool_calls: Any) -> list[str]:

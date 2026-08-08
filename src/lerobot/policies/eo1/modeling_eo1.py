@@ -65,8 +65,6 @@ class EO1Policy(PreTrainedPolicy):
 
     config_class = EO1Config
     name = "eo1"
-    #: EO-1's trained subtask wording; the runtime fills it with the operator's goal.
-    PROMPT_TEMPLATES = {"subtask": "{task}\nPredict the next action in language."}  # noqa: RUF012
 
     def __init__(self, config: EO1Config, **kwargs):
         require_package("transformers", extra="eo1")
@@ -286,7 +284,8 @@ class EO1Policy(PreTrainedPolicy):
             if kind == "caption":
                 prompts = ["Describe the image in one sentence."] * batch_size
             elif kind == "subtask":
-                prompts = [f"{task}\nPredict the next action in language." for task in tasks]
+                # The wording comes from the checkpoint's recipe (config.recipe).
+                prompts = [self.build_prompt("subtask", task=task) for task in tasks]
             else:
                 prompts = tasks
         elif isinstance(user_text, str):
