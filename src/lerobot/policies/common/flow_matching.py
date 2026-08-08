@@ -63,24 +63,35 @@ def euler_integrate(
     noise: Tensor,
     num_steps: int,
     *,
+    forward_euler: bool = False,
     rtc_processor: "RTCProcessor | None" = None,
     rtc_enabled: bool = False,
     inference_delay: int | None = None,
     prev_chunk_left_over: Tensor | None = None,
     execution_horizon: int | None = None,
 ) -> Tensor:
-    """Forward-Euler integration of a velocity field from t=1 (noise) to t=0 (actions).
+    """Euler integration of a velocity field between the noise and action endpoints.
 
-    This is the openpi sampling loop: ``dt = -1/num_steps``, ``time = 1.0 + step*dt``,
-    ``x_t <- x_t + dt * v_t``, with the optional real-time-chunking (RTC) guidance hook
-    wrapping the velocity computation and debug tracking after each step.
+    Two integration conventions are supported via ``forward_euler``:
+
+    * Backward (default, openpi: pi0, pi05, eo1, smolvla): integrates from t=1 (noise) to
+      t=0 (actions) with ``dt = -1/num_steps`` and ``time = 1.0 + step*dt``.
+    * Forward (groot, evo1, wall_x): integrates from t=0 (noise) to t=1 (actions) with
+      ``dt = +1/num_steps`` and ``time = step*dt``.
+
+    In both cases the update is ``x_t <- x_t + dt * v_t``, with the optional
+    real-time-chunking (RTC) guidance hook wrapping the velocity computation and debug
+    tracking after each step.
 
     Args:
         denoise_fn: Computes the velocity ``v_t`` from ``(x_t, time_tensor)`` where
             ``time_tensor`` is a float32 tensor of shape ``(batch_size,)``. The returned
             velocity must have the same shape and dtype as ``x_t``.
-        noise: Initial sample ``x_1`` of shape ``(batch_size, ...)``.
+        noise: Initial sample of shape ``(batch_size, ...)``. This is ``x_1`` for the
+            backward convention and ``x_0`` for the forward convention.
         num_steps: Number of Euler steps.
+        forward_euler: If ``True`` use the forward convention (start at t=0); otherwise
+            use the backward openpi convention (start at t=1).
         rtc_processor: Optional RTC processor. Debug tracking fires whenever it is set and
             has debugging enabled, even if RTC guidance itself is disabled (this mirrors
             the historical per-policy loops).
@@ -93,10 +104,11 @@ def euler_integrate(
     bsize = noise.shape[0]
     device = noise.device
 
-    dt = -1.0 / num_steps
+    dt = 1.0 / num_steps if forward_euler else -1.0 / num_steps
+    t_start = 0.0 if forward_euler else 1.0
     x_t = noise
     for step in range(num_steps):
-        time = 1.0 + step * dt
+        time = t_start + step * dt
         time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
 
         def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
