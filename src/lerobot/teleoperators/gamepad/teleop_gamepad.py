@@ -57,7 +57,7 @@ class GamepadTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.gamepad = None
+        self.gamepad: Any = None
 
         self.hidapi_fallback = config.hidapi_fallback
         if sys.platform == "darwin" and not self.hidapi_fallback:
@@ -85,13 +85,20 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
+        # `calibrate` is part of the Teleoperator interface and is passed by
+        # `lerobot-calibrate`; a gamepad has nothing to calibrate, so it is ignored.
+        gamepad_cls: type[Any]
         if self.hidapi_fallback:
-            from .gamepad_utils import GamepadControllerHID as Gamepad
-        else:
-            from .gamepad_utils import GamepadController as Gamepad
+            from .gamepad_utils import GamepadControllerHID
 
-        self.gamepad = Gamepad()
+            gamepad_cls = GamepadControllerHID
+        else:
+            from .gamepad_utils import GamepadController
+
+            gamepad_cls = GamepadController
+
+        self.gamepad = gamepad_cls()
         self.gamepad.start()
 
     @check_if_not_connected
@@ -120,7 +127,7 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, Any]:
         """
         Get extra control events from the gamepad such as intervention status,
         episode termination, success indicators, etc.
@@ -178,6 +185,7 @@ class GamepadTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration

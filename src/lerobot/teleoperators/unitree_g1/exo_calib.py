@@ -152,9 +152,13 @@ def run_exo_calibration(
     side: str,
     save_path: Path,
     params: CalibParams | None = None,
-) -> ExoskeletonCalibration:
+) -> ExoskeletonCalibration | None:
     """
     Run interactive calibration for an exoskeleton arm.
+
+    Returns the calibration once every joint has been captured, or None if the plot
+    window is closed before the procedure finishes. `ExoSerial.calibrate` already
+    treats a falsy calibration as "not calibrated".
     """
     require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
@@ -256,7 +260,7 @@ def run_exo_calibration(
     joint_idx = 0
     phase = "ellipse"
     advance_requested = False
-    zero_samples = []
+    zero_samples: list[float] = []
 
     def on_key(event):
         nonlocal advance_requested
@@ -454,3 +458,6 @@ def run_exo_calibration(
 
     finally:
         plt.close(fig)
+
+    # The plot window was closed before every joint was captured.
+    return None

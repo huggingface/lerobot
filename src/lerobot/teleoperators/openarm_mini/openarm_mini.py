@@ -155,7 +155,7 @@ class OpenArmMini(Teleoperator):
         motor_resolution = self.bus.model_resolution_table[list(self.bus.motors.values())[0].model]
         max_res = motor_resolution - 1
 
-        for motor_name, motor in self.bus.motors.items():
+        for motor_name, motor_obj in self.bus.motors.items():
             if motor_name == "gripper":
                 input(
                     "\nGripper Calibration\n"
@@ -189,9 +189,9 @@ class OpenArmMini(Teleoperator):
                 logger.info(f"  {motor_name}: range set to [0, {max_res}] (full motor range)")
 
             self.calibration[motor_name] = MotorCalibration(
-                id=motor.id,
+                id=motor_obj.id,
                 drive_mode=drive_mode,
-                homing_offset=homing_offsets[motor_name],
+                homing_offset=int(homing_offsets[motor_name]),
                 range_min=range_min,
                 range_max=range_max,
             )
