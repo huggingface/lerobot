@@ -51,8 +51,9 @@ ROBOTWIN_CAMERA_NAMES: tuple[str, ...] = (
 )
 
 ACTION_DIM = 14  # 7 DOF × 2 arms (joint-space control mode)
-# End-effector-pose control mode: per arm [x, y, z, qx, qy, qz, qw, gripper] = 8, dual-arm = 16.
-# Used by world-model policies (e.g. LingBot-VA) that predict eef-pose deltas executed via CuRobo IK.
+# End-effector-pose control modes use 8 values per arm and 16 values total. ``ee`` follows
+# LingBot-VA's xyzw delta-pose contract; ``ee_absolute`` preserves RoboTwin's native end-pose
+# quaternion order (wxyz in the Hy-VLA benchmark) and passes the absolute pose through unchanged.
 EEF_ACTION_DIM = 16
 ACTION_LOW = -1.0
 ACTION_HIGH = 1.0
@@ -336,7 +337,10 @@ class RoboTwinEnv(gym.Env):
 
     Actions
     -------
-    14-dim float32 array in ``[-1, 1]`` (joint-space, 7 DOF per arm).
+    ``joint`` accepts a 14D joint-space action. ``ee`` accepts a 16D pose delta
+    relative to the episode's initial pose. ``ee_absolute`` accepts the 16D
+    absolute dual-arm end-effector pose returned by RoboTwin and passes it
+    directly to ``take_action(..., action_type="ee")``.
 
     Autograd
     --------
@@ -365,12 +369,12 @@ class RoboTwinEnv(gym.Env):
         self.task_description = task_name.replace("_", " ")
         self.episode_index = episode_index
         self._reset_stride = n_envs
-        # "joint": 14-d joint-space actions via take_action(action). "ee": 16-d end-effector-pose
-        # deltas (added onto the episode's initial eef pose) executed via take_action(.., "ee") + IK.
-        if action_mode not in ("joint", "ee"):
-            raise ValueError(f"action_mode must be 'joint' or 'ee'; got {action_mode!r}")
+        # "joint": 14-d joint-space actions. "ee": 16-d pose deltas composed onto the episode's
+        # initial pose. "ee_absolute": native 16-d absolute poses passed directly to RoboTwin.
+        if action_mode not in ("joint", "ee", "ee_absolute"):
+            raise ValueError(f"action_mode must be 'joint', 'ee', or 'ee_absolute'; got {action_mode!r}")
         self.action_mode = action_mode
-        self._action_dim = EEF_ACTION_DIM if action_mode == "ee" else ACTION_DIM
+        self._action_dim = EEF_ACTION_DIM if action_mode in ("ee", "ee_absolute") else ACTION_DIM
         self._init_eef_pose: np.ndarray | None = None
         self.camera_names = list(camera_names)
         # Default to D435 dims (the camera type baked into task_config/demo_clean.yml).
@@ -400,7 +404,12 @@ class RoboTwinEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "pixels": spaces.Dict(image_spaces),
-                "agent_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(ACTION_DIM,), dtype=np.float32),
+                "agent_pos": spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=(EEF_ACTION_DIM if action_mode == "ee_absolute" else ACTION_DIM,),
+                    dtype=np.float32,
+                ),
             }
         )
         self.action_space = spaces.Box(
@@ -448,10 +457,16 @@ class RoboTwinEnv(gym.Env):
         else:
             joint_state = np.zeros(ACTION_DIM, dtype=np.float32)
 
-        return {"pixels": images, "agent_pos": joint_state}
+        state = self._read_eef_pose().astype(np.float32) if self.action_mode == "ee_absolute" else joint_state
+        return {"pixels": images, "agent_pos": state}
 
     def _read_eef_pose(self) -> np.ndarray:
-        """Read the current 16-d dual-arm eef pose [left(xyz+quat)+grip, right(xyz+quat)+grip]."""
+        """Read RoboTwin's native absolute 16D dual-arm end-effector pose.
+
+        Each arm is ``xyz + quaternion + gripper``. The quaternion order is
+        owned by the selected RoboTwin embodiment; the released Hy-VLA
+        RoboTwin contract uses wxyz.
+        """
         assert self._env is not None, "_read_eef_pose called before _ensure_env()"
         ep = self._env.get_obs()["endpose"]
         pose = (
@@ -498,8 +513,11 @@ class RoboTwinEnv(gym.Env):
 
         with torch.enable_grad():
             if self.action_mode == "ee":
+                assert self._init_eef_pose is not None
                 ee_action = _add_init_eef_pose(np.asarray(action, dtype=np.float64), self._init_eef_pose)
                 self._env.take_action(ee_action, action_type="ee")
+            elif self.action_mode == "ee_absolute":
+                self._env.take_action(np.asarray(action, dtype=np.float64), action_type="ee")
             elif hasattr(self._env, "take_action"):
                 self._env.take_action(action)
             else:

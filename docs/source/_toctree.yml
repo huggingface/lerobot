@@ -71,6 +71,8 @@
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
+  - local: hy_vla
+    title: Hy-Embodied-0.5-VLA
   - local: fastwam
     title: FastWAM
   - local: evo1
