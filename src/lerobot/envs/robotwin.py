@@ -383,6 +383,7 @@ class RoboTwinEnv(gym.Env):
         self.render_mode = render_mode
 
         self._env: Any | None = None  # deferred — created on first reset() inside worker
+        self._episode_active = False
         self._step_count: int = 0
         self._black_frame: np.ndarray = np.zeros(
             (self.observation_height, self.observation_width, 3), dtype=np.uint8
@@ -466,12 +467,16 @@ class RoboTwinEnv(gym.Env):
         self._ensure_env()
         super().reset(seed=seed)
         assert self._env is not None  # set by _ensure_env() above
+        if self._episode_active and hasattr(self._env, "close_env"):
+            self._env.close_env()
+            self._episode_active = False
 
         actual_seed = self.episode_index if seed is None else seed
         setup_kwargs = _load_robotwin_setup_kwargs(self.task_name)
         setup_kwargs.update(seed=actual_seed, is_test=True)
         with torch.enable_grad():
             self._env.setup_demo(**setup_kwargs)
+        self._episode_active = True
         self.episode_index += self._reset_stride
         self._step_count = 0
 
@@ -498,6 +503,7 @@ class RoboTwinEnv(gym.Env):
 
         with torch.enable_grad():
             if self.action_mode == "ee":
+                assert self._init_eef_pose is not None, "EEF pose must be initialized during reset()."
                 ee_action = _add_init_eef_pose(np.asarray(action, dtype=np.float64), self._init_eef_pose)
                 self._env.take_action(ee_action, action_type="ee")
             elif hasattr(self._env, "take_action"):
@@ -526,7 +532,6 @@ class RoboTwinEnv(gym.Env):
                 "task": self.task_name,
                 "is_success": is_success,
             }
-            self.reset()
 
         return obs, reward, terminated, truncated, info
 
@@ -546,6 +551,7 @@ class RoboTwinEnv(gym.Env):
                 with contextlib.suppress(TypeError):
                     self._env.close_env()
             self._env = None
+            self._episode_active = False
 
 
 # ---- Multi-task factory --------------------------------------------------------

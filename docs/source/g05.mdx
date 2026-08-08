@@ -1,0 +1,282 @@
+# OpenGalaxea G0.5
+
+G0.5 is a Qwen3.5-2B vision-language-action model that can generate embodied
+reasoning and actions in one stream. LeRobot exposes the action phase as System 1
+and the optional native chain-of-thought phase as System 2. They are not separate
+models: the runtime obtains both from one inference call and the action stays
+conditioned on the same post-reasoning KV state.
+
+## Model Overview
+
+Transformers includes the native multimodal Qwen3.5 backbone, vision tower, and
+processor. G0.5 is not a stock `Qwen3_5ForConditionalGeneration` checkpoint,
+however: it adds the proprioception/action path, action expert, flow-matching
+head, ActionCodec, and unified CoT/action decode. LeRobot implements those G0.5
+components natively and loads converted checkpoints without the OpenGalaxea
+Python package, Hydra, or OmegaConf.
+
+### What the LeRobot Integration Covers
+
+- Standard `policy.type=g05` configuration and Hub checkpoint loading.
+- Native continuous flow and discrete ActionCodec action generation.
+- Optional same-pass System 2 reasoning and action generation.
+- Serializable camera, state, action, normalization, and prompt processors.
+- Fine-tuning through `lerobot-train` and inference through `lerobot-rollout`.
+- LIBERO, RoboTwin, SO-101, and released R1 Lite/Pro checkpoint contracts.
+
+> [!WARNING]
+> G0.5 code and checkpoints use the
+> [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5),
+> including non-commercial restrictions. LeRobot does not redistribute checkpoint
+> weights, download gated files, or imply that Apache-2.0 applies to those materials.
+> Accept the license yourself and use a private or local checkpoint.
+
+## Checkpoints
+
+### Input and Output Contracts
+
+| Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization                   |
+| ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ------------------------------- |
+| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | z-score-tail + q01/q99 grippers |
+| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99                |
+| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99                |
+| `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99                |
+
+Each packaged checkpoint stores the resolved model and processor configuration,
+ActionCodec metadata, statistics, exact prompt template, and license. Loading
+rejects a different head, horizon, processor mode, or
+normalization contract.
+
+The converted checkpoints are private under the LeRobot organization:
+
+### Converted Checkpoints
+
+| Repository                                                                | Contract                     |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| [`lerobot/g05_base`](https://huggingface.co/lerobot/g05_base)             | 27D base, R1 Lite processor  |
+| [`lerobot/g05_libero`](https://huggingface.co/lerobot/g05_libero)         | 20D LIBERO                   |
+| [`lerobot/g05_robotwin20`](https://huggingface.co/lerobot/g05_robotwin20) | 20D RoboTwin                 |
+| [`lerobot/g05_so101`](https://huggingface.co/lerobot/g05_so101)           | 20D SO-101 (`so100` profile) |
+
+`lerobot/g05_base` supplies those 27D model weights, both action heads, the
+ActionCodec tokenizer, and the released six-step R1 Lite processor/statistics
+contract.
+
+## Installation Requirements
+
+Install LeRobot with the G0.5 Transformers dependency:
+
+```bash
+uv sync --extra g05 --extra test
+```
+
+The LeRobot organization hosts the prepared base, LIBERO, RoboTwin, and SO-101
+checkpoints privately. Authenticate with `hf auth login` before loading them.
+SO-100 and SO-101 share the released `so100` embodiment token and six-joint
+right-arm contract. A missing left-wrist camera is zero-padded exactly as in the
+author deployment client.
+
+## Usage
+
+Load the checkpoint that matches the target embodiment with the standard
+`--policy.path` option. The packaged configuration selects the correct action
+head, camera order, dimensions, normalization, and execution horizon.
+
+### Interactive System 1 and System 2 Runtime
+
+G0.5 emits reasoning and actions from one inference stream, so it has no
+separate text head: it does not implement `generate_text`, and the interactive
+runtime therefore never generates a subtask for it. The operator's task is
+forwarded byte-for-byte and drives action prediction directly. G0.5 never
+samples `task_aug` text, launches a second planner, or feeds generated CoT back
+as a replacement task.
+
+`policy.runtime_system` on the checkpoint selects the path. System 1 executes
+the selected ActionCodec or flow chunk directly:
+
+```bash
+lerobot-rollout \
+  --policy.path=lerobot/g05_so101 \
+  --language \
+  --policy.runtime_system=system1 \
+  --task="pick up the cup" \
+  --mode=action
+```
+
+System 2 is available only when the packaged checkpoint metadata has
+`predict_cot=true`. `predict_action_chunk_with_text` returns the chain-of-thought
+generated in the same pass as the chunk it belongs to:
+
+```python
+prediction = policy.predict_action_chunk_with_text(batch)
+print(prediction.text)  # "Subtask: grasp the cup ..."
+prediction.action  # the chunk that reasoning produced
+```
+
+The interactive panel shows it on a `reasoning` line, and
+`predict_action_chunk_with_runtime` returns the full telemetry when you want the
+generated token ids too. The reasoning is display-only: it never re-enters the
+observation batch, so it cannot replace the operator's task. System 1 emits none
+and reports `text=None`.
+
+```bash
+lerobot-rollout \
+  --policy.path=lerobot/g05_so101 \
+  --language \
+  --task="clear the table" \
+  --mode=action
+```
+
+For a physical SO-101, start paused, confirm the camera indices and arm port,
+then type `/action <task>`:
+
+```bash
+lerobot-rollout \
+  --language \
+  --policy.path=lerobot/g05_so101 \
+  --policy.device=cuda \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_follower \
+  --robot.cameras='{exterior: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist_right: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}' \
+  --task="pick up the cube" \
+  --mode=paused \
+  --ctrl_hz=30 \
+  --chunk_hz=1
+```
+
+The checkpoint is non-commercial and may be private; authenticate with
+`hf auth login` before loading it.
+
+## Data Requirements
+
+The dataset must expose the state, action, camera, and task features matching
+the selected checkpoint contract. For SO-101, use camera names `exterior` and
+`wrist_right`; the optional `wrist_left` input is zero-filled.
+
+Training System 2 language targets additionally requires the checkpoint's
+annotated CoT fields. A normal LeRobot recording supplies action supervision
+but does not synthesize CoT labels. Generate `subtask` and grounded `vqa`
+language columns with `lerobot-annotate` as described in the
+[annotation pipeline](./annotation_pipeline).
+
+## Training
+
+G0.5 implements LeRobot's training surface natively: `forward` computes
+assistant-token cross entropy and flow-matching loss, the policy exposes
+VLM/vision/action optimizer groups, and the checkpoint can be saved, resumed,
+and loaded by the normal LeRobot scripts.
+The objective preserves the packaged `ar.ce_weight`, optional
+`ar.ce_z_loss_scale`, and `fm.fm_weight`; the autoregressive loss jointly covers
+CoT text and ActionCodec targets.
+For example, fine-tune the private SO-101 checkpoint on a LeRobot dataset:
+
+### Training Command Example
+
+```bash
+export HF_USER=your_hf_username
+
+lerobot-train \
+  --dataset.repo_id=${HF_USER}/my_so101_dataset_annotated \
+  --policy.path=lerobot/g05_so101 \
+  --policy.device=cuda \
+  --policy.recipe_path=recipes/g05_bbox_subtask.yaml \
+  --policy.cot_bbox_camera=observation.images.exterior \
+  --policy.repo_id=${HF_USER}/g05_so101_finetuned \
+  --policy.private=true \
+  --output_dir=outputs/train/g05_so101 \
+  --job_name=g05_so101 \
+  --batch_size=16 \
+  --steps=10000 \
+  --save_freq=1000
+```
+
+The bundled `g05_bbox_subtask.yaml` recipe resolves the active
+`language_persistent` `subtask` and camera-scoped grounded `vqa` event at each
+sample timestamp. It emits each optional BBox or Subtask target when that
+annotation is present; unavailable annotations are skipped through the recipe's
+existing `if_present` guard.
+
+Grounded VQA boxes are converted from pixel-space `xyxy` JSON using the source
+camera dimensions captured before image resizing, then serialized as G0.5
+`<locXXXX>` tokens. Joint samples preserve the released checkpoint's
+`BBox → Subtask → Action` order. The user/task conditioning tokens remain
+masked; the native backend applies its language/action objective to the
+assistant sequence.
+
+Generate the required `subtask` and grounded `vqa` language columns with
+`lerobot-annotate` as described in the
+[annotation pipeline](./annotation_pipeline). The bundled recipe targets
+`observation.images.exterior`; copy the YAML and change its camera-filtered
+bindings when training an embodiment with a different grounded camera.
+
+The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
+LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
+1,000 and 500 warmup steps respectively. All profiles preserve G0.5's six
+decay/no-decay parameter groups and the configured VLM and vision learning-rate
+multipliers. Override these only when deliberately changing the author recipe:
+
+```bash
+--policy.optimizer_lr=2e-5 \
+--policy.optimizer_backbone_lr_multiplier=0.5 \
+--policy.optimizer_vision_lr_multiplier=0.1
+```
+
+Resume a saved run with the standard LeRobot checkpoint:
+
+```bash
+lerobot-train \
+  --config_path=outputs/train/g05_so101/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+## Key Configuration Parameters
+
+| Parameter                                 | Description                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `policy.checkpoint_profile`               | Selects the packaged base, LIBERO, RoboTwin, or SO-101 contract  |
+| `policy.action_head`                      | Uses the checkpoint's `flow` or `actioncodec` action path        |
+| `policy.runtime_system`                   | Selects direct System 1 or unified System 2 reasoning and action |
+| `policy.chunk_size`                       | Number of actions predicted in each chunk                        |
+| `policy.n_action_steps`                   | Number of actions executed before replanning                     |
+| `policy.recipe_path`                      | Optional language-supervision recipe used during fine-tuning     |
+| `policy.optimizer_backbone_lr_multiplier` | Learning-rate multiplier for the language backbone               |
+| `policy.optimizer_vision_lr_multiplier`   | Learning-rate multiplier for the vision tower                    |
+
+Do not override checkpoint contract fields unless deliberately converting or
+validating another embodiment. Incompatible action heads, dimensions, horizons,
+processor modes, and normalization contracts are rejected during loading.
+
+## Evaluation
+
+Once the pinned LIBERO simulator and assets are installed, run the matching
+LeRobot rollout with the author camera names and relative control:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/g05_libero \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.control_mode=relative \
+  --env.observation_height=512 \
+  --env.observation_width=512 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=5 \
+  --seed=0 \
+  --output_dir=outputs/g05-libero-lerobot-eval
+```
+
+## References
+
+- [OpenGalaxea G0.5 model](https://huggingface.co/OpenGalaxea/G05)
+- [OpenGalaxea G0.5 repository](https://github.com/OpenGalaxea/GalaxeaVLA)
+- [LeRobot language annotation pipeline](./annotation_pipeline)
+
+## License
+
+The native LeRobot integration is distributed with LeRobot, while G0.5 code
+and checkpoint weights remain subject to the
+[G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5).
+Review and accept that license before downloading or using a checkpoint.

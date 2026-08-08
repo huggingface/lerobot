@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from contextlib import nullcontext
 from copy import copy
 
@@ -25,25 +26,11 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 
 from .base import InferenceEngine
 
 logger = logging.getLogger(__name__)
-
-
-# TODO(Steven): support relative-action policies.  The per-tick flow refreshes
-# ``RelativeActionsProcessorStep._last_state`` every call, so cached chunk
-# actions popped on later ticks get reanchored to the *current* robot state and
-# absolute targets drift through the chunk.  Relative-action policies are
-# rejected at context-build time today; RTC postprocesses the whole chunk and
-# is unaffected.
-#
-# Candidate fix: drive the policy via ``predict_action_chunk`` and serve a
-# local FIFO of postprocessed actions.  Eliminates drift by construction and
-# saves per-tick pre/post work, but bypasses ``select_action`` — needs
-# fallbacks for SAC (raises), ACT temporal ensembling (ensembler lives in
-# ``select_action``), and Diffusion-family (obs-history queues populated as a
-# side effect of ``select_action``).
 
 
 class SyncInferenceEngine(InferenceEngine):
@@ -52,6 +39,10 @@ class SyncInferenceEngine(InferenceEngine):
     ``get_action`` runs the full policy pipeline (pre/post-processor +
     ``select_action``) on the given observation frame and returns a
     CPU action tensor reordered to match the dataset action keys.
+
+    Relative-action policies freeze the preprocessor reference state for the
+    lifetime of a ``select_action`` queue so queued relative steps stay
+    anchored to the observation that produced the chunk.
     """
 
     def __init__(
@@ -73,10 +64,19 @@ class SyncInferenceEngine(InferenceEngine):
         self._task = task
         self._device = torch.device(device or "cpu")
         self._robot_type = robot_type
+        self._relative_step = next(
+            (
+                step
+                for step in getattr(preprocessor, "steps", ())
+                if isinstance(step, RelativeActionsProcessorStep) and step.enabled
+            ),
+            None,
+        )
         logger.info(
-            "SyncInferenceEngine initialized (device=%s, action_keys=%d)",
+            "SyncInferenceEngine initialized (device=%s, action_keys=%d, relative_actions=%s)",
             self._device,
             len(ordered_action_keys),
+            self._relative_step is not None,
         )
 
     def start(self) -> None:
@@ -93,6 +93,19 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
+        if self._relative_step is not None:
+            self._relative_step.unfreeze_reference_state()
+
+    def _policy_action_queue_empty(self) -> bool:
+        queue = getattr(self._policy, "_action_queue", None)
+        if queue is None:
+            return True
+        if isinstance(queue, deque):
+            return len(queue) == 0
+        try:
+            return len(queue) == 0
+        except TypeError:
+            return True
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -108,12 +121,25 @@ class SyncInferenceEngine(InferenceEngine):
             else nullcontext()
         )
         with torch.inference_mode(), autocast_ctx:
+            if self._relative_step is not None and self._policy_action_queue_empty():
+                # New chunk: allow preprocessor to refresh the absolute reference.
+                self._relative_step.unfreeze_reference_state()
+
             observation = prepare_observation_for_inference(
                 observation, self._device, self._task, self._robot_type
             )
             observation = self._preprocessor(observation)
+
+            if self._relative_step is not None:
+                # Hold the chunk reference while select_action drains its queue.
+                self._relative_step.freeze_reference_state()
+
             action = self._policy.select_action(observation)
             action = self._postprocessor(action)
+
+            if self._relative_step is not None and self._policy_action_queue_empty():
+                self._relative_step.unfreeze_reference_state()
+
         action_tensor = action.squeeze(0).cpu()
 
         # Reorder to match dataset action ordering so the caller can treat

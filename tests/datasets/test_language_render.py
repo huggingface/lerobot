@@ -176,6 +176,32 @@ def test_deterministic_blend_sampling():
     assert first == second
 
 
+def test_g05_recipe_emits_available_bbox_and_subtask():
+    recipe = TrainingRecipe.from_yaml("src/lerobot/configs/recipes/g05_bbox_subtask.yaml")
+    persistent = [persistent_row("assistant", "grasp the cup", "subtask", 0.0)]
+    events = [
+        {
+            "role": "assistant",
+            "content": '{"detections": [{"label": "cup", "bbox": [1, 2, 3, 4]}]}',
+            "style": "vqa",
+            "camera": "observation.images.exterior",
+        }
+    ]
+
+    rendered = render_sample(
+        recipe=recipe,
+        persistent=persistent,
+        events=events,
+        t=0.0,
+        sample_idx=0,
+        task="pick the cup",
+    )
+
+    assert rendered["target_message_indices"] == [1, 2]
+    assert rendered["messages"][1]["content"].startswith("BBoxJSON:")
+    assert rendered["messages"][2]["content"] == "Subtask: grasp the cup"
+
+
 def test_emitted_at_filters_vqa_by_camera():
     top = emitted_at(
         3.0,

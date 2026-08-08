@@ -216,8 +216,10 @@ def rollout(
     """
     assert isinstance(policy, nn.Module), "Policy must be a PyTorch nn module."
 
-    # Reset the policy and environments.
+    # Reset the policy, stateful processors, and environments.
     policy.reset()
+    for processor in (env_preprocessor, env_postprocessor, preprocessor, postprocessor):
+        processor.reset()
     # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
     # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
     observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
