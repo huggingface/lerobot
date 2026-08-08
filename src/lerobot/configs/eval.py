@@ -18,6 +18,7 @@ from logging import getLogger
 from pathlib import Path
 
 from lerobot import envs, policies  # noqa: F401
+from lerobot.faults import FaultInjectionConfig, default_fault_config
 
 from . import parser
 from .default import EvalConfig
@@ -41,6 +42,8 @@ class EvalPipelineConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
     # Explicit consent to execute remote code from the Hub (required for hub environments).
     trust_remote_code: bool = False
+    # Optional evaluation-time fault injection (disabled by default; no-op when enabled=false).
+    fault: FaultInjectionConfig = field(default_factory=default_fault_config)
 
     def __post_init__(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
