@@ -29,18 +29,17 @@ logger = logging.getLogger(__name__)
 
 
 class BiSOFollower(BimanualMixin, Robot):
-    """A bimanual pair of [SO follower arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio."""
+    """A bimanual pair of [SO follower arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio.
+
+    Args:
+        config (`BiSOFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
 
     config_class = BiSOFollowerConfig
     name = "bi_so_follower"
 
     def __init__(self, config: BiSOFollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`BiSOFollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
 

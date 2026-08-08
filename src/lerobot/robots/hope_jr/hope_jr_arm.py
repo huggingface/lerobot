@@ -39,18 +39,16 @@ class HopeJrArm(Robot):
 
     The arm and the hand are separate robots; pair this with [`~robots.hope_jr.HopeJrHand`] for a full
     limb. See [`~robots.Robot`] for the contract every method here implements.
+
+    Args:
+        config (`HopeJrArmConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = HopeJrArmConfig
     name = "hope_jr_arm"
 
     def __init__(self, config: HopeJrArmConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`HopeJrArmConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
         self.bus = FeetechMotorsBus(

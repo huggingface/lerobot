@@ -41,6 +41,11 @@ class Robot(abc.ABC):
     ...     robot.send_action(action)
     ```
 
+    Args:
+        config (`RobotConfig`):
+            The robot's configuration. Its `id` and `calibration_dir` decide where calibration is
+            read from and written to.
+
     **Attributes**:
         - **config_class** (`type[RobotConfig]`) -- The expected configuration class for this robot.
         - **name** (`str`) -- The unique robot name used to identify this robot type.
@@ -51,13 +56,6 @@ class Robot(abc.ABC):
     name: str
 
     def __init__(self, config: RobotConfig):
-        """Set up identity and calibration paths, loading an existing calibration file if there is one.
-
-        Args:
-            config (`RobotConfig`):
-                The robot's configuration. Its `id` and `calibration_dir` decide where calibration is
-                read from and written to.
-        """
         self.robot_type = self.name
         self.id = config.id
         self.calibration_dir = (

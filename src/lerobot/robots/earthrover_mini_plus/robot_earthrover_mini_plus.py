@@ -81,6 +81,11 @@ class EarthRoverMiniPlus(Robot):
     - Linear and angular velocity control
     - Battery and orientation telemetry
 
+    Args:
+        config (`EarthRoverMiniPlusConfig`):
+            The robot's configuration. Its `sdk_url` points at the Frodobots SDK server; there is no
+            serial port, since control goes over HTTP.
+
     **Attributes**:
         - **config** -- Robot configuration
         - **sdk_base_url** -- URL of the Frodobots SDK server (default: http://localhost:8000)
@@ -90,11 +95,6 @@ class EarthRoverMiniPlus(Robot):
     name = "earthrover_mini_plus"
 
     def __init__(self, config: EarthRoverMiniPlusConfig):
-        """Initialize EarthRover Mini Plus robot.
-
-        Args:
-            config: Robot configuration including SDK URL
-        """
         super().__init__(config)
         self.config = config
         self.sdk_base_url = "http://localhost:8000"

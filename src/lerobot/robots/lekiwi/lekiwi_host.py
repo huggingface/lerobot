@@ -40,15 +40,13 @@ class LeKiwiHost:
 
     Runs on the robot's own computer, receiving actions on one socket and publishing observations on
     another.
+
+    Args:
+        config (`LeKiwiHostConfig`):
+            Ports, loop frequency and watchdog settings for the host.
     """
 
     def __init__(self, config: LeKiwiHostConfig):
-        """Bind the command and observation sockets.
-
-        Args:
-            config (`LeKiwiHostConfig`):
-                Ports, loop frequency and watchdog settings for the host.
-        """
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)

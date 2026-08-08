@@ -41,18 +41,16 @@ class OpenArmFollower(Robot):
 
     Uses Damiao motors in MIT control mode. See [`~robots.Robot`] for the contract every method here
     implements.
+
+    Args:
+        config (`OpenArmFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = OpenArmFollowerConfig
     name = "openarm_follower"
 
     def __init__(self, config: OpenArmFollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`OpenArmFollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
 

@@ -44,6 +44,10 @@ class SOFollower(Robot):
     Actions and observations are keyed `"<motor>.pos"`; cameras named in the config appear in observations
     under their own keys. See [`~robots.Robot`] for the contract every method here implements.
 
+    Args:
+        config (`SOFollowerRobotConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+
     Example:
         ```python
         >>> from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -58,12 +62,6 @@ class SOFollower(Robot):
     name = "so_follower"
 
     def __init__(self, config: SOFollowerRobotConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`SOFollowerRobotConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
         # choose normalization mode depending on config if available

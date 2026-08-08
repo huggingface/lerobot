@@ -73,18 +73,17 @@ REACHY2_VEL = {
 
 
 class Reachy2Robot(Robot):
-    """[Reachy 2](https://www.pollen-robotics.com/reachy/), the humanoid by Pollen Robotics."""
+    """[Reachy 2](https://www.pollen-robotics.com/reachy/), the humanoid by Pollen Robotics.
+
+    Args:
+        config (`Reachy2RobotConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
 
     config_class = Reachy2RobotConfig
     name = "reachy2"
 
     def __init__(self, config: Reachy2RobotConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`Reachy2RobotConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 

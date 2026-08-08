@@ -39,18 +39,16 @@ class OmxFollower(Robot):
     """The [OpenMANIPULATOR-X](https://github.com/ROBOTIS-GIT/open_manipulator) follower arm.
 
     Developed by Woojin Wie and Junha Cha at [ROBOTIS](https://ai.robotis.com/).
+
+    Args:
+        config (`OmxFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = OmxFollowerConfig
     name = "omx_follower"
 
     def __init__(self, config: OmxFollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`OmxFollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100

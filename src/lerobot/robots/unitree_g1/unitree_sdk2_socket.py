@@ -44,30 +44,28 @@ class LowStateMsg:
     """
 
     class MotorState:
-        """Motor state data for a single joint."""
+        """Motor state data for a single joint.
+
+        Args:
+            data (`dict[str, Any]`):
+                The motor's entry from the robot's state message.
+        """
 
         def __init__(self, data: dict[str, Any]) -> None:
-            """Build one motor's state from a deserialized JSON frame.
-
-            Args:
-                data (`dict[str, Any]`):
-                    The motor's entry from the robot's state message.
-            """
             self.q: float = data.get("q", 0.0)
             self.dq: float = data.get("dq", 0.0)
             self.tau_est: float = data.get("tau_est", 0.0)
             self.temperature: float = data.get("temperature", 0.0)
 
     class IMUState:
-        """IMU sensor data."""
+        """IMU sensor data.
+
+        Args:
+            data (`dict[str, Any]`):
+                The IMU's entry from the robot's state message.
+        """
 
         def __init__(self, data: dict[str, Any]) -> None:
-            """Build the IMU state from a deserialized JSON frame.
-
-            Args:
-                data (`dict[str, Any]`):
-                    The IMU's entry from the robot's state message.
-            """
             self.quaternion: list[float] = data.get("quaternion", [1.0, 0.0, 0.0, 0.0])
             self.gyroscope: list[float] = data.get("gyroscope", [0.0, 0.0, 0.0])
             self.accelerometer: list[float] = data.get("accelerometer", [0.0, 0.0, 0.0])
@@ -147,17 +145,16 @@ def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  #
 
 
 class ChannelPublisher:
-    """ZMQ-based publisher that sends commands to the robot server."""
+    """ZMQ-based publisher that sends commands to the robot server.
+
+    Args:
+        topic (`str`):
+            The topic name to publish under.
+        msg_type (`type`):
+            The message class this topic carries.
+    """
 
     def __init__(self, topic: str, msg_type: type) -> None:
-        """Bind the publisher to a topic.
-
-        Args:
-            topic (`str`):
-                The topic name to publish under.
-            msg_type (`type`):
-                The message class this topic carries.
-        """
         self.topic = topic
         self.msg_type = msg_type
 
@@ -175,17 +172,16 @@ class ChannelPublisher:
 
 
 class ChannelSubscriber:
-    """ZMQ-based subscriber that receives state from the robot server."""
+    """ZMQ-based subscriber that receives state from the robot server.
+
+    Args:
+        topic (`str`):
+            The topic name to receive from.
+        msg_type (`type`):
+            The message class this topic carries.
+    """
 
     def __init__(self, topic: str, msg_type: type) -> None:
-        """Bind the subscriber to a topic.
-
-        Args:
-            topic (`str`):
-                The topic name to receive from.
-            msg_type (`type`):
-                The message class this topic carries.
-        """
         self.topic = topic
         self.msg_type = msg_type
 

@@ -413,6 +413,11 @@ ignore = [
     # rendered page. Coverage of the things that do get rendered is enforced by interrogate instead.
     "D100",
     "D104",
+    # D107: `__init__` docstrings. doc-builder renders a class from its *class* docstring and never reads
+    # `__init__.__doc__`, so anything documented there is dropped from the page. Constructor parameters
+    # belong in an `Args:` block on the class, where they render and where `make check-docstrings`
+    # validates them against the signature.
+    "D107",
 ]
 
 [tool.ruff.lint.per-file-ignores]

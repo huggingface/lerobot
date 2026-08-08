@@ -41,18 +41,16 @@ class KochFollower(Robot):
       wrist-to-elbow expansion, developed by Alexander Koch from
       [Tau Robotics](https://tau-robotics.com).
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1), developed by Jess Moss.
+
+    Args:
+        config (`KochFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = KochFollowerConfig
     name = "koch_follower"
 
     def __init__(self, config: KochFollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`KochFollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100

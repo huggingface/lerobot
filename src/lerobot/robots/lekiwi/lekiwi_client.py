@@ -36,18 +36,16 @@ class LeKiwiClient(Robot):
     Presents the same [`~robots.Robot`] interface as [`~robots.lekiwi.LeKiwi`], but every observation and
     action crosses a ZMQ connection to the host process running on the robot. Calibration stays on the
     robot, so this class does not perform it.
+
+    Args:
+        config (`LeKiwiClientConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
 
     def __init__(self, config: LeKiwiClientConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`LeKiwiClientConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         import zmq
 
         self._zmq = zmq

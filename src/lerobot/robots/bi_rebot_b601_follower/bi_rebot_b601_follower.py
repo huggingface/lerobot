@@ -33,18 +33,16 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
     action keys of each arm are namespaced with a ``left_`` / ``right_`` prefix.
+
+    Args:
+        config (`BiRebotB601FollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = BiRebotB601FollowerConfig
     name = "bi_rebot_b601_follower"
 
     def __init__(self, config: BiRebotB601FollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`BiRebotB601FollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
 

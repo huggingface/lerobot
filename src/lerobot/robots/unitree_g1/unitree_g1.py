@@ -136,22 +136,20 @@ class UnitreeG1(Robot):
     `is_simulation=True` to drive a MuJoCo model instead of the physical robot.
 
     See [`~robots.Robot`] for the contract every method here implements.
+
+    Args:
+        config (`UnitreeG1Config`):
+            The robot's configuration, including gains, the ZMQ bridge address and whether to run
+            against MuJoCo instead of hardware.
+
+    Raises:
+        ImportError: If the `unitree_g1` extra is not installed.
     """
 
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
     def __init__(self, config: UnitreeG1Config):
-        """Build the robot and, if one is configured, its locomotion controller.
-
-        Args:
-            config (`UnitreeG1Config`):
-                The robot's configuration, including gains, the ZMQ bridge address and whether to run
-                against MuJoCo instead of hardware.
-
-        Raises:
-            ImportError: If the `unitree_g1` extra is not installed.
-        """
         require_package("unitree-sdk2py", extra="unitree_g1", import_name="unitree_sdk2py")
         super().__init__(config)
 

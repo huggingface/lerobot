@@ -24,17 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 class WeightedMovingFilter:
-    """A fixed-length weighted moving average over recent samples, used to smooth IK solutions."""
+    """A fixed-length weighted moving average over recent samples, used to smooth IK solutions.
+
+    Args:
+        weights (`Sequence[float]`):
+            Per-sample weights, newest first. Their length sets the window size.
+        data_size (`int`, *optional*, defaults to 14):
+            Number of values in each sample.
+    """
 
     def __init__(self, weights, data_size=14):
-        """Set up the filter.
-
-        Args:
-            weights:
-                Per-sample weights, newest first. Their length sets the window size.
-            data_size (`int`, *optional*, defaults to 14):
-                Number of values in each sample.
-        """
         self._window_size = len(weights)
         self._weights = np.array(weights)
         self._data_size = data_size
@@ -76,15 +75,14 @@ class WeightedMovingFilter:
 
 
 class G1_29_ArmIK:  # noqa: N801
-    """Inverse kinematics for the G1's two arms, solved together as one optimisation problem."""
+    """Inverse kinematics for the G1's two arms, solved together as one optimisation problem.
+
+    Args:
+        unit_test (`bool`, *optional*, defaults to `False`):
+            Whether to run in test mode, which visualises the solution instead of driving a robot.
+    """
 
     def __init__(self, unit_test=False):
-        """Build the arm model and the IK solver.
-
-        Args:
-            unit_test (`bool`, *optional*, defaults to `False`):
-                Whether to run in test mode, which visualises the solution instead of driving a robot.
-        """
         import casadi
         import pinocchio as pin
         from huggingface_hub import snapshot_download

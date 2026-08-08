@@ -29,18 +29,17 @@ logger = logging.getLogger(__name__)
 
 
 class BiOpenArmFollower(BimanualMixin, Robot):
-    """A bimanual pair of OpenArm follower arms driven as one robot."""
+    """A bimanual pair of OpenArm follower arms driven as one robot.
+
+    Args:
+        config (`BiOpenArmFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
 
     config_class = BiOpenArmFollowerConfig
     name = "bi_openarm_follower"
 
     def __init__(self, config: BiOpenArmFollowerConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`BiOpenArmFollowerConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
 

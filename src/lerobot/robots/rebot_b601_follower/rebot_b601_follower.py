@@ -60,18 +60,16 @@ class RebotB601Follower(Robot):
 
     Motor communication is handled by the ``motorbridge`` package over a CAN bus,
     reached either through a Damiao serial bridge or a SocketCAN adapter.
+
+    Args:
+        config (`RebotB601FollowerRobotConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = RebotB601FollowerRobotConfig
     name = "rebot_b601_follower"
 
     def __init__(self, config: RebotB601FollowerRobotConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`RebotB601FollowerRobotConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         require_package("motorbridge", extra="rebot")
         super().__init__(config)
         self.config = config

@@ -63,18 +63,16 @@ class HopeJrHand(Robot):
 
     Each hand is its own robot, so a two-handed setup uses two of these with different `side` values. See
     [`~robots.Robot`] for the contract every method here implements.
+
+    Args:
+        config (`HopeJrHandConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = HopeJrHandConfig
     name = "hope_jr_hand"
 
     def __init__(self, config: HopeJrHandConfig):
-        """Build the robot from its configuration.
-
-        Args:
-            config (`HopeJrHandConfig`):
-                The robot's configuration. Its `port` and `cameras` determine what is connected.
-        """
         super().__init__(config)
         self.config = config
         self.bus = FeetechMotorsBus(
