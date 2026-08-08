@@ -769,10 +769,14 @@ def make_g05_pre_post_processors(
     )
     steps: list[ProcessorStep] = [RenameObservationsProcessorStep(rename_map={})]
     if config.recipe_path:
+        # Cache the loaded recipe on the config: it serializes into config.json, so a
+        # fine-tuned checkpoint carries the exact CoT recipe it was rendered with
+        # (`PreTrainedPolicy.language_recipe` reads it back at inference).
+        config.recipe = _load_recipe(config.recipe_path)
         steps.extend(
             [
                 G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),
-                RenderMessagesStep(recipe=_load_recipe(config.recipe_path)),
+                RenderMessagesStep(recipe=config.recipe),
             ]
         )
     steps.append(AddBatchDimensionProcessorStep())
