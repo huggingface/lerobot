@@ -123,6 +123,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.startup_guard import StartupJointGuard
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import (
     init_visualization,
@@ -150,6 +151,14 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+    # Startup joint-mismatch guard: on the first frame, commanded vs measured joint
+    # positions are compared; a disagreement larger than `startup_guard_threshold`
+    # (action units, e.g. degrees) is ramped over `startup_guard_ramp_s` seconds
+    # ("ramp") or raises ("abort") instead of jumping at full speed.
+    startup_guard: bool = True
+    startup_guard_threshold: float = 10.0
+    startup_guard_ramp_s: float = 1.5
+    startup_guard_mode: str = "ramp"
 
 
 def teleop_loop(
@@ -163,6 +172,7 @@ def teleop_loop(
     display_mode: str = "rerun",
     duration: float | None = None,
     display_compressed_images: bool = False,
+    startup_guard: StartupJointGuard | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -205,6 +215,11 @@ def teleop_loop(
 
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
+
+        # Defuse first-frame convention mismatches (sign flips, stale zeros,
+        # wrapped multi-turn encoders) before anything reaches the motors.
+        if startup_guard is not None:
+            robot_action_to_send = startup_guard.process(robot_action_to_send, obs)
 
         # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
         _ = robot.send_action(robot_action_to_send)
@@ -258,6 +273,16 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    guard = (
+        StartupJointGuard(
+            threshold=cfg.startup_guard_threshold,
+            ramp_duration_s=cfg.startup_guard_ramp_s,
+            mode=cfg.startup_guard_mode,
+        )
+        if cfg.startup_guard
+        else None
+    )
+
     try:
         teleop_loop(
             teleop=teleop,
@@ -270,6 +295,7 @@ def teleoperate(cfg: TeleoperateConfig):
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
             display_compressed_images=display_compressed_images,
+            startup_guard=guard,
         )
     except KeyboardInterrupt:
         pass
