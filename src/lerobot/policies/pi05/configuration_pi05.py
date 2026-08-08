@@ -40,10 +40,15 @@ class PI05Config(PreTrainedConfig):
     # Historical image tokens are fused inside SigLIP and dropped before the
     # language backbone. Historical proprioceptive states become one continuous
     # backbone token per frame. Both paths are opt-in and independent.
+    #
+    # MEM pre-trains on six observations spaced one second apart. `memory_stride` is
+    # counted in dataset frames, so the default matches that spacing only at 30 fps,
+    # the usual LeRobot recording rate. Scale it with the dataset: a 10 fps dataset
+    # such as `lerobot/robomme` needs `memory_stride=10` for the same one second.
     use_visual_memory: bool = False
     use_proprioceptive_memory: bool = False
     memory_frames: int = 6
-    memory_stride: int = 10
+    memory_stride: int = 30
     memory_temporal_attention_every: int = 4
 
     # Shorter state and action vectors will be padded to these dimensions
@@ -110,8 +115,6 @@ class PI05Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
-
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()

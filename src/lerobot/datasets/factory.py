@@ -23,7 +23,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGES, OBS_PREFIX, OBS_STATE, REWARD
+from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
@@ -54,21 +54,46 @@ def resolve_delta_timestamps(
             }
             returns `None` if the resulting dict is empty.
     """
+    # Only policies that opt into modality-specific history (currently Pi05 with MEM)
+    # define these; everything else falls back to the shared observation indices.
+    explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
+    image_indices = (
+        explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
+    )
+    explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
+    state_indices = (
+        explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
+    )
+
     delta_timestamps = {}
+    matched_image_keys = []
     for key in ds_meta.features:
         policy_key = (rename_map or {}).get(key, key)
         if policy_key == REWARD and cfg.reward_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
         if policy_key == ACTION and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
-        if policy_key.startswith(OBS_IMAGES):
-            indices = getattr(cfg, "image_observation_delta_indices", cfg.observation_delta_indices)
+        # `OBS_IMAGE` matches both the `observation.image` and `observation.images.<cam>`
+        # conventions; matching `OBS_IMAGES` alone would silently give singular-key
+        # datasets no image history at all.
+        if policy_key.startswith(OBS_IMAGE):
+            indices = image_indices
+            matched_image_keys.append(key)
         elif policy_key == OBS_STATE:
-            indices = getattr(cfg, "state_observation_delta_indices", cfg.observation_delta_indices)
+            indices = state_indices
         else:
             indices = cfg.observation_delta_indices if policy_key.startswith(OBS_PREFIX) else None
         if indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in indices]
+
+    # A policy asking for an image history that no dataset key can supply would train
+    # on single frames without any error, so fail instead of degrading silently.
+    if explicit_image_indices is not None and len(explicit_image_indices) > 1 and not matched_image_keys:
+        raise ValueError(
+            f"{type(cfg).__name__} requests {len(explicit_image_indices)} history frames per camera, but no "
+            f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
+            "Image keys must be named `observation.image*` after applying `--rename_map`."
+        )
 
     if len(delta_timestamps) == 0:
         delta_timestamps = None

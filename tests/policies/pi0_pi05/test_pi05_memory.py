@@ -5,6 +5,12 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from types import SimpleNamespace
 
@@ -14,8 +20,10 @@ from torch import nn
 
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05.memory import (
+    causal_temporal_mask,
     encode_video_with_mem,
     sample_observation_history,
+    space_time_attention,
     temporal_sinusoidal_embedding,
 )
 from lerobot.policies.pi05.modeling_pi05 import PI05Policy, PI05Pytorch
@@ -78,6 +86,52 @@ def test_inference_history_order_and_padding():
     assert padding.tolist() == [[True, True, False], [True, True, False]]
 
 
+def test_inference_history_anchors_on_the_newest_frame():
+    """Ages are relative to the newest frame, so an over-long queue still ends at it."""
+    history = [torch.full((1, 1), value) for value in range(14)]
+    values, _ = sample_observation_history(history, num_frames=3, stride=5, steps_seen=99)
+    assert values[:, :, 0].tolist() == [[3, 8, 13]]
+
+
+def test_inference_history_rejects_a_too_short_queue():
+    history = [torch.zeros(1, 1) for _ in range(10)]
+    with pytest.raises(ValueError, match="need at least 11"):
+        sample_observation_history(history, num_frames=3, stride=5, steps_seen=99)
+
+
+def test_visual_memory_requires_a_matching_image_key():
+    pytest.importorskip("datasets")
+    from lerobot.datasets.factory import resolve_delta_timestamps
+
+    config = PI05Config(use_visual_memory=True, memory_frames=3, memory_stride=5)
+
+    # Singular `observation.image` is a valid LeRobot convention and must get history.
+    singular = SimpleNamespace(fps=10, features={"observation.image": {}, "action": {}})
+    assert resolve_delta_timestamps(config, singular)["observation.image"] == [-1.0, -0.5, 0.0]
+
+    # A dataset with no image key at all must fail instead of training single-frame.
+    stateless = SimpleNamespace(fps=10, features={"observation.state": {}, "action": {}})
+    with pytest.raises(ValueError, match="no dataset feature maps to an image key"):
+        resolve_delta_timestamps(config, stateless)
+
+
+def test_proprioceptive_memory_removes_the_state_from_the_prompt():
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.pi05.processor_pi05 import Pi05PrepareStateTokenizerProcessorStep
+    from lerobot.utils.constants import OBS_STATE
+
+    def prompt_for(*, include_state: bool) -> str:
+        transition = {
+            TransitionKey.OBSERVATION: {OBS_STATE: torch.zeros(1, 2, 4)},
+            TransitionKey.COMPLEMENTARY_DATA: {"task": ["pick the cube"]},
+        }
+        step = Pi05PrepareStateTokenizerProcessorStep(include_state_in_prompt=include_state)
+        return step(transition)[TransitionKey.COMPLEMENTARY_DATA]["task"][0]
+
+    assert prompt_for(include_state=True) == "Task: pick the cube, State: 128 128 128 128;\nAction: "
+    assert prompt_for(include_state=False) == "Task: pick the cube;\nAction: "
+
+
 def test_current_temporal_position_is_exactly_zero():
     embedding = temporal_sinusoidal_embedding(4, 16, device=torch.device("cpu"), dtype=torch.float32)
     torch.testing.assert_close(embedding[-1], torch.zeros(16))
@@ -102,11 +156,9 @@ def _tiny_siglip():
 
 def test_single_frame_mem_matches_original_siglip():
     model = _tiny_siglip()
-    model.config._attn_implementation = "flash_attention_2"  # noqa: SLF001
+    model.config._attn_implementation = "sdpa"  # noqa: SLF001
     image = torch.randn(2, 3, 16, 16)
-    model.config._attn_implementation = "eager"  # noqa: SLF001
     expected = model(image).last_hidden_state
-    model.config._attn_implementation = "flash_attention_2"  # noqa: SLF001
     actual = encode_video_with_mem(
         model,
         image[:, None],
@@ -114,7 +166,51 @@ def test_single_frame_mem_matches_original_siglip():
         temporal_attention_every=4,
     )
     torch.testing.assert_close(actual, expected)
-    assert model.config._attn_implementation == "eager"  # noqa: SLF001
+    # MEM composes attention weights itself, so it must not downgrade the tower.
+    assert model.config._attn_implementation == "sdpa"  # noqa: SLF001
+
+
+def test_composed_space_time_attention_is_identity_over_one_frame():
+    """A softmax over a single timestep is the identity, so eq. 3 reduces to SigLIP."""
+    model = _tiny_siglip()
+    model.config._attn_implementation = "sdpa"  # noqa: SLF001
+    attention = model.encoder.layers[0].self_attn
+    hidden = torch.randn(2, 1, 4, 16)
+    mask = causal_temporal_mask(
+        torch.ones(2, 1, dtype=torch.bool), dtype=hidden.dtype, num_patches=hidden.shape[2]
+    )
+
+    composed = space_time_attention(attention, hidden, mask)
+    spatial_only = attention(hidden_states=hidden[:, 0], attention_mask=None)[0]
+
+    torch.testing.assert_close(composed[:, 0], spatial_only)
+
+
+def test_mem_drops_past_frames_after_the_last_temporal_layer():
+    model = _tiny_siglip()  # 4 layers; temporal_attention_every=3 -> temporal at index 2 only
+    batch_size, num_frames = 2, 3
+    # Spatial-only layers are invoked as whole layers with a (batch * frames) leading
+    # dim; temporal layers drive the sub-modules directly and so never fire this hook.
+    spatial_batches: list[int] = []
+    for layer in model.encoder.layers:
+        layer.register_forward_pre_hook(
+            lambda _module, args, sink=spatial_batches: sink.append(args[0].shape[0])
+        )
+
+    encode_video_with_mem(
+        model,
+        torch.randn(batch_size, num_frames, 3, 16, 16),
+        torch.ones(batch_size, num_frames, dtype=torch.bool),
+        temporal_attention_every=3,
+    )
+
+    # Layers 0 and 1 still see every frame; layer 3 sits above the last temporal layer,
+    # so it must only ever see the current frame.
+    assert spatial_batches == [
+        batch_size * num_frames,
+        batch_size * num_frames,
+        batch_size,
+    ]
 
 
 def test_mem_normalizes_tuple_encoder_layer_output(monkeypatch):

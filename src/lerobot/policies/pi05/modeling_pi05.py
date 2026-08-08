@@ -195,7 +195,6 @@ class PaliGemmaWithExpertModel(
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
-        use_visual_memory: bool = False,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -222,9 +221,6 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.vision_config.projection_dim = 2048
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
         vlm_config_hf.vision_config.dtype = "float32"
-        if use_visual_memory:
-            # MEM uses a 4-D additive temporal mask, which FlashAttention 2 does not support.
-            vlm_config_hf.vision_config._attn_implementation = "eager"  # noqa: SLF001
 
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
             head_dim=action_expert_config.head_dim,
@@ -446,7 +442,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
-            use_visual_memory=config.use_visual_memory,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -1016,6 +1011,11 @@ class PI05Policy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
         if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
+            # The sampled ages are relative to the current step, so every step shifts
+            # all of them: a dense ring buffer spanning the whole horizon is the
+            # smallest structure that keeps inference aligned with the training
+            # `delta_indices`. Storing only `memory_frames` observations would pin the
+            # history to an absolute grid and drift up to `memory_stride` out of phase.
             history_length = (self.config.memory_frames - 1) * self.config.memory_stride + 1
             memory_keys = []
             if self.config.use_visual_memory:
@@ -1152,7 +1152,9 @@ class PI05Policy(PreTrainedPolicy):
                     f"expected {self._memory_batch_size}, got {batch_size}"
                 )
             if not queue:
-                queue.extend(value.clone() for _ in range(queue.maxlen))
+                # Queue entries are snapshots that are never mutated in place, so the
+                # pre-episode fill can share one clone instead of `maxlen` copies.
+                queue.extend([value.clone()] * queue.maxlen)
             else:
                 queue.append(value.clone())
             result[key], result[f"{key}_is_pad"] = sample_observation_history(
@@ -1276,7 +1278,12 @@ class PI05Policy(PreTrainedPolicy):
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
         )
         target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
+        # MEM's proprioceptive projection does not exist in `lerobot/pi05_base`, so a
+        # LoRA adapter cannot start from pretrained weights for it. Train and save it
+        # in full, otherwise it stays frozen at its random init and is absent from
+        # adapter checkpoints.
+        modules_to_save = ["model.proprio_history_proj"] if self.config.use_proprioceptive_memory else []
         return {
             "target_modules": target_modules,
-            "modules_to_save": [],
+            "modules_to_save": modules_to_save,
         }
