@@ -1,0 +1,157 @@
+# π₀.₅ (Pi05) 정책
+
+π₀.₅는 Physical Intelligence에서 만든 **개방형 세계 일반화(open-world generalization)를 지원하는 Vision-Language-Action 모델**입니다. LeRobot 구현은 이들의 오픈소스 저장소인 [OpenPI](https://github.com/Physical-Intelligence/openpi)를 기반으로 합니다.
+
+## 모델 개요
+
+π₀.₅는 π₀로부터 크게 진화한 모델로, 로봇 공학의 주요 도전 과제인 **개방형 세계 일반화(open-world generalization)** 문제를 해결하기 위해 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05)에서 개발하였습니다. 로봇은 통제된 환경에서 인상적인 작업을 수행할 수 있지만, π₀.₅는 학습 시 전혀 보지 못한 완전히 새로운 환경과 상황에서도 일반화할 수 있도록 설계되었습니다.
+
+### 일반화의 도전 과제
+
+Physical Intelligence가 설명하듯이, 근본적인 도전 과제는 민첩성(agility)이나 정교한 조작(dexterity) 작업을 수행하는 것이 아니라, 새로운 환경과 새로운 물체를 포함한 새로운 상황에서 작업을 올바르게 수행하는 능력, 즉 일반화입니다. 서로 다른 집을 청소하는 로봇을 생각해 보세요: 각각의 집에는 서로 다른 위치에 서로 다른 물체가 있습니다. 일반화는 여러 수준에서 이루어져야 합니다:
+
+- **물리적 수준(Physical Level)**: 복잡한 환경에서 보지 못한 물체라도 숟가락은 손잡이로, 접시는 가장자리로 집는 방법을 이해하는 것
+- **의미적 수준(Semantic Level)**: 작업의 의미를 이해하는 것, 예를 들어 옷과 신발을 어디에 두어야 하는지(침대 위가 아니라 빨래 바구니), 쏟아진 것을 치울 때 어떤 도구가 적절한지 판단하기
+- **환경적 수준(Environmental Level)**: 집, 식료품점, 사무실, 병원 같은 "어질러진" 실제 환경에 적응하기
+
+### 이질적 데이터 공동 학습(Co-Training on Heterogeneous Data)
+
+π₀.₅의 획기적인 혁신은 **이질적 데이터 소스에 대한 공동 학습(co-training)**입니다. 모델은 다음으로부터 학습합니다:
+
+1. **멀티모달 웹 데이터**: 이미지 캡셔닝, 시각적 질의응답, 객체 탐지
+2. **언어 지시(Verbal Instructions)**: 복잡한 작업을 단계별로 로봇에 코치하는 사람의 지시
+3. **서브태스크 명령(Subtask Commands)**: 고수준 의미 행동 라벨(예: 정돈되지 않은 침대에 대해 "베개를 집어라")
+4. **교차 임바디먼트 로봇 데이터(Cross-Embodiment Robot Data)**: 서로 다른 능력을 가진 다양한 로봇 플랫폼의 데이터
+5. **다중 환경 데이터(Multi-Environment Data)**: 서로 다른 여러 가정에 배치된 고정형 로봇 데이터
+6. **모바일 매니퓰레이션 데이터(Mobile Manipulation Data)**: 약 400시간 분량의 모바일 로봇 시연 데이터
+
+이러한 다양한 학습 데이터 조합은 일종의 "커리큘럼"을 만들어, 물리적, 시각적, 의미적 수준에서 동시에 일반화가 가능하도록 합니다.
+
+## 설치 요구사항
+
+1. [설치 가이드](./installation)를 따라 LeRobot을 설치합니다.
+2. 다음을 실행하여 Pi0.5 의존성을 설치합니다:
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 사용법
+
+LeRobot 구성에서 π₀.₅를 사용하려면, 정책 타입을 다음과 같이 지정합니다:
+
+```python
+policy.type=pi05
+```
+
+## 학습
+
+### 학습 명령 예시
+
+다음은 자신의 데이터셋에 대해 기본 π₀.₅ 모델을 파인튜닝하는 전체 학습 명령의 예시입니다:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training \
+    --job_name=pi05_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 주요 학습 매개변수
+
+- **`--policy.compile_model=true`**: 더 빠른 학습을 위해 모델 컴파일을 활성화합니다
+- **`--policy.gradient_checkpointing=true`**: 학습 중 메모리 사용량을 크게 줄입니다
+- **`--policy.dtype=bfloat16`**: 효율성을 위해 혼합 정밀도(mixed precision) 학습을 사용합니다
+- **`--batch_size=32`**: 학습의 배치 크기로, GPU 메모리에 맞게 조정하세요
+- **`--policy.pretrained_path=lerobot/pi05_base`**: 파인튜닝할 기본 π₀.₅ 모델입니다. 옵션은 다음과 같습니다:
+  - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
+  - [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero) (Libero 데이터셋에 특화되어 학습됨)
+
+### 학습 매개변수 설명
+
+| Parameter               | Default | Description                                 |
+| ----------------------- | ------- | ------------------------------------------- |
+| `freeze_vision_encoder` | `false` | 비전 인코더를 동결하지 않습니다              |
+| `train_expert_only`     | `false` | VLM을 동결하지 않고 모든 매개변수를 학습합니다 |
+
+**💡 팁**: `train_expert_only=true`로 설정하면 VLM을 동결하고 액션 전문가(action expert)와 프로젝션만 학습하므로, 메모리 사용량을 줄이면서 파인튜닝할 수 있습니다.
+
+데이터셋이 `quantiles`로 변환되지 않은 경우, 다음 명령으로 변환할 수 있습니다:
+
+```bash
+python src/lerobot/datasets/v30/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+```
+
+또는 다음 정규화 매핑으로 pi05를 학습할 수 있습니다: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
+
+## 상대 액션(Relative Actions)
+
+기본적으로 π₀.₅는 절대 액션(absolute actions)을 예측합니다. 현재 로봇 상태를 기준으로 한 오프셋을 예측하도록 **상대 액션(relative actions)**을 활성화할 수 있습니다. 이는 특정 설정에서 학습 안정성을 개선할 수 있습니다.
+
+상대 액션을 사용하려면, 먼저 CLI를 통해 데이터셋 통계를 상대 공간에서 재계산합니다:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+또는 Python에서 동일하게:
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size`는 정책의 `chunk_size`와 일치해야 합니다(π₀.₅의 기본값은 50). `relative_exclude_joints`는 절대 공간에 남아 있어야 하는 조인트 이름 목록입니다(예: 그리퍼 명령). 업데이트된 통계를 Hub에 업로드하려면 `--push_to_hub true`를 사용하세요.
+
+그런 다음 상대 액션을 활성화한 상태로 학습합니다:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 성능 결과
+
+### Libero 벤치마크 결과
+
+π₀.₅는 Libero 벤치마크 스위트에서 강력한 성능을 보여주었습니다. LeRobot 구현을 비교·테스트하기 위해 libero 베이스 모델을 Libero 데이터셋에서 추가로 6k 스텝 파인튜닝하고 OpenPI 참조 결과와 비교하였습니다.
+
+| Benchmark          | LeRobot Implementation | OpenPI Reference |
+| ------------------ | ---------------------- | ---------------- |
+| **Libero Spatial** | 97.0%                  | 98.8%            |
+| **Libero Object**  | 99.0%                  | 98.2%            |
+| **Libero Goal**    | 98.0%                  | 98.0%            |
+| **Libero 10**      | 96.0%                  | 92.4%            |
+| **Average**        | 97.5%                  | 96.85%           |
+
+이 결과들은 다양한 로봇 조작 작업에 걸친 π₀.₅의 강력한 일반화 능력을 보여줍니다. 이 결과를 재현하려면 [Libero](./libero) 섹션의 지침을 따르세요.
+
+## 라이선스
+
+이 모델은 원본 [OpenPI repository](https://github.com/Physical-Intelligence/openpi)와 일관되게 **Apache 2.0 License**를 따릅니다.
