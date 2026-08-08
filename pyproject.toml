@@ -238,6 +238,7 @@ evo1 = ["lerobot[transformers-dep]"]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
+wall_oss_05 = ["lerobot[transformers-dep]"]
 
 # Features
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
@@ -312,6 +313,7 @@ all = [
     "lerobot[diffusion]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
+    "lerobot[wall_oss_05]",
     "lerobot[pi]",
     "lerobot[molmoact2]",
     "lerobot[smolvla]",

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -23,12 +24,18 @@ import numpy as np
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe
-from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
-from lerobot.datasets.language_render import render_sample
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
+
+LANGUAGE_PERSISTENT = "language_persistent"
+LANGUAGE_EVENTS = "language_events"
+
+
+def _render_sample(**kwargs: Any) -> dict[str, Any] | None:
+    """Load annotation rendering only when raw language columns are present."""
+    return importlib.import_module("lerobot.datasets.language_render").render_sample(**kwargs)
 
 
 @dataclass
@@ -80,7 +87,7 @@ class RenderMessagesStep(ProcessorStep):
             raise KeyError("RenderMessagesStep requires sample timestamp in complementary data.")
 
         sample_idx = complementary_data.get("index", 0)
-        rendered = render_sample(
+        rendered = _render_sample(
             recipe=self.recipe,
             persistent=persistent,
             events=events,
@@ -133,7 +140,7 @@ class RenderMessagesStep(ProcessorStep):
         keep_indices: list[int] = []
 
         for i in range(batch_size):
-            rendered = render_sample(
+            rendered = _render_sample(
                 recipe=self.recipe,
                 persistent=persistent_batch[i] if i < len(persistent_batch) else [],
                 events=events_batch[i] if i < len(events_batch) else [],
