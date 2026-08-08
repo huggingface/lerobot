@@ -151,7 +151,6 @@ Usage examples
 """
 
 import logging
-import sys
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -243,61 +242,10 @@ def rollout(cfg: RolloutConfig):
     logger.info("Rollout finished")
 
 
-_LANGUAGE_RUNTIME_FLAGS = {
-    "--language",
-    "--no_robot",
-    "--direct_subtask",
-    "--fp8",
-}
-_LANGUAGE_RUNTIME_PREFIXES = (
-    "--chunk_hz",
-    "--ctrl_hz",
-    "--high_level_hz",
-    "--subtask_chunks_per_gen",
-)
-
-
-def _uses_language_runtime(argv: list[str]) -> bool:
-    """Return whether *argv* selects the interactive language runtime.
-
-    ``--language`` is the explicit selector for real-robot runs whose other
-    options overlap with the standard rollout CLI. Language-only options also
-    select it automatically.
-    """
-    return any(
-        arg.split("=", 1)[0] in _LANGUAGE_RUNTIME_FLAGS or arg.startswith(_LANGUAGE_RUNTIME_PREFIXES)
-        for arg in argv
-    )
-
-
-def main(argv: list[str] | None = None):
-    """CLI entry point for ``lerobot-rollout``.
-
-    Standard policy deployment continues through :class:`RolloutConfig`.
-    Interactive language-conditioned real-robot runs share this entry point
-    and are selected with ``--language`` or any language-runtime-only option.
-    """
+def main():
+    """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
-    cli_args = list(sys.argv[1:] if argv is None else argv)
-    if _uses_language_runtime(cli_args):
-        from lerobot.runtime.cli import run as run_language_runtime
-
-        # ``--language`` is a dispatcher flag, not part of the runtime's own
-        # argparse surface. All other arguments pass through unchanged.
-        runtime_args = [arg for arg in cli_args if arg != "--language"]
-        return run_language_runtime(runtime_args, prog="lerobot-rollout")
-
-    if argv is None:
-        return rollout()
-
-    # draccus reads sys.argv. Supporting an explicit argv keeps this entry
-    # point easy to smoke-test and mirrors the language-runtime branch above.
-    previous_argv = sys.argv
-    try:
-        sys.argv = [previous_argv[0], *cli_args]
-        return rollout()
-    finally:
-        sys.argv = previous_argv
+    rollout()
 
 
 if __name__ == "__main__":
