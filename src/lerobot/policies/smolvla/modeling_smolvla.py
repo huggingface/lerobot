@@ -505,6 +505,8 @@ class VLAFlowMatching(nn.Module):
             expert_width_multiplier=self.config.expert_width_multiplier,
             device=self.config.device if self.config.device is not None else "auto",
         )
+        if self.config.gradient_checkpointing:
+            self.vlm_with_expert.gradient_checkpointing_enable()
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
         )
