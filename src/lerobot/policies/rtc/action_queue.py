@@ -219,20 +219,28 @@ class ActionQueue:
     def _check_and_resolve_delays(
         self, real_delay: int, action_index_before_inference: int | None = None
     ) -> int:
-        """Validate that computed delays match expectations.
+        """Resolve how many leading actions of the new chunk to discard.
 
-        Compares the delay computed from inference latency with the actual
-        number of actions consumed during inference.
+        The purpose of the discard is to stay aligned with the actions the robot
+        actually executed while inference was running, so the number of actions
+        consumed since inference started is authoritative. The latency-based
+        estimate (``real_delay``) is only a proxy and is used when consumption
+        cannot be measured (``action_index_before_inference`` is None).
+
+        The two can diverge legitimately — most notably on the first chunk of an
+        episode: the robot sits idle on an empty queue (zero actions consumed)
+        while the latency estimate is large. Trusting the estimate there skips
+        deep into the fresh chunk and commands a far-future action from
+        standstill, causing a violent jump. Skipping only what was actually
+        consumed keeps the commanded position continuous in every case.
 
         Args:
             real_delay: Delay computed from inference latency.
             action_index_before_inference: Action index when inference started.
 
         Returns:
-            int: Delay to use.
+            int: Number of actions to discard from the start of the new chunk.
         """
-        effective_delay = max(0, real_delay)
-
         if action_index_before_inference is not None:
             indexes_diff = max(0, self.last_index - action_index_before_inference)
             if indexes_diff != real_delay:
@@ -241,6 +249,6 @@ class ActionQueue:
                     indexes_diff,
                     real_delay,
                 )
-                return real_delay
+            return indexes_diff
 
-        return effective_delay
+        return max(0, real_delay)
