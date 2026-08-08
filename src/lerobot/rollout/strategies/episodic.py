@@ -229,7 +229,11 @@ class EpisodicStrategy(RolloutStrategy):
             if ctx.runtime.shutdown_event.is_set():
                 break
 
-            obs = robot.get_observation()
+            obs = self._get_observation_or_wait_for_warmup(
+                robot, ctx.runtime.cfg.use_torch_compile, loop_start, control_interval
+            )
+            if obs is None:
+                continue
             obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, loop_start, control_interval):

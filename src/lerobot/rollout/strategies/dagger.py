@@ -377,7 +377,11 @@ class DAggerStrategy(RolloutStrategy):
                             last_action = None
 
                     phase = events.phase
-                    obs = robot.get_observation()
+                    obs = self._get_observation_or_wait_for_warmup(
+                        robot, cfg.use_torch_compile, loop_start, control_interval
+                    )
+                    if obs is None:
+                        continue
 
                     # --- CORRECTING: human teleop control ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
@@ -557,7 +561,11 @@ class DAggerStrategy(RolloutStrategy):
                         self._background_push(dataset, cfg)
 
                     phase = events.phase
-                    obs = robot.get_observation()
+                    obs = self._get_observation_or_wait_for_warmup(
+                        robot, cfg.use_torch_compile, loop_start, control_interval
+                    )
+                    if obs is None:
+                        continue
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
