@@ -239,6 +239,7 @@ class RolloutConfig:
     # Runtime
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
+    action_horizon: int = 0  # 0 = infinite (24/7 mode)
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -381,6 +382,14 @@ class RolloutConfig:
             else:
                 self.device = auto_select_torch_device().type
                 logger.info("No policy config to resolve device from; auto-selected device: %s", self.device)
+
+        # --- Rollout length ---
+        if self.duration < 0:
+            raise ValueError("--duration must be >= 0")
+        if self.action_horizon < 0:
+            raise ValueError("--action_horizon must be >= 0")
+        if self.duration != 0 and self.action_horizon != 0:
+            raise ValueError("Cannot specify both --duration and --action_horizon")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:

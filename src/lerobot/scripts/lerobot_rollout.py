@@ -221,11 +221,19 @@ def rollout(cfg: RolloutConfig):
 
     strategy = create_strategy(cfg.strategy)
     logger.info("Rollout strategy: %s", cfg.strategy.type)
+    has_action_horizon = cfg.action_horizon > 0
     logger.info(
-        "Robot: %s | FPS: %.0f | Duration: %s",
+        "Robot: %s | FPS: %.0f | %s: %s",
         cfg.robot.type if cfg.robot else "?",
         cfg.fps,
-        f"{cfg.duration}s" if cfg.duration > 0 else "infinite",
+        "Action horizon" if has_action_horizon else "Duration",
+        (
+            cfg.action_horizon
+            if has_action_horizon
+            else f"{cfg.duration}s"
+            if cfg.duration > 0
+            else "infinite"
+        ),
     )
 
     try:
