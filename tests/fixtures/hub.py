@@ -29,6 +29,7 @@ from lerobot.datasets.utils import (
     STATS_PATH,
 )
 from tests.fixtures.constants import LEROBOT_TEST_DIR
+from tests.fixtures.dataset_factories import video_file_frames
 
 
 @pytest.fixture(scope="session")
@@ -99,7 +100,12 @@ def mock_snapshot_download_factory(
 
             video_keys = [key for key, feats in info.features.items() if feats["dtype"] == "video"]
             for key in video_keys:
-                all_files.append(DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0))
+                # A video key spans one file per `videos/<key>/file_index` in the episodes
+                # metadata — several of them once v3.0 rolls a video over.
+                for file_index in video_file_frames(episodes, key, info.total_frames):
+                    all_files.append(
+                        DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=file_index)
+                    )
 
             allowed_files = filter_repo_objects(
                 all_files, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns
@@ -138,7 +144,7 @@ def mock_snapshot_download_factory(
             if request_data:
                 create_hf_dataset(local_dir, hf_dataset, data_files_size_in_mb, chunks_size)
             if request_videos:
-                create_videos(root=local_dir, info=info)
+                create_videos(root=local_dir, info=info, episodes=episodes)
 
             return str(local_dir)
 
