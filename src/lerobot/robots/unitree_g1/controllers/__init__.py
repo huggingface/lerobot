@@ -14,11 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 locomotion controllers (Groot, Holosoma, SONIC)."""
+"""Unitree G1 locomotion controllers (Groot, Holosoma, SONIC, mjlab motion imitation)."""
 
 __all__ = [
     "GrootLocomotionController",
     "HolosomaLocomotionController",
     "SonicWholeBodyController",
     "SonicRuntime",
+    "MjlabMotionImitationController",
 ]
