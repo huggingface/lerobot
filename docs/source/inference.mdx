@@ -243,22 +243,23 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
 ## Common Flags
 
-| Flag                              | Description                                                       | Default |
-| --------------------------------- | ----------------------------------------------------------------- | ------- |
-| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path            | --      |
-| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`) | --      |
-| `--robot.port`                    | Serial port for the robot                                         | --      |
-| `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
-| `--fps`                           | Control loop frequency                                            | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
-| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
-| `--task`                          | Task description (used when no dataset is provided)               | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                       | 1       |
-| `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
-| `--resume`                        | Resume a previous recording session                               | false   |
-| `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+| Flag                              | Description                                                           | Default |
+| --------------------------------- | --------------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)     | --      |
+| `--robot.port`                    | Serial port for the robot                                             | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                      | --      |
+| `--fps`                           | Control loop frequency                                                | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite)                                    | 0       |
+| `--action_horizon`                | Maximum number of interpolated control actions to send (0 = infinite) | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                   | auto    |
+| `--task`                          | Task description (used when no dataset is provided)                   | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                               | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                           | --      |
+| `--interpolation_multiplier`      | Action interpolation factor                                           | 1       |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                                  | false   |
+| `--resume`                        | Resume a previous recording session                                   | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                            | true    |
 
 ---
 
