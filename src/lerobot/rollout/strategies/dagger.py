@@ -393,6 +393,7 @@ class DAggerStrategy(RolloutStrategy):
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
                         robot.send_action(robot_action_to_send)
+                        actions_sent += 1
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
                         if record_tick % record_stride == 0:
@@ -411,6 +412,7 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             robot.send_action(last_action)
+                            actions_sent += 1
 
                     # --- AUTONOMOUS: policy control ---
                     else:
@@ -578,6 +580,7 @@ class DAggerStrategy(RolloutStrategy):
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
                         robot.send_action(robot_action_to_send)
+                        actions_sent += 1
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 
@@ -598,6 +601,7 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             robot.send_action(last_action)
+                            actions_sent += 1
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
