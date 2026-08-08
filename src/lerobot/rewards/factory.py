@@ -27,6 +27,7 @@ from .classifier.configuration_classifier import RewardClassifierConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
 from .sarm.configuration_sarm import SARMConfig
+from .soler1.configuration_soler1 import SOLER1Config
 from .topreward.configuration_topreward import TOPRewardConfig
 
 
@@ -39,7 +40,7 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
     Args:
         name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "robometer", "topreward".
+              "sarm", "robometer", "topreward", "sole-r1".
 
     Returns:
         The reward model class corresponding to the given name.
@@ -63,6 +64,10 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 
         return TOPRewardModel
+    elif name == "sole-r1":
+        from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+
+        return SOLER1RewardModel
     else:
         try:
             return _get_reward_model_cls_from_name(name=name)
@@ -79,7 +84,7 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
     Args:
         reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "robometer", "topreward".
+                     "reward_classifier", "sarm", "robometer", "topreward", "sole-r1".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -96,6 +101,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return RobometerConfig(**kwargs)
     elif reward_type == "topreward":
         return TOPRewardConfig(**kwargs)
+    elif reward_type == "sole-r1":
+        return SOLER1Config(**kwargs)
     else:
         try:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
@@ -191,7 +198,13 @@ def make_reward_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    elif isinstance(reward_cfg, SOLER1Config):
+        from lerobot.rewards.soler1.processor_soler1 import make_soler1_pre_post_processors
 
+        return make_soler1_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
     else:
         try:
             processors = _make_processors_from_reward_model_config(
