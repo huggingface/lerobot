@@ -30,7 +30,8 @@ from safetensors.torch import load_model as load_model_as_safetensor, save_model
 from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
-from lerobot.configs import PreTrainedConfig, TextKind
+from lerobot.configs import PreTrainedConfig
+from lerobot.configs.recipe import PLACEHOLDER_RE, MessageTurn, TrainingRecipe
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -49,6 +50,26 @@ if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+#: Fallback language contract for checkpoints whose ``config.json`` ships no recipe:
+#: the subtask wording the WALL-OSS and EO-1 family were trained on. See
+#: `PreTrainedPolicy.language_recipe`.
+DEFAULT_LANGUAGE_RECIPE = TrainingRecipe(
+    messages=[
+        MessageTurn(
+            role="user",
+            content="${task}\nPredict the next action in language.",
+            stream="high_level",
+        ),
+        MessageTurn(
+            role="assistant",
+            content="${subtask}",
+            stream="high_level",
+            target=True,
+            if_present="subtask",
+        ),
+    ]
+)
 
 
 def _build_card_context(
@@ -268,11 +289,37 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        with_text: bool = False,
+        **kwargs: Unpack[ActionSelectKwargs],
+    ) -> Tensor | tuple[Tensor, str | None]:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        `with_text` asks for the text this policy generated *inside this pass*, returning
+        `(chunk, text)` instead of the bare chunk. Only a policy that emits text and
+        actions from one inference stream honours it — G0.5's System 2 chain-of-thought,
+        where the flow head runs on a cache the reasoning extended, so the action is
+        conditioned on the text rather than merely accompanied by it.
+
+        A policy whose text head runs its own prefill must ignore `with_text`: the
+        subtask it was conditioned on is already runtime state, and returning it here
+        would claim a causal link inside this pass that does not exist. Use
+        `generate_text` for that policy instead.
+
+        Honouring `with_text` costs nothing extra. Whether a policy generates text in its
+        pass is a property of the checkpoint and its configuration, not of the flag.
+
+        Callers must tolerate either return shape, since a policy that ignores the flag
+        still returns a bare chunk:
+
+            result = policy.predict_action_chunk(batch, with_text=True)
+            chunk, text = result if isinstance(result, tuple) else (result, None)
         """
         raise NotImplementedError
 
@@ -286,52 +333,93 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     def supports_text_generation(self) -> bool:
-        """Whether this policy implements `generate_text`."""
+        """Whether this policy has a usable text head."""
         return type(self).generate_text is not PreTrainedPolicy.generate_text
 
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: TextKind = TextKind.SUBTASK,
-        user_text: str | None = None,
-    ) -> str:
-        """Decode one string from the policy's text head, for policies that have one.
+    def language_recipe(self) -> TrainingRecipe:
+        """The training recipe whose message turns define this checkpoint's prompt wording.
 
-        This is the whole contract the interactive language runtime needs from a policy:
-        it owns scheduling, the action loop, and the conversation state, and calls here
-        only to turn the current observation into text. Decode with
-        `self.config.text_temperature` and `self.config.text_top_p`, so a checkpoint
-        decodes the way it was trained. A policy needing knobs beyond those two (top-k,
-        repetition penalty, ...) declares them on its own config rather than on the
-        base, which stays at the settings every text head shares.
+        The recipe is the language contract: the same turns that rendered this
+        checkpoint's training samples are replayed at inference to build prompts,
+        so the wording cannot drift from the trained phrasing — WALL-OSS declares
+        its mode in that turn, and a prompt that drifts is answered out of
+        distribution. The recipe ships in ``config.json``; a reloaded config
+        carries it as a plain dict, normalized here.
+
+        A checkpoint without one falls back to `DEFAULT_LANGUAGE_RECIPE` — the
+        wording the WALL-OSS and EO-1 family were trained on, which more released
+        checkpoints recognise than a sentence written for the occasion. Declare
+        your own even when it matches: the default may be retuned, and a
+        checkpoint that pins its recipe will not silently follow.
+        """
+        recipe = self.config.recipe
+        if isinstance(recipe, dict):
+            recipe = TrainingRecipe.from_dict(recipe)
+            self.config.recipe = recipe
+        return recipe if recipe is not None else DEFAULT_LANGUAGE_RECIPE
+
+    def prompt_messages(self, kind: str, **values: str) -> list[dict[str, str]]:
+        """Chat-style turns asking this policy for the `kind` text it was trained to produce.
+
+        Replays the recipe turns preceding the target turn that supervises the
+        ``kind`` binding, filled with the caller's values — the recipe owns the
+        wording while the caller owns the values. Substitution uses `str.replace`
+        rather than `str.format`: turns may carry chat-control tokens, and a value
+        such as an operator's task may contain braces that `format` would choke on.
+
+        A turn whose `if_present` binding is not among `values` is skipped, exactly
+        as it is for a training sample missing that annotation. A turn referencing
+        a placeholder the caller did not provide raises, naming the missing values.
+        """
+        rendered: list[dict[str, str]] = []
+        for turn in self.language_recipe().prompt_turns(kind):
+            if turn.if_present is not None and turn.if_present not in values:
+                continue
+            content = turn.content
+            if isinstance(content, list):
+                content = "\n".join(block["text"] for block in content if block.get("type") == "text")
+            if not content:
+                continue
+            missing = set(PLACEHOLDER_RE.findall(content)) - values.keys()
+            if missing:
+                raise ValueError(
+                    f"Prompt turn for {kind!r} references {sorted(missing)} — pass them as keyword values."
+                )
+            for name, value in values.items():
+                content = content.replace("${" + name + "}", value)
+            rendered.append({"role": turn.role, "content": content})
+        return rendered
+
+    def build_prompt(self, kind: str, **values: str) -> str:
+        """Flatten `prompt_messages` into one prompt string, ready to pass to `generate_text`.
+
+        Policies applying a real chat template should prefer `prompt_messages`,
+        which preserves the roles.
+        """
+        return "\n".join(message["content"] for message in self.prompt_messages(kind, **values))
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation, for policies with a text head.
+
+        The single text entry point: the caller supplies the whole
+        question, so this covers VQA, captioning, grounding and anything else the
+        checkpoint can answer. Decode with `self.config.text_temperature` and
+        `self.config.text_top_p`, so a checkpoint decodes the way it was trained.
+
+        Note that most VLA text heads are blind to proprioception — the prompt carries
+        images and language only — so answers are grounded in pixels, not robot state.
 
         Args:
-            batch: A preprocessed observation batch. The runtime puts the operator's
-                high-level goal in `batch["task"]` and the active subtask, once one has
-                been generated, in `batch["subtask"]`.
-            kind: What to generate, from the shared `TextKind` catalog.
-                `SUBTASK` is the next low-level instruction to condition actions on;
-                `VQA` answers `user_text` about the current view.
-            user_text: The operator's question, for kinds that take one.
+            batch: A preprocessed observation batch, with the operator's goal in
+                `batch["task"]`.
+            prompt: The question to answer.
 
         Returns:
             The decoded text, or an empty string when the head produced nothing.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} has no text head. Implement `generate_text` to use it with "
-            "the interactive language runtime."
+            f"{type(self).__name__} has no text head. Implement `generate_text` to query it."
         )
-
-    def last_reasoning(self) -> str | None:
-        """Text this policy emitted in-stream during its last action prediction.
-
-        For policies that produce reasoning and actions from one inference pass, so the
-        runtime can display it. This is read-only telemetry: unlike a generated subtask
-        it never re-enters the observation batch, so it cannot replace the operator's
-        task. Returns `None` for policies that emit nothing.
-        """
-        return None
 
     def push_model_to_hub(
         self,

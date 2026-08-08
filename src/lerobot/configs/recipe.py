@@ -192,12 +192,31 @@ class TrainingRecipe:
             if recipe.weight <= 0:
                 raise ValueError(f"Blend component {name!r} must have a positive weight.")
 
-    def referenced_binding_names(self) -> set[str]:
-        """Names of every binding referenced by this recipe's message turns."""
-        names: set[str] = set()
-        for turn in self.messages or []:
-            names |= self._referenced_bindings(turn)
-        return names
+    def prompt_turns(self, kind: str) -> list[MessageTurn]:
+        """The turns preceding the target turn that supervises the ``kind`` binding.
+
+        Searches this recipe's messages — or each blend component in declaration
+        order — for the first ``target: true`` turn referencing the ``kind``
+        binding, and returns every turn before it. These are the turns an
+        inference caller replays to make the model produce the ``kind`` text the
+        recipe trained it on (see ``PreTrainedPolicy.prompt_messages``).
+        """
+        components = [self] if self.messages is not None else list((self.blend or {}).values())
+        for component in components:
+            turns = component.messages or []
+            for index, turn in enumerate(turns):
+                if turn.target and kind in self._referenced_bindings(turn):
+                    return turns[:index]
+        supervised = sorted(
+            {
+                name
+                for component in components
+                for turn in component.messages or []
+                if turn.target
+                for name in self._referenced_bindings(turn)
+            }
+        )
+        raise ValueError(f"Recipe has no target turn supervising {kind!r}. Supervised kinds: {supervised}.")
 
     def _referenced_bindings(self, turn: MessageTurn) -> set[str]:
         """Return the binding names that ``turn`` references via placeholders or attributes."""

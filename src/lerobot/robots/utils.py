@@ -21,8 +21,6 @@ from lerobot.utils.import_utils import make_device_from_device_class
 from .config import RobotConfig
 from .robot import Robot
 
-logger = logging.getLogger(__name__)
-
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
@@ -120,7 +118,7 @@ def ensure_safe_goal_position(
             }
 
     if warnings_dict:
-        logger.warning(
+        logging.warning(
             "Relative goal position magnitude had to be clamped to be safe.\n"
             f"{pformat(warnings_dict, indent=4)}"
         )

@@ -191,82 +191,76 @@ def make_my_policy_pre_post_processors(
 
 ---
 
-## Adding high- and low-level language control
+## Adding a text head: the language contract
 
-The policy API above is sufficient for training and standard evaluation. Interactive `lerobot-rollout` adds one optional method: `generate_text`. Implement it and your policy gains high-level subtask generation, `/ask` grounded VQA, and the interactive panel. Skip it and the policy still runs — on the operator's own instruction.
-
-There is nothing to register. The runtime owns the tick loop, generation cadence, pause/resume, action queues, and dispatch; the policy only turns an observation into text.
-
-During a rollout, `RuntimeState` holds the operator's task and the active language context:
-
-```text
-task ──> policy.generate_text(kind="subtask") ──> state.language_context["subtask"]
-                                                       │
-observation ──> processors ──> policy.predict_action_chunk() ──> action chunk ──> robot
-```
-
-### Policies without a text head
-
-Nothing to do. The observation provider writes the active instruction into the batch before your preprocessor runs, so `predict_action_chunk` already sees it. PI0.5 and MolmoAct2 work this way:
-
-```bash
-lerobot-rollout \
-    --language \
-    --policy.path=user/my_policy_checkpoint \
-    --robot.type=so101_follower \
-    --robot.port=/dev/ttyACM0 \
-    --direct_subtask
-```
-
-`--direct_subtask` makes the operator's typed text the instruction the action expert consumes. It is implied for any policy without a text head.
+The policy API above is sufficient for training and standard evaluation. Language-conditioned policies can additionally expose a **text head** — for high-level subtask generation, grounded VQA, or captioning — through one optional method, `generate_text`, plus the recipe declaring the wording the checkpoint was trained on. Deployment tooling drives a policy exclusively through this contract; a policy without a text head still runs, on the operator's own instruction.
 
 ### Policies with a text head
 
-Implement `generate_text` on the policy, next to `predict_action_chunk`:
+Implement one method, `generate_text`, which answers an arbitrary prompt about the current observation:
 
 ```python
 # modeling_my_policy.py
-from lerobot.configs import TextKind
-
-
 class MyPolicy(PreTrainedPolicy):
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: TextKind = TextKind.SUBTASK,
-        user_text: str | None = None,
-    ) -> str:
-        messages = self.build_messages(kind, batch, user_text)
-        inputs, tokenizer = self.tokenize_messages(messages, batch)
-        return self.decode(
-            inputs,
-            tokenizer=tokenizer,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
-
-    def build_messages(self, kind, batch, user_text):
-        if kind == TextKind.SUBTASK:
-            return [{"role": "user", "content": batch.get("task", "")}]
-        if kind == TextKind.VQA:
-            return [
-                {"role": "user", "content": batch.get("task", "")},
-                {"role": "user", "content": user_text or ""},
-            ]
-        raise ValueError(f"Unsupported text kind: {kind}")
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation."""
+        return self._decode(prompt, batch)
 ```
 
-`kind` comes from [`TextKind`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/types.py), one shared catalog so callers and implementations cannot drift:
+That one method covers everything: VQA, captioning, grounding, and subtask prediction. Subtask prediction is not a separate method — the caller composes the prompt from the policy's recipe and calls `generate_text` with the result.
 
-| `TextKind` | Purpose                                                         | Result                              |
-| ---------- | --------------------------------------------------------------- | ----------------------------------- |
-| `SUBTASK`  | The next low-level instruction to condition actions on.         | `state.language_context["subtask"]` |
-| `VQA`      | Answer `user_text` about the current view (the `/ask` command). | Printed to the operator.            |
+### The recipe is the wording contract
 
-The members are `str` subclasses, so `kind == "subtask"` and `kind in {"subtask", "vqa"}` both work if your policy already dispatches on strings internally.
+Training renders language supervision through a [`TrainingRecipe`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/recipe.py) — chat-style message turns whose `${placeholder}` bindings are filled per sample. That same recipe ships with the checkpoint as `config.recipe` in `config.json`, and inference replays it: `prompt_messages(kind, **values)` returns the turns preceding the recipe's target turn for a _kind_ (the binding that target supervises, e.g. `subtask`), filled with the caller's values.
 
-The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — the runtime keeps the previous subtask and counts it in the panel diagnostics.
+```yaml
+# The high-level component of a subtask recipe
+messages:
+  - {
+      role: user,
+      content: "${task}\nPredict the next action in language.",
+      stream: high_level,
+    }
+  - {
+      role: assistant,
+      content: "${subtask}",
+      stream: high_level,
+      target: true,
+      if_present: subtask,
+    }
+```
+
+```python
+prompt = policy.build_prompt("subtask", task="clear the table")
+subtask = policy.generate_text(batch, prompt)
+```
+
+`build_prompt` flattens the turns into one string; a policy applying a real chat template reads `prompt_messages` instead, which preserves the roles. Substitution uses `str.replace` rather than `str.format` — turns carry chat-control tokens, and a task may contain braces that `format` would choke on.
+
+Because training and inference read the same turns, the wording cannot drift. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess — down to the newline.
+
+A checkpoint without a recipe falls back to `DEFAULT_LANGUAGE_RECIPE`, the subtask wording the WALL-OSS and EO-1 family were trained on, which more released checkpoints recognise than a sentence written for the occasion. Declare your own anyway: the default may be retuned, and a checkpoint that pins its recipe will not silently follow. Make it your config's default so training and deployment share one source:
+
+```python
+def make_my_policy_recipe() -> TrainingRecipe:
+    return TrainingRecipe.from_dict({...})  # or load_recipe(<yaml path>)
+
+@PreTrainedConfig.register_subclass("my_policy")
+@dataclass
+class MyPolicyConfig(PreTrainedConfig):
+    recipe: TrainingRecipe | dict[str, Any] | None = field(default_factory=make_my_policy_recipe)
+```
+
+Adding a kind is a recipe component and nothing else. A blend component whose target turn supervises `${current_memory}` makes `build_prompt("current_memory", task=..., completed_subtask=...)` work with no change to the base class.
+
+| Piece                              | Owned by       | Used for                                 |
+| ---------------------------------- | -------------- | ---------------------------------------- |
+| `config.recipe`                    | the checkpoint | the trained wording, per kind            |
+| `prompt_messages` / `build_prompt` | the base       | replaying the recipe's prompt turns      |
+| `generate_text(batch, prompt)`     | the policy     | every text call, subtask and VQA alike   |
+| the values                         | the caller     | the high-level goal, a question, history |
+
+The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — callers keep the previous subtask.
 
 ### Sampling settings
 
@@ -277,11 +271,7 @@ self.config.text_temperature  # 0.0 is greedy argmax
 self.config.text_top_p        # nucleus filtering threshold
 ```
 
-The `text_` prefix keeps them distinct from action-sampling settings such as `PI0FastConfig.temperature`. Override them per run through the usual policy path — no runtime-specific flags:
-
-```bash
-lerobot-rollout --language --policy.path=... --policy.text_temperature=0.5
-```
+The `text_` prefix keeps them distinct from action-sampling settings such as `PI0FastConfig.temperature`. Override them per run through the usual policy path — `--policy.text_temperature=0.5` on any CLI that loads the policy.
 
 Temperature `0.0` is greedy argmax and is the default; any value above `0.0` enables sampling with `text_top_p`. Greedy suits a subtask head trained with cross-entropy against one target per step, but raising the temperature is a useful probe for an under-trained head stuck on a single output.
 
@@ -295,16 +285,30 @@ class MyPolicyConfig(PreTrainedConfig):
 
 That keeps the base config free of knobs most policies never read, and your extra settings still ride in `config.json` and stay overridable as `--policy.text_top_k=50`.
 
-### Reasoning emitted with the action
+### Text emitted with the action
 
-Some policies produce reasoning and an action from a single inference pass rather than a separate planning call. Expose it by overriding `last_reasoning`:
+Interactive callers ask for actions through `predict_action_chunk(batch, with_text=True)`. There is no second method: `with_text` asks for the text your policy generated **inside that pass**, returning `(chunk, text)` instead of the bare chunk.
+
+Honour it only if your policy emits text and actions from one inference stream, where the action is conditioned on the text rather than merely accompanied by it:
 
 ```python
-def last_reasoning(self) -> str | None:
-    return self._last_cot_text
+def predict_action_chunk(self, batch, *, with_text=False, **kwargs):
+    action, metadata = self._run_inference(batch)
+    return (action, first_text(metadata)) if with_text else action
 ```
 
-The runtime panel shows it on a `reasoning` line. It is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task.
+If your text head runs its own prefill, **ignore the flag** and keep returning the bare chunk. Do not echo `batch["subtask"]` — that string is already runtime state, and returning it here would claim a causal link inside this pass that does not exist. Expose `generate_text` instead.
+
+Because a policy may ignore the flag, callers tolerate both shapes:
+
+```python
+result = policy.predict_action_chunk(batch, with_text=True)
+chunk, text = result if isinstance(result, tuple) else (result, None)
+```
+
+Honouring `with_text` must never cost an extra generation pass. Whether text appears is a property of the checkpoint and its configuration, not of the flag.
+
+The returned text is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task. Return the pair rather than caching text on the policy — a caller can then commit chunk and text together, so a chunk discarded mid-inference takes its text with it.
 
 ### Keep training and deployment aligned
 
@@ -312,9 +316,9 @@ The runtime panel shows it on a `reasoning` line. It is display-only: unlike a g
 
 - Use the same tokenizer, role formatting, special tokens, image ordering, and state encoding as training.
 - Condition actions on `batch["subtask"]`, falling back to `batch["task"]` before the first generation.
-- Return a full action chunk from `predict_action_chunk`; the runtime handles control-rate dispatch.
+- Return a full action chunk from `predict_action_chunk`; callers handle control-rate dispatch.
 - Keep optional model dependencies inside lazy imports.
-- Test it with a lightweight fake batch: the method is stateless, so it needs no runtime to exercise.
+- Test it with a lightweight fake batch: the method is stateless, so it needs no robot to exercise.
 
 ---
 
