@@ -22,9 +22,11 @@ instead of a policy-local copy has no effect on checkpoints.
 """
 
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
@@ -56,6 +58,63 @@ def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedd
     scaling_factor = 1.0 / period * 2 * math.pi
     sin_input = scaling_factor[None, :] * time[:, None]
     return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
+
+
+def fuse_action_time_embedding(
+    noisy_actions: Tensor,
+    timestep: Tensor,
+    *,
+    action_in_proj: nn.Module,
+    action_time_mlp_in: nn.Module,
+    action_time_mlp_out: nn.Module,
+    min_period: float,
+    max_period: float,
+    time_emb_dtype: torch.dtype | None = None,
+    apply: Callable[[Callable, Tensor], Tensor] | None = None,
+) -> Tensor:
+    """Fuse noisy actions and a diffusion timestep into the action-expert input embedding.
+
+    This is the block copy-pasted across the openpi action-expert policies (pi0, pi05,
+    eo1, smolvla): project actions, add a sine-cosine timestep embedding, concatenate, and
+    run ``mlp_in -> SiLU -> mlp_out``. The ``nn.Linear`` layers are passed in (not owned by
+    this helper) so adopting it does not rename any checkpoint keys.
+
+    Args:
+        noisy_actions: ``(batch, horizon, action_dim)`` noised action chunk.
+        timestep: ``(batch,)`` diffusion timestep.
+        action_in_proj: ``Linear(action_dim, width)``.
+        action_time_mlp_in: ``Linear(2*width, width)``.
+        action_time_mlp_out: ``Linear(width, width)``.
+        min_period / max_period: sine-cosine embedding periods.
+        time_emb_dtype: dtype to cast the time embedding to. ``None`` (default, the
+            smolvla/eo1 convention) uses the projected action dtype; pass ``timestep.dtype``
+            for the pi0/pi05 convention.
+        apply: optional wrapper ``apply(fn, arg) -> fn(arg)`` used to route the two
+            sub-computations through gradient checkpointing (pi0/eo1). Defaults to a direct
+            call (smolvla).
+    """
+    if apply is None:
+
+        def apply(fn, arg):
+            return fn(arg)
+
+    action_emb = apply(action_in_proj, noisy_actions)
+
+    time_emb = create_sinusoidal_pos_embedding(
+        timestep,
+        action_in_proj.out_features,
+        min_period=min_period,
+        max_period=max_period,
+        device=timestep.device,
+    )
+    time_emb = time_emb.type(dtype=time_emb_dtype if time_emb_dtype is not None else action_emb.dtype)
+    time_emb = time_emb[:, None, :].expand_as(action_emb)
+    action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+    def _mlp(x):
+        return action_time_mlp_out(F.silu(action_time_mlp_in(x)))
+
+    return apply(_mlp, action_time_emb)
 
 
 def make_att_2d_masks(pad_masks: Tensor, att_masks: Tensor) -> Tensor:  # see openpi (exact copy)
