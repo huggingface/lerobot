@@ -26,6 +26,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
+from lerobot.configs.recipe import TrainingRecipe
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
@@ -81,6 +82,15 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # knobs that most policies never read.
     text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
     text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
+
+    # The training recipe this checkpoint's language supervision was rendered with.
+    # Its message turns are the single source of inference-time prompt wording (see
+    # `PreTrainedPolicy.language_recipe`), so a checkpoint prompts itself with the
+    # exact phrasing it was trained on. A reloaded config.json carries it as a plain
+    # dict — the same convention as `RenderMessagesProcessorStep` — and
+    # `language_recipe` normalizes it back into a `TrainingRecipe`. None falls back
+    # to the base WALL-OSS/EO-1 subtask recipe in `lerobot.policies.pretrained`.
+    recipe: TrainingRecipe | dict[str, Any] | None = None
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
