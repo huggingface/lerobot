@@ -169,6 +169,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
             json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
 
     @classmethod
+    def _migrate_serialized_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Adapt a serialized config to the current fields of this subclass.
+
+        Subclasses override this to drop or rename fields that older checkpoints
+        serialized, since draccus rejects keys that are not dataclass fields. The
+        base implementation leaves the payload untouched.
+        """
+        return config
+
+    @classmethod
     def from_pretrained(
         cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
@@ -226,6 +236,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
+
+        config = config_cls._migrate_serialized_config(config)
 
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)

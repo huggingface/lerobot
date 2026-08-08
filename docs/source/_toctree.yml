@@ -63,6 +63,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: g05
+    title: G0.5
   - local: molmoact2
     title: MolmoAct2
   - local: vla_jepa

@@ -42,8 +42,8 @@ def make_env_pre_post_processors(
     Create preprocessor and postprocessor pipelines for environment observations.
 
     Returns a tuple of (preprocessor, postprocessor). By default, delegates to
-    ``env_cfg.get_env_processors()``.  The XVLAConfig policy-specific override
-    stays here because it depends on the *policy* config, not the env config.
+    ``env_cfg.get_env_processors()``. Policy-specific overrides stay here when
+    they depend on both the policy and environment configs.
     """
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
