@@ -52,6 +52,10 @@ def resolve_delta_timestamps(
             }
             returns `None` if the resulting dict is empty.
     """
+    resolve_dataset_metadata = getattr(cfg, "resolve_dataset_metadata", None)
+    if callable(resolve_dataset_metadata):
+        resolve_dataset_metadata(ds_meta)
+
     delta_timestamps = {}
     for key in ds_meta.features:
         if key == REWARD and cfg.reward_delta_indices is not None:
