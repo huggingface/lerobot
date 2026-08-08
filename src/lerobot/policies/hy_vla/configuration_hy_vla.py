@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -28,6 +29,27 @@ _UMI_CAMERA_KEYS = (
     "observation.images.hand_left",
     "observation.images.hand_right",
 )
+
+
+def _hy_vla_default_recipe() -> TrainingRecipe:
+    """Hy-VLA's subtask wording: the bare goal.
+
+    Upstream Hy-Embodied-0.5-VLA trains on raw instruction strings with no added
+    prompt sentence — the Hunyuan chat template's role tokens carry the framing —
+    so the recipe's user turn is the task alone.
+    """
+    return TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="high_level"),
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            ),
+        ]
+    )
 
 
 @PreTrainedConfig.register_subclass("hy_vla")
@@ -50,6 +72,8 @@ class HyVLAConfig(PreTrainedConfig):
     empty_cameras: int = 0
     tokenizer_max_length: int = 64
     task_suffix: str = "<｜hy_Assistant｜>"
+    # Hy-VLA's language contract; see `_hy_vla_default_recipe`.
+    recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _hy_vla_default_recipe())
 
     # Joint text + flow supervision. The VLM tower keeps its tied vocabulary head,
     # so assistant tokens can be supervised alongside the flow objective. Text is

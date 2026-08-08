@@ -1796,8 +1796,6 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     config_class = HyVLAConfig
     name = "hy_vla"
-    #: Hy's chat suffix already marks where the assistant turn begins, so the goal alone.
-    PROMPT_TEMPLATES = {"subtask": "{task}"}  # noqa: RUF012
 
     def __init__(self, config: HyVLAConfig, **_: Any):
         super().__init__(config)
@@ -2115,6 +2113,10 @@ class HyVLAPolicy(PreTrainedPolicy):
             prompt = prompt[0]
         if not prompt:
             return ""
+        if kind == "subtask":
+            # The wording comes from the checkpoint's recipe (config.recipe): the bare
+            # goal — Hy's chat suffix already marks where the assistant turn begins.
+            prompt = self.build_prompt("subtask", task=prompt)
 
         model_batch = self._with_inference_history(batch) if self.config.use_video_encoder else batch
         images, image_masks = self.prepare_images(model_batch)
