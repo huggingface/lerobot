@@ -384,6 +384,10 @@ class RolloutConfig:
                 logger.info("No policy config to resolve device from; auto-selected device: %s", self.device)
 
         # --- Rollout length ---
+        if self.duration < 0:
+            raise ValueError("--duration must be >= 0")
+        if self.action_horizon < 0:
+            raise ValueError("--action_horizon must be >= 0")
         if self.duration != 0 and self.action_horizon != 0:
             raise ValueError("Cannot specify both --duration and --action_horizon")
 
