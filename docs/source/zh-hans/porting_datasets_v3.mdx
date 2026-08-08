@@ -1,0 +1,321 @@
+```
+# 将大型数据集迁移到 LeRobot Dataset v3.0
+
+本教程介绍如何将大规模机器人数据集迁移到 LeRobot Dataset v3.0 格式。我们以 **DROID 1.0.1** 数据集为主要示例，演示如何在 SLURM 集群上处理跨数千个分片的多 TB 数据集。
+
+## 文件组织：v2.1 与 v3.0 对比
+
+Dataset v3.0 从根本上改变了数据的组织和存储方式：
+
+**v2.1 结构（基于片段）**：
+
+```
+dataset/
+├── data/chunk-000/episode_000000.parquet
+├── data/chunk-000/episode_000001.parquet
+├── videos/chunk-000/camera/episode_000000.mp4
+└── meta/episodes.jsonl
+```
+
+**v3.0 结构（基于文件）**：
+
+```
+dataset/
+├── data/chunk-000/file-000.parquet        # 每个文件包含多个片段
+├── videos/camera/chunk-000/file-000.mp4   # 合并后的视频块
+└── meta/episodes/chunk-000/file-000.parquet  # 结构化元数据
+```
+
+从单独片段文件到基于文件的块结构，这一转变显著提升了性能并降低了存储开销。
+
+## v3.0 的新特性
+
+Dataset v3.0 为处理大型数据集引入了重大改进：
+
+### 🏗️ **增强的文件组织**
+
+- **基于文件的结构**：片段现在被分组到分块文件中，而非单独的片段文件
+- **可配置的文件大小**：支持数据文件和视频文件的大小配置
+- **更高的存储效率**：更好的压缩率和更低的开销
+
+### 📊 **现代化的元数据管理**
+
+- **基于 Parquet 的元数据**：以高效的 parquet 格式取代 JSON Lines
+- **结构化的片段访问**：通过 `dataset.meta.episodes` 直接访问 pandas DataFrame
+- **片段级统计**：片段级别的增强统计追踪
+
+### 🚀 **性能提升**
+
+- **内存映射访问**：通过 PyArrow 内存映射改善 RAM 使用
+- **更快的加载速度**：显著缩短数据集初始化时间
+- **更好的可扩展性**：专为包含数百万个片段的数据集设计
+
+## 前提条件
+
+在迁移大型数据集之前，请确保：
+
+- **已安装支持 v3.0 的 LeRobot**，请参阅[安装指南](./installation)
+- **充足的存储空间**：原始数据集可能非常大（例如 DROID 需要 2TB）
+- **集群访问权限**（大型数据集推荐）：SLURM 或类似的作业调度器
+- **数据集专属依赖**：对于 DROID，需要 TensorFlow Dataset 工具
+
+## 了解 DROID 数据集
+
+[DROID 1.0.1](https://droid-dataset.github.io/droid/the-droid-dataset) 是大规模机器人数据集的典型示例：
+
+- **大小**：1.7TB（RLDS 格式），8.7TB（原始数据）
+- **结构**：2048 个预定义的 TensorFlow 数据集分片
+- **内容**：来自 Franka Emika Panda 机器人的 76,000+ 条机器人操作轨迹
+- **范围**：跨多种环境和物体的真实世界操作任务
+- **格式**：原为 TensorFlow Records/RLDS 格式，需转换为 LeRobot 格式
+- **托管**：Google Cloud Storage，可通过 `gsutil` 公开访问
+
+该数据集包含多样化的操作演示，涵盖：
+
+- 多摄像头视角（腕部摄像头、外部摄像头）
+- 自然语言任务描述
+- 机器人本体感知状态和动作
+- 成功/失败标注
+
+### DROID 特征模式
+
+```python
+DROID_FEATURES = {
+    # 片段标记
+    "is_first": {"dtype": "bool", "shape": (1,)},
+    "is_last": {"dtype": "bool", "shape": (1,)},
+    "is_terminal": {"dtype": "bool", "shape": (1,)},
+
+    # 语言指令
+    "language_instruction": {"dtype": "string", "shape": (1,)},
+    "language_instruction_2": {"dtype": "string", "shape": (1,)},
+    "language_instruction_3": {"dtype": "string", "shape": (1,)},
+
+    # 机器人状态
+    "observation.state.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "observation.state.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "observation.state.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # 摄像头观测
+    "observation.images.wrist_left": {"dtype": "image"},
+    "observation.images.exterior_1_left": {"dtype": "image"},
+    "observation.images.exterior_2_left": {"dtype": "image"},
+
+    # 动作
+    "action.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "action.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "action.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # LeRobot 标准格式
+    "observation.state": {"dtype": "float32", "shape": (8,)},  # 关节 + 夹爪
+    "action": {"dtype": "float32", "shape": (8,)},  # 关节 + 夹爪
+}
+```
+
+## 方式一：单机迁移
+
+### 第一步：安装依赖
+
+针对 DROID：
+
+```bash
+pip install tensorflow
+pip install tensorflow_datasets
+```
+
+对于其他数据集，请安装适合源格式的读取工具。
+
+### 第二步：下载原始数据
+
+使用 `gsutil` 从 Google Cloud Storage 下载 DROID：
+
+```bash
+# 如未安装 Google Cloud SDK，请先安装
+# https://cloud.google.com/sdk/docs/install
+
+# 下载完整 RLDS 数据集（1.7TB）
+gsutil -m cp -r gs://gresearch/robotics/droid/1.0.1 /your/data/
+
+# 或下载 100 个片段的样本（2GB）用于测试
+gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
+```
+
+> [!WARNING]
+> 大型数据集需要大量时间和存储空间：
+>
+> - **完整 DROID（1.7TB）**：根据带宽情况，下载可能需要数天
+> - **处理时间**：本地迁移完整数据集需要 7 天以上
+> - **上传时间**：推送到 Hugging Face Hub 需要 3 天以上
+> - **本地存储**：处理后的 LeRobot 格式约需 400GB
+
+### 第三步：迁移数据集
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --push-to-hub
+```
+
+### 开发与测试
+
+开发阶段可以迁移单个分片：
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1_test \
+    --num-shards 2048 \
+    --shard-index 0
+```
+
+此方式适用于较小的数据集或测试场景，大型数据集建议使用集群计算。
+
+## 方式二：SLURM 集群迁移（推荐）
+
+对于 DROID 等大型数据集，跨多节点并行处理可显著缩短处理时间。
+
+### 第一步：安装集群依赖
+
+```bash
+pip install datatrove  # Hugging Face 的分布式处理库
+```
+
+### 第二步：配置 SLURM 环境
+
+查找分区信息：
+
+```bash
+sinfo --format="%R"  # 列出可用分区
+sinfo -N -p your_partition -h -o "%N cpus=%c mem=%m"  # 查看资源
+```
+
+选择 **CPU 分区**——数据集迁移无需 GPU。
+
+### 第三步：启动并行迁移任务
+
+```bash
+python examples/port_datasets/slurm_port_shards.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name port_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+#### 参数说明
+
+- **`--workers`**：并行任务数（DROID 分片数最多 2048）
+- **`--cpus-per-task`**：推荐 8 个 CPU，用于帧编码并行化
+- **`--mem-per-cpu`**：约 16GB 总 RAM（8×1950M），用于加载原始帧
+
+> [!TIP]
+> 建议先用较少的 worker（如 100）测试集群配置，再启动大规模任务。
+
+### 第四步：监控进度
+
+查看运行中的任务：
+
+```bash
+squeue -u $USER
+```
+
+监控整体进度：
+
+```bash
+jobs_status /your/logs
+```
+
+查看单个任务日志：
+
+```bash
+less /your/logs/port_droid/slurm_jobs/JOB_ID_WORKER_ID.out
+```
+
+调试失败任务：
+
+```bash
+failed_logs /your/logs/port_droid
+```
+
+### 第五步：聚合分片
+
+所有迁移任务完成后：
+
+```bash
+python examples/port_datasets/slurm_aggregate_shards.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name aggr_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+### 第六步：上传到 Hub
+
+```bash
+python examples/port_datasets/slurm_upload.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name upload_droid \
+    --partition your_partition \
+    --workers 50 \
+    --cpus-per-task 4 \
+    --mem-per-cpu 1950M
+```
+
+> [!NOTE]
+> 上传使用较少的 worker（50），因为瓶颈在于网络而非计算。
+
+## Dataset v3.0 文件结构
+
+迁移完成后，数据集将具有以下现代化结构：
+
+```
+dataset/
+├── meta/
+│   ├── episodes/
+│   │   └── chunk-000/
+│   │       └── file-000.parquet    # 片段元数据
+│   ├── tasks.parquet               # 任务定义
+│   ├── stats.json                  # 聚合统计信息
+│   └── info.json                   # 数据集信息
+├── data/
+│   └── chunk-000/
+│       └── file-000.parquet        # 合并后的片段数据
+└── videos/
+    └── camera_key/
+        └── chunk-000/
+            └── file-000.mp4        # 合并后的视频文件
+```
+
+## 从 Dataset v2.1 迁移
+
+如果你有 v2.1 格式的现有数据集，请使用迁移工具：
+
+```bash
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+    --repo-id your_id/existing_dataset
+```
+
+该工具自动完成：
+
+- 将文件结构转换为 v3.0 格式
+- 将元数据从 JSON Lines 迁移到 parquet
+- 聚合统计信息并创建片段级统计
+- 更新版本信息
+
+## 性能优势
+
+Dataset v3.0 为大型数据集提供了显著改进：
+
+- **更快的加载速度**：初始化时间缩短 3-5 倍
+- **内存效率**：通过内存映射改善 RAM 使用
+- **可扩展处理**：高效处理数百万个片段
+- **存储优化**：减少文件数量，提升压缩效果
+```
