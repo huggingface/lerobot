@@ -495,6 +495,11 @@ def train(cfg: TrainPipelineConfig):
             },
             "rename_observations_processor": {"rename_map": cfg.rename_map},
         }
+        action_tokenizer_name = getattr(active_cfg, "action_tokenizer_name", None)
+        if action_tokenizer_name is not None:
+            preprocessor_overrides["action_tokenizer_processor"] = {
+                "action_tokenizer_name": action_tokenizer_name,
+            }
         postprocessor_overrides = {
             "unnormalizer_processor": {
                 "features": policy.config.output_features,
