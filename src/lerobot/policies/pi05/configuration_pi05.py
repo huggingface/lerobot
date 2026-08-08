@@ -83,6 +83,32 @@ class PI05Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
+    # VLM MLP FP8 settings (NVIDIA Transformer Engine). Only the te_layernorm_mlp backend is
+    # implemented: each VLM language-model layer's post_attention_layernorm (plain RMSNorm) is
+    # fused with its gate/up/down projections into one te.LayerNormMLP FP8 kernel. The action
+    # expert (adaRMS) stays bf16. Defaults keep FP8 disabled → identical to the bf16 path.
+    vlm_mlp_fp8_enable: bool = False
+    vlm_mlp_fp8_format: str = "hybrid"  # Options: "hybrid" (E4M3 fwd/E5M2 bwd), "e4m3"
+    vlm_mlp_fp8_amax_history_len: int = 16
+    vlm_mlp_fp8_amax_compute_algo: str = "max"  # Options: "max", "most_recent"
+    vlm_mlp_fp8_margin: int = 0
+    vlm_mlp_fp8_strict_shape_check: bool = True
+    vlm_mlp_fp8_log_once: bool = True
+    # FP8 scaling recipe selector.
+    # "delayed_scaling"      — per-tensor, 16-step amax history (default, HYBRID format).
+    # "float8_block_scaling" — block-wise: 1D for activations/grads, 2D for weights (TE-managed,
+    #                          works on Hopper and Blackwell). Defaults to power-of-2 scales.
+    vlm_mlp_fp8_recipe_kind: str = "delayed_scaling"
+    # Float8BlockScaling tuning knobs (used only when vlm_mlp_fp8_recipe_kind="float8_block_scaling").
+    # Defaults match TE's defaults — leaving these alone reproduces the original recipe construction.
+    vlm_mlp_fp8_blockscale_use_f32_scales: bool = False  # False = E8M0 power-of-2 scales; True = FP32
+    vlm_mlp_fp8_blockscale_x_dim: int = 1  # Activation block scaling dim: 1=row-wise (1D), 2=tile (2D)
+    vlm_mlp_fp8_blockscale_w_dim: int = 2  # Weight block scaling dim: default 2 (tile); 1 for 1D
+    vlm_mlp_fp8_blockscale_grad_dim: int = 1  # Gradient block scaling dim: default 1 (row-wise)
+    # When False, te.autocast is skipped during inference (model.eval()) even if FP8 is enabled,
+    # so the forward runs in bf16 from the stored master weights. Training always quantizes.
+    vlm_mlp_quant_inference: bool = True
+
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
@@ -120,6 +146,29 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        # VLM MLP FP8 validations
+        if self.vlm_mlp_fp8_format not in ["hybrid", "e4m3"]:
+            raise ValueError(f"Invalid vlm_mlp_fp8_format: {self.vlm_mlp_fp8_format}")
+
+        if self.vlm_mlp_fp8_amax_compute_algo not in ["max", "most_recent"]:
+            raise ValueError(
+                f"Invalid vlm_mlp_fp8_amax_compute_algo: {self.vlm_mlp_fp8_amax_compute_algo}"
+            )
+
+        if self.vlm_mlp_fp8_amax_history_len <= 0:
+            raise ValueError(
+                f"vlm_mlp_fp8_amax_history_len must be > 0, got {self.vlm_mlp_fp8_amax_history_len}"
+            )
+
+        if self.vlm_mlp_fp8_margin < 0:
+            raise ValueError(f"vlm_mlp_fp8_margin must be >= 0, got {self.vlm_mlp_fp8_margin}")
+
+        if self.vlm_mlp_fp8_recipe_kind not in ["delayed_scaling", "float8_block_scaling"]:
+            raise ValueError(
+                f"Invalid vlm_mlp_fp8_recipe_kind: {self.vlm_mlp_fp8_recipe_kind}. "
+                f"Must be one of: 'delayed_scaling', 'float8_block_scaling'."
+            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
