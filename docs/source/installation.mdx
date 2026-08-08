@@ -207,9 +207,9 @@ pip install 'lerobot[feetech]'        # Feetech motor support
 
 _Multiple extras can be combined (e.g., `.[core_scripts,pi,pusht]`). For a full list of available extras, refer to `pyproject.toml`._
 
-### PyTorch CUDA variant (Linux only)
+### PyTorch CUDA variants
 
-On Linux, the install path determines which CUDA wheel you get. macOS and Windows installs use the PyPI default (MPS / CPU / CUDA-Windows wheel respectively) and can skip this section.
+On Linux, the install path determines which CUDA wheel you get. macOS uses the PyPI default with MPS support. On Windows, follow the [Windows with NVIDIA CUDA](#windows-with-nvidia-cuda) instructions below when you need CUDA support.
 
 <!-- prettier-ignore-start -->
 
@@ -256,6 +256,23 @@ Supported values include `auto`, `cpu`, `cu126`, `cu128`, `cu129`, `cu130`, plus
 </hfoption>
 </hfoptions>
 <!-- prettier-ignore-end -->
+
+#### Windows with NVIDIA CUDA
+
+For source installs on Windows, `uv sync` installs the default PyTorch build, which can be CPU-only. To use an NVIDIA GPU, select **Windows**, **Pip**, your Python version, and a supported CUDA version on the [PyTorch installation page](https://pytorch.org/get-started/locally). Then run the selected command with `uv pip` after syncing LeRobot:
+
+```powershell
+uv sync
+uv pip install --force-reinstall torch torchvision --index-url <pytorch-selector-index-url>
+```
+
+Verify that PyTorch can access the GPU:
+
+```powershell
+uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```
+
+The final command should print `True`. Repeat the PyTorch installation command after recreating the environment or running a full dependency sync that replaces the selected wheels.
 
 ### Troubleshooting
 
