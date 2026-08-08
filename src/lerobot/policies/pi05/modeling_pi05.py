@@ -72,13 +72,30 @@ class ActionSelectKwargs(TypedDict, total=False):
 
 
 # Define the complete layer computation function for gradient checkpointing
-def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
+def compute_layer_complete(
+    inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb, freeze_prefix=False
+):
     query_states = []
     key_states = []
     value_states = []
     gates = []
     for i, hidden_states in enumerate(inputs_embeds):
         layer = layers[i]
+        if freeze_prefix and i == 0:
+            hidden_states = hidden_states.detach()
+            with torch.no_grad():
+                hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, adarms_cond[i])
+                input_shape = hidden_states.shape[:-1]
+                hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+                query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+                value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            gates.append(gate)
+            query_states.append(query_state)
+            key_states.append(key_state)
+            value_states.append(value_state)
+            continue
+
         hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, adarms_cond[i])
         gates.append(gate)
         input_shape = hidden_states.shape[:-1]
@@ -125,19 +142,32 @@ def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_c
     for i, hidden_states in enumerate(inputs_embeds):
         layer = layers[i]
         end_pos = start_pos + hidden_states.shape[1]
-        if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
-            att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
-        out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
-        # first residual
-        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
-        after_first_residual = out_emb.clone()
-        out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, adarms_cond[i])
-        # Convert to bfloat16 if the next layer (mlp) uses bfloat16
-        if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
-            out_emb = out_emb.to(dtype=torch.bfloat16)
-        out_emb = layer.mlp(out_emb)
-        # second residual
-        out_emb = _gated_residual(after_first_residual, out_emb, gate)
+        layer_att_output = att_output
+        if layer_att_output.dtype != layer.self_attn.o_proj.weight.dtype:
+            layer_att_output = layer_att_output.to(layer.self_attn.o_proj.weight.dtype)
+
+        if freeze_prefix and i == 0:
+            with torch.no_grad():
+                out_emb = layer.self_attn.o_proj(layer_att_output[:, start_pos:end_pos])
+                out_emb = _gated_residual(hidden_states.detach(), out_emb, gates[i])
+                after_first_residual = out_emb.clone()
+                out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, adarms_cond[i])
+                if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+                    out_emb = out_emb.to(dtype=torch.bfloat16)
+                out_emb = layer.mlp(out_emb)
+                out_emb = _gated_residual(after_first_residual, out_emb, gate).detach()
+        else:
+            out_emb = layer.self_attn.o_proj(layer_att_output[:, start_pos:end_pos])
+            # first residual
+            out_emb = _gated_residual(hidden_states, out_emb, gates[i])
+            after_first_residual = out_emb.clone()
+            out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, adarms_cond[i])
+            # Convert to bfloat16 if the next layer (mlp) uses bfloat16
+            if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+                out_emb = out_emb.to(dtype=torch.bfloat16)
+            out_emb = layer.mlp(out_emb)
+            # second residual
+            out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -250,15 +280,27 @@ class PaliGemmaWithExpertModel(
         else:
             raise ValueError(f"Invalid precision: {precision}")
 
-        # Keep full vision path in float32 so we never toggle (toggle causes optimizer
-        # "same dtype" error). Saves memory vs full float32; more memory than only 3 params.
-        params_to_keep_float32 = [
-            "vision_tower",
-            "multi_modal_projector",
-            "input_layernorm",
-            "post_attention_layernorm",
-            "model.norm",
-        ]
+        # Full-model fine-tuning needs the full vision path in float32 to avoid
+        # mixed optimizer dtype errors. Expert-only training freezes PaliGemma,
+        # so keep only the numerically sensitive parameters in float32 and let
+        # the frozen vision encoder run mostly in bfloat16.
+        if self.train_expert_only:
+            params_to_keep_float32 = [
+                "vision_tower.vision_model.embeddings.patch_embedding.weight",
+                "vision_tower.vision_model.embeddings.patch_embedding.bias",
+                "vision_tower.vision_model.embeddings.position_embedding.weight",
+                "input_layernorm",
+                "post_attention_layernorm",
+                "model.norm",
+            ]
+        else:
+            params_to_keep_float32 = [
+                "vision_tower",
+                "multi_modal_projector",
+                "input_layernorm",
+                "post_attention_layernorm",
+                "model.norm",
+            ]
 
         for name, param in self.named_parameters():
             if any(selector in name for selector in params_to_keep_float32):
@@ -355,6 +397,7 @@ class PaliGemmaWithExpertModel(
                         preserve_rng_state=False,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        freeze_prefix=self.train_expert_only,
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
@@ -364,6 +407,7 @@ class PaliGemmaWithExpertModel(
                         adarms_cond,
                         layers=layers,
                         rotary_emb=rotary_emb,
+                        freeze_prefix=self.train_expert_only,
                     )
 
             # final norm
@@ -375,7 +419,14 @@ class PaliGemmaWithExpertModel(
             def compute_final_norms(inputs_embeds, adarms_cond):
                 outputs_embeds = []
                 for i, hidden_states in enumerate(inputs_embeds):
-                    out_emb, _ = layernorm_forward(final_norms[i], hidden_states, adarms_cond[i])
+                    if self.train_expert_only and i == 0:
+                        with torch.no_grad():
+                            out_emb, _ = layernorm_forward(
+                                final_norms[i], hidden_states.detach(), adarms_cond[i]
+                            )
+                            out_emb = out_emb.detach()
+                    else:
+                        out_emb, _ = layernorm_forward(final_norms[i], hidden_states, adarms_cond[i])
                     outputs_embeds.append(out_emb)
                 return outputs_embeds
 
@@ -461,7 +512,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def _apply_checkpoint(self, func, *args, **kwargs):
         """Helper method to apply gradient checkpointing if enabled."""
-        if self.gradient_checkpointing_enabled and self.training:
+        has_grad_input = any(isinstance(arg, torch.Tensor) and arg.requires_grad for arg in args)
+        if self.gradient_checkpointing_enabled and self.training and has_grad_input:
             return torch.utils.checkpoint.checkpoint(
                 func, *args, use_reentrant=False, preserve_rng_state=False, **kwargs
             )
@@ -494,7 +546,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            if self.paligemma_with_expert.train_expert_only:
+                with torch.no_grad():
+                    img_emb = image_embed_func(img).detach()
+            else:
+                img_emb = self._apply_checkpoint(image_embed_func, img)
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
@@ -506,7 +562,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens)
             return lang_emb
 
-        lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
+        if self.paligemma_with_expert.train_expert_only:
+            with torch.no_grad():
+                lang_emb = lang_embed_func(tokens).detach()
+        else:
+            lang_emb = self._apply_checkpoint(lang_embed_func, tokens)
         embs.append(lang_emb)
         pad_masks.append(masks)
 
@@ -596,9 +656,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
             return suffix_out
 
-        suffix_out = self._apply_checkpoint(
-            forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
-        )
+        suffix_out = forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond)
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
