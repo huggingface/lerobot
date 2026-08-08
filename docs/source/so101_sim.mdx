@@ -1,0 +1,63 @@
+# SO-101 (MuJoCo)
+
+A generic, joint-space MuJoCo simulation of the SO-101/SO-100 arm — [TheRobotStudio/SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100)'s official MJCF model, wrapped as a first-party `EnvConfig` (`--env.type=so101`).
+
+This is **infrastructure, not a task**: there's no reward, no goal, no success criterion, no scene content beyond the robot and a ground plane. `reward` is always `0.0` and `terminated` is always `False` — episodes only end via `truncated` at `episode_length`. It exists so anyone working with SO-101/SO-100 in `lerobot` has a working local sim to develop and test against (e.g. control-stack changes, dataset-collection scripts, or a starting point for a real RL/task wrapper) without standing up an external MuJoCo setup by hand.
+
+## Installation
+
+```bash
+pip install -e ".[so101]"
+```
+
+This installs `mujoco` (no other new dependencies). The MJCF + mesh assets (~16MB) are fetched once from GitHub on first use and cached under `HF_LEROBOT_HOME/robot-mjcf/so101`.
+
+## Quick start
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=so101 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+```python
+from lerobot.envs.so101 import SO101MujocoEnv
+
+env = SO101MujocoEnv(obs_type="state", episode_length=300)
+obs, info = env.reset(seed=0)
+action = env.action_space.sample()  # target joint positions, degrees
+obs, reward, terminated, truncated, info = env.step(action)
+```
+
+### Policy inputs and outputs
+
+**Observations** (`--env.obs_type`):
+
+- `state` (default) — `agent_pos`: 6-dim joint positions in degrees (5 arm joints + gripper, same order as the SO-101 dataset schema's `observation.state`).
+- `pixels_agent_pos` — adds `pixels`: an offscreen RGB render (`observation_height` x `observation_width`, default 480x480) from a camera framed on the robot's own bounding box (the MJCF ships no named `<camera>`, and MuJoCo's default free-camera auto-framing breaks against this scene's "infinite" ground plane). Requires a working offscreen rendering backend (EGL/OSMesa/GLFW).
+
+**Actions**: `Box(6,)` — absolute target joint positions in degrees, bounded by each joint's real MJCF range (read directly from the model, not hardcoded).
+
+### Key CLI options for `env.type=so101`
+
+| Option                           | Default | Description                                                                                     |
+| -------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `env.obs_type`                   | `state` | `state` or `pixels_agent_pos`                                                                   |
+| `env.fps`                        | `30`    | Control rate; physics substeps per env step are derived from this and the MJCF's 500Hz timestep |
+| `env.episode_length`             | `300`   | Steps per episode before `truncated=True`                                                       |
+| `env.observation_height`/`width` | `480`   | Render resolution (`pixels_agent_pos` only)                                                     |
+| `env.reset_qpos_deg`             | `None`  | Optional fixed reset pose (degrees, 6-dim); defaults to the MJCF's neutral pose (all zeros)     |
+
+`reset_qpos_deg` can also be overridden per-episode via `env.reset(options={"reset_qpos_deg": [...]})`.
+
+## Known limitation: gripper convention
+
+The MJCF's `gripper` joint is a hinge with its own native range (roughly -10° to 100°) — not LeRobot's separate linear 0=closed/100=open convention. This gap is upstream, in TheRobotStudio's own MJCF/URDF (their README already documents it as unresolved), not something introduced here. Rather than inventing an unvalidated remapping, `action_space`/`agent_pos` simply expose each joint's real MJCF range in degrees, gripper included — the same raw, per-joint-calibrated-degree convention SO-101's own dataset recordings already use. Convert at your own boundary if you need the 0-100 convention.
+
+## Platform notes
+
+- Physics-only (no `dynamics`/contact/actuator-gain calibration against real hardware) — kinematics (forward kinematics via this same MJCF) has been cross-validated against real hardware to micron-level agreement elsewhere in this project's history, but the shipped actuator gains are TheRobotStudio's own defaults, not independently calibrated.
+- Rendering (`pixels_agent_pos`) needs a working offscreen backend; set `MUJOCO_GL=egl` (or `osmesa`) if the default doesn't work in your environment.
+- No reward, task, or object/scene content — this is a base env meant to be wrapped or subclassed for anything task-specific (RL reward shaping, a Cartesian/IK action space, scripted pick-place, etc.).

@@ -234,6 +234,70 @@ class PushtEnv(EnvConfig):
         }
 
 
+@EnvConfig.register_subclass("so101")
+@dataclass
+class SO101Env(EnvConfig):
+    """Generic joint-space MuJoCo simulation of the SO-101/SO-100 arm.
+
+    Wraps TheRobotStudio's official MJCF model into a minimal ``gymnasium`` env: no reward,
+    no task, no success criterion — 5 arm joints + gripper, absolute joint-degree control,
+    matching the SO-101 dataset schema's own ``observation.state``/``action`` layout. See
+    ``lerobot.envs.so101``'s module docstring for the (deliberately unfixed) gripper-mapping
+    caveat inherited from the upstream MJCF/URDF.
+
+    Requires ``mujoco`` (``pip install lerobot[so101]``) — not installed by default, since no
+    other ``lerobot.envs`` code needs it.
+    """
+
+    task: str | None = "SO101-v0"
+    fps: int = 30
+    episode_length: int = 300
+    obs_type: str = "state"
+    render_mode: str = "rgb_array"
+    observation_height: int = 480
+    observation_width: int = 480
+    reset_qpos_deg: list[float] | None = None
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels": OBS_IMAGE,
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type not in ("state", "pixels_agent_pos"):
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+        if self.obs_type == "pixels_agent_pos":
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "episode_length": self.episode_length,
+            "fps": self.fps,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "reset_qpos_deg": self.reset_qpos_deg,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .so101 import create_so101_envs
+
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_so101_envs(n_envs=n_envs, gym_kwargs=self.gym_kwargs, env_cls=env_cls)
+
+
 @dataclass
 class ImagePreprocessingConfig:
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
