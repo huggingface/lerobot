@@ -23,10 +23,12 @@ from ..config import RobotConfig
 
 @dataclass
 class RebotB601FollowerConfig:
-    """Base configuration class for the Seeed Studio reBot B601-DM follower arm.
+    """Field definitions for the Seeed Studio reBot B601-DM follower arm.
 
-    The B601-DM is a 6-DOF arm plus gripper driven by Damiao CAN motors. Motor
-    communication goes through the ``motorbridge`` package.
+    This class only carries the fields. The registered configuration users instantiate is
+    [`RebotB601FollowerRobotConfig`], which documents them all in one place — doc-builder renders only a
+    class's own docstring, never its bases'. It is also used directly as the per-arm config of
+    [`~robots.bi_rebot_b601_follower.BiRebotB601FollowerConfig`].
     """
 
     # Communication port. For ``can_adapter="damiao"`` this is the Damiao serial
@@ -104,6 +106,62 @@ class RebotB601FollowerConfig:
 @RobotConfig.register_subclass("rebot_b601_follower")
 @dataclass
 class RebotB601FollowerRobotConfig(RobotConfig, RebotB601FollowerConfig):
-    """Registered configuration for the reBot B601-DM follower robot."""
+    """Configuration for the Seeed Studio reBot B601-DM follower arm.
+
+    The B601-DM is a 6-DOF arm plus gripper on Damiao CAN motors, driven through the `motorbridge`
+    package. What `port` means depends on `can_adapter`. Calibration follows the usual LeRobot flow and is
+    stored per `id`.
+
+    The arm and the gripper are controlled separately: `control_mode` governs the six arm joints and
+    `gripper_control_mode` the gripper, and each mode uses a different subset of the gain fields.
+
+    Per-joint lists hold 7 values in motor order: `shoulder_pan`, `shoulder_lift`, `elbow_flex`,
+    `wrist_flex`, `wrist_yaw`, `wrist_roll`, `gripper`.
+
+    Args:
+        port (`str`):
+            Where the arm is reached. For `can_adapter="damiao"` this is the serial bridge device, e.g.
+            `/dev/ttyACM0`; for `can_adapter="socketcan"` it is the CAN channel name, e.g. `can0`.
+        can_adapter (`str`, *optional*, defaults to `"damiao"`):
+            `"damiao"` for the dedicated Damiao serial bridge, or `"socketcan"` for SocketCAN adapters
+            such as PCAN, slcan and embedded controllers.
+        dm_serial_baud (`int`, *optional*, defaults to 921600):
+            Baud rate of the Damiao serial bridge. Only used when `can_adapter="damiao"`.
+        disable_torque_on_disconnect (`bool`, *optional*, defaults to `True`):
+            Whether to release the motors on disconnect. Leave `True` unless the arm is holding a load it
+            must not drop.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps how far a single action may move the arm from its present position, in degrees. A scalar
+            applies to every motor; a dict maps motor name to a per-motor cap. `None` disables clipping.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras to read alongside the arm's joint positions.
+        motor_can_ids (`dict[str, tuple[int, int]]`, *optional*):
+            Maps motor name to its `(send_can_id, recv_can_id)` pair. Change it only if you have
+            re-addressed the motors.
+        pos_vel_velocity (`float | list[float]`, *optional*):
+            Maximum speed in deg/s per joint, used by the arm in `pos_vel` mode and by the gripper in
+            `force_pos` mode.
+        control_mode (`str`, *optional*, defaults to `"mit"`):
+            How the six arm joints are driven: `"mit"` or `"pos_vel"`.
+        mit_kp (`float | list[float]`, *optional*):
+            MIT-mode proportional gains per arm joint. Unused when `control_mode="pos_vel"`.
+        mit_kd (`float | list[float]`, *optional*):
+            MIT-mode derivative gains per arm joint. Unused when `control_mode="pos_vel"`.
+        gripper_control_mode (`str`, *optional*, defaults to `"force_pos"`):
+            How the gripper is driven: `"force_pos"` or `"mit"`.
+        gripper_torque_ratio (`float`, *optional*, defaults to 0.07):
+            Maximum grip force as a fraction in `[0, 1]`. Only used when
+            `gripper_control_mode="force_pos"`.
+        gripper_mit_kp (`float`, *optional*, defaults to 8.0):
+            Gripper MIT-mode proportional gain. Only used when `gripper_control_mode="mit"`.
+        gripper_mit_kd (`float`, *optional*, defaults to 0.3):
+            Gripper MIT-mode derivative gain. Only used when `gripper_control_mode="mit"`.
+        joint_limits (`dict[str, tuple[float, float]]`, *optional*):
+            Soft `(min, max)` limits in degrees per joint, clipped against on every action.
+        id (`str`, *optional*):
+            Identifier for this particular arm; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
 
     pass

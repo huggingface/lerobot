@@ -21,6 +21,12 @@ from ..config import RobotConfig
 
 
 def lekiwi_cameras_config() -> dict[str, CameraConfig]:
+    """Build the default camera set for a LeKiwi base.
+
+    Returns:
+        `dict[str, CameraConfig]`: The `front` and `wrist` OpenCV cameras at the device paths and
+        rotations of a standard LeKiwi build. Override the `cameras` field if yours is wired differently.
+    """
     return {
         "front": OpenCVCameraConfig(
             index_or_path="/dev/video0",
@@ -44,6 +50,34 @@ def lekiwi_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
+    """Configuration for LeKiwi, running on the robot itself.
+
+    This is the config used by the process on the LeKiwi's own computer. To drive one from another machine,
+    use [`LeKiwiClientConfig`] instead.
+
+    Args:
+        port (`str`, *optional*, defaults to `"/dev/ttyACM0"`):
+            Serial port of the motor bus on the robot's computer.
+        disable_torque_on_disconnect (`bool`, *optional*, defaults to `True`):
+            Whether to release the motors on disconnect.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps how far a single action may move the arm from its present position, as a safety limit. A
+            scalar applies to every motor; a dict maps motor name to a per-motor cap. `None` disables
+            clipping.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras to read alongside the joint positions. Defaults to the standard `front` and `wrist`
+            build; see [`lekiwi_cameras_config`].
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Whether to report and accept arm joint positions in degrees.
+        num_read_retries (`int`, *optional*, defaults to 2):
+            Extra attempts when a `sync_read` fails. Feetech buses occasionally return a corrupted status
+            packet, which would otherwise abort the control loop.
+        id (`str`, *optional*):
+            Identifier for this particular robot; also names its calibration file.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to the LeRobot calibration home.
+    """
+
     port: str = "/dev/ttyACM0"  # port to connect to the bus
 
     disable_torque_on_disconnect: bool = True
@@ -67,6 +101,22 @@ class LeKiwiConfig(RobotConfig):
 
 @dataclass
 class LeKiwiHostConfig:
+    """Configuration for the host process that serves a LeKiwi over the network.
+
+    Args:
+        port_zmq_cmd (`int`, *optional*, defaults to 5555):
+            ZMQ port the host listens on for actions.
+        port_zmq_observations (`int`, *optional*, defaults to 5556):
+            ZMQ port the host publishes observations on.
+        connection_time_s (`int`, *optional*, defaults to 30):
+            How long the host stays up before shutting down.
+        watchdog_timeout_ms (`int`, *optional*, defaults to 500):
+            Stop the robot if no command arrives within this window. Guards against a dropped client
+            leaving the base driving.
+        max_loop_freq_hz (`int`, *optional*, defaults to 30):
+            Control loop frequency. Lower it if the robot jitters, and watch CPU load with `top`.
+    """
+
     # Network Configuration
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
@@ -84,6 +134,32 @@ class LeKiwiHostConfig:
 @RobotConfig.register_subclass("lekiwi_client")
 @dataclass
 class LeKiwiClientConfig(RobotConfig):
+    """Configuration for driving a LeKiwi from another machine.
+
+    Presents the same [`~robots.Robot`] interface as the robot-side [`LeKiwiConfig`], but every call goes
+    over ZMQ to the host process. Calibration lives on the robot, so nothing here configures it.
+
+    Args:
+        remote_ip (`str`):
+            IP address of the LeKiwi's computer on the network.
+        port_zmq_cmd (`int`, *optional*, defaults to 5555):
+            ZMQ port to send actions to. Must match the host's `port_zmq_cmd`.
+        port_zmq_observations (`int`, *optional*, defaults to 5556):
+            ZMQ port to receive observations on. Must match the host's `port_zmq_observations`.
+        teleop_keys (`dict[str, str]`, *optional*):
+            Keyboard bindings for driving the base: movement, rotation, speed control and quit.
+        cameras (`dict[str, CameraConfig]`, *optional*):
+            Cameras expected in the observation stream. Defaults to the standard `front` and `wrist` build.
+        polling_timeout_ms (`int`, *optional*, defaults to 15):
+            How long to wait for an observation before giving up on that step.
+        connect_timeout_s (`int`, *optional*, defaults to 5):
+            How long to wait for the host to answer when connecting.
+        id (`str`, *optional*):
+            Identifier for this particular robot.
+        calibration_dir (`Path`, *optional*):
+            Unused by the client: calibration is held on the robot.
+    """
+
     # Network Configuration
     remote_ip: str
     port_zmq_cmd: int = 5555

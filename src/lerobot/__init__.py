@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-LeRobot -- PyTorch library for real-world robotics.
+"""LeRobot -- PyTorch library for real-world robotics.
 
 Provides datasets, pretrained policies, and tools for training, evaluation,
 data collection, and robot control. Integrates with Hugging Face Hub for

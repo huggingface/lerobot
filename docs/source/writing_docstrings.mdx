@@ -26,7 +26,7 @@ def send_action(self, action: RobotAction, rate_hz: float = 30.0) -> RobotAction
         action (`dict[str, float]`):
             Target values keyed by motor name, e.g. `{"shoulder_pan.pos": 0.0}`. Keys must match the
             robot's action features.
-        rate_hz (`float`, *optional*, defaults to `30.0`):
+        rate_hz (`float`, *optional*, defaults to 30.0):
             Control loop frequency.
 
     Returns:
@@ -60,7 +60,7 @@ description, then the sections.
 ### The `Args:` line is machine-parsed
 
 ```
-name (`type`, *optional*, defaults to `X`):
+name (`type`, *optional*, defaults to X):
     Description, indented on its own line.
 ```
 
@@ -80,6 +80,10 @@ fails. Omit the clause entirely for required parameters:
 
 Types go in backticks. Use `*optional*` with no `defaults to` when the default is `None` or is otherwise not
 worth restating.
+
+The default value itself follows one rule, and the checker rewrites to match it: **numbers are bare,
+everything else is backticked** — `defaults to 30`, `defaults to 1e-05`, but `` defaults to `True` ``,
+`` defaults to `"socketcan"` ``. Booleans count as "everything else", not as numbers.
 
 ### `Returns:` is type-first
 
@@ -179,7 +183,33 @@ Add files containing runnable examples to `utils/documentation_tests.txt`.
 
 Put examples on the three to five genuine entry points of a module. Examples on trivial accessors are noise.
 
-## Three patterns you will hit constantly
+## Four patterns you will hit constantly
+
+### Constructor parameters go on the class
+
+**doc-builder renders a class from its class docstring and never reads `__init__.__doc__`.** An `Args:`
+block written on `__init__` is dropped from the page entirely — the parameter still appears in the rendered
+signature, but with no description beside it.
+
+Document constructor parameters in an `Args:` block on the **class** docstring:
+
+```python
+class SOFollower(Robot):
+    """A single SO-family follower arm.
+
+    Args:
+        config (`SOFollowerRobotConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
+
+    def __init__(self, config: SOFollowerRobotConfig):
+        super().__init__(config)
+```
+
+`__init__` then needs no docstring at all — `D107` is disabled repo-wide for exactly this reason. The
+payoff is not only that the parameters render: an `Args:` block on the class is checked against
+`inspect.signature(cls)` by `make check-docstrings`, so it cannot silently drift from the constructor. The
+same block on `__init__` is checked by nothing.
 
 ### Config dataclasses
 

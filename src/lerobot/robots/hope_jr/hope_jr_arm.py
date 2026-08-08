@@ -35,6 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 class HopeJrArm(Robot):
+    """One arm of the Hope Jr humanoid.
+
+    The arm and the hand are separate robots; pair this with [`~robots.hope_jr.HopeJrHand`] for a full
+    limb. See [`~robots.Robot`] for the contract every method here implements.
+
+    Args:
+        config (`HopeJrArmConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
+
     config_class = HopeJrArmConfig
     name = "hope_jr_arm"
 
@@ -77,23 +87,47 @@ class HopeJrArm(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
+        """Connect the motor bus and cameras, calibrating and configuring the arm.
 
+        > [!WARNING]
+        > The arm is assumed to be at rest when this is called, because torque is disabled to run
+        > calibration.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the arm is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect(handshake=False)
         if not self.is_calibrated and calibrate:
             self.calibrate()
@@ -107,9 +141,18 @@ class HopeJrArm(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         groups = {
             "all": list(self.bus.motors.keys()),
             "shoulder": ["shoulder_pitch", "shoulder_yaw", "shoulder_roll"],
@@ -122,11 +165,17 @@ class HopeJrArm(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         with self.bus.torque_disabled():
             self.bus.configure_motors(maximum_acceleration=30, acceleration=30)
 
     def setup_motors(self) -> None:
         # TODO: add docstring
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -135,6 +184,14 @@ class HopeJrArm(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         # Read arm position
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position", self.other_motors)
         obs_dict[self.shoulder_pitch] = self.bus.read("Present_Position", self.shoulder_pitch)
@@ -160,6 +217,18 @@ class HopeJrArm(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        """Command the robot to move towards a target configuration.
+
+        Args:
+            action (`dict[str, Any]`):
+                Target values, keyed as in [`~robots.Robot.action_features`].
+
+        Returns:
+            `dict[str, Any]`: The action actually sent, which may be clipped by `max_relative_target`.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -174,6 +243,11 @@ class HopeJrArm(Robot):
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

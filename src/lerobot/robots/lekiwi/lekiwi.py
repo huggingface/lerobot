@@ -39,11 +39,17 @@ logger = logging.getLogger(__name__)
 
 
 class LeKiwi(Robot):
-    """
-    The robot includes a three omniwheel mobile base and a remote follower arm.
-    The leader arm is connected locally (on the laptop) and its joint positions are recorded and then
-    forwarded to the remote follower arm (after applying a safety clamp).
-    In parallel, keyboard teleoperation is used to generate raw velocity commands for the wheels.
+    """A three-omniwheel mobile base with a follower arm on top, running on the robot itself.
+
+    The leader arm is connected to the operator's laptop; its joint positions are recorded and forwarded
+    to this follower arm after a safety clamp. In parallel, keyboard teleoperation generates raw velocity
+    commands for the wheels.
+
+    To drive one of these from another machine, use [`~robots.lekiwi.LeKiwiClient`].
+
+    Args:
+        config (`LeKiwiConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = LeKiwiConfig
@@ -105,18 +111,43 @@ class LeKiwi(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._state_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect to the robot and its cameras, then apply the configured settings.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the robot is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -132,9 +163,18 @@ class LeKiwi(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -189,6 +229,7 @@ class LeKiwi(Robot):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         self.bus.disable_torque()
         self.bus.configure_motors()
         for name in self.arm_motors:
@@ -205,6 +246,11 @@ class LeKiwi(Robot):
         self.bus.enable_torque()
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -238,8 +284,7 @@ class LeKiwi(Robot):
         base_radius: float = 0.125,
         max_raw: int = 3000,
     ) -> dict:
-        """
-        Convert desired body-frame velocities into wheel raw commands.
+        """Convert desired body-frame velocities into wheel raw commands.
 
         Parameters:
           x_cmd      : Linear velocity in x (m/s).
@@ -302,8 +347,7 @@ class LeKiwi(Robot):
         wheel_radius: float = 0.05,
         base_radius: float = 0.125,
     ) -> dict[str, Any]:
-        """
-        Convert wheel raw command feedback back into body-frame velocities.
+        """Convert wheel raw command feedback back into body-frame velocities.
 
         Parameters:
           wheel_raw   : Vector with raw wheel commands ("base_left_wheel", "base_back_wheel", "base_right_wheel").
@@ -313,7 +357,6 @@ class LeKiwi(Robot):
         Returns:
           A dict (x.vel, y.vel, theta.vel) all in m/s
         """
-
         # Convert each raw command back to an angular speed in deg/s.
         wheel_degps = np.array(
             [
@@ -346,6 +389,14 @@ class LeKiwi(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         # Read actuators position for arm and vel for base
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         start = time.perf_counter()
         arm_pos = self.bus.sync_read(
             "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
@@ -390,7 +441,6 @@ class LeKiwi(Robot):
         Returns:
             RobotAction: the action sent to the motors, potentially clipped.
         """
-
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
 
@@ -419,11 +469,17 @@ class LeKiwi(Robot):
         return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
+        """Bring the mobile base to a halt by commanding zero velocity on its wheels."""
         self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.stop_base()
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():

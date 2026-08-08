@@ -269,13 +269,18 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     data processing workflow. It's generic, allowing for custom input and output types,
     which are handled by the `to_transition` and `to_output` converters.
 
-    Attributes:
-        steps: A sequence of `ProcessorStep` objects that make up the pipeline.
-        name: A descriptive name for the pipeline.
-        to_transition: A function to convert raw input data into the standardized `EnvTransition` format.
-        to_output: A function to convert the final `EnvTransition` into the desired output format.
-        before_step_hooks: A list of functions to be called before each step is executed.
-        after_step_hooks: A list of functions to be called after each step is executed.
+    **Attributes**:
+        - **steps** (`Sequence[ProcessorStep]`) -- A sequence of `ProcessorStep` objects that make up the
+          pipeline.
+        - **name** (`str`) -- A descriptive name for the pipeline.
+        - **to_transition** (`Callable[[TInput], EnvTransition]`) -- A function to convert raw input data into
+          the standardized `EnvTransition` format.
+        - **to_output** (`Callable[[EnvTransition], TOutput]`) -- A function to convert the final
+          `EnvTransition` into the desired output format.
+        - **before_step_hooks** (`list[Callable[[int, EnvTransition], None]]`) -- A list of functions to be
+          called before each step is executed.
+        - **after_step_hooks** (`list[Callable[[int, EnvTransition], None]]`) -- A list of functions to be
+          called after each step is executed.
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)

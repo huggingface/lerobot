@@ -33,10 +33,10 @@ class Camera(abc.ABC):
     - Connection/disconnection
     - Frame capture (sync/async/latest)
 
-    Attributes:
-        fps (int | None): Configured frames per second
-        width (int | None): Frame width in pixels
-        height (int | None): Frame height in pixels
+    **Attributes**:
+        - **fps** (`int | None`) -- Configured frames per second.
+        - **width** (`int | None`) -- Frame width in pixels.
+        - **height** (`int | None`) -- Frame height in pixels.
     """
 
     def __init__(self, config: CameraConfig):
