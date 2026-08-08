@@ -31,6 +31,7 @@ from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
+from lerobot.configs.recipe import PLACEHOLDER_RE, MessageTurn, TrainingRecipe
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
@@ -49,6 +50,26 @@ if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+#: Fallback language contract for checkpoints whose ``config.json`` ships no recipe:
+#: the subtask wording the WALL-OSS and EO-1 family were trained on. See
+#: `PreTrainedPolicy.language_recipe`.
+DEFAULT_LANGUAGE_RECIPE = TrainingRecipe(
+    messages=[
+        MessageTurn(
+            role="user",
+            content="${task}\nPredict the next action in language.",
+            stream="high_level",
+        ),
+        MessageTurn(
+            role="assistant",
+            content="${subtask}",
+            stream="high_level",
+            target=True,
+            if_present="subtask",
+        ),
+    ]
+)
 
 
 def _build_card_context(
@@ -315,44 +336,67 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Whether this policy has a usable text head."""
         return type(self).generate_text is not PreTrainedPolicy.generate_text
 
-    #: Prompts this checkpoint was trained to answer, keyed by kind. A subclass declares
-    #: its own dict; lookups fall back to these, so it only lists what it changes.
-    #:
-    #: Each value is a template whose ``{placeholder}`` fields the caller fills with
-    #: `build_prompt`. The wording is part of the model contract and model-specific down
-    #: to the token — WALL-OSS declares its mode in this turn, and a prompt that drifts
-    #: from the trained phrasing is answered out of distribution. So the policy owns the
-    #: wording while the caller owns the values.
-    #:
-    #: The default is the wording the WALL-OSS and EO-1 family were trained on, which more
-    #: released checkpoints recognise than a sentence written for the occasion. Declare your
-    #: own even when it matches: this default may be retuned, and a policy that pins its
-    #: template will not silently follow.
-    PROMPT_TEMPLATES: dict[str, str] = {  # noqa: RUF012
-        "subtask": "{task}\nPredict the next action in language.",
-    }
+    def language_recipe(self) -> TrainingRecipe:
+        """The training recipe whose message turns define this checkpoint's prompt wording.
 
-    def prompt_template(self, kind: str) -> str:
-        """The template registered for `kind`, falling back to the base defaults."""
-        merged = {**PreTrainedPolicy.PROMPT_TEMPLATES, **type(self).PROMPT_TEMPLATES}
-        template = merged.get(kind)
-        if template is None:
-            raise ValueError(
-                f"{type(self).__name__} has no {kind!r} prompt template. Registered kinds: {sorted(merged)}."
-            )
-        return template
+        The recipe is the language contract: the same turns that rendered this
+        checkpoint's training samples are replayed at inference to build prompts,
+        so the wording cannot drift from the trained phrasing — WALL-OSS declares
+        its mode in that turn, and a prompt that drifts is answered out of
+        distribution. The recipe ships in ``config.json``; a reloaded config
+        carries it as a plain dict, normalized here.
+
+        A checkpoint without one falls back to `DEFAULT_LANGUAGE_RECIPE` — the
+        wording the WALL-OSS and EO-1 family were trained on, which more released
+        checkpoints recognise than a sentence written for the occasion. Declare
+        your own even when it matches: the default may be retuned, and a
+        checkpoint that pins its recipe will not silently follow.
+        """
+        recipe = self.config.recipe
+        if isinstance(recipe, dict):
+            recipe = TrainingRecipe.from_dict(recipe)
+            self.config.recipe = recipe
+        return recipe if recipe is not None else DEFAULT_LANGUAGE_RECIPE
+
+    def prompt_messages(self, kind: str, **values: str) -> list[dict[str, str]]:
+        """Chat-style turns asking this policy for the `kind` text it was trained to produce.
+
+        Replays the recipe turns preceding the target turn that supervises the
+        ``kind`` binding, filled with the caller's values — the recipe owns the
+        wording while the caller owns the values. Substitution uses `str.replace`
+        rather than `str.format`: turns may carry chat-control tokens, and a value
+        such as an operator's task may contain braces that `format` would choke on.
+
+        A turn whose `if_present` binding is not among `values` is skipped, exactly
+        as it is for a training sample missing that annotation. A turn referencing
+        a placeholder the caller did not provide raises, naming the missing values.
+        """
+        rendered: list[dict[str, str]] = []
+        for turn in self.language_recipe().prompt_turns(kind):
+            if turn.if_present is not None and turn.if_present not in values:
+                continue
+            content = turn.content
+            if isinstance(content, list):
+                content = "\n".join(block["text"] for block in content if block.get("type") == "text")
+            if not content:
+                continue
+            missing = set(PLACEHOLDER_RE.findall(content)) - values.keys()
+            if missing:
+                raise ValueError(
+                    f"Prompt turn for {kind!r} references {sorted(missing)} — pass them as keyword values."
+                )
+            for name, value in values.items():
+                content = content.replace("${" + name + "}", value)
+            rendered.append({"role": turn.role, "content": content})
+        return rendered
 
     def build_prompt(self, kind: str, **values: str) -> str:
-        """Fill the `kind` template, ready to pass to `generate_text`.
+        """Flatten `prompt_messages` into one prompt string, ready to pass to `generate_text`.
 
-        Substitutes with `str.replace` rather than `str.format`: templates carry
-        chat-control tokens, and a value such as an operator's task may contain braces
-        that `format` would choke on.
+        Policies applying a real chat template should prefer `prompt_messages`,
+        which preserves the roles.
         """
-        template = self.prompt_template(kind)
-        for name, value in values.items():
-            template = template.replace("{" + name + "}", value)
-        return template
+        return "\n".join(message["content"] for message in self.prompt_messages(kind, **values))
 
     def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
         """Answer `prompt` about the current observation, for policies with a text head.

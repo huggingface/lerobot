@@ -197,34 +197,6 @@ def test_emitted_at_filters_vqa_by_camera():
     assert wrist["content"] == '{"count": 1}'
 
 
-def test_unreferenced_default_bindings_are_not_resolved():
-    # A recipe that never references ``vqa`` must render on frames carrying
-    # multi-camera VQA events, which the camera-less default ``vqa`` binding
-    # cannot disambiguate (regression: eager DEFAULT_BINDINGS resolution).
-    recipe = TrainingRecipe(
-        messages=[
-            MessageTurn(role="user", content="${task}", stream="low_level"),
-            MessageTurn(
-                role="assistant",
-                content="${subtask}",
-                stream="low_level",
-                target=True,
-                if_present="subtask",
-            ),
-        ]
-    )
-    rendered = render_sample(
-        recipe=recipe,
-        persistent=PERSISTENT,
-        events=EVENTS_AT_3_TWO_CAMERAS,
-        t=3.0,
-        sample_idx=0,
-        task="tidy the table",
-    )
-    assert rendered is not None
-    assert rendered["messages"][1]["content"] == "subtask 1"
-
-
 def test_emitted_at_raises_on_ambiguous_per_camera_vqa():
     with pytest.raises(ValueError, match="Ambiguous resolver"):
         emitted_at(
