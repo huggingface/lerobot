@@ -1,0 +1,187 @@
+# 실시간 청킹(Real-Time Chunking, RTC)
+
+실시간 청킹(Real-Time Chunking, RTC)은 [Pi0](./pi0), [Pi0.5](./pi05), [SmolVLA](./smolvla)와 같은 대형 flow-matching 기반 로봇 정책이 높은 추론 지연(inference latency)에도 불구하고 부드럽고 연속적이며 반응적인 동작을 생성할 수 있도록 하는 추론 시점 기법입니다.
+
+이러한 정책은 단일 액션이 아닌, 미래 액션의 청크(chunk)를 한 번에 생성합니다(예: 한 번에 50 스텝).
+모델이 크기 때문에 각 청크를 생성하는 데 걸리는 시간이 로봇이 청크를 실행하는 시간보다 더 깁니다.
+청크를 단순하게 실행하면, 다음 청크가 늦게 도착하거나 이전에 실행된 액션과 일치하지 않을 때 일시 정지, 끊기는 전환, 또는 갑작스러운 전략 변경 같은 문제가 발생합니다.
+
+RTC는 로봇이 현재 청크를 계속 실행하는 동안 다음 청크를 비동기적으로 생성하고, 새 청크가 이미 실행된 이전 청크의 부분과 부드럽게 정렬되도록 안내함으로써 이러한 문제를 해결합니다.
+
+## RTC 작동 원리(간단 설명)
+
+RTC는 로봇이 움직이는 중에도 미리 계산할 수 있게 합니다. 로봇이 한 청크의 액션을 수행하는 동안, RTC는 다음 청크를 미리 만들기 시작합니다.
+하지만 새 청크가 준비될 즈음에는 로봇이 이미 조금 움직였기 때문에, RTC는 새 청크가 로봇이 현재 하고 있는 동작과 여전히 부드럽게 이어지도록 해야 합니다.
+
+이를 위해 RTC는 새 청크의 시작 부분을 인페인팅(inpainting) 또는 "빈칸 채우기" 문제처럼 다룹니다.
+새 청크의 첫 부분을 부드럽게 조정하여 로봇의 진행 중인 동작과 자연스럽게 어우러지도록 합니다. 그 결과 일시 정지나 갑작스러운 동작 변화가 없습니다.
+
+기술적인 용어로 표현하면, RTC는 flow-matching 디노이징(denoising) 과정에 가이던스 항(guidance term)을 추가하여 새 청크의 겹치는 시간 단계가 이전 청크의 실행된 부분에 가깝게 유지되도록 강제하며, 일반적으로 부드러운 전환 마스크(soft transition mask)를 사용합니다.
+
+## 빠른 시작
+
+### 설치
+
+RTC는 LeRobot에 내장되어 있습니다. 필요한 정책 의존성만 설치해주세요:
+
+```bash
+# Pi0 또는 Pi0.5의 경우
+pip install -e ".[pi]"
+
+# SmolVLA의 경우
+pip install -e ".[smolvla]"
+```
+
+### Pi0와 함께 RTC 사용하기
+
+전체 참조 구현은 [eval_with_real_robot.py](examples/rtc/eval_with_real_robot.py)에서 확인할 수 있습니다.
+아래 코드는 RTC가 파이프라인에서 Pi0와 함께 작동하는 방식을 단순화한 의사 예제입니다:
+
+```python
+from lerobot.policies.pi0 import PI0Policy, PI0Config
+from lerobot.configs import RTCAttentionSchedule
+from lerobot.policies.rtc import RTCConfig, ActionQueue
+
+# RTC가 활성화된 Pi0 로드
+policy_cfg = PI0Config()
+
+# RTC 활성화
+policy_cfg.rtc_config = RTCConfig(
+    enabled=True,
+    execution_horizon=10,  # 이전 청크와 혼합할 스텝 수
+    max_guidance_weight=10.0,  # 일관성을 얼마나 강하게 강제할지
+    prefix_attention_schedule=RTCAttentionSchedule.EXP,  # 지수 혼합
+)
+
+# 정책 로드
+policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
+
+# RTC 파라미터와 함께 predict_action_chunk 사용
+inference_delay = 4  # 추론 지연 스텝 수, 정책의 추론 지연을 기반으로 계산해야 합니다
+
+# 액션 큐 초기화
+action_queue = ActionQueue(policy_cfg.rtc_config)
+
+# 다음 함수와 함께 별도의 스레드에서 시작
+def get_actions():
+  while True:
+    if should_get_actions:
+
+      prev_actions = action_queue.get_left_over()
+      obs = get_robot_observations(robot)
+
+      # RTC와 함께 액션 생성
+      actions = policy.predict_action_chunk(
+          obs,
+          inference_delay=inference_delay,
+          prev_chunk_left_over=prev_actions,
+      )
+
+      action_queue.merge(
+          actions, actions, inference_delay
+      )
+
+for step in range(num_steps):
+    action = action_queue.get()
+
+    # 첫 N개 액션 실행
+    execute_actions(action)
+```
+
+## 주요 파라미터
+
+`RTCConfig`는 다음과 같은 튜닝 가능한 파라미터를 가집니다:
+
+**`execution_horizon`**: 이전 청크의 몇 개 시간 단계와 일관성을 유지할지 결정합니다. 값이 클수록 전환이 부드러워지지만 반응성이 떨어질 수 있습니다.
+
+일반적인 값: 8-12 스텝
+
+```python
+RTCConfig(execution_horizon=10)
+```
+
+**`max_guidance_weight`**: 이전 청크와의 일관성을 얼마나 강하게 강제할지 결정합니다. 전환의 부드러움과 정책의 반응성 사이의 균형을 조정하기 위해 튜닝할 수 있는 하이퍼파라미터입니다. 10 스텝 flow matching(SmolVLA, Pi0, Pi0.5)에서는 10.0이 최적값입니다.
+
+**`prefix_attention_schedule`**: 겹치는 영역 전반에 걸쳐 일관성에 가중치를 부여하는 방식입니다.
+
+- `LINEAR`: inference_delay에서 execution_horizon까지 선형 감소
+- `EXP`: 지수 감소 (시작용으로 권장)
+- `ONES`: 전체 execution_horizon에 걸쳐 전체 가중치
+- `ZEROS`: 계단형 (inference_delay까지 전체 가중치, 그 이후는 0)
+
+**`inference_delay`**: 시스템이 가지는 추론 지연 시간 단계 수입니다. 런타임에 따라 달라질 수 있으므로 config 대신 `predict_action_chunk()`에 전달됩니다.
+
+## 오프라인에서 RTC 테스트하기
+
+실제 로봇에서 실행하기 전에, 데이터셋 샘플로 RTC를 테스트하여 작동 방식을 시각화할 수 있습니다:
+
+```bash
+python examples/rtc/eval_dataset.py \
+    --policy.path=lerobot/pi0_libero_finetuned \
+    --dataset.repo_id=HuggingFaceVLA/libero \
+    --rtc.execution_horizon=10 \
+    --rtc.max_guidance_weight=10.0 \
+    --device=cuda
+```
+
+이 스크립트는 표준 생성(왼쪽)과 RTC(오른쪽)를 비교하는 디노이징 과정의 시각화를 생성합니다. RTC 그래프에서 첫 몇 스텝(파란색/보라색 선)이 빨간색 정답 궤적(이전 청크의 끝부분)에 맞춰 안내되어 청크 간 부드러운 전환을 보장하는 것을 볼 수 있습니다.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/flow_matching.png"
+    alt="RTC 적용 유무에 따른 디노이징 스텝"
+    width="100%"
+  />
+</p>
+
+## 실제 로봇과 함께 RTC 테스트하기
+
+```bash
+python examples/rtc/eval_with_real_robot.py \
+    --policy.path=${HF_USERNAME}/policy_repo_id \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
+
+## LeRobot의 비동기 추론(Async Inference)과의 차이점
+
+RTC와 [비동기 추론](./async) 모두 실시간 로봇 제어를 개선하지만, 서로 다른 문제를 해결합니다.
+
+| 측면            | 비동기 추론(Async Inference)                       | RTC                                              |
+| --------------- | -------------------------------------------------- | ------------------------------------------------ |
+| **문제**        | 추론을 기다리는 동안의 유휴 프레임                 | 액션 청크 간 불연속성                            |
+| **해결책**      | 예측을 실행에서 분리                               | 새 청크가 이전 청크에서 부드럽게 이어지도록 안내 |
+| **이점**        | 대기 없음, 연속적인 액션                           | 부드러운 전환, 자연스러운 동작                   |
+| **적합한 사용** | 비동기 추론은 추론 지연이 큰 대형 모델에 가장 적합 | flow-matching 기반 정책                          |
+
+**두 가지를 함께 사용**하면 최대의 부드러움과 반응성을 얻을 수 있습니다!
+
+## 고급: 디버그 추적
+
+RTC는 추론 중에 무슨 일이 일어나는지 이해하는 데 도움이 되는 내장 디버그 추적을 포함합니다:
+
+```python
+# 디버그 추적 활성화
+policy_cfg.rtc_config.debug = True
+policy_cfg.rtc_config.debug_maxlen = 100
+
+# 추론 후, 디버그 데이터 접근
+debug_data = policy.rtc_processor.get_debug_data()
+
+# 디노이징 스텝, 보정 등을 시각화
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
+visualizer = RTCDebugVisualizer()
+# ... 그래프 생성
+```
+
+전체 시각화 예제는 `examples/rtc/eval_dataset.py`를 참고해주세요.
+
+## 참고 자료
+
+- [Smooth-As-Butter Robot Policies](https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html) - 실제 로봇 결과를 포함한 훌륭한 기술 설명
+- [Physical Intelligence - Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking) - 원본 논문 및 연구
+- [Kinetix RTC Implementation](https://github.com/Physical-Intelligence/real-time-chunking-kinetix) - Physical Intelligence의 참조 구현
