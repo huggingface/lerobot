@@ -1,0 +1,450 @@
+# SO-101
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+    alt="SO-101"
+    width="60%"
+  />
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Leader.webp"
+    alt="SO-101"
+    width="60%"
+  />
+</div>
+
+在以下步驟中，我們將說明如何組裝我們的旗艦機器人 SO-101。
+
+## 採購零件（source the parts）
+
+請依照這份 [README](https://github.com/TheRobotStudio/SO-ARM100) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。
+如果這是您第一次列印，或您沒有 3D 印表機，也會提供建議。
+
+## 安裝 LeRobot（install LeRobot） 🤗
+
+若要安裝 LeRobot，請依照我們的[安裝指南（Installation Guide）](./installation)操作。
+
+除了這些說明之外，您還需要安裝 Feetech SDK：
+
+```bash
+pip install -e ".[feetech]"
+```
+
+## 逐步組裝說明（step-by-step assembly instructions）
+
+從臂（follower arm）使用 6 個具 1/345 齒輪比的 STS3215 馬達（motors）。然而，主臂（leader）使用三種不同齒輪比的馬達，以確保它既能支撐自身重量，又能在不需太大力量的情況下被移動。哪個關節（joint）需要哪個馬達，如下表所示。
+
+| 主軸（leader-arm axis）                | 馬達（motor） | 齒輪比（gear ratio） |
+| -------------------------------------- | :-----------: | :------------------: |
+| 底座 / 肩部平移（base / shoulder pan） |       1       |       1 / 191        |
+| 肩部抬升（shoulder lift）              |       2       |       1 / 345        |
+| 肘部彎曲（elbow flex）                 |       3       |       1 / 191        |
+| 腕部彎曲（wrist flex）                 |       4       |       1 / 147        |
+| 腕部滾轉（wrist roll）                 |       5       |       1 / 147        |
+| 夾爪（gripper）                        |       6       |       1 / 147        |
+
+## 設定馬達（configure the motors）
+
+### 1. 找出與每支手臂相關聯的 USB 連接埠（find the USB ports associated with each arm）
+
+若要找出每個匯流排伺服轉接器（bus servo adapter）的連接埠（port），請透過 USB 與電源將 MotorBus 連接到您的電腦。執行以下腳本，並在出現提示（prompt）時中斷 MotorBus 的連接：
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+範例輸出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到您的主臂（leader）或從臂（follower）。
+
+</hfoption>
+<hfoption id="Linux">
+
+在 Linux 上，您可能需要執行以下命令來授予 USB 連接埠（ports）的存取權：
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+範例輸出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0', '/dev/ttyACM1']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/ttyACM1
+Reconnect the USB cable.
+```
+
+其中找到的連接埠（found port）為：`/dev/ttyACM1`，對應到您的主臂（leader）或從臂（follower）。
+
+</hfoption>
+</hfoptions>
+
+### 2. 設定馬達 id 與鮑率（set the motors ids and baudrates）
+
+每個馬達在匯流排（bus）上都由一個唯一的 id 來識別（identified）。全新的馬達（motors）通常預設 id 為 `1`。為了讓馬達與控制器（controller）之間的通訊能正常運作，我們首先需要為每個馬達設定一個唯一且不同的 id。此外，資料在匯流排（bus）上傳輸的速度由鮑率（baudrate）決定。為了能互相通訊，控制器與所有馬達都需要設定（configured）為相同的鮑率。
+
+為此，我們首先需要用控制器（controller）逐一連接每個馬達（motor）來設定這些值。由於我們會將這些參數（parameter）寫入馬達內部記憶體的非揮發性區段（non-volatile section, EEPROM），因此只需要做一次即可。
+
+如果您是要重新利用來自其他機器人的馬達（motors），您可能也需要執行此步驟，因為 id 與鮑率（baudrate）很可能不相符。
+
+下方影片展示了設定馬達 id 的步驟順序（sequence of steps）。
+
+##### 設定馬達影片（motor setup video）
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/setup_motors_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 從臂（follower）
+
+將電腦的 USB 線與電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用您在上一步取得的連接埠（port），執行以下命令或執行 API 範例。您還需要搭配 `id` 參數（parameter）為您的從臂（follower arm）命名。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem585A0076841  # <- 在此貼上上一步找到的連接埠
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_follower_arm",
+)
+follower = SO101Follower(config)
+follower.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+您應該會看到以下指示（instruction）
+
+```bash
+Connect the controller board to the 'gripper' motor only and press enter.
+```
+
+依照指示，插上夾爪的馬達（gripper’s motor）。確認它是唯一連接到控制板（board）的馬達（motor），且該馬達本身尚未與任何其他馬達串接（the motor itself is not yet daisy-chained to any other motor）。當您按下 `[Enter]` 時，腳本會自動為該馬達設定 id 與鮑率（baudrate）。
+
+<details>
+<summary>疑難排解</summary>
+
+若您在此時遇到錯誤，請檢查您的線材並確認它們已正確插好：
+
+<ul>
+  <li>電源供應器</li>
+  <li>電腦與控制板（controller board）之間的 USB 線</li>
+  <li>控制板（controller board）到馬達（motor）的 3-pin 線（3-pin cable）</li>
+</ul>
+
+若您使用的是 Waveshare 控制板（controller board），請確認兩個跳線（jumper）都設在 `B` 通道（`B` channel, USB）上。
+
+</details>
+
+接著您應該會看到以下訊息：
+
+```bash
+'gripper' motor id set to 6
+```
+
+隨後是下一個指示（next instruction）：
+
+```bash
+Connect the controller board to the 'wrist_roll' motor only and press enter.
+```
+
+您可以從控制板拔除 3-pin 線（3-pin cable），但另一端可以保持連接在夾爪馬達（gripper motor）上，因為它已經在正確的位置。現在，將另一條 3-pin 線插到腕部滾轉馬達（wrist roll motor）上，並將它連接到控制板（controller board）。與前一個馬達（motor）一樣，確認它是唯一連接到控制板的馬達，且該馬達本身沒有連接到任何其他馬達（the motor itself isn’t connected to any other one）。
+
+依照指示對每個馬達重複此操作（repeat the operation）。
+
+> [!TIP]
+> 在按下 Enter 前，每一步都請檢查您的接線（cabling）。舉例來說，電源供應線可能會在您操作控制板時鬆脫。
+
+完成後，腳本就會結束，此時馬達（motors）即可使用。您現在可以將每個馬達的 3-pin 線（3-pin cable）插到下一個馬達，並將第一個馬達（id=1 的 '肩部平移 shoulder pan'）的線連接到控制板（controller board），接著就可以將控制板固定到手臂的底座上。
+
+#### 主臂（leader）
+
+對主臂（leader arm）執行相同的步驟。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751  # <- 在此貼上上一步找到的連接埠
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_leader_arm",
+)
+leader = SO101Leader(config)
+leader.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+### 清理零件
+
+移除 3D 列印零件上的所有支撐材料。最簡單的方法是使用小螺絲起子伸到支撐材料下方。
+
+建議在放好馬達（motor）後，先在馬達上安裝一條 3-pin 線（3-pin cable），再繼續組裝。
+
+### 關節 1（joint 1）
+
+- 安裝兩個馬達喇叭盤（motor horn）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
+- 將第一個馬達放入底座（base）。
+- 以 4 顆 M2x6mm 螺絲（最小的螺絲）固定馬達。兩顆從上方、兩顆從下方。
+- 滑上第一個馬達固定座，並以兩顆 M2x6mm 螺絲（每側一顆）固定它。
+- 裝上肩部（shoulder part）零件。
+- 以上方 4 顆 M3x6mm 螺絲與下方 4 顆 M3x6mm 螺絲鎖緊肩部（shoulder part）零件
+- 加上肩部馬達固定座（shoulder motor holder）。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 關節 2（joint 2）
+
+- 安裝兩個馬達喇叭盤（motor horns）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
+- 從上方滑入第二個馬達。
+- 以 4 顆 M2x6mm 螺絲固定第二個馬達。
+- 以每側 4 顆 M3x6mm 螺絲裝上上臂（upper arm）。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 關節 3（joint 3）
+
+- 安裝兩個馬達喇叭盤。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
+- 插入馬達 3 並以 4 顆 M2x6mm 螺絲固定。
+- 以每側 4 顆 M3x6mm 螺絲將前臂（forearm）連接到馬達 3。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 關節 4（joint 4）
+
+- 安裝兩個馬達喇叭盤（motor horns）。以一顆 M3x6mm 螺絲固定上方的喇叭盤。下方的喇叭盤不需要螺絲。
+- 滑上馬達固定座 4。
+- 滑入馬達 4。
+- 以 4 顆 M2x6mm 螺絲固定馬達 4。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 關節 5（joint 5）
+
+- 將馬達 5 插入腕部固定座（wrist holder），並以 2 顆 M2x6mm 前方螺絲固定它。
+- 在腕部馬達（wrist motor）上只安裝一個馬達喇叭盤，並以一顆 M3x6mm 喇叭盤螺絲固定它。
+- 以兩側 4 顆 M3x6mm 螺絲將腕部（wrist）固定到馬達 4。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 夾爪與握把（gripper / handle）
+
+<hfoptions id="assembly">
+<hfoption id="Follower">
+
+- 將夾爪（gripper）裝到馬達 5，以 4 顆 M3x6mm 螺絲將它裝到腕部（wrist）的馬達喇叭盤上。
+- 插入夾爪（gripper）馬達，並以每側 2 顆 M2x6mm 螺絲固定它。
+- 在夾爪（gripper）馬達上安裝兩個馬達喇叭盤（motor horns）。以一顆 M3x6mm 螺絲固定上方的喇叭盤；下方的喇叭盤不需要螺絲。
+- 安裝夾爪爪部（gripper claw），並以兩側 4 顆 M3x6mm 螺絲固定它。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+<hfoption id="Leader">
+
+- 將主臂固定座（leader holder）裝到腕部（wrist），並以 4 顆 M3x6mm 螺絲固定它。
+- 以 1 顆 M2x6mm 螺絲將握把裝到馬達 5。
+- 插入夾爪（gripper）馬達，以每側 2 顆 M2x6mm 螺絲固定它，並以一顆 M3x6mm 喇叭盤螺絲裝上一個馬達喇叭盤。
+- 以 4 顆 M3x6mm 螺絲裝上從臂扳機（follower trigger）。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+</hfoptions>
+
+## 校正（calibrate）
+
+接下來，您需要校正（calibrate）您的機器人，以確保主臂（leader arm）與從臂（follower arm）在相同的物理位置（physical position）時具有相同的位置值（position values）。
+校正過程（calibration process）非常重要，因為它能讓在某一台機器人上訓練（training）的神經網路（neural network），也能在另一台機器人上運作。
+
+#### 從臂（follower）
+
+執行以下命令或 API 範例來校正從臂（calibrate the follower arm）：
+
+<hfoptions id="calibrate_follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 您機器人的連接埠
+    --robot.id=my_awesome_follower_arm # <- 為機器人取一個唯一的名稱
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076891",
+    id="my_awesome_follower_arm",
+)
+
+follower = SO101Follower(config)
+follower.connect(calibrate=False)
+follower.calibrate()
+follower.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+下方影片展示了如何執行校正（calibration）。首先，您需要將機器人移動到所有關節（joints）都位於其活動範圍中間的位置（middle of their ranges）。接著在按下 enter 後，您必須讓每個關節走完其完整的活動範圍（through its full range of motion）。
+
+##### 校正影片（calibration video）
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 主臂（leader）
+
+執行相同的步驟來校正主臂（calibrate the leader arm），執行以下命令或 API 範例：
+
+<hfoptions id="calibrate_leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 您機器人的連接埠
+    --teleop.id=my_awesome_leader_arm # <- 為機器人取一個唯一的名稱
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_awesome_leader_arm",
+)
+
+leader = SO101Leader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+恭喜 🎉，您的機器人已準備就緒，可以開始自行學習任務（learn a task）。依照這份教學開始訓練（training）它：[開始使用真實世界機器人（Getting started with real-world robots）](./il_robots)
+
+> [!TIP]
+> 若您有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。

@@ -1,0 +1,119 @@
+# SmolVLA
+
+SmolVLA 是 Hugging Face 的輕量級機器人基礎模型（lightweight foundation model）。它設計為可輕鬆在 LeRobot 資料集（dataset）上進行微調（fine-tune），幫助加速您的開發流程！
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png"
+    alt="SmolVLA architecture."
+    width="500"
+  />
+  <br />
+  <em>
+    圖 1. SmolVLA 接收以下輸入： (i) 多個攝影機視角（multiple cameras views）、 (ii)
+    機器人當前的感覺運動狀態（sensorimotor state）， 以及 (iii) 自然語言指令（natural language instruction），編碼為上下文特徵（contextual features），
+    用於在生成動作區塊（action chunk）時對動作專家（action expert）進行條件化。
+
+  </em>
+</p>
+
+## 設定您的環境（set up your environment）
+
+1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+2. 執行以下命令安裝 SmolVLA 的依賴套件（dependencies）：
+
+   ```bash
+   pip install -e ".[smolvla]"
+   ```
+
+## 收集資料集（collect a dataset）
+
+SmolVLA 是一個基礎模型（base model），因此需要在您自己的資料上進行微調（fine-tune），才能在您的設定中達到最佳效能（optimal performance）。
+我們建議先錄製約 50 個回合（recording ~50 episodes）的任務（task）作為起點。請參考我們的指南開始操作：[錄製資料集（Recording a Dataset）](./il_robots)
+
+<Tip>
+
+在您的資料集（dataset）中，請確保對每個您引入的變化（variation，例如：如果是方塊取放任務，則方塊在桌面上的位置）都有足夠的示範（demonstrations）次數。
+
+我們建議參考以下在 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)中使用的資料集（dataset）：
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+在此資料集（dataset）中，我們在 5 個不同的方塊位置上錄製了 50 個回合（recorded 50 episodes）。每個位置收集了 10 個取放互動的回合。這種結構將每個變化（variation）重複多次，有助於模型更好地泛化（model generalize better）。我們也嘗試過類似的資料集但只有 25 個回合，結果不足以達到良好效能。因此，資料的品質和數量確實是關鍵。
+當您的資料集上傳到 Hub 後，就可以使用我們的微調腳本（finetuning script）來將 SmolVLA 適配到您的應用場景。
+
+</Tip>
+
+## 在您的資料上微調 SmolVLA（finetune SmolVLA on your data）
+
+使用 [`smolvla_base`](https://hf.co/lerobot/smolvla_base)，我們預訓練（pretrained）的 450M 模型（model），在您的資料上進行微調（fine-tune）。
+訓練（training）模型 20k 步（steps）大約需要在單張 A100 GPU 上花費約 4 小時。您應該根據效能和使用場景來調整步數（number of steps）。
+
+如果您沒有 GPU 裝置，可以使用我們的筆記本在 [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) 上進行訓練（training）。
+
+使用 `--dataset.repo_id` 將您的資料集（dataset）傳遞給訓練腳本（training script）。如果您想測試安裝是否正確，請執行以下命令，這裡我們使用的是為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)收集的其中一個資料集。
+
+```bash
+cd lerobot && lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --batch_size=64 \
+  --steps=20000 \
+  --output_dir=outputs/train/my_smolvla \
+  --job_name=my_smolvla_training \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+<Tip>
+  您可以從較小的批次大小（batch size）開始， 在 GPU 允許且載入時間（loading
+  times）仍然較短的前提下，逐步增加批次大小。
+</Tip>
+
+微調（fine-tune）是一門藝術。如需完整了解微調的所有選項，請執行：
+
+```bash
+lerobot-train --help
+```
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"
+    alt="SmolVLA 在不同任務（task）變化中的比較。"
+    width="500"
+  />
+  <br />
+  <em>
+    圖 2：SmolVLA 在不同任務變化（task variations）中的比較。從左至右： (1) 方塊取放計數、 (2)
+    方塊取放計數、 (3) 在干擾（perturbations）下的方塊取放計數，以及 (4) 使用真實世界 SO101
+    對樂高積木取放的泛化能力（generalization）。
+
+  </em>
+</p>
+
+## 評估微調後的模型並即時運行（evaluate the finetuned model and run it in real-time）
+
+與錄製回合（recording an episode）時類似，建議您先登入 HuggingFace Hub。您可以按照相應的步驟操作：[錄製資料集（Record a dataset）](./il_robots)。
+登入後，您可以在您的設定中執行推理（inference）：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \ # <- 使用您的連接埠
+  --robot.id=my_blue_follower_arm \ # <- 使用您的機器人 ID
+  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- 使用您的相機
+  --task="Grasp a lego block and put it in the bin." \ # <- 使用您在錄製資料集時使用的相同任務描述
+  # <- RTC 為可選項，於低算力硬體上執行時使用 \
+  # --inference.type=rtc \
+  # --inference.rtc.execution_horizon=10 \
+  # --inference.rtc.max_guidance_weight=10.0 \
+  # <- 若您想在回合之間進行遙操作，可選啟用 Teleop \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_red_leader_arm \
+  # --display_data=true #若您想查看相機串流，可選啟用 \
+  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 使用您微調後的模型
+```
+
+根據您的評估設定（evaluation setup），您可以配置錄製持續時間和回合數（duration and the number of episodes to record ），以建立您的評估套件（evaluation suite）。

@@ -1,0 +1,299 @@
+# 除錯您的處理器管線（debugging your processor pipeline）
+
+處理器管線（processor pipelines） 可能非常複雜，尤其是當多個轉換步驟（transformation steps）串聯在一起時。
+與簡單的函式呼叫（function calls）不同，管線（pipeline） 天生缺乏可觀測性（natural observability），
+您無法輕易看到每個步驟（step）之間發生了什麼，也無法輕易發現問題出在哪裡。
+本指南提供了專門為解決這些問題而設計的除錯工具（debugging tools）與技術，
+幫助您理解資料在管線（pipeline）中的流動過程。
+
+我們將探討三種互補的除錯方法：**hooks** 用於執行時期監控、**逐步除錯（step-through debugging）** 用於詳細檢查，以及**特徵驗證（feature validation）** 用於捕捉結構不匹配（structural mismatches）的問題。每種方法各有不同用途，搭配使用可以讓您完整掌握管線（pipeline）的行為。
+
+## 理解 hooks（understanding hooks）
+
+Hooks 是在管線（pipeline）執行過程中特定時間點被呼叫的函式（functions）。
+它們提供了一種檢查（inspect）、監控（monitor）或修改（modify）資料的方式，而無需更改您的管線程式碼（pipeline code）。
+可以將它們視為管線（pipeline）的「事件監聽器（event listeners）」。
+
+### 什麼是 hook（what is a hook）？
+
+hook 是一個回呼函式（callback function），在管線執行（pipeline execution）的特定時刻被自動觸發（automatically invoked）。
+這個概念來自事件驅動程式設計（event-driven programming），想像您可以「掛鉤（hook into）」到管線的執行流程（pipeline’s execution flow）中，觀察（observe）或回應（react）正在發生的事情。
+
+將 hooks 想像成在管線（pipeline）中插入檢查點（checkpoints）。每當管線到達這些檢查點時，它會短暫暫停並呼叫您的 hook 函式（function），讓您有機會檢查當前狀態（current state）、記錄資訊（log information）和驗證資料（validate data）。
+
+hook 就是一個接受兩個參數（parameters）的函式（function）：
+
+- `step_idx: int` - 當前處理步驟（current processing step）的索引（index，0、1、2 等）
+- `transition: EnvTransition` - 該管線（pipeline）節點的資料轉換（data transition）
+
+hooks 的優點在於其非侵入性（non-invasive nature）：您可以添加監控（monitoring）、驗證（validation）或除錯邏輯（debugging logic），而不需要更改管線程式碼（pipeline code）中的任何一行。管線（pipeline）保持簡潔並專注於其核心邏輯，而 hooks 則處理日誌記錄（logging）、監控（monitoring）和除錯（debugging）等橫切關注點（cross-cutting concerns）。
+
+### 前置與後置 hooks（before vs after hooks）
+
+管線（pipeline）支援兩種類型（types）的 hooks：
+
+- **前置 hooks**（before hooks, `register_before_step_hook`）- 在每個步驟執行（step executes）前被呼叫
+- **後置 hooks**（after hooks, `register_after_step_hook`）- 在每個步驟完成（step completes）後被呼叫
+
+```python
+def before_hook(step_idx: int, transition: EnvTransition):
+    """在步驟處理轉換之前被呼叫。"""
+    print(f"About to execute step {step_idx}")
+    # 適用於：日誌記錄、驗證、前置準備
+
+def after_hook(step_idx: int, transition: EnvTransition):
+    """在步驟處理轉換之後被呼叫。"""
+    print(f"Completed step {step_idx}")
+    # 適用於：監控結果、清理、除錯
+
+processor.register_before_step_hook(before_hook)
+processor.register_after_step_hook(after_hook)
+```
+
+### 實作 NaN 偵測 hook（implementing a nan detection hook）
+
+以下是一個偵測 NaN 值的 hook 實用範例：
+
+```python
+def check_nans(step_idx: int, transition: EnvTransition):
+    """檢查觀測值中的 NaN 值。"""
+    obs = transition.get(TransitionKey.OBSERVATION)
+    if obs:
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor) and torch.isnan(value).any():
+                print(f"NaN detected in {key} at step {step_idx}")
+
+# 註冊 hook，使其在每個步驟之後執行
+processor.register_after_step_hook(check_nans)
+
+# 處理您的資料——hook 會自動被呼叫
+output = processor(input_data)
+
+# 除錯完成後移除 hook
+processor.unregister_after_step_hook(check_nans)
+```
+
+### hooks 的內部運作機制（how hooks work internally）
+
+理解內部機制有助於您更有效地使用 hooks。管線（pipeline）維護兩個獨立的列表（lists）：一個用於前置（before-step） hooks，另一個用於後置（after-step） hooks。當您註冊（register） hooks 時，它會被附加到對應的列表（list）中。
+
+在執行期間，管線（pipeline）遵循嚴格的順序（strict sequence）：對於每個處理步驟（processing step），它首先按照註冊順序（registration order）呼叫所有前置 hooks（before-hooks），然後執行實際的步驟轉換（step transformation），最後按照註冊順序呼叫所有後置 hooks（after-hooks）。這在每個步驟周圍建立了一個可預測的三明治式結構（sandwich-like structure）。
+
+關鍵的理解是，hooks 不會改變管線（pipeline）的核心邏輯（core pipeline logic）——它們是純粹附加的。管線（pipeline）的 `_forward` 方法（method）負責協調 hooks 與處理步驟（processing steps）之間的配合，確保您的除錯（debugging）或監控程式碼（monitoring code）在正確的時間點執行，而不會干擾主要的資料流（data flow）。
+
+以下是管線（pipeline）執行 hooks 方式的簡化視圖（simplified view）：
+
+```python
+class DataProcessorPipeline:
+    def __init__(self):
+        self.steps = [...]
+        self.before_step_hooks = []  # 前置鉤子列表
+        self.after_step_hooks = []   # 後置鉤子列表
+
+    def _forward(self, transition):
+        """處理轉換通過所有步驟的內部方法。"""
+        for step_idx, processor_step in enumerate(self.steps):
+            # 1. 呼叫所有前置鉤子
+            for hook in self.before_step_hooks:
+                hook(step_idx, transition)
+
+            # 2. 執行實際的處理步驟
+            transition = processor_step(transition)
+
+            # 3. 呼叫所有後置鉤子
+            for hook in self.after_step_hooks:
+                hook(step_idx, transition)
+
+        return transition
+
+    def register_before_step_hook(self, hook_fn):
+        self.before_step_hooks.append(hook_fn)
+
+    def register_after_step_hook(self, hook_fn):
+        self.after_step_hooks.append(hook_fn)
+```
+
+### 執行流程（execution flow）
+
+執行流程如下所示：
+
+```
+輸入 → 前置 hook → 步驟 0 → 後置 Hook → 前置 Hook → 步驟 1 → 後置 hook → ... → 輸出
+```
+
+例如，有 3 個步驟（steps）且同時使用兩種 hook 類型（types）：
+
+```python
+def timing_before(step_idx, transition):
+    print(f"⏱️  Starting step {step_idx}")
+
+def validation_after(step_idx, transition):
+    print(f"✅ Completed step {step_idx}")
+
+processor.register_before_step_hook(timing_before)
+processor.register_after_step_hook(validation_after)
+
+# 輸出結果：
+# ⏱️  Starting step 0
+# ✅ Completed step 0
+# ⏱️  Starting step 1
+# ✅ Completed step 1
+# ⏱️  Starting step 2
+# ✅ Completed step 2
+```
+
+### 多個 hooks（multiple hooks）
+
+您可以註冊（register）多個相同類型（same type）的 hooks ——它們會按照註冊順序（order registered）執行：
+
+```python
+def log_shapes(step_idx: int, transition: EnvTransition):
+    obs = transition.get(TransitionKey.OBSERVATION)
+    if obs:
+        print(f"Step {step_idx} observation shapes:")
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor):
+                print(f"  {key}: {value.shape}")
+
+processor.register_after_step_hook(check_nans) # 第一個執行
+processor.register_after_step_hook(log_shapes) # 第二個執行
+
+# 兩個 hooks 都會在每個步驟之後按照註冊順序被呼叫
+output = processor(input_data)
+```
+
+雖然 hooks 非常適合在正常管線（pipeline）執行期間監控特定問題（如 NaN 偵測）或收集指標（gathering metrics），但有時您需要更深入地探查。當您想要精確理解每個步驟發生了什麼，或除錯複雜的轉換邏輯（debug complex transformation logic）時，逐步除錯（step-through debugging）能提供您所需的詳細檢查能力。
+
+## 逐步除錯（step-through debugging）
+
+逐步除錯就像為您的管線（pipeline）提供慢動作回放（slow-motion replay）功能。您可以在每個步驟（step）之後暫停（pause）並檢查（examine）發生了什麼，而不是看著資料從輸入到輸出（from input to output）一閃而過地被轉換（transformed）。
+
+這種方法在您嘗試理解複雜管線（complex pipeline）、除錯非預期行為（debug unexpected behavior），或驗證（verify）每個轉換（transformation）是否按預期運作時特別有價值。與適合自動化監控（automated monitoring）的 hooks 不同，逐步除錯（step-through debugging）讓您能夠手動（manual）、互動式地（interactive）控制檢查過程（inspection process）。
+
+`step_through()` 方法（method）是一個生成器（generator），它會在每個處理步驟（processing step）之後產出轉換狀態（transition state），讓您檢查中間結果。可以將它想像成為您的資料在管線（pipeline）中流動時建立一系列快照——每張快照都精確呈現您的資料在又經過一次轉換（transformation）後的樣貌。
+
+### 逐步除錯的運作方式（how step-through works）
+
+`step_through()` 方法從根本上改變了管線的執行方式（pipeline executes）。它不是按順序執行所有步驟（running all steps in sequence）後只回傳（returning ）最終結果，而是將管線（pipeline）轉換為一個產出中間結果（yields intermediate results）的迭代器（iterator）。
+
+以下是內部運作過程：該方法首先將您的輸入資料轉換為管線內部的轉換格式（pipeline’s internal transition format），然後產出這個初始狀態（initial state）。接著，它套用第一個處理步驟（processing step）並產出結果。然後將第二個步驟（step）套用到該結果上並再次產出，以此類推。每次 `yield` 都會給您該時間點轉換（transition）的完整快照（complete snapshot）。
+
+這種生成器模式（generator pattern）之所以強大，是因為它是惰性的（lazy）——管線（pipeline）只在您請求時才計算下一個步驟（next step）。這意味著您可以在任何時間點停下來，徹底檢查當前狀態（current state），然後決定是否繼續。您不需要為了除錯（debug）一個有問題的步驟（problematic step）而被迫執行整個管線（pipeline）。
+
+`step_through()` 會在每個步驟（step）之後暫停並提供中間轉換（intermediate transition），而不是執行整個管線（pipeline）後只看到最終結果：
+
+```python
+# 建立一個產出中間狀態的生成器
+for i, intermediate_result in enumerate(processor.step_through(input_data)):
+    print(f"=== After step {i} ===")
+
+    # 檢查此階段的觀測值
+    obs = intermediate_result.get(TransitionKey.OBSERVATION)
+    if obs:
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor):
+                print(f"{key}: shape={value.shape}, dtype={value.dtype}")
+```
+
+### 使用中斷點進行互動式除錯（interactive debugging with breakpoints）
+
+您可以在逐步走過的迴圈（step-through loop）中加入中斷點（breakpoints），以進行互動式除錯（interactively debug）：
+
+```python
+# 逐步走過管線（pipeline）並進行除錯
+for i, intermediate in enumerate(processor.step_through(data)):
+    print(f"Step {i}: {processor.steps[i].__class__.__name__}")
+
+    # 設定中斷點以檢查當前狀態
+    breakpoint()  # 除錯器會在此暫停
+
+    # 現在您可以在除錯器中檢查 'intermediate'：
+    # - 檢查張量的形狀和值
+    # - 驗證預期的轉換
+    # - 尋找非預期的變化
+```
+
+在除錯器階段（debugger session）中，您可以：
+
+- 檢查 `intermediate[TransitionKey.OBSERVATION]` 以查看觀測資料（observation data）
+- 檢查 `intermediate[TransitionKey.ACTION]` 以查看動作轉換（action transformations）
+- 檢查轉換（transition）的任何部分，以理解每個步驟（step）的作用
+
+逐步除錯（step-through debugging）非常適合理解*資料（data）*轉換（transformations），但資料的*結構（structure）*呢？雖然 hooks 和逐步除錯幫助您除錯執行時期的行為（runtime behavior），但您還需要確保管線（pipeline）產出的資料格式（format）符合下游元件（downstream components）的預期。這正是特徵合約驗證（feature contract validation）的用武之地。
+
+## 驗證特徵合約（validating feature contracts）
+
+特徵合約（feature contracts）定義了您的管線（pipeline）預期的輸入資料結構（data structure）以及產出的輸出資料結構。
+驗證這些合約有助於及早發現不匹配的問題。
+
+### 理解特徵合約（understanding feature contracts）
+
+每個處理步驟（processor step）都有一個 `transform_features()` 方法（method），描述它如何改變資料結構（data structure）：
+
+```python
+# 從您的管線（pipeline）取得預期的輸出特徵
+initial_features = {
+    PipelineFeatureType.OBSERVATION: {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        "observation.image": PolicyFeature(type=FeatureType.IMAGE, shape=(3, 224, 224))
+    },
+    PipelineFeatureType.ACTION: {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,))
+    }
+}
+
+# 檢查您的管線（pipeline）將會輸出什麼
+output_features = processor.transform_features(initial_features)
+
+print("Input features:")
+for feature_type, features in initial_features.items():
+    print(f"  {feature_type}:")
+    for key, feature in features.items():
+        print(f"    {key}: {feature.type.value}, shape={feature.shape}")
+
+print("\nOutput features:")
+for feature_type, features in output_features.items():
+    print(f"  {feature_type}:")
+    for key, feature in features.items():
+        print(f"    {key}: {feature.type.value}, shape={feature.shape}")
+```
+
+### 驗證預期特徵（verifying expected features）
+
+檢查您的管線（pipeline）是否產出預期的特徵（features）：
+
+```python
+# 定義您預期管線（pipeline）產出的特徵
+expected_keys = ["observation.state", "observation.image", "action"]
+
+print("Validating feature contract...")
+for expected_key in expected_keys:
+    found = False
+    for feature_type, features in output_features.items():
+        if expected_key in features:
+            feature = features[expected_key]
+            print(f"✅ {expected_key}: {feature.type.value}, shape={feature.shape}")
+            found = True
+            break
+
+    if not found:
+        print(f"❌ Missing expected feature: {expected_key}")
+```
+
+此驗證有助於確保您的管線（pipeline）能夠正確地與預期特定資料結構（data structure）的下游元件（downstream components）協同運作。
+
+## 總結（summary）
+
+現在您已經理解了三種除錯方法，可以有系統地解決任何管線（pipeline）問題：
+
+1. **hooks** - 用於執行時期監控與驗證（monitoring and validation），無需修改管線程式碼（pipeline code）
+2. **逐步除錯（step-through）** - 用於檢查中間狀態（intermediate states）並理解轉換過程（transformations）
+3. **特徵驗證（feature validation）** - 用於確保資料結構（data structure）與合約（contracts）吻合
+
+**何時使用每種方法（when to use each approach）：**
+
+- 當您需要理解管線（pipeline）的行為或遇到非預期情況時，從**逐步除錯（step-through debugging）**開始
+- 在開發和正式環境（development and production）中添加 **hooks** 進行持續監控（monitoring），以自動捕捉問題（catch issues automatically）
+- 在部署（deployment）前使用**特徵驗證（feature validation）**，確保您的管線（pipeline）能與下游元件（downstream components）正確協作
+
+這三種工具協同運作，為您提供複雜管線（pipeline）天生缺乏的完整可觀測性（complete observability）。透過 hooks 監控問題（issues）、逐步（step-through）幫助您理解行為，以及特徵驗證（feature validation）確保相容性（ensuring compatibility），您將能夠自信且高效地除錯（debug）任何管線（pipeline）。
