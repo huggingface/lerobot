@@ -82,6 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
@@ -217,7 +218,9 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
+    # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
+    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
     if render_callback is not None:
         render_callback(env)
 
