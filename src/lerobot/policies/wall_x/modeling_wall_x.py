@@ -34,6 +34,7 @@ lerobot-train \
 ```
 """
 
+import json
 import logging
 import math
 from collections import deque
@@ -69,7 +70,6 @@ from .constant import (
     MODEL_TYPE,
     PRIORITY_ORDER,
     RESOLUTION,
-    TOKENIZER_MAX_LENGTH,
 )
 
 if TYPE_CHECKING or _wallx_deps_available:
@@ -106,7 +106,10 @@ else:
     configure_wall_x_vision_attention = None
 
 from .utils import (
+    TEXT_TARGET_END,
+    TEXT_TARGET_START,
     get_wallx_normal_text,
+    img_key_mapping,
     preprocesser_call,
     process_grounding_points,
     replace_action_token,
@@ -959,19 +962,24 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process proprioceptive data (joint positions, orientations, etc.)
             if proprioception is not None:
-                proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                proprioception = self.action_preprocessor.proprioception_proj(
-                    proprioception,
-                    agent_pos_mask,
-                )
                 mask = input_ids == self.action_token_id_set["propri_token_id"]
-                mask_unsqueezed = mask.unsqueeze(-1)
-                mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
-                proprioception_mask = mask_expanded.to(inputs_embeds.device)
-
-                proprioception = proprioception.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(proprioception_mask, proprioception)
+                proprioception_rows = mask.any(dim=-1)
+                if proprioception_rows.any():
+                    active_proprioception = proprioception[proprioception_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_agent_pos_mask = agent_pos_mask[proprioception_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_proprioception = self.action_preprocessor.proprioception_proj(
+                        active_proprioception,
+                        active_agent_pos_mask,
+                    )
+                    proprioception_mask = mask.unsqueeze(-1).expand_as(inputs_embeds)
+                    inputs_embeds = inputs_embeds.masked_scatter(
+                        proprioception_mask.to(inputs_embeds.device),
+                        active_proprioception.to(inputs_embeds.device, inputs_embeds.dtype),
+                    )
             elif self.training:
                 # Dummy forward pass to ensure gradient registration in DDP
                 # This handles cases where one process has proprioception data while another doesn't
@@ -987,16 +995,19 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process action chunk data
             if action_chunk is not None:
-                action_chunk = action_chunk.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                dof_mask = dof_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                noisy_action_emb, flow = self.action_preprocessor(action_chunk, dof_mask)
                 mask = input_ids == self.action_token_id_set["action_token_id"]
-                mask_unsqueezed = mask.unsqueeze(-1)
-                mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
-                action_mask = mask_expanded.to(inputs_embeds.device)
-
-                noisy_action_emb = noisy_action_emb.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(action_mask, noisy_action_emb)
+                action_rows = mask.any(dim=-1)
+                if action_rows.any():
+                    active_action_chunk = action_chunk[action_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_dof_mask = dof_mask[action_rows].to(inputs_embeds.device, inputs_embeds.dtype)
+                    noisy_action_emb, flow = self.action_preprocessor(active_action_chunk, active_dof_mask)
+                    action_mask = mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
+                    inputs_embeds = inputs_embeds.masked_scatter(
+                        action_mask,
+                        noisy_action_emb.to(inputs_embeds.device, inputs_embeds.dtype),
+                    )
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -1056,16 +1067,22 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         if action_chunk is not None:
             action_mask = input_ids == self.action_token_id_set["action_token_id"]
             if action_mask.any():
+                action_rows = action_mask.any(dim=-1)
+                active_dof_mask = dof_mask[action_rows]
                 action_hidden_states = hidden_states[action_mask].to(torch.float32)
                 flow = flow.reshape(-1, flow.shape[-1]).to(torch.float32)
-                _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, dof_mask)
+                _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, active_dof_mask)
                 if isinstance(_flow_loss, torch.Tensor):
                     flow_loss = _flow_loss.mean()
                 if loss is not None:
                     loss = loss + self.flow_loss_weight * flow_loss.to(torch.float32)
                 else:
                     loss = self.flow_loss_weight * flow_loss.to(torch.float32)
-                _flow_loss = _flow_loss.view(dof_mask.shape[0], dof_mask.shape[1], dof_mask.shape[2])
+                _flow_loss = _flow_loss.view(
+                    active_dof_mask.shape[0],
+                    active_dof_mask.shape[1],
+                    active_dof_mask.shape[2],
+                )
 
         # Return outputs based on return_dict setting
         if not return_dict:
@@ -1585,6 +1602,25 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             - Handles special cases for input_embeds, generation methods, and GPU synchronization
             - Manages vision inputs to avoid unnecessary forward passes
         """
+        if cache_position is None:
+            past_length = 0
+            if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
+                past_length = int(past_key_values.get_seq_length())
+            input_length = input_ids.shape[1]
+            end = input_length if input_length > past_length else past_length + input_length
+            cache_position = torch.arange(
+                past_length,
+                end,
+                dtype=torch.long,
+                device=input_ids.device,
+            )
+            if cache_position.numel() == 0:
+                cache_position = torch.arange(
+                    input_length,
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+
         # Initialize MoE token types if not provided
         if moe_token_types is None:
             moe_token_types = torch.zeros_like(
@@ -1851,6 +1887,112 @@ class WallXPolicy(PreTrainedPolicy):
         """Get parameters for optimization."""
         return self.parameters()
 
+    @staticmethod
+    def _batched_recipe_field(value: Any, batch_size: int, field_name: str) -> list[list[Any]]:
+        if not isinstance(value, list):
+            raise TypeError(f"{field_name} must be a list.")
+        if len(value) == batch_size and all(isinstance(row, list) for row in value):
+            return value
+        if batch_size == 1:
+            return [value]
+        raise ValueError(f"Expected {field_name} for exactly {batch_size} samples.")
+
+    @staticmethod
+    def _message_content(message: dict[str, Any]) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                str(block.get("text", ""))
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            text = "" if content is None else str(content)
+        say_texts = []
+        for call in message.get("tool_calls") or []:
+            function = call.get("function", {}) if isinstance(call, dict) else {}
+            if function.get("name") != "say":
+                continue
+            arguments = function.get("arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (TypeError, ValueError):
+                    arguments = {}
+            if isinstance(arguments, dict) and arguments.get("text"):
+                say_texts.append(str(arguments["text"]))
+        suffix = "".join(f"<say>{value}</say>" for value in say_texts)
+        if suffix:
+            text = f"{text}\n{suffix}" if text else suffix
+        return text
+
+    def _observation_prompt(self, img_keys: list[str]) -> str:
+        prompt = "Observation:"
+        for label in img_key_mapping(img_keys):
+            prompt += f" {label}: <|vision_start|><|image_pad|><|vision_end|>"
+        return prompt
+
+    def _format_recipe_text(
+        self,
+        messages: list[dict[str, Any]],
+        message_streams: list[str | None],
+        target_message_indices: list[int],
+        task: str,
+        img_keys: list[str],
+    ) -> tuple[str, bool]:
+        if len(messages) != len(message_streams):
+            raise ValueError("WALL-OSS recipe messages and streams must have equal length.")
+        target_indices = set(target_message_indices)
+        invalid_targets = [index for index in target_indices if not 0 <= index < len(messages)]
+        if invalid_targets:
+            raise ValueError(f"WALL-OSS recipe target indices are out of range: {invalid_targets}.")
+
+        predicts_action = any(stream == "low_level" for stream in message_streams)
+        text = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        observation_injected = not any(str(message.get("role", "user")) == "user" for message in messages)
+        if observation_injected:
+            text += f"<|im_start|>user\n{self._observation_prompt(img_keys)}<|im_end|>\n"
+        for index, message in enumerate(messages):
+            role = str(message.get("role", "user"))
+            content = self._message_content(message)
+            if TEXT_TARGET_START in content or TEXT_TARGET_END in content:
+                raise ValueError("Recipe content contains a reserved WALL-OSS text-target marker.")
+            if role == "user" and not observation_injected:
+                content = f"{self._observation_prompt(img_keys)}\n{content}"
+                observation_injected = True
+            text += f"<|im_start|>{role}\n"
+            payload = f"{content}<|im_end|>"
+            if index in target_indices:
+                payload = f"{TEXT_TARGET_START}{payload}{TEXT_TARGET_END}"
+            text += f"{payload}\n"
+
+        if predicts_action:
+            text += (
+                "<|im_start|>user\n"
+                f"Instruction: {task}\n"
+                "Predict the next action in robot action.\nProprioception: <|propri|>\n"
+                "<|im_end|>\n<|im_start|>assistant\n"
+                "<|action_fast|><|im_end|>\n" + "<|action|>" * self.config.chunk_size
+            )
+        return text, predicts_action
+
+    def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
+        # The subtask wording comes from the checkpoint's recipe (config.recipe),
+        # token-exact with the subtask branch of `get_wallx_normal_text` down to the
+        # newline before `<|im_end|>`: WALL-OSS declares its mode in this user turn, so
+        # a prompt that drifts from the trained template is answered out of
+        # distribution.
+        if kind == "subtask":
+            instruction = self.build_prompt("subtask", task=instruction)
+        return (
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+            f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"
+            f"Instruction: {instruction}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+
     def preprocess_inputs(
         self,
         batch: dict[str, Any],
@@ -1891,25 +2033,65 @@ class WallXPolicy(PreTrainedPolicy):
         # loop left these values set to the final configured camera's dimensions.
         orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
 
-        for i in range(batch_size):
-            # Text preprocessing
-            task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
-            instruction_info = {"instruction": task_text}
-
-            frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
-            complete_text, _ = get_wallx_normal_text(
-                instruction_info,
-                self.config.chunk_size,
-                frame_index,
-                PRIORITY_ORDER,
-                img_keys,
-                generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
+        tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
+        if "messages" in batch:
+            messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
+            streams_batch = self._batched_recipe_field(
+                batch.get("message_streams", []),
+                batch_size,
+                "message_streams",
             )
-
-            text = process_grounding_points(
-                complete_text, orig_height, orig_width, resized_height, resized_width, MODEL_TYPE
+            targets_batch = self._batched_recipe_field(
+                batch.get("target_message_indices", []),
+                batch_size,
+                "target_message_indices",
             )
-            all_texts.append(text)
+            for messages, streams, targets, task_text in zip(
+                messages_batch,
+                streams_batch,
+                targets_batch,
+                tasks,
+                strict=True,
+            ):
+                complete_text, _ = self._format_recipe_text(
+                    messages,
+                    streams,
+                    targets,
+                    str(task_text),
+                    img_keys,
+                )
+                all_texts.append(
+                    process_grounding_points(
+                        complete_text,
+                        orig_height,
+                        orig_width,
+                        resized_height,
+                        resized_width,
+                        MODEL_TYPE,
+                    )
+                )
+        else:
+            for i, task_text in enumerate(tasks):
+                instruction_info = {"instruction": task_text}
+                frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
+                complete_text, _ = get_wallx_normal_text(
+                    instruction_info,
+                    self.config.chunk_size,
+                    frame_index,
+                    PRIORITY_ORDER,
+                    img_keys,
+                    generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
+                )
+                all_texts.append(
+                    process_grounding_points(
+                        complete_text,
+                        orig_height,
+                        orig_width,
+                        resized_height,
+                        resized_width,
+                        MODEL_TYPE,
+                    )
+                )
 
         # ==================== PROCESS AGENT POS ====================
         agent_pos = batch[OBS_STATE]  # (batch_size, state_dim)
@@ -2004,7 +2186,8 @@ class WallXPolicy(PreTrainedPolicy):
             padding=True,
             truncation=True,
             return_tensors="pt",
-            max_length=TOKENIZER_MAX_LENGTH,
+            max_length=self.config.tokenizer_max_length,
+            targeted_text_only="messages" in batch,
         )
 
         if compute_position_ids:
@@ -2056,16 +2239,34 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
+        recipe_supervision = "messages" in batch
         batch = self.preprocess_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(**batch, mode="train")
 
-        # Extract losses from output
-        loss = outputs.loss
-        loss_dict = {
-            "loss": loss.detach() if loss is not None else 0.0,
-        }
+        flow_loss = outputs.flow_loss
+        text_loss = outputs.cross_entropy_loss
+        if recipe_supervision:
+            loss = None
+            if flow_loss is not None:
+                loss = self.config.flow_loss_weight * flow_loss
+            if text_loss is not None:
+                weighted_text_loss = self.config.text_loss_weight * text_loss
+                loss = weighted_text_loss if loss is None else loss + weighted_text_loss
+            if loss is None:
+                raise RuntimeError(
+                    "WALL-OSS batch produced neither action nor text supervision. "
+                    "Check the selected recipe and target annotations."
+                )
+            if not torch.isfinite(loss):
+                raise FloatingPointError("WALL-OSS produced a non-finite training loss.")
+        else:
+            loss = outputs.loss
+            if loss is None:
+                raise RuntimeError("WALL-OSS action-only batch produced no training loss.")
+
+        loss_dict = {"loss": loss.detach()}
 
         if outputs.flow_loss is not None:
             loss_dict["flow_loss"] = outputs.flow_loss.detach()
@@ -2079,6 +2280,120 @@ class WallXPolicy(PreTrainedPolicy):
                     loss_dict[f"channel_{key}"] = value.detach()
 
         return loss, loss_dict
+
+    def _build_text_inputs(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: str,
+        user_text: str | list[str] | None,
+    ) -> BatchFeature:
+        batch_size = batch[OBS_STATE].shape[0]
+        img_keys = [key for key in self.config.image_features if key in batch]
+        if not img_keys:
+            raise ValueError("WALL-OSS text generation requires at least one image feature.")
+
+        image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
+        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
+        tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
+        if user_text is None:
+            instructions = (
+                ["Describe what you observe in the current scene."] * batch_size
+                if kind == "caption"
+                else tasks
+            )
+        elif isinstance(user_text, str):
+            instructions = [user_text] * batch_size
+        elif len(user_text) == batch_size:
+            instructions = user_text
+        else:
+            raise ValueError(f"Expected one text prompt for each of the {batch_size} samples.")
+
+        texts = [
+            process_grounding_points(
+                self._format_text_prompt(str(instruction), kind, img_keys),
+                orig_height,
+                orig_width,
+                resized_height,
+                resized_width,
+                MODEL_TYPE,
+            )
+            for instruction in instructions
+        ]
+        inputs = preprocesser_call(
+            processor=self.model.processor,
+            text=texts,
+            images=image_inputs,
+            videos=None,
+            device=batch[OBS_STATE].device,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.config.tokenizer_max_length,
+        )
+        inputs.pop("labels", None)
+        inputs["moe_token_types"] = torch.zeros_like(inputs.input_ids, dtype=torch.bool)
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                inputs[key] = value.to(batch[OBS_STATE].device)
+        return inputs
+
+    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
+        """Answer `prompt` about the current observation with WALL-OSS's own text head."""
+        return self._one_text(batch, kind="vqa", user_text=prompt)
+
+    def _one_text(self, batch: dict[str, Tensor], *, kind: str, user_text: str | None = None) -> str:
+        outputs = self.generate_texts(
+            batch,
+            kind=kind,
+            user_text=user_text,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
+        )
+        if len(outputs) != 1:
+            raise ValueError(
+                f"The interactive runtime expected one WALL-OSS text output, got {len(outputs)}."
+            )
+        return outputs[0]
+
+    @torch.no_grad()
+    def generate_texts(
+        self,
+        batch: dict[str, Any],
+        *,
+        kind: str = "vqa",
+        user_text: str | list[str] | None = None,
+        max_new_tokens: int = 100,
+        min_new_tokens: int = 0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+    ) -> list[str]:
+        """Generate WALL-OSS text for VQA, grounding, and language subtasks over a batch."""
+        self.eval()
+        if kind not in {"vqa", "caption", "grounding", "text", "subtask"}:
+            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask'.")
+        inputs = self._build_text_inputs(batch, kind=kind, user_text=user_text)
+        prompt_length = inputs.input_ids.shape[1]
+        sampling = temperature > 0
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": max_new_tokens,
+            "min_new_tokens": min_new_tokens,
+            "do_sample": sampling,
+            "eos_token_id": self.model.processor.tokenizer.eos_token_id,
+            "pad_token_id": self.model.processor.tokenizer.pad_token_id,
+            "use_cache": True,
+        }
+        if sampling:
+            generation_kwargs.update(temperature=temperature, top_p=top_p)
+        output_ids = self.model.generate(**inputs, **generation_kwargs)
+        return [
+            value.strip()
+            for value in self.model.processor.tokenizer.batch_decode(
+                output_ids[:, prompt_length:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+        ]
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:

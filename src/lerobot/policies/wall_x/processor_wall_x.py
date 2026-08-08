@@ -27,8 +27,9 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.render_messages_processor import RenderMessagesStep
 
-from .configuration_wall_x import WallXConfig
+from .configuration_wall_x import WallXConfig, _load_recipe
 
 
 def make_wall_x_pre_post_processors(
@@ -61,11 +62,20 @@ def make_wall_x_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
+    language_steps = []
+    if config.recipe_path:
+        # Re-resolve the path here, not only in `WallXConfig.__post_init__`: a caller
+        # may set `recipe_path` after construction, and training must render the
+        # same recipe the checkpoint prompts itself with (`config.recipe`).
+        config.recipe = _load_recipe(config.recipe_path)
+        language_steps.append(RenderMessagesStep(recipe=config.recipe))
+
     input_steps = [
         steps.rename_observations,
         steps.add_batch_dim,
         WallXTaskProcessor(),  # Process task description
         steps.normalize,
+        *language_steps,
         steps.to_device,
     ]
 
