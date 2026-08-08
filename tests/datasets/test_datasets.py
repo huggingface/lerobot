@@ -1828,25 +1828,21 @@ def test_episode_filter_intersects_with_episodes(tmp_path, lerobot_dataset_facto
     assert seen_eps == set(expected_eps)
 
 
-def test_episode_filter_no_match_raises(tmp_path, lerobot_dataset_factory):
-    """An empty match in LeRobotDataset's episode_filter raises a ValueError rather than silently returning an empty dataset."""
+@pytest.mark.parametrize(
+    "kwargs, exc, match",
+    [
+        (
+            {"episode_filter": lambda ep: ep["length"] < 0},
+            ValueError,
+            r"The episode filter did not match any episode",
+        ),
+        ({"episode_filter": lambda ep: ep["not_a_real_field"] > 0}, KeyError, "not_a_real_field"),
+        ({"episodes": [99]}, ValueError, "No valid episodes"),
+    ],
+)
+def test_episode_selection_invalid_raises(tmp_path, lerobot_dataset_factory, kwargs, exc, match):
+    """Invalid selections fail loudly: non-matching filter, unknown filter key, or out-of-range episodes."""
     dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
 
-    with pytest.raises(ValueError, match=r"The episode filter did not match any episode"):
-        LeRobotDataset(
-            dataset.repo_id,
-            root=dataset.root,
-            episode_filter=lambda ep: ep["length"] < 0,
-        )
-
-
-def test_episode_filter_unknown_key_raises(tmp_path, lerobot_dataset_factory):
-    """A predicate referencing a column absent from meta.episodes surfaces a clear KeyError."""
-    dataset = lerobot_dataset_factory(root=tmp_path / "test", total_episodes=4, total_frames=100)
-
-    with pytest.raises(KeyError, match="not_a_real_field"):
-        LeRobotDataset(
-            dataset.repo_id,
-            root=dataset.root,
-            episode_filter=lambda ep: ep["not_a_real_field"] > 0,
-        )
+    with pytest.raises(exc, match=match):
+        LeRobotDataset(dataset.repo_id, root=dataset.root, **kwargs)

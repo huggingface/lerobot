@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator
 from pathlib import Path
@@ -32,6 +33,7 @@ from .feature_utils import get_delta_indices
 from .io_utils import item_to_torch
 from .utils import (
     check_version_compatibility,
+    resolve_episode_indices,
     safe_shard,
 )
 from .video_utils import (
@@ -39,6 +41,8 @@ from .video_utils import (
     decode_video_frames,
     decode_video_frames_torchcodec,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LookBackError(Exception):
@@ -246,6 +250,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         repo_id: str,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
+        episode_filter: Callable[[dict], bool] | None = None,
         image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
@@ -272,6 +277,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 When omitted, Hub metadata is resolved through the cache under ``$HF_LEROBOT_HOME/hub``.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list.
+            episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
+                metadata rows used to select episodes (e.g. ``lambda ep: ep["length"] >= 100``).
+                Intersected with ``episodes`` when both are set. Defaults to None.
             image_transforms (Callable | None, optional): Transform to apply to image data.
             tolerance_s (float, optional): Tolerance in seconds for timestamp matching.
             revision (str, optional): Git revision id (branch name, tag, or commit hash).
@@ -303,7 +311,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.streaming_from_local = root is not None and self.repo_type == "dataset"
 
         self.image_transforms = image_transforms
-        self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
         self.seed = seed
@@ -335,6 +342,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
+
+        self.episodes = resolve_episode_indices(episodes, self.meta.total_episodes)
+        if self.episodes is not None and not self.episodes:
+            raise ValueError(
+                "No valid episodes: the requested episode selection is empty after resolving "
+                f"against the dataset range [0, {self.meta.total_episodes})."
+            )
+        if episode_filter is not None:
+            resolved = self.meta.filter_episodes(episode_filter, candidates=self.episodes)
+            if not resolved:
+                raise ValueError(
+                    "The episode filter did not match any episode. Make sure the filter and episodes list are valid and compatible."
+                )
+            logger.info(f"The episode filter matched {len(resolved)} episode(s).")
+            self.episodes = resolved
 
         self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
             vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
@@ -377,15 +399,22 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 **token_kwargs,
             )
 
+        # Streaming loads all shards, so episode selection is applied as a lazy stream filter.
+        if self.episodes is not None:
+            selected = set(self.episodes)
+            self.hf_dataset = self.hf_dataset.filter(lambda x: x["episode_index"] in selected)
+
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
 
     @property
     def num_frames(self):
-        return self.meta.total_frames
+        if self.episodes is None:
+            return self.meta.total_frames
+        return sum(self.meta.episodes[ep]["length"] for ep in self.episodes)
 
     @property
     def num_episodes(self):
-        return self.meta.total_episodes
+        return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
 
     @property
     def fps(self):
