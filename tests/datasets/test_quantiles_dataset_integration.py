@@ -204,11 +204,17 @@ def test_save_multiple_episodes_with_quantiles(tmp_path, simple_features):
             }
             dataset.add_frame(frame)
 
-        dataset.save_episode()
+        if episode_idx == 0:
+            dataset.save_episode()
+        else:
+            with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
+                dataset.save_episode()
 
-    # Verify final stats include properly aggregated quantiles
+    # Quantiles from multiple episode summaries are not composable, so the
+    # aggregate deliberately omits them while retaining valid summary stats.
     stats = dataset.meta.stats
     for key in ["action", "observation.state"]:
         feature_stats = stats[key]
-        assert "q01" in feature_stats and "q99" in feature_stats
+        assert "q01" not in feature_stats
+        assert "q99" not in feature_stats
         assert feature_stats["count"][0] == 150  # 3 episodes * 50 frames
