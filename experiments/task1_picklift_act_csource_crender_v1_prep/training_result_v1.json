@@ -1,0 +1,151 @@
+{
+  "boundaries": {
+    "hardware_accessed": false,
+    "paper_effect_claim": false,
+    "rollout_started": false
+  },
+  "completed_at_utc": "2026-08-09T15:02:19.468964+00:00",
+  "formal": {
+    "checkpoints": {
+      "100000": "6d55954c9401987e90616188777a00e76348feee53bf40b905211fa4c1a612f3",
+      "120000": "a19a11fb91361f7a86612b4135e2b48c02dbaefd4dde2f9ddedceab010a0303e",
+      "140000": "418c9894135f117e5aefda3b2a955faab18b61c3844927c1e24ad0e0a9cf8dfe",
+      "160000": "817543c129bf6b5db513ec6e335e4b926fbf53200be37b9c49ca3150615d71eb",
+      "180000": "966636f0a8a015a743fbfd716a5b3bfb813647ed5bbd362154a4e13aa03e29ae",
+      "20000": "763c9e51d24b8c302034c2753a6432e8a73fa4ce0c049de882d40a92f5eeeb9f",
+      "200000": "4ea775e8cab32d7959ba32e1dde6072185227dd6eab392b29acd139f40a67b53",
+      "40000": "6179ddeadcc3d2f929279418d6c0b59bbb74724a28fb1e2b5bb421d1411e5a9b",
+      "60000": "d5950966aabea54f11642ac56d8d925b343fb33afb317826dfe84ef4408a3c27",
+      "80000": "ba950c355ea165ff426e325b8c0cd26d49f5e471511a37ceaf52562e5203e81e"
+    },
+    "log_sha256": "31572ca3247536833f22022179aca583fb9a5942c6152a08bcd63904c739e4fc",
+    "metrics": {
+      "grdn": "2.000",
+      "kld_loss": "0.000",
+      "l1_loss": "0.028",
+      "loss": "0.028",
+      "smp/s": "163",
+      "step": "200K"
+    },
+    "sampling_counts": {
+      "actual_samples_seen_by_main_process": {
+        "real24": 800000,
+        "source_b": 800000
+      },
+      "batch_size_per_process": 8,
+      "note": "Counts reflect batches consumed by optimizer steps; stream order is fixed within each batch.",
+      "num_processes": 1,
+      "optimizer_steps": 200000,
+      "schema": "lerobot_matched_two_stream_sampling_counts_v1",
+      "seed": 1000,
+      "stream_episode_groups": {
+        "real24": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "source_b": [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47
+        ]
+      }
+    }
+  },
+  "model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_csource_crender_v1/full_200k/checkpoints/200000/pretrained_model",
+    "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+    "model_id": "ACT_R24_LocalSim24Gap_CRender_200k",
+    "model_sha256": "4ea775e8cab32d7959ba32e1dde6072185227dd6eab392b29acd139f40a67b53",
+    "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+    "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+    "train_config_sha256": "5ed9ec6e99e143cf552a4d5b0a603ac3c519ff76016c13402fb0a5aeb4ff6838"
+  },
+  "offline_validation": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_csource_crender_v1/full_200k/checkpoints/200000/pretrained_model",
+    "cuda_reload": true,
+    "hardware_accessed": false,
+    "samples": [
+      {
+        "action": [
+          -1.846245527267456,
+          -82.44033813476562,
+          44.450897216796875,
+          88.69914245605469,
+          -1.8240623474121094,
+          85.9197769165039
+        ],
+        "domain": "real24",
+        "finite": true,
+        "index": 0,
+        "shape": [
+          1,
+          6
+        ]
+      },
+      {
+        "action": [
+          -2.397325277328491,
+          -84.05560302734375,
+          40.696441650390625,
+          93.93727111816406,
+          -2.2476234436035156,
+          99.91494750976562
+        ],
+        "domain": "rerender_localsim_gap24",
+        "finite": true,
+        "index": 4263,
+        "shape": [
+          1,
+          6
+        ]
+      }
+    ],
+    "status": "pass"
+  },
+  "schema": "task1_act_csource_crender_training_result_v1",
+  "selected_step": 200000,
+  "status": "offline_training_complete_ready_for_separately_authorized_real_eval"
+}

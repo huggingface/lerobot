@@ -1,0 +1,67 @@
+{
+  "created_at_utc": "2026-08-09T15:03:02.271993+00:00",
+  "dry_run": {
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_act_csource_vs_crender_eval24_v1/software_preparation_v1/dry_run.json",
+    "sha256": "1555a85dfead1c06181ae5d414a72a407ba6c37a92b6bcc73a20f587adf2dc84"
+  },
+  "evaluation_id": "task1_picklift_act_csource_vs_crender_eval24_v1",
+  "first_trial": {
+    "artifact_stem": "t001_h01_s",
+    "cell": "r3c2",
+    "column": 2,
+    "coverage_tier": "seen_by_real24",
+    "eval_pose_id": "eval48_r3c2_seen_by_real48_340_m010_yaw45",
+    "manual_pose_is_measurement_truth": false,
+    "model_id": "R24_localsim_gap24_200k",
+    "model_key": "S",
+    "nominal_x_forward_m": 0.34,
+    "nominal_y_lateral_m": -0.01,
+    "nominal_yaw_degrees_modulo_90": 45,
+    "operator_placement_prompt_zh": "\u6446\u653e\u65b9\u5757\uff1ar3c2\uff08\u7b2c3\u884c\u7b2c2\u5217\uff09\uff0c\u7ea2\u5757\u4e2d\u5fc3\u653e\u5728X=34 cm\u3001Y=-1 cm\uff1b\u7ed5\u4e2d\u5fc3\u8f6c45\u00b0\u3002",
+    "order": 1,
+    "policy_failure_retry_allowed": false,
+    "pose_order": 1,
+    "quadrant": "Q3",
+    "row": 3,
+    "source_eval48_pose_order": 1,
+    "spawn_region": "t001_h01_s",
+    "trial_id": "t001_h01_s",
+    "within_pose_order": 1
+  },
+  "hardware_access": {
+    "camera": false,
+    "robot": false,
+    "rollout": false,
+    "serial": false,
+    "torque": false
+  },
+  "model_order": {
+    "pattern": "SR/RS alternating",
+    "render_first": 12,
+    "same_pose_contiguous": true,
+    "source_first": 12
+  },
+  "models": {
+    "R": "4ea775e8cab32d7959ba32e1dde6072185227dd6eab392b29acd139f40a67b53",
+    "S": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f"
+  },
+  "plan": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_csource_crender_v1_prep/bound_evaluation_plan.json",
+    "sha256": "a6303420020894931e493dcfbfd41ec1de65891e8f521a98d145c393150a2d62"
+  },
+  "poses": 24,
+  "schema": "task1_act_csource_crender_paired_eval24_software_gate_v1",
+  "status": "pass_hardware_not_authorized",
+  "success_early_stop": {
+    "enabled": true,
+    "explicit_opt_in": true,
+    "marker_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_act_csource_vs_crender_eval24_v1/success_markers",
+    "profile_path": "experiments/task1_picklift_real24_act_v1/real_evaluation_success_early_stop_profile_v1.json",
+    "profile_sha256": "50f4f2a2771cf21f34d333d13f2b413a54c3d183704218c1b0d36abef8e2aa28"
+  },
+  "training_result": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_csource_crender_v1_prep/training_result_v1.json",
+    "sha256": "79c76a12c7a85f3a66665286b96885a78b0ddea4e369e7e8040978bc65f42fd6"
+  },
+  "trials": 48
+}

@@ -1,0 +1,75 @@
+{
+  "schema": "task1_picklift_csource_crender_preparation_skeleton_v1",
+  "status": "waiting_for_final_rerender_identity",
+  "final_contract_frozen": false,
+  "training_authorized_after_identity_binding": true,
+  "training_started": false,
+  "hardware_authorized": false,
+  "fixed_comparator": {
+    "model_id": "R24_localsim_gap24_200k",
+    "model_sha256": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f",
+    "train_config_sha256": "bf499bb21fca3cd40ea43b25e1c7a2ed37d31b4b5661a94bfce5a77cbe571703"
+  },
+  "frozen_sources": {
+    "real24": {
+      "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+      "episodes": 24,
+      "frames": 4263,
+      "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712"
+    },
+    "localsim_gap24_source": {
+      "root": "/home/ubuntu24/SO101QuestLocalSim-data/postcollection/task1-localsim48-gridphase0-v2-s01-finalization-v1/derived/sim24_gap/dataset",
+      "episodes": 24,
+      "frames": 1933,
+      "tree_sha256": "7f3b0ada0525fa1c358179f9c8823c877f1d81f88569253eaaecd81322531b22"
+    },
+    "real24_processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651"
+  },
+  "required_rerender_handoff": {
+    "dataset_root": null,
+    "dataset_tree_sha256": null,
+    "dataset_tree_hash_algorithm": null,
+    "accepted_manifest_path": null,
+    "accepted_manifest_sha256": null,
+    "source_to_rerender_mapping_path": null,
+    "source_to_rerender_mapping_sha256": null,
+    "status_must_be_accepted_for_training": null
+  },
+  "training_recipe": {
+    "from_scratch": true,
+    "seed": 1000,
+    "batch_size": 8,
+    "batch_composition": "4 Real24 + 4 rerender LocalSim-gap24",
+    "optimizer_steps": 200000,
+    "sample_slots": {"real24": 800000, "sim_rerender": 800000},
+    "smoke_steps": 500,
+    "formal_run_restarts_from_scratch": true,
+    "selected_checkpoint_step": 200000,
+    "checkpoint_frequency": 20000,
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67,
+    "front_only": true,
+    "fps": 20,
+    "image_shape": [3, 480, 640],
+    "state_shape": [6],
+    "action_shape": [6],
+    "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651"
+  },
+  "future_eval": {
+    "comparison": "C-source vs C-render",
+    "pose_bank_sha256": "5a61888b54ef99b5daf1e7875319b41ce6fa410aa3550f38eef14dbd3f60e7d7",
+    "poses": 24,
+    "models_per_pose": 2,
+    "planned_rollouts": 48,
+    "same_pose_contiguous": true,
+    "first_model_balance": {"C-source": 12, "C-render": 12},
+    "hardware_plan_generated": false
+  },
+  "boundaries": {
+    "no_fake_rerender_hash": true,
+    "train_A_or_B": false,
+    "train_full48": false,
+    "prepare_diffusion_policy": false,
+    "hardware_accessed": false
+  }
+}
