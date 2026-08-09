@@ -11,8 +11,6 @@ At each timestep, SOLE-R1 compares:
 
 The published checkpoint is available at [`Philip-MIT/SOLE-R1-8B`](https://huggingface.co/Philip-MIT/SOLE-R1-8B).
 
-The LeRobot implementation is self-contained. It does not depend on RewardGen or vLLM and uses Transformers for inference.
-
 ## Installation
 
 Install LeRobot with the SOLE-R1 dependency group:
@@ -34,22 +32,16 @@ A single-frame input is also accepted and is interpreted as a trajectory with `T
 
 Each trajectory in a batch must have the same number of timesteps. `B` is the number of trajectories and `T` is the trajectory length.
 
-SOLE-R1 requires an external-camera trajectory and can optionally use a wrist-camera trajectory. When both camera views are configured, their batch and time dimensions must match.
+SOLE-R1 can use a external camera view only, wrist view only, or both external and wrist view. When both camera views are configured, their batch and time dimensions must match.
 
 ## Composite images
 
 For every timestep, the preprocessor creates the composite image expected by SOLE-R1.
 
-With the default `from_zero=False`, each camera row contains:
+Each camera row contains:
 
 ```text
 first | previous | current
-```
-
-With `from_zero=True`, each camera row contains:
-
-```text
-first | current
 ```
 
 When both external and wrist cameras are configured, the external-camera row is placed above the wrist-camera row.
@@ -64,12 +56,11 @@ The resulting preprocessed tensor has shape:
 
 The composite dimensions are:
 
-| Camera configuration | `from_zero` | Composite shape per timestep |
-| -------------------- | ----------: | ---------------------------- |
-| External only        |     `False` | `(3, 384, 1162)`             |
-| External and wrist   |     `False` | `(3, 773, 1162)`             |
-| External only        |      `True` | `(3, 384, 773)`              |
-| External and wrist   |      `True` | `(3, 773, 773)`              |
+| Camera configuration | Composite shape per timestep |
+| -------------------- | ---------------------------: |
+| External only        |             `(3, 384, 1162)` |
+| Wrist only           |             `(3, 384, 1162)` |
+| External and wrist   |             `(3, 773, 1162)` |
 
 ## Reward output
 
@@ -399,27 +390,26 @@ before `reward_scale` is applied.
 
 Important configuration fields include:
 
-| Field                  |                    Default | Description                                                          |
-| ---------------------- | -------------------------: | -------------------------------------------------------------------- |
-| `model_name`           |  `"Philip-MIT/SOLE-R1-8B"` | Hugging Face model identifier or local checkpoint path.              |
-| `external_image_key`   | `"observation.images.top"` | External-camera observation key.                                     |
-| `wrist_image_key`      |                     `None` | Optional wrist-camera observation key.                               |
-| `task_key`             |                   `"task"` | Key containing the task description.                                 |
-| `default_task`         |                     `None` | Fallback task description when `task_key` is absent.                 |
-| `from_zero`            |                    `False` | Compare the first and current frames without previous-frame context. |
-| `reward_output`        |               `"progress"` | Output type: `"progress"` or `"success"`.                            |
-| `success_threshold`    |                     `0.95` | Threshold applied to final scaled progress for success output.       |
-| `reward_scale`         |                     `0.01` | Scale applied to predicted progress percentages.                     |
-| `min_progress`         |                   `-100.0` | Minimum accepted progress percentage.                                |
-| `max_progress`         |                    `100.0` | Maximum accepted progress percentage.                                |
-| `fallback_to_previous` |                     `True` | Reuse previous progress when parsing fails.                          |
-| `torch_dtype`          |               `"bfloat16"` | Torch dtype used to load the model.                                  |
-| `attn_implementation`  |                     `None` | Optional Transformers attention implementation.                      |
-| `max_new_tokens`       |                      `600` | Maximum generated tokens per timestep.                               |
-| `temperature`          |                      `1.0` | Generation sampling temperature. Zero enables greedy decoding.       |
-| `top_p`                |                      `0.9` | Nucleus-sampling probability.                                        |
-| `top_k`                |                       `50` | Top-k sampling parameter.                                            |
-| `max_input_length`     |                    `16384` | Maximum permitted tokenized input length.                            |
+| Field                  |                    Default | Description                                                    |
+| ---------------------- | -------------------------: | -------------------------------------------------------------- |
+| `model_name`           |  `"Philip-MIT/SOLE-R1-8B"` | Hugging Face model identifier or local checkpoint path.        |
+| `external_image_key`   | `"observation.images.top"` | External-camera observation key.                               |
+| `wrist_image_key`      |                     `None` | Optional wrist-camera observation key.                         |
+| `task_key`             |                   `"task"` | Key containing the task description.                           |
+| `default_task`         |                     `None` | Fallback task description when `task_key` is absent.           |
+| `reward_output`        |               `"progress"` | Output type: `"progress"` or `"success"`.                      |
+| `success_threshold`    |                     `0.95` | Threshold applied to final scaled progress for success output. |
+| `reward_scale`         |                     `0.01` | Scale applied to predicted progress percentages.               |
+| `min_progress`         |                   `-100.0` | Minimum accepted progress percentage.                          |
+| `max_progress`         |                    `100.0` | Maximum accepted progress percentage.                          |
+| `fallback_to_previous` |                     `True` | Reuse previous progress when parsing fails.                    |
+| `torch_dtype`          |               `"bfloat16"` | Torch dtype used to load the model.                            |
+| `attn_implementation`  |                     `None` | Optional Transformers attention implementation.                |
+| `max_new_tokens`       |                      `600` | Maximum generated tokens per timestep.                         |
+| `temperature`          |                      `1.0` | Generation sampling temperature. Zero enables greedy decoding. |
+| `top_p`                |                      `0.9` | Nucleus-sampling probability.                                  |
+| `top_k`                |                       `50` | Top-k sampling parameter.                                      |
+| `max_input_length`     |                    `16384` | Maximum permitted tokenized input length.                      |
 
 ## Model identifier
 
