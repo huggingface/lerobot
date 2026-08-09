@@ -93,16 +93,13 @@ def _to_btchw_uint8(
     *,
     image_key: str,
 ) -> Tensor:
-    """Convert camera frames to a CPU ``(B,T,C,H,W)`` uint8 tensor.
+    """Supported input shapes are:
 
-    Canonical input shapes are:
+    - ``(T,C,H,W)`` or ``(T,H,W,C)`` for an unbatched trajectory;
+    - ``(B,T,C,H,W)`` or ``(B,T,H,W,C)`` for batched trajectories.
 
-    - ``(T,H,W,C)`` for an unbatched trajectory;
-    - ``(B,T,H,W,C)`` for batched trajectories.
-
-    Batched channels-first LeRobot tensors remain supported for
-    compatibility. Floating-point inputs in ``[0,1]`` are scaled to
-    ``[0,255]``.
+    LeRobot normally supplies channels-first tensors. Channels-last inputs
+    are accepted for direct NumPy-style use.
     """
 
     tensor = images.detach().cpu() if isinstance(images, Tensor) else torch.as_tensor(images)

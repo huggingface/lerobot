@@ -207,7 +207,7 @@ def test_soler1_config_validation():
         )
 
 
-def test_soler1_camera_features_are_channels_last():
+def test_soler1_camera_features_are_channels_first():
     external_key = "observation.images.front"
     wrist_key = "observation.images.wrist"
     config = SOLER1Config(
@@ -215,9 +215,9 @@ def test_soler1_camera_features_are_channels_last():
         external_image_key=external_key,
         wrist_image_key=wrist_key,
     )
-
-    assert config.input_features[external_key].shape == (224, 224, 3)
-    assert config.input_features[wrist_key].shape == (224, 224, 3)
+    assert config.input_features[external_key].shape == (3, 224, 224)
+    assert config.input_features[wrist_key].shape == (3, 224, 224)
+    assert config.output_features["reward"].shape == (1,)
 
 
 def test_parse_progress():
@@ -721,3 +721,43 @@ def test_wrist_only_uses_wrist_prompt(monkeypatch):
     model.compute_reward(_batch(trajectory_length=2))
 
     assert "robot's wrist camera" in model.processor.user_prompts[0]
+
+
+@skip_if_package_missing("transformers")
+def test_missing_task_raises_without_default(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            default_task=None,
+        )
+    )
+
+    batch = _batch(trajectory_length=2)
+    del batch["task"]
+
+    with pytest.raises(KeyError, match="task description"):
+        model.compute_reward(batch)
+
+
+@skip_if_package_missing("transformers")
+def test_explicit_default_task_is_supported(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            default_task="pick up the cube",
+        )
+    )
+    model.processor.completion_batches = [["<think>closer</think><answer>25%</answer>"]]
+
+    batch = _batch(trajectory_length=2)
+    del batch["task"]
+
+    reward = model.compute_reward(batch)
+
+    torch.testing.assert_close(reward, torch.tensor([0.25]))
