@@ -1,15 +1,6 @@
 # SOLE-R1
 
-[SOLE-R1](https://philip-mit.github.io/sole-r1/) is an inference-only vision-language reward model that predicts dense task progress from robot trajectories.
-
-At each timestep, SOLE-R1 compares:
-
-- the first observation in the trajectory;
-- the previous observation;
-- the current observation;
-- the progress predicted for the previous timestep.
-
-The published checkpoint is available at [`Philip-MIT/SOLE-R1-8B`](https://huggingface.co/Philip-MIT/SOLE-R1-8B).
+[SOLE-R1](https://philip-mit.github.io/sole-r1/) is an inference-only vision-language reward model that predicts task progress from robot trajectories. The published checkpoint is available at [`Philip-MIT/SOLE-R1-8B`](https://huggingface.co/Philip-MIT/SOLE-R1-8B).
 
 ## Installation
 
@@ -19,48 +10,134 @@ Install LeRobot with the SOLE-R1 dependency group:
 pip install -e ".[soler1]"
 ```
 
+When developing or running the tests with `uv`, install the SOLE-R1 and test extras:
+
+```bash
+uv sync --extra soler1 --extra test
+```
+
 ## Input format
 
-SOLE-R1 operates on complete trajectories.
+SOLE-R1 operates on complete trajectories. The canonical camera layout is channels-last:
 
-The preprocessor accepts camera tensors with either of these shapes:
+- `(T, H, W, C)` for one unbatched trajectory;
+- `(B, T, H, W, C)` for a batch of trajectories.
 
-- `(T, C, H, W)` for one unbatched trajectory;
-- `(B, T, C, H, W)` for a batch of trajectories.
+Here, `B` is the number of trajectories, `T` is the original trajectory length, and `C` must be one or three channels.
 
-A single-frame input is also accepted and is interpreted as a trajectory with `T=1`.
+Batched channels-first LeRobot tensors remain supported for compatibility. Floating-point images in `[0, 1]` are converted to uint8 images in `[0, 255]`.
 
-Each trajectory in a batch must have the same number of timesteps. `B` is the number of trajectories and `T` is the trajectory length.
+A trajectory must contain at least one frame. Each trajectory in a batch must have the same number of timesteps.
 
-SOLE-R1 can use a external camera view only, wrist view only, or both external and wrist view. When both camera views are configured, their batch and time dimensions must match.
+SOLE-R1 can use:
+
+- an external camera only;
+- a wrist camera only;
+- both an external and wrist camera.
+
+Set the unused camera key to `None`. At least one camera key must be configured. When both views are configured, their batch and time dimensions must match.
+
+## Camera configurations
+
+### External camera only
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.front",
+    wrist_image_key=None,
+)
+```
+
+### Wrist camera only
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key=None,
+    wrist_image_key="observation.images.wrist",
+)
+```
+
+### External and wrist cameras
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.front",
+    wrist_image_key="observation.images.wrist",
+)
+```
+
+## Downsampling
+
+By default, SOLE-R1 processes at most 10 uniformly spaced frames from each trajectory:
+
+```python
+config = SOLER1Config(
+    downsample_to=10,
+)
+```
+
+Set `downsample_to=None` to process every frame:
+
+```python
+config = SOLER1Config(
+    downsample_to=None,
+)
+```
+
+If the original trajectory is shorter than or equal to `downsample_to`, every frame is processed.
+
+Downsampling occurs before composite images are constructed. This ensures that each composite uses the previous sampled frame as its middle image, matching the previous sampled progress value used in the prompt.
+
+For example, a 25-frame trajectory with `downsample_to=10` uses approximately these original frame indices:
+
+```text
+[0, 2, 5, 8, 10, 13, 16, 18, 21, 24]
+```
+
+The composite for original frame `5` therefore contains original frame `2` as its previous frame. It does not contain the immediately preceding original frame `4`.
+
+The preprocessor records the sampled indices and original trajectory length so that dense predictions can later be interpolated back to all original timesteps.
 
 ## Composite images
 
-For every timestep, the preprocessor creates the composite image expected by SOLE-R1.
+For every sampled timestep, the preprocessor creates the composite image expected by SOLE-R1.
 
 Each camera row contains:
 
 ```text
-first | previous | current
+first | previous sampled | current sampled
 ```
+
+At the first sampled timestep, the first, previous, and current frames are all the first frame of the trajectory.
 
 When both external and wrist cameras are configured, the external-camera row is placed above the wrist-camera row.
 
 Each source frame is resized while preserving its aspect ratio and centered on a black `384 × 384` canvas. Adjacent frames and camera rows are separated by five black pixels.
 
-The resulting preprocessed tensor has shape:
+The resulting preprocessed composite tensor has shape:
 
 ```text
-(B, T, 3, composite_height, composite_width)
+(B, S, 3, composite_height, composite_width)
 ```
+
+Here, `S` is the sampled trajectory length:
+
+```text
+S = min(T, downsample_to)
+```
+
+when `downsample_to` is not `None`. When `downsample_to=None`, `S=T`.
 
 The composite dimensions are:
 
-| Camera configuration | Composite shape per timestep |
-| -------------------- | ---------------------------: |
-| External only        |             `(3, 384, 1162)` |
-| Wrist only           |             `(3, 384, 1162)` |
-| External and wrist   |             `(3, 773, 1162)` |
+| Camera configuration | Composite shape per sampled timestep |
+| -------------------- | -----------------------------------: |
+| External only        |                     `(3, 384, 1162)` |
+| Wrist only           |                     `(3, 384, 1162)` |
+| External and wrist   |                     `(3, 773, 1162)` |
 
 ## Reward output
 
@@ -73,6 +150,8 @@ reward = reward_model.compute_reward(
 )
 ```
 
+Downsampling is configured through `SOLER1Config` and performed by the preprocessor. Therefore, `compute_reward()` does not take a `downsample_to` argument.
+
 ### Sparse progress
 
 With:
@@ -82,14 +161,14 @@ reward_output="progress"
 dense=False
 ```
 
-`compute_reward()` returns only the final progress value for each trajectory:
+`compute_reward()` returns only the final sampled progress value for each trajectory:
 
 ```text
-input:  (B, T, C, H, W)
-output: (B,)
+batched input:  (B, S, C, H, W)
+batched output: (B,)
 ```
 
-For example, if the predicted progress percentages are:
+For example, if the sampled progress percentages are:
 
 ```text
 [0%, 20%, 45%, 80%]
@@ -110,30 +189,60 @@ reward_output="progress"
 dense=True
 ```
 
-`compute_reward()` returns one progress value per timestep:
+`compute_reward()` returns one progress value per original timestep:
 
 ```text
-input:  (B, T, C, H, W)
-output: (B, T)
+batched input:  (B, S, C, H, W)
+batched output: (B, T)
 ```
 
-For example, progress percentages of:
+If downsampling occurred, `numpy.interp` linearly interpolates the sampled progress predictions using their original frame indices.
+
+For example, suppose the original trajectory contains five frames, the sampled indices are:
 
 ```text
-[0%, 20%, 45%, 80%]
+[0, 2, 4]
 ```
 
-produce:
+and SOLE-R1 predicts:
 
 ```text
-[0.00, 0.20, 0.45, 0.80]
+[0%, 20%, 60%]
 ```
 
-when `reward_scale=0.01`.
+The interpolated percentages are:
 
-The first timestep is always assigned `0%` progress and does not invoke the vision-language model.
+```text
+[0%, 10%, 20%, 40%, 60%]
+```
 
-Subsequent timesteps are evaluated sequentially because each prediction is conditioned on the progress predicted for the preceding timestep. Trajectories within the batch are evaluated in parallel at each timestep.
+With `reward_scale=0.01`, the dense rewards are:
+
+```text
+[0.00, 0.10, 0.20, 0.40, 0.60]
+```
+
+The first sampled timestep is always assigned exactly `0%` progress and does not invoke the vision-language model.
+
+Subsequent sampled positions are evaluated sequentially because each prediction is conditioned on the progress predicted at the previous sampled position. Trajectories within a batch are evaluated in parallel at each sampled position.
+
+### Unbatched output
+
+The standard preprocessor adds a batch dimension, so its output normally produces batched rewards.
+
+`compute_reward()` also accepts a directly constructed, unbatched composite trajectory with shape:
+
+```text
+(S, C, H, W)
+```
+
+For unbatched input:
+
+- sparse progress is returned as a scalar tensor;
+- dense progress is returned with shape `(T,)`;
+- success is returned as a scalar tensor.
+
+Sampling metadata is optional when `compute_reward()` is called directly with already constructed composites. Without metadata, the composite sequence is treated as the complete trajectory and no interpolation is necessary.
 
 ### Success output
 
@@ -146,7 +255,7 @@ reward_output="success"
 `compute_reward()` always returns one binary success value per trajectory:
 
 ```text
-output: (B,)
+batched output: (B,)
 ```
 
 This remains true when `dense=True`.
@@ -159,7 +268,7 @@ success = (
 ).float()
 ```
 
-Intermediate progress values do not affect the success result. For example, a trajectory with scaled progress:
+Intermediate progress values do not affect the result. For example, a trajectory with scaled progress:
 
 ```text
 [0.00, 0.90, 0.40]
@@ -183,20 +292,26 @@ from lerobot.rewards.soler1 import (
 config = SOLER1Config(
     device="cuda",
     external_image_key="observation.images.front",
+    wrist_image_key=None,
     reward_output="progress",
+    downsample_to=10,
 )
 
-preprocessor, _ = make_reward_pre_post_processors(config)
+preprocessor, _ = make_reward_pre_post_processors(
+    config
+)
 
 reward_model = SOLER1RewardModel(config)
-reward_model = reward_model.to(config.device).eval()
+reward_model = reward_model.to(
+    config.device
+).eval()
 
-# One trajectory containing eight RGB frames.
+# One channels-last trajectory containing eight RGB frames.
 trajectory = torch.rand(
     8,
-    3,
     480,
     640,
+    3,
 )
 
 batch = preprocessor(
@@ -223,8 +338,36 @@ dense_rewards = reward_model.compute_reward(
     dense=True,
 )
 
+# The trajectory contains eight original frames.
 assert dense_rewards.shape == (1, 8)
 assert dense_rewards[0, 0].item() == 0.0
+```
+
+For a trajectory longer than `downsample_to`, dense output is still returned at the original trajectory length:
+
+```python
+trajectory = torch.rand(
+    25,
+    480,
+    640,
+    3,
+)
+
+batch = preprocessor(
+    {
+        config.external_image_key: trajectory,
+        config.task_key: "pick up the cube",
+    }
+)
+
+dense_rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+# SOLE-R1 evaluates 10 sampled frames, then interpolates
+# the predictions back to all 25 original timesteps.
+assert dense_rewards.shape == (1, 25)
 ```
 
 ## Batch example
@@ -232,13 +375,13 @@ assert dense_rewards[0, 0].item() == 0.0
 ```python
 import torch
 
-# Two trajectories, each containing eight frames.
+# Two channels-last trajectories, each containing eight frames.
 trajectories = torch.rand(
     2,
     8,
-    3,
     480,
     640,
+    3,
 )
 
 batch = preprocessor(
@@ -255,6 +398,7 @@ sparse_rewards = reward_model.compute_reward(
     batch,
     dense=False,
 )
+
 dense_rewards = reward_model.compute_reward(
     batch,
     dense=True,
@@ -264,44 +408,71 @@ assert sparse_rewards.shape == (2,)
 assert dense_rewards.shape == (2, 8)
 ```
 
-Calling both sparse and dense inference as shown above evaluates the model twice. If both forms are needed, request dense rewards once and select the final column:
+Calling both sparse and dense inference as shown above evaluates the model twice. Generation may produce different predictions between calls when `temperature` is greater than zero.
+
+If both forms are needed, request dense progress once and select the final column:
 
 ```python
 dense_rewards = reward_model.compute_reward(
     batch,
     dense=True,
 )
+
 sparse_rewards = dense_rewards[:, -1]
 ```
 
-This shortcut applies to progress output. Success output should use `reward_output="success"` so the configured threshold is applied by the model.
+This shortcut applies to progress output. Success output should use `reward_output="success"` so that the configured threshold is applied by the model.
 
-## External and wrist cameras
+For deterministic generation, use:
 
 ```python
+config = SOLER1Config(
+    temperature=0.0,
+)
+```
+
+## External and wrist camera example
+
+```python
+import torch
+
+from lerobot.rewards.factory import (
+    make_reward_pre_post_processors,
+)
+from lerobot.rewards.soler1 import (
+    SOLER1Config,
+    SOLER1RewardModel,
+)
+
 config = SOLER1Config(
     device="cuda",
     external_image_key="observation.images.front",
     wrist_image_key="observation.images.wrist",
     reward_output="progress",
+    downsample_to=10,
 )
 
-preprocessor, _ = make_reward_pre_post_processors(config)
+preprocessor, _ = make_reward_pre_post_processors(
+    config
+)
 
 reward_model = SOLER1RewardModel(config)
-reward_model = reward_model.to(config.device).eval()
+reward_model = reward_model.to(
+    config.device
+).eval()
 
 external_trajectory = torch.rand(
-    8,
-    3,
+    25,
     480,
     640,
+    3,
 )
+
 wrist_trajectory = torch.rand(
-    8,
-    3,
+    25,
     480,
     640,
+    3,
 )
 
 batch = preprocessor(
@@ -309,6 +480,47 @@ batch = preprocessor(
         config.external_image_key: external_trajectory,
         config.wrist_image_key: wrist_trajectory,
         config.task_key: "place the object in the container",
+    }
+)
+
+rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+assert rewards.shape == (1, 25)
+```
+
+## Wrist-only example
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key=None,
+    wrist_image_key="observation.images.wrist",
+    reward_output="progress",
+)
+
+preprocessor, _ = make_reward_pre_post_processors(
+    config
+)
+
+reward_model = SOLER1RewardModel(config)
+reward_model = reward_model.to(
+    config.device
+).eval()
+
+wrist_trajectory = torch.rand(
+    8,
+    480,
+    640,
+    3,
+)
+
+batch = preprocessor(
+    {
+        config.wrist_image_key: wrist_trajectory,
+        config.task_key: "pick up the cube",
     }
 )
 
@@ -326,14 +538,26 @@ assert rewards.shape == (1, 8)
 config = SOLER1Config(
     device="cuda",
     external_image_key="observation.images.front",
+    wrist_image_key=None,
     reward_output="success",
-    success_threshold=0.95,
+    success_threshold=0.80,
 )
 
-preprocessor, _ = make_reward_pre_post_processors(config)
+preprocessor, _ = make_reward_pre_post_processors(
+    config
+)
 
 reward_model = SOLER1RewardModel(config)
-reward_model = reward_model.to(config.device).eval()
+reward_model = reward_model.to(
+    config.device
+).eval()
+
+trajectory = torch.rand(
+    8,
+    480,
+    640,
+    3,
+)
 
 batch = preprocessor(
     {
@@ -352,6 +576,59 @@ assert success.shape == (1,)
 assert success.item() in {0.0, 1.0}
 ```
 
+## Inspecting a composite image
+
+The preprocessor stores composite images as uint8 tensors with shape:
+
+```text
+(B, S, C, H, W)
+```
+
+A composite can be saved with Pillow:
+
+```python
+from pathlib import Path
+
+from PIL import Image
+
+from lerobot.rewards.soler1.processor_soler1 import (
+    SOLER1_COMPOSITE_IMAGE_KEY,
+)
+
+composites = batch[
+    SOLER1_COMPOSITE_IMAGE_KEY
+]
+
+batch_index = 0
+sampled_position = 1
+
+composite = (
+    composites[batch_index, sampled_position]
+    .detach()
+    .cpu()
+    .permute(1, 2, 0)
+    .contiguous()
+    .numpy()
+)
+
+output_path = Path(
+    "soler1_composite.png"
+)
+
+Image.fromarray(
+    composite,
+    mode="RGB",
+).save(output_path)
+```
+
+For a two-camera configuration, the saved image has this layout:
+
+```text
+external first | external previous sampled | external current sampled
+---------------------------------------------------------------------
+wrist first    | wrist previous sampled    | wrist current sampled
+```
+
 ## Invalid model outputs
 
 SOLE-R1 expects progress in the following format:
@@ -362,7 +639,7 @@ SOLE-R1 expects progress in the following format:
 
 If the preferred tags are missing, the parser falls back to the final percentage found in the generated text.
 
-By default, if no percentage can be parsed, SOLE-R1 reuses the progress predicted for the previous timestep:
+By default, if no percentage can be parsed, SOLE-R1 reuses the progress predicted for the previous sampled timestep:
 
 ```python
 config = SOLER1Config(
@@ -390,26 +667,31 @@ before `reward_scale` is applied.
 
 Important configuration fields include:
 
-| Field                  |                    Default | Description                                                    |
-| ---------------------- | -------------------------: | -------------------------------------------------------------- |
-| `model_name`           |  `"Philip-MIT/SOLE-R1-8B"` | Hugging Face model identifier or local checkpoint path.        |
-| `external_image_key`   | `"observation.images.top"` | External-camera observation key.                               |
-| `wrist_image_key`      |                     `None` | Optional wrist-camera observation key.                         |
-| `task_key`             |                   `"task"` | Key containing the task description.                           |
-| `default_task`         |                     `None` | Fallback task description when `task_key` is absent.           |
-| `reward_output`        |               `"progress"` | Output type: `"progress"` or `"success"`.                      |
-| `success_threshold`    |                     `0.95` | Threshold applied to final scaled progress for success output. |
-| `reward_scale`         |                     `0.01` | Scale applied to predicted progress percentages.               |
-| `min_progress`         |                   `-100.0` | Minimum accepted progress percentage.                          |
-| `max_progress`         |                    `100.0` | Maximum accepted progress percentage.                          |
-| `fallback_to_previous` |                     `True` | Reuse previous progress when parsing fails.                    |
-| `torch_dtype`          |               `"bfloat16"` | Torch dtype used to load the model.                            |
-| `attn_implementation`  |                     `None` | Optional Transformers attention implementation.                |
-| `max_new_tokens`       |                      `600` | Maximum generated tokens per timestep.                         |
-| `temperature`          |                      `1.0` | Generation sampling temperature. Zero enables greedy decoding. |
-| `top_p`                |                      `0.9` | Nucleus-sampling probability.                                  |
-| `top_k`                |                       `50` | Top-k sampling parameter.                                      |
-| `max_input_length`     |                    `16384` | Maximum permitted tokenized input length.                      |
+| Field                  |                    Default | Description                                                         |
+| ---------------------- | -------------------------: | ------------------------------------------------------------------- |
+| `model_name`           |  `"Philip-MIT/SOLE-R1-8B"` | Hugging Face model identifier or local checkpoint path.             |
+| `external_image_key`   | `"observation.images.top"` | Optional external-camera observation key.                           |
+| `wrist_image_key`      |                     `None` | Optional wrist-camera observation key.                              |
+| `task_key`             |                   `"task"` | Key containing the task description.                                |
+| `default_task`         |     `"Complete the task."` | Fallback task description when `task_key` is absent.                |
+| `downsample_to`        |                       `10` | Maximum uniformly sampled frames. `None` processes every frame.     |
+| `reward_output`        |               `"progress"` | Output type: `"progress"` or `"success"`.                           |
+| `success_threshold`    |                     `0.80` | Threshold applied to final scaled progress for success output.      |
+| `reward_scale`         |                     `0.01` | Scale applied to predicted progress percentages.                    |
+| `min_progress`         |                   `-100.0` | Minimum accepted progress percentage.                               |
+| `max_progress`         |                    `100.0` | Maximum accepted progress percentage.                               |
+| `fallback_to_previous` |                     `True` | Reuse previous progress when parsing fails.                         |
+| `torch_dtype`          |               `"bfloat16"` | Torch dtype used to load the model.                                 |
+| `attn_implementation`  |                     `None` | Optional Transformers attention implementation.                     |
+| `max_new_tokens`       |                      `600` | Maximum generated tokens per sampled timestep.                      |
+| `temperature`          |                      `1.0` | Generation temperature. Zero enables deterministic greedy decoding. |
+| `top_p`                |                      `0.9` | Nucleus-sampling probability.                                       |
+| `top_k`                |                       `50` | Top-k sampling parameter.                                           |
+| `max_input_length`     |                    `16384` | Maximum permitted tokenized input length.                           |
+
+Both `external_image_key` and `wrist_image_key` are optional individually, but they cannot both be `None`.
+
+`downsample_to` must be a positive integer or `None`.
 
 ## Model identifier
 

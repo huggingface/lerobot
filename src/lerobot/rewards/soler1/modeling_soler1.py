@@ -20,17 +20,11 @@ Original code: https://github.com/Philip-MIT/rewardgen
 Model:         https://huggingface.co/Philip-MIT/SOLE-R1-8B
 
 SOLE-R1 estimates task progress from a composite image containing the first,
-previous, and current robot observations. When two cameras are configured, the
-external-camera temporal row is placed above the wrist-camera temporal row.
+previous, and current observations. With two cameras, the external-camera
+temporal row is placed above the wrist-camera temporal row.
 
-The preprocessor creates the composite image and stores it under
-``observation.soler1.composite_image``. This class builds the SOLE-R1 prompt,
-runs the underlying vision-language model with Transformers, parses the
-predicted progress percentage, and retains that prediction for the next
-timestep's prompt.
-
-This implementation is inference-only and does not depend on RewardGen or
-vLLM.
+This implementation is inference-only and depends on Transformers rather than
+RewardGen or vLLM.
 """
 
 from __future__ import annotations
@@ -42,6 +36,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
@@ -56,6 +51,8 @@ from lerobot.rewards.soler1.processor_soler1 import (
     COMPOSITE_WIDTH,
     SINGLE_VIEW_COMPOSITE_HEIGHT,
     SOLER1_COMPOSITE_IMAGE_KEY,
+    SOLER1_ORIGINAL_LENGTH_KEY,
+    SOLER1_SAMPLE_INDICES_KEY,
     TWO_VIEW_COMPOSITE_HEIGHT,
 )
 from lerobot.utils.import_utils import (
@@ -64,7 +61,10 @@ from lerobot.utils.import_utils import (
 )
 
 if TYPE_CHECKING or _transformers_available:
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers import (
+        AutoModelForImageTextToText,
+        AutoProcessor,
+    )
 else:
     AutoModelForImageTextToText = None  # type: ignore[assignment, misc]
     AutoProcessor = None  # type: ignore[assignment, misc]
@@ -118,6 +118,19 @@ EXTERNAL_ONLY_PROMPT = (
     "Predict the task progress for the current timestep."
 )
 
+WRIST_ONLY_PROMPT = (
+    "Here is an image containing multiple camera views of a robot attempting "
+    "to complete a task. "
+    "The views are from the robot's wrist camera. "
+    "The views from the very first timestep are shown to the left. "
+    "The views from the previous timestep are shown in the middle. "
+    "The views from the current timestep are shown to the right. "
+    "The task description is: {task_description}. "
+    "The task progress for the very first timestep is 0%. "
+    "The task progress for the previous timestep is {previous_progress}%. "
+    "Predict the task progress for the current timestep."
+)
+
 _ANSWER_PATTERN = re.compile(
     r"<answer>\s*([-+]?\d+(?:\.\d+)?)\s*%?\s*</answer>",
     flags=re.IGNORECASE | re.DOTALL,
@@ -152,7 +165,7 @@ def _extract_task_value(
     *,
     task_key: str,
 ) -> Any:
-    """Read the task from the flattened batch or complementary data."""
+    """Read the task from a flattened batch or complementary data."""
 
     if task_key in batch:
         return batch[task_key]
@@ -170,7 +183,7 @@ def _expand_tasks(
     batch_size: int,
     default_task: str | None,
 ) -> list[str]:
-    """Expand one task description to match the image batch."""
+    """Expand task descriptions to match the trajectory batch."""
 
     if task is None:
         task = default_task
@@ -196,8 +209,10 @@ def _expand_tasks(
     return task
 
 
-def _composite_batch_to_pil(composites: Tensor) -> list[Image.Image]:
-    """Convert ``(B, 3, H, W)`` composite tensors to PIL images."""
+def _composite_batch_to_pil(
+    composites: Tensor,
+) -> list[Image.Image]:
+    """Convert ``(B,3,H,W)`` composite tensors to PIL images."""
 
     if composites.ndim != 4:
         raise ValueError(
@@ -218,7 +233,13 @@ def _composite_batch_to_pil(composites: Tensor) -> list[Image.Image]:
 
     images = images.clamp(0, 255).round().to(torch.uint8).permute(0, 2, 3, 1).contiguous()
 
-    return [Image.fromarray(image.numpy(), mode="RGB") for image in images]
+    return [
+        Image.fromarray(
+            image.numpy(),
+            mode="RGB",
+        )
+        for image in images
+    ]
 
 
 def _parse_progress(
@@ -227,11 +248,10 @@ def _parse_progress(
     minimum: float,
     maximum: float,
 ) -> float | None:
-    """Parse and clamp the progress percentage produced by SOLE-R1.
+    """Parse and clamp a SOLE-R1 progress percentage.
 
-    The preferred format is ``<answer>42%</answer>``. If those tags are
-    missing, the final percentage appearing in the completion is used.
-    If no percentage can be parsed, ``None`` is returned.
+    The preferred format is ``<answer>42%</answer>``. If the answer
+    tags are absent, the final percentage in the completion is used.
     """
 
     answer_matches = list(_ANSWER_PATTERN.finditer(completion))
@@ -240,6 +260,7 @@ def _parse_progress(
         value_text = answer_matches[-1].group(1)
     else:
         percentage_matches = list(_PERCENT_PATTERN.finditer(completion))
+
         if not percentage_matches:
             logger.warning(
                 "Could not parse SOLE-R1 progress from completion: %r",
@@ -258,10 +279,15 @@ def _parse_progress(
         )
         return None
 
-    return min(maximum, max(minimum, value))
+    return min(
+        maximum,
+        max(minimum, value),
+    )
 
 
-def extract_reasoning_trace(completion: str) -> str:
+def extract_reasoning_trace(
+    completion: str,
+) -> str:
     """Extract the optional reasoning trace from a completion."""
 
     match = _THINK_PATTERN.search(completion)
@@ -277,8 +303,14 @@ class SOLER1RewardModel(PreTrainedRewardModel):
     name = "sole-r1"
     config_class = SOLER1Config
 
-    def __init__(self, config: SOLER1Config) -> None:
-        require_package("transformers", extra="soler1")
+    def __init__(
+        self,
+        config: SOLER1Config,
+    ) -> None:
+        require_package(
+            "transformers",
+            extra="soler1",
+        )
 
         super().__init__(config)
         self.config = config
@@ -313,8 +345,11 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         self.last_completions = []
         self.last_reasoning_traces = []
 
-    def _validate_composite_shape(self, composites: Tensor) -> None:
-        """Validate trajectory composites emitted by the preprocessor."""
+    def _validate_composite_shape(
+        self,
+        composites: Tensor,
+    ) -> None:
+        """Validate composites emitted by the SOLE-R1 preprocessor."""
 
         if composites.ndim != 5:
             raise ValueError(
@@ -325,26 +360,22 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         if composites.shape[1] < 1:
             raise ValueError("SOLE-R1 requires at least one timestep per trajectory")
 
-        expected_height = (
-            TWO_VIEW_COMPOSITE_HEIGHT
-            if self.config.wrist_image_key is not None
-            else SINGLE_VIEW_COMPOSITE_HEIGHT
-        )
-        expected_width = COMPOSITE_WIDTH
-
+        has_two_views = self.config.external_image_key is not None and self.config.wrist_image_key is not None
+        expected_height = TWO_VIEW_COMPOSITE_HEIGHT if has_two_views else SINGLE_VIEW_COMPOSITE_HEIGHT
         expected_suffix = (
             3,
             expected_height,
-            expected_width,
+            COMPOSITE_WIDTH,
         )
 
         if tuple(composites.shape[2:]) != expected_suffix:
             raise ValueError(
-                "SOLE-R1 received trajectory composites with the wrong "
-                f"shape. Got {tuple(composites.shape)}; expected "
-                f"(B,T,{expected_suffix[0]},{expected_suffix[1]},"
-                f"{expected_suffix[2]}). Make sure "
-                "SOLER1CompositeProcessorStep ran before compute_reward()."
+                "SOLE-R1 received trajectory composites with the "
+                f"wrong shape. Got {tuple(composites.shape)}; "
+                f"expected (B,T,{expected_suffix[0]},"
+                f"{expected_suffix[1]},{expected_suffix[2]}). "
+                "Make sure SOLER1CompositeProcessorStep ran before "
+                "compute_reward()."
             )
 
     def _build_prompt(
@@ -353,11 +384,14 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         task_description: str,
         previous_progress: float,
     ) -> str:
-        """Build the user prompt for one sample."""
+        """Build the user prompt for one trajectory."""
 
-        template = (
-            EXTERNAL_AND_WRIST_PROMPT if self.config.wrist_image_key is not None else EXTERNAL_ONLY_PROMPT
-        )
+        if self.config.external_image_key is not None and self.config.wrist_image_key is not None:
+            template = EXTERNAL_AND_WRIST_PROMPT
+        elif self.config.wrist_image_key is not None:
+            template = WRIST_ONLY_PROMPT
+        else:
+            template = EXTERNAL_ONLY_PROMPT
 
         previous_progress_text = (
             str(int(previous_progress)) if previous_progress.is_integer() else f"{previous_progress:g}"
@@ -375,7 +409,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         tasks: list[str],
         previous_progress: list[float],
     ) -> dict[str, Tensor]:
-        """Build and encode the multimodal chat prompts."""
+        """Build and encode a batch of multimodal prompts."""
 
         prompt_texts: list[str] = []
 
@@ -426,16 +460,19 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             return_tensors="pt",
         )
 
-        if encoded["input_ids"].shape[1] > self.config.max_input_length:
+        input_length = encoded["input_ids"].shape[1]
+        if input_length > self.config.max_input_length:
             raise ValueError(
-                f"SOLE-R1 input length {encoded['input_ids'].shape[1]} "
-                f"exceeds max_input_length {self.config.max_input_length}."
+                f"SOLE-R1 input length {input_length} exceeds "
+                f"max_input_length {self.config.max_input_length}."
             )
 
         return dict(encoded)
 
-    def _generation_kwargs(self) -> dict[str, Any]:
-        """Build Transformers generation arguments from the configuration."""
+    def _generation_kwargs(
+        self,
+    ) -> dict[str, Any]:
+        """Build Transformers generation arguments."""
 
         do_sample = self.config.temperature > 0
 
@@ -453,7 +490,12 @@ class SOLER1RewardModel(PreTrainedRewardModel):
                 }
             )
 
-        tokenizer = getattr(self.processor, "tokenizer", None)
+        tokenizer = getattr(
+            self.processor,
+            "tokenizer",
+            None,
+        )
+
         if tokenizer is not None:
             if tokenizer.pad_token_id is None:
                 tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -469,37 +511,89 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         *,
         dense: bool = False,
     ) -> Tensor:
-        """Compute progress or success rewards for complete trajectories.
+        """Compute progress or success from sampled trajectory composites.
+
+        Downsampling has already been performed by
+        ``SOLER1CompositeProcessorStep`` before composite creation.
 
         Args:
-            batch: Preprocessed trajectory batch. The SOLE-R1 composite tensor
-                must have shape ``(B, T, C, H, W)``.
-            dense: When ``True`` and ``reward_output="progress"``, return
-                progress for every timestep with shape ``(B, T)``. Otherwise,
-                return only final progress with shape ``(B,)``.
-
-                Success output is always sparse with shape ``(B,)`` and is
-                computed by thresholding final-timestep progress.
+            batch: Preprocessed SOLE-R1 inputs. Composites use
+                ``(B,S,C,H,W)`` or unbatched ``(S,C,H,W)``, where ``S``
+                is the sampled trajectory length.
+            dense: For progress output, interpolate sampled predictions
+                back to the original trajectory length. Otherwise return
+                final sampled progress. Success is always trajectory-level.
 
         Returns:
-            Progress rewards with shape ``(B,)`` or ``(B, T)``, or binary
-            success values with shape ``(B,)``.
+            Batched progress with shape ``(B,)`` or ``(B,T)``. Batched
+            success has shape ``(B,)``. Unbatched output drops ``B``.
         """
 
         if SOLER1_COMPOSITE_IMAGE_KEY not in batch:
             raise KeyError(
-                f"SOLE-R1 batch is missing "
+                "SOLE-R1 batch is missing "
                 f"{SOLER1_COMPOSITE_IMAGE_KEY!r}. Make sure "
-                "SOLER1CompositeProcessorStep ran before compute_reward()."
+                "SOLER1CompositeProcessorStep ran before "
+                "compute_reward()."
             )
 
         composites = batch[SOLER1_COMPOSITE_IMAGE_KEY]
+
         if not isinstance(composites, Tensor):
             composites = torch.as_tensor(composites)
 
+        unbatched = composites.ndim == 4
+        if unbatched:
+            composites = composites.unsqueeze(0)
+
         self._validate_composite_shape(composites)
 
-        batch_size, trajectory_length = composites.shape[:2]
+        batch_size, sampled_length = composites.shape[:2]
+
+        raw_sample_indices = batch.get(SOLER1_SAMPLE_INDICES_KEY)
+        raw_original_length = batch.get(SOLER1_ORIGINAL_LENGTH_KEY)
+
+        # Sampling metadata is optional for direct calls using already
+        # constructed composites. Without metadata, no interpolation is
+        # necessary.
+        if raw_sample_indices is None:
+            sample_indices = np.arange(
+                sampled_length,
+                dtype=int,
+            )
+        else:
+            if isinstance(
+                raw_sample_indices,
+                Tensor,
+            ):
+                raw_sample_indices = raw_sample_indices.detach().cpu().numpy()
+
+            sample_indices = np.asarray(
+                raw_sample_indices,
+                dtype=int,
+            ).reshape(-1)
+
+        if len(sample_indices) != sampled_length:
+            raise ValueError(f"SOLE-R1 expected {sampled_length} sample indices; got {len(sample_indices)}")
+
+        if raw_original_length is None:
+            original_length = sampled_length
+        elif isinstance(
+            raw_original_length,
+            Tensor,
+        ):
+            original_length = int(raw_original_length.detach().cpu().reshape(-1)[0].item())
+        else:
+            original_length = int(raw_original_length)
+
+        if original_length < 1:
+            raise ValueError(f"SOLE-R1 original trajectory length must be positive; got {original_length}")
+
+        if np.any(sample_indices < 0) or np.any(sample_indices >= original_length):
+            raise ValueError("SOLE-R1 received sample indices outside the original trajectory range")
+
+        if len(sample_indices) > 1 and np.any(np.diff(sample_indices) <= 0):
+            raise ValueError("SOLE-R1 sample indices must be strictly increasing")
 
         task_value = _extract_task_value(
             batch,
@@ -513,11 +607,12 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         model_device = next(self.model.parameters()).device
 
-        # SOLE-R1 defines the first timestep as exactly 0% progress.
+        # The first sampled frame is the original first frame and is
+        # defined as exactly 0% progress.
         progress_values = [0.0] * batch_size
-        dense_progress = torch.zeros(
+        sampled_progress = torch.zeros(
             batch_size,
-            trajectory_length,
+            sampled_length,
             dtype=torch.float32,
             device=model_device,
         )
@@ -526,10 +621,17 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         self.last_completions = [""] * batch_size
         self.last_reasoning_traces = [""] * batch_size
 
-        # Timesteps must be evaluated sequentially because the prediction for
-        # timestep t is conditioned on the predicted progress at timestep t-1.
-        for timestep in range(1, trajectory_length):
-            images = _composite_batch_to_pil(composites[:, timestep])
+        # Sampled positions are evaluated sequentially because position
+        # s is conditioned on the prediction at sampled position s - 1.
+        for sampled_position in range(
+            1,
+            sampled_length,
+        ):
+            original_timestep = int(sample_indices[sampled_position])
+
+            # Composites are indexed by sampled position, not by their
+            # original trajectory timestep.
+            images = _composite_batch_to_pil(composites[:, sampled_position])
 
             encoded = self._encode_batch(
                 images=images,
@@ -548,7 +650,10 @@ class SOLER1RewardModel(PreTrainedRewardModel):
                 **encoded,
                 **self._generation_kwargs(),
             )
-            generated_only_ids = generated_ids[:, input_length:]
+            generated_only_ids = generated_ids[
+                :,
+                input_length:,
+            ]
 
             completions = self.processor.batch_decode(
                 generated_only_ids,
@@ -572,14 +677,21 @@ class SOLER1RewardModel(PreTrainedRewardModel):
                 if progress is None:
                     if not self.config.fallback_to_previous:
                         raise ValueError(
-                            f"Could not parse SOLE-R1 completion at timestep {timestep}: {completion!r}"
+                            "Could not parse SOLE-R1 completion at "
+                            f"original timestep {original_timestep}: "
+                            f"{completion!r}"
                         )
+
                     progress = previous_value
 
                 next_progress_values.append(progress)
 
             progress_values = next_progress_values
-            dense_progress[:, timestep] = torch.tensor(
+
+            sampled_progress[
+                :,
+                sampled_position,
+            ] = torch.tensor(
                 progress_values,
                 dtype=torch.float32,
                 device=model_device,
@@ -589,10 +701,37 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             self.last_completions = list(completions)
             self.last_reasoning_traces = [extract_reasoning_trace(completion) for completion in completions]
 
-        return self._format_rewards(
-            dense_progress,
+        progress_percentages = sampled_progress
+
+        if dense and sampled_length != original_length:
+            target_indices = np.arange(
+                original_length,
+                dtype=float,
+            )
+
+            interpolated = np.stack(
+                [
+                    np.interp(
+                        target_indices,
+                        sample_indices.astype(float),
+                        values.detach().cpu().numpy(),
+                    )
+                    for values in sampled_progress
+                ]
+            )
+
+            progress_percentages = torch.as_tensor(
+                interpolated,
+                dtype=torch.float32,
+                device=model_device,
+            )
+
+        rewards = self._format_rewards(
+            progress_percentages,
             dense=dense,
         )
+
+        return rewards.squeeze(0) if unbatched else rewards
 
     def _format_rewards(
         self,
@@ -600,16 +739,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         *,
         dense: bool,
     ) -> Tensor:
-        """Scale progress and select dense, sparse, or success output.
-
-        Args:
-            progress_percentages: Progress percentages with shape ``(B, T)``.
-            dense: Whether progress output should retain the time dimension.
-
-        Returns:
-            ``(B, T)`` for dense progress, or ``(B,)`` for sparse progress
-            and success.
-        """
+        """Scale progress and select dense, sparse, or success output."""
 
         if progress_percentages.ndim != 2:
             raise ValueError(
@@ -618,10 +748,12 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             )
 
         progress_rewards = progress_percentages.float() * self.config.reward_scale
-        final_progress = progress_rewards[:, -1]
+        final_progress = progress_rewards[
+            :,
+            -1,
+        ]
 
         if self.config.reward_output == "success":
-            # Success is always trajectory-level, including when dense=True.
             rewards = (final_progress > self.config.success_threshold).float()
         elif dense:
             rewards = progress_rewards
@@ -630,12 +762,11 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         return rewards.to(self.config.device or "cpu")
 
-    def _save_pretrained(self, save_directory: Path) -> None:
-        """Save only the LeRobot SOLE-R1 configuration.
-
-        The underlying VLM remains identified by ``config.model_name`` and is
-        loaded from its original Hugging Face repository.
-        """
+    def _save_pretrained(
+        self,
+        save_directory: Path,
+    ) -> None:
+        """Save only the LeRobot SOLE-R1 configuration."""
 
         self.config._save_pretrained(save_directory)
 
@@ -655,7 +786,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         strict: bool = False,
         **kwargs: Any,
     ) -> T:
-        """Load a LeRobot SOLE-R1 configuration and its referenced VLM."""
+        """Load a SOLE-R1 wrapper configuration and referenced VLM."""
 
         del strict
 
@@ -674,8 +805,9 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         if not isinstance(config, SOLER1Config):
             raise TypeError(
-                f"Expected SOLER1Config, got {type(config).__name__}. "
-                f"Make sure {pretrained_name_or_path!r} points to a "
+                "Expected SOLER1Config, got "
+                f"{type(config).__name__}. Make sure "
+                f"{pretrained_name_or_path!r} points to a "
                 "LeRobot SOLE-R1 configuration."
             )
 
@@ -702,4 +834,5 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         instance = cls(config)
         instance.to(config.device)
         instance.eval()
+
         return instance

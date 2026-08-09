@@ -25,6 +25,8 @@ from lerobot.rewards.soler1.processor_soler1 import (
     FRAME_SIZE,
     PADDING,
     SOLER1_COMPOSITE_IMAGE_KEY,
+    SOLER1_ORIGINAL_LENGTH_KEY,
+    SOLER1_SAMPLE_INDICES_KEY,
     SOLER1CompositeProcessorStep,
     _to_btchw_uint8,
 )
@@ -511,9 +513,147 @@ def test_get_config():
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
         wrist_image_key=WRIST_KEY,
+        downsample_to=10,
     )
 
     assert step.get_config() == {
         "external_image_key": EXTERNAL_KEY,
         "wrist_image_key": WRIST_KEY,
+        "downsample_to": 10,
     }
+
+
+def test_get_config_preserves_custom_downsample_to():
+    step = SOLER1CompositeProcessorStep(
+        external_image_key=EXTERNAL_KEY,
+        wrist_image_key=None,
+        downsample_to=5,
+    )
+
+    assert step.get_config() == {
+        "external_image_key": EXTERNAL_KEY,
+        "wrist_image_key": None,
+        "downsample_to": 5,
+    }
+
+
+def test_to_btchw_uint8_accepts_unbatched_channels_last_trajectory():
+    images = torch.ones(
+        5,
+        4,
+        6,
+        3,
+        dtype=torch.uint8,
+    )
+
+    result = _to_btchw_uint8(
+        images,
+        image_key="image",
+    )
+
+    assert result.shape == (1, 5, 3, 4, 6)
+
+
+def test_wrist_only_trajectory_composites():
+    step = SOLER1CompositeProcessorStep(
+        external_image_key=None,
+        wrist_image_key=WRIST_KEY,
+    )
+    wrist = _batched_video([[10, 20]])
+    transition = {
+        TransitionKey.OBSERVATION: {
+            WRIST_KEY: wrist,
+        },
+        TransitionKey.COMPLEMENTARY_DATA: {
+            "task": "pick up the cube",
+        },
+    }
+
+    output = step(transition)
+    composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
+
+    assert composites.shape == (
+        1,
+        2,
+        3,
+        FRAME_SIZE,
+        COMPOSITE_WIDTH,
+    )
+    assert torch.all(composites[:, 1, ..., :FRAME_SIZE] == 10)
+    assert torch.all(
+        composites[
+            :,
+            1,
+            ...,
+            2 * (FRAME_SIZE + PADDING) :,
+        ]
+        == 20
+    )
+
+
+def test_downsampling_happens_before_composite_construction():
+    step = SOLER1CompositeProcessorStep(
+        external_image_key=EXTERNAL_KEY,
+        downsample_to=3,
+    )
+
+    # Original indices: 0, 1, 2, 3, 4
+    # Sampled indices:  0, 2, 4
+    external = _batched_video([[10, 20, 30, 40, 50]])
+
+    output = step(_transition(external))
+    observation = output[TransitionKey.OBSERVATION]
+
+    composites = observation[SOLER1_COMPOSITE_IMAGE_KEY]
+    sample_indices = observation[SOLER1_SAMPLE_INDICES_KEY]
+    original_length = observation[SOLER1_ORIGINAL_LENGTH_KEY]
+
+    assert sample_indices.tolist() == [
+        0,
+        2,
+        4,
+    ]
+    assert original_length.item() == 5
+    assert composites.shape == (
+        1,
+        3,
+        3,
+        FRAME_SIZE,
+        COMPOSITE_WIDTH,
+    )
+
+    # Sampled position 1 corresponds to original frame 2.
+    # Its previous sampled frame is original frame 0, not frame 1.
+    previous_column = composites[
+        :,
+        1,
+        ...,
+        FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
+    ]
+    current_column = composites[
+        :,
+        1,
+        ...,
+        2 * (FRAME_SIZE + PADDING) :,
+    ]
+
+    assert torch.all(previous_column == 10)
+    assert torch.all(current_column == 30)
+
+    # Sampled position 2 corresponds to original frame 4.
+    # Its previous sampled frame is original frame 2.
+    previous_column = composites[
+        :,
+        2,
+        ...,
+        FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
+    ]
+    current_column = composites[
+        :,
+        2,
+        ...,
+        2 * (FRAME_SIZE + PADDING) :,
+    ]
+
+    assert torch.all(previous_column == 30)
+    assert torch.all(current_column == 50)

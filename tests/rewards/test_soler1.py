@@ -48,10 +48,10 @@ def test_soler1_transformers_end_to_end():
     try:
         trajectory = torch.stack(
             [
-                torch.zeros(3, 64, 64),
-                torch.ones(3, 64, 64),
+                torch.zeros(64, 64, 3),
+                torch.ones(64, 64, 3),
             ]
-        ).unsqueeze(0)  # shape: (1, 2, 3, 64, 64)
+        )  # shape: (2, 64, 64, 3)
 
         batch = preprocessor(
             {
