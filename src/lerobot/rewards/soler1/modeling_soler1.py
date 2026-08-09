@@ -16,7 +16,6 @@
 
 Paper:         https://arxiv.org/abs/2603.28730
 Project:       https://philip-mit.github.io/sole-r1/
-Original code: https://github.com/Philip-MIT/rewardgen
 Model:         https://huggingface.co/Philip-MIT/SOLE-R1-8B
 
 SOLE-R1 estimates task progress from a composite image containing the first,
@@ -511,22 +510,25 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         *,
         dense: bool = False,
     ) -> Tensor:
-        """Compute progress or success from sampled trajectory composites.
+        """Compute SOLE-R1 rewards for one or more trajectories.
 
-        Downsampling has already been performed by
-        ``SOLER1CompositeProcessorStep`` before composite creation.
+        The first sampled timestep is assigned 0% progress. Every subsequent
+        prediction is generated sequentially because SOLE-R1 conditions the
+        current estimate on the previous predicted progress.
 
         Args:
-            batch: Preprocessed SOLE-R1 inputs. Composites use
-                ``(B,S,C,H,W)`` or unbatched ``(S,C,H,W)``, where ``S``
-                is the sampled trajectory length.
-            dense: For progress output, interpolate sampled predictions
-                back to the original trajectory length. Otherwise return
-                final sampled progress. Success is always trajectory-level.
+            batch: Output of ``SOLER1CompositeProcessorStep``. Composite images
+                have shape ``(B, S, C, H, W)``. Direct unbatched calls may use
+                ``(S, C, H, W)``.
+            dense: When ``False``, return the final reward for each trajectory,
+                matching LeRobot's standard reward-model API. When ``True`` and
+                ``reward_output="progress"``, interpolate sampled predictions
+                back to every original trajectory timestep.
 
         Returns:
-            Batched progress with shape ``(B,)`` or ``(B,T)``. Batched
-            success has shape ``(B,)``. Unbatched output drops ``B``.
+            With ``dense=False``, a tensor of shape ``(B,)``. With dense progress,
+            a tensor of shape ``(B, T)``. A direct unbatched call drops the leading
+            batch dimension.
         """
 
         if SOLER1_COMPOSITE_IMAGE_KEY not in batch:
@@ -739,8 +741,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         *,
         dense: bool,
     ) -> Tensor:
-        """Scale progress and select dense, sparse, or success output."""
-
+        """Scale progress and select final, dense, or success output."""
         if progress_percentages.ndim != 2:
             raise ValueError(
                 "SOLE-R1 expected progress percentages with shape "
@@ -748,10 +749,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             )
 
         progress_rewards = progress_percentages.float() * self.config.reward_scale
-        final_progress = progress_rewards[
-            :,
-            -1,
-        ]
+        final_progress = progress_rewards[:, -1]
 
         if self.config.reward_output == "success":
             rewards = (final_progress > self.config.success_threshold).float()

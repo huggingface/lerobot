@@ -60,13 +60,13 @@ class SOLER1Config(RewardModelConfig):
     pretrained_path: str | None = None
 
     model_name: str = "Philip-MIT/SOLE-R1-8B"
-    torch_dtype: str = "bfloat16"
+    torch_dtype: str = "auto"
     attn_implementation: str | None = None
 
     external_image_key: str | None = OBS_IMAGES + ".top"
     wrist_image_key: str | None = None
     task_key: str = "task"
-    default_task: str | None = "Complete the task."
+    default_task: str | None = None
     downsample_to: int | None = 10
 
     max_new_tokens: int = 600
@@ -131,7 +131,7 @@ class SOLER1Config(RewardModelConfig):
             self.input_features.setdefault(
                 self.external_image_key,
                 PolicyFeature(
-                    shape=(224, 224, 3),
+                    shape=(3, 224, 224),
                     type=FeatureType.VISUAL,
                 ),
             )
@@ -140,20 +140,13 @@ class SOLER1Config(RewardModelConfig):
             self.input_features.setdefault(
                 self.wrist_image_key,
                 PolicyFeature(
-                    shape=(224, 224, 3),
+                    shape=(3, 224, 224),
                     type=FeatureType.VISUAL,
                 ),
             )
 
         self.output_features.setdefault(
-            "progress",
-            PolicyFeature(
-                shape=(1,),
-                type=FeatureType.REWARD,
-            ),
-        )
-        self.output_features.setdefault(
-            "success",
+            "reward",
             PolicyFeature(
                 shape=(1,),
                 type=FeatureType.REWARD,
