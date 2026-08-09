@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 
 import numpy as np
 
@@ -607,21 +608,19 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
         "count": total_count,
     }
 
-    if stats_ft_list:
-        quantile_keys = [k for k in stats_ft_list[0] if k.startswith("q") and k[1:].isdigit()]
+    quantile_keys = [k for k in stats_ft_list[0] if k.startswith("q") and k[1:].isdigit()]
+    common_quantile_keys = [q_key for q_key in quantile_keys if all(q_key in s for s in stats_ft_list)]
 
-        for q_key in quantile_keys:
-            if all(q_key in s for s in stats_ft_list):
-                quantile_values = np.stack([s[q_key] for s in stats_ft_list])
-                # Exact global quantiles cannot be recovered from quantile summaries.
-                # Keep a conservative envelope of the available estimates: min
-                # for lower quantiles and max for upper quantiles. The resulting
-                # values are bounds across the inputs, not global quantile estimates.
-                q_percent = int(q_key[1:])
-                if q_percent <= 50:
-                    aggregated[q_key] = np.min(quantile_values, axis=0)
-                else:
-                    aggregated[q_key] = np.max(quantile_values, axis=0)
+    if len(stats_ft_list) == 1:
+        for q_key in common_quantile_keys:
+            aggregated[q_key] = stats_ft_list[0][q_key].copy()
+    elif common_quantile_keys:
+        warnings.warn(
+            "Quantiles cannot be combined accurately from per-source summary statistics; "
+            "omitting aggregated quantiles. Recompute them from raw samples instead.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return aggregated
 

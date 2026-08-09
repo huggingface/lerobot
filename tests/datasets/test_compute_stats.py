@@ -687,8 +687,7 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
-def test_aggregate_feature_stats_with_quantiles():
-    """Test aggregating feature stats that include quantiles uses conservative bounds."""
+def test_aggregate_feature_stats_omits_non_composable_quantiles():
     stats_ft_list = [
         {
             "min": np.array([1.0]),
@@ -716,14 +715,11 @@ def test_aggregate_feature_stats_with_quantiles():
         },
     ]
 
-    result = aggregate_feature_stats(stats_ft_list)
+    with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
+        result = aggregate_feature_stats(stats_ft_list)
 
-    # Lower quantiles use min; upper quantiles use max, regardless of counts.
-    np.testing.assert_allclose(result["q01"], np.array([1.5]), atol=1e-6)
-    np.testing.assert_allclose(result["q10"], np.array([2.0]), atol=1e-6)
-    np.testing.assert_allclose(result["q50"], np.array([5.0]), atol=1e-6)
-    np.testing.assert_allclose(result["q90"], np.array([11.0]), atol=1e-6)
-    np.testing.assert_allclose(result["q99"], np.array([11.5]), atol=1e-6)
+    assert "q01" not in result
+    assert "q99" not in result
 
 
 def test_aggregate_stats_mixed_quantiles():
@@ -882,58 +878,52 @@ def test_fixed_quantiles_always_computed():
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
 
 
-def test_aggregate_stats_incremental_resume():
-    """Verify conservative bounds remain associative across incremental additions."""
-    # Start with episode 1 stats (narrow distribution)
-    ep1_stats = {
-        "action": {
-            "min": np.array([-10.0, -5.0]),
-            "max": np.array([10.0, 5.0]),
-            "mean": np.array([0.0, 0.0]),
-            "std": np.array([3.0, 1.5]),
-            "count": np.array([500]),
-            "q01": np.array([-9.0, -4.5]),
-            "q99": np.array([9.0, 4.5]),
-        },
-    }
-
-    # Episode 2: wider distribution on dim 0
-    ep2_stats = {
-        "action": {
-            "min": np.array([-30.0, -5.0]),
-            "max": np.array([40.0, 6.0]),
-            "mean": np.array([5.0, 0.5]),
-            "std": np.array([15.0, 2.0]),
+def test_aggregate_stats_omits_non_composable_quantiles():
+    stats_1 = {
+        "observation.image": {
+            "min": np.array([0.0, 0.0, 0.0]).reshape(3, 1, 1),
+            "max": np.array([1.0, 1.0, 1.0]).reshape(3, 1, 1),
+            "mean": np.array([0.4, 0.4, 0.4]).reshape(3, 1, 1),
+            "std": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
             "count": np.array([100]),
-            "q01": np.array([-25.0, -4.0]),
-            "q99": np.array([35.0, 5.5]),
-        },
+            "q01": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
+            "q99": np.array([0.9, 0.9, 0.9]).reshape(3, 1, 1),
+        }
+    }
+    stats_2 = {
+        "observation.image": {
+            "min": np.array([0.0, 0.0, 0.0]).reshape(3, 1, 1),
+            "max": np.array([1.0, 1.0, 1.0]).reshape(3, 1, 1),
+            "mean": np.array([0.6, 0.6, 0.6]).reshape(3, 1, 1),
+            "std": np.array([0.1, 0.1, 0.1]).reshape(3, 1, 1),
+            "count": np.array([200]),
+            "q01": np.array([0.2, 0.2, 0.2]).reshape(3, 1, 1),
+            "q99": np.array([0.95, 0.95, 0.95]).reshape(3, 1, 1),
+        }
     }
 
-    # First aggregation: ep1 + ep2 (simulates save_episode for ep2)
-    cumulative = aggregate_stats([ep1_stats, ep2_stats])
+    with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
+        result = aggregate_stats([stats_1, stats_2])
 
-    # q01 should take min (conservative lower bound)
-    np.testing.assert_allclose(cumulative["action"]["q01"], np.array([-25.0, -4.5]))
-    # q99 should take max (conservative upper bound)
-    np.testing.assert_allclose(cumulative["action"]["q99"], np.array([35.0, 5.5]))
+    image_stats = result["observation.image"]
+    assert "q01" not in image_stats
+    assert "q99" not in image_stats
+    np.testing.assert_allclose(image_stats["mean"], np.full((3, 1, 1), 8 / 15))
+    np.testing.assert_array_equal(image_stats["count"], np.array([300]))
 
-    # Episode 3: even wider on dim 1
-    ep3_stats = {
-        "action": {
-            "min": np.array([-8.0, -20.0]),
-            "max": np.array([8.0, 25.0]),
-            "mean": np.array([0.0, 3.0]),
-            "std": np.array([2.0, 8.0]),
-            "count": np.array([50]),
-            "q01": np.array([-7.0, -18.0]),
-            "q99": np.array([7.0, 22.0]),
-        },
+
+def test_aggregate_stats_preserves_single_source_quantiles():
+    image_stats = {
+        "min": np.zeros((3, 1, 1)),
+        "max": np.ones((3, 1, 1)),
+        "mean": np.full((3, 1, 1), 0.4),
+        "std": np.full((3, 1, 1), 0.1),
+        "count": np.array([100]),
+        "q01": np.full((3, 1, 1), 0.1),
+        "q99": np.full((3, 1, 1), 0.9),
     }
 
-    # Second aggregation: cumulative + ep3 (simulates save_episode for ep3)
-    cumulative2 = aggregate_stats([cumulative, ep3_stats])
+    result = aggregate_stats([{"observation.image": image_stats}])
 
-    # Bounds should widen monotonically
-    np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
-    np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+    np.testing.assert_array_equal(result["observation.image"]["q01"], image_stats["q01"])
+    np.testing.assert_array_equal(result["observation.image"]["q99"], image_stats["q99"])
