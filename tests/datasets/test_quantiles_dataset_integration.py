@@ -204,11 +204,11 @@ def test_save_multiple_episodes_with_quantiles(tmp_path, simple_features):
             }
             dataset.add_frame(frame)
 
-        if episode_idx == 0:
-            dataset.save_episode()
-        else:
+        if episode_idx == 1:
             with pytest.warns(RuntimeWarning, match="cannot be combined accurately"):
                 dataset.save_episode()
+        else:
+            dataset.save_episode()
 
     # Quantiles from multiple episode summaries are not composable, so the
     # aggregate deliberately omits them while retaining valid summary stats.
