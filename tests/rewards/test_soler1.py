@@ -30,7 +30,7 @@ from tests.utils import require_cuda  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="Downloads and loads the full SOLE-R1 checkpoint; not intended for CI",
+    reason="Downloads the full SOLE-R1 checkpoint; not intended for CI",
 )
 
 
@@ -43,34 +43,28 @@ def test_soler1_transformers_end_to_end():
     )
 
     preprocessor, _ = make_soler1_pre_post_processors(config)
-    model = SOLER1RewardModel(config).to(config.device)
-    model.eval()
+    model = SOLER1RewardModel(config).to(config.device).eval()
 
     try:
-        preprocessor.reset()
-        model.reset()
+        trajectory = torch.stack(
+            [
+                torch.zeros(3, 64, 64),
+                torch.ones(3, 64, 64),
+            ]
+        ).unsqueeze(0)  # shape: (1, 2, 3, 64, 64)
 
-        first = preprocessor(
+        batch = preprocessor(
             {
-                config.external_image_key: torch.zeros(3, 64, 64),
+                config.external_image_key: trajectory,
                 config.task_key: "pick up the cube",
             }
         )
-        first_reward = model.compute_reward(first)
-        assert first_reward.item() == 0.0
+        reward = model.compute_reward(batch)
 
-        second = preprocessor(
-            {
-                config.external_image_key: torch.ones(3, 64, 64),
-                config.task_key: "pick up the cube",
-            }
-        )
-        second_reward = model.compute_reward(second)
-
-        assert second_reward.shape == (1,)
-        assert second_reward.dtype == torch.float32
-        assert torch.isfinite(second_reward).all()
-        assert -1.0 <= second_reward.item() <= 1.0
+        assert reward.shape == (1,)
+        assert reward.dtype == torch.float32
+        assert torch.isfinite(reward).all()
+        assert -1.0 <= reward.item() <= 1.0
     finally:
         del model
         torch.cuda.empty_cache()

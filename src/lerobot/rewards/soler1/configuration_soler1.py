@@ -1,4 +1,4 @@
-# Copyright 2026 Philip Schroeder and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,26 +52,6 @@ EXTERNAL_VIEW_QUESTION_TEMPLATE = (
     "timestep is {previous_progress}%. Predict the task progress for the current timestep."
 )
 
-DUAL_VIEW_FROM_ZERO_QUESTION_TEMPLATE = (
-    "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views on the top are from an external camera. The views on the bottom are from the "
-    "robot's wrist camera. "
-    "The views from the very first timestep are shown to the left. The views from the current "
-    "timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. Predict the task progress for the "
-    "current timestep."
-)
-
-EXTERNAL_VIEW_FROM_ZERO_QUESTION_TEMPLATE = (
-    "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views from the very first timestep are shown to the left. The views from the current "
-    "timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. Predict the task progress for the "
-    "current timestep."
-)
-
 
 @RewardModelConfig.register_subclass("sole-r1")
 @dataclass
@@ -93,8 +73,6 @@ class SOLER1Config(RewardModelConfig):
         wrist_image_key: Optional observation key containing the wrist-camera image.
         task_key: Complementary-data key containing the task description.
         default_task: Task used when ``task_key`` is absent.
-        from_zero: Predict every timestep relative to the first frame rather than
-            including the previous predicted progress.
         max_new_tokens: Maximum number of generated reasoning/answer tokens.
         temperature: Sampling temperature. Zero enables greedy decoding.
         top_p: Nucleus-sampling probability.
@@ -105,6 +83,10 @@ class SOLER1Config(RewardModelConfig):
         reward_scale: Scale applied to percentages. The default maps percentages
             to progress values in approximately ``[-1, 1]``.
         fallback_to_previous: Reuse the previous prediction when output parsing fails.
+        reward_output: Output mode. ``"progress"`` returns scaled progress;
+            ``"success"`` returns a binary thresholded value.
+        success_threshold: Threshold applied to scaled progress when
+            ``reward_output="success"``.
     """
 
     # A LeRobot wrapper checkpoint contains only this configuration. The SOLE-R1
@@ -120,8 +102,6 @@ class SOLER1Config(RewardModelConfig):
     task_key: str = "task"
     default_task: str | None = "Complete the task."
 
-    from_zero: bool = False
-
     max_new_tokens: int = 600
     temperature: float = 1.0
     top_p: float = 0.9
@@ -132,6 +112,8 @@ class SOLER1Config(RewardModelConfig):
     max_progress: float = 100.0
     reward_scale: float = 0.01
     fallback_to_previous: bool = True
+    reward_output: str = "progress"
+    success_threshold: float = 0.80
 
     license: str | None = "mit"
     tags: list[str] | None = field(
@@ -171,6 +153,8 @@ class SOLER1Config(RewardModelConfig):
             raise ValueError("min_progress must be smaller than max_progress")
         if self.reward_scale <= 0:
             raise ValueError(f"reward_scale must be > 0, got {self.reward_scale}")
+        if self.reward_output not in {"progress", "success"}:
+            raise ValueError(f"reward_output must be 'progress' or 'success', got {self.reward_output!r}")
 
         self.input_features.setdefault(
             self.external_image_key,
@@ -183,7 +167,11 @@ class SOLER1Config(RewardModelConfig):
             )
 
         self.output_features.setdefault(
-            "reward",
+            "progress",
+            PolicyFeature(shape=(1,), type=FeatureType.REWARD),
+        )
+        self.output_features.setdefault(
+            "success",
             PolicyFeature(shape=(1,), type=FeatureType.REWARD),
         )
 

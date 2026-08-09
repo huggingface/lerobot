@@ -1,6 +1,4 @@
-# Copyright 2026 Philip Schroeder, Thomas Weng, Karl Schmeckpeper,
-# Eric Rosen, Stephen Hart, Ondrej Biza, and The HuggingFace Inc. team.
-# All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -223,16 +221,17 @@ def _composite_batch_to_pil(composites: Tensor) -> list[Image.Image]:
     return [Image.fromarray(image.numpy(), mode="RGB") for image in images]
 
 
-def parse_progress_percentage(
+def _parse_progress(
     completion: str,
     *,
-    fallback: float,
-) -> float:
+    minimum: float,
+    maximum: float,
+) -> float | None:
     """Parse and clamp the progress percentage produced by SOLE-R1.
 
     The preferred format is ``<answer>42%</answer>``. If those tags are
     missing, the final percentage appearing in the completion is used.
-    If no percentage can be parsed, the previous progress is returned.
+    If no percentage can be parsed, ``None`` is returned.
     """
 
     answer_matches = list(_ANSWER_PATTERN.finditer(completion))
@@ -243,10 +242,10 @@ def parse_progress_percentage(
         percentage_matches = list(_PERCENT_PATTERN.finditer(completion))
         if not percentage_matches:
             logger.warning(
-                "Could not parse SOLE-R1 progress from completion; reusing previous progress. Completion: %r",
+                "Could not parse SOLE-R1 progress from completion: %r",
                 completion,
             )
-            return fallback
+            return None
 
         value_text = percentage_matches[-1].group(1)
 
@@ -254,12 +253,12 @@ def parse_progress_percentage(
         value = float(value_text)
     except ValueError:
         logger.warning(
-            "Could not convert SOLE-R1 progress value %r to float; reusing previous progress.",
+            "Could not convert SOLE-R1 progress value %r to float.",
             value_text,
         )
-        return fallback
+        return None
 
-    return min(100.0, max(0.0, value))
+    return min(maximum, max(minimum, value))
 
 
 def extract_reasoning_trace(completion: str) -> str:
@@ -308,39 +307,44 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         self.last_reasoning_traces: list[str] = []
 
     def reset(self) -> None:
-        """Clear all episode-local progress and completion state."""
+        """Clear cached diagnostic output from the previous call."""
 
         self._previous_progress = None
         self.last_completions = []
         self.last_reasoning_traces = []
 
     def _validate_composite_shape(self, composites: Tensor) -> None:
-        """Validate the fixed dimensions emitted by the preprocessor."""
+        """Validate trajectory composites emitted by the preprocessor."""
 
-        if composites.ndim != 4:
+        if composites.ndim != 5:
             raise ValueError(
-                f"SOLE-R1 expected composite images with shape (B,C,H,W); got {tuple(composites.shape)}"
+                "SOLE-R1 expected trajectory composites with shape "
+                f"(B,T,C,H,W); got {tuple(composites.shape)}"
             )
+
+        if composites.shape[1] < 1:
+            raise ValueError("SOLE-R1 requires at least one timestep per trajectory")
 
         expected_height = (
             TWO_VIEW_COMPOSITE_HEIGHT
             if self.config.wrist_image_key is not None
             else SINGLE_VIEW_COMPOSITE_HEIGHT
         )
+        expected_width = COMPOSITE_WIDTH
 
-        expected_shape = (
-            composites.shape[0],
+        expected_suffix = (
             3,
             expected_height,
-            COMPOSITE_WIDTH,
+            expected_width,
         )
 
-        if tuple(composites.shape) != expected_shape:
+        if tuple(composites.shape[2:]) != expected_suffix:
             raise ValueError(
-                "SOLE-R1 received a composite image with the wrong shape. "
-                f"Got {tuple(composites.shape)}; expected {expected_shape}. "
-                "Make sure SOLER1CompositeProcessorStep ran before "
-                "compute_reward()."
+                "SOLE-R1 received trajectory composites with the wrong "
+                f"shape. Got {tuple(composites.shape)}; expected "
+                f"(B,T,{expected_suffix[0]},{expected_suffix[1]},"
+                f"{expected_suffix[2]}). Make sure "
+                "SOLER1CompositeProcessorStep ran before compute_reward()."
             )
 
     def _build_prompt(
@@ -422,6 +426,12 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             return_tensors="pt",
         )
 
+        if encoded["input_ids"].shape[1] > self.config.max_input_length:
+            raise ValueError(
+                f"SOLE-R1 input length {encoded['input_ids'].shape[1]} "
+                f"exceeds max_input_length {self.config.max_input_length}."
+            )
+
         return dict(encoded)
 
     def _generation_kwargs(self) -> dict[str, Any]:
@@ -453,11 +463,27 @@ class SOLER1RewardModel(PreTrainedRewardModel):
         return generation_kwargs
 
     @torch.no_grad()
-    def compute_reward(self, batch: dict[str, Any]) -> Tensor:
-        """Predict one task-progress percentage per sample.
+    def compute_reward(
+        self,
+        batch: dict[str, Any],
+        *,
+        dense: bool = False,
+    ) -> Tensor:
+        """Compute progress or success rewards for complete trajectories.
 
-        Returns a tensor with shape ``(batch_size,)``. Values are percentages
-        clamped to ``[0, 100]``.
+        Args:
+            batch: Preprocessed trajectory batch. The SOLE-R1 composite tensor
+                must have shape ``(B, T, C, H, W)``.
+            dense: When ``True`` and ``reward_output="progress"``, return
+                progress for every timestep with shape ``(B, T)``. Otherwise,
+                return only final progress with shape ``(B,)``.
+
+                Success output is always sparse with shape ``(B,)`` and is
+                computed by thresholding final-timestep progress.
+
+        Returns:
+            Progress rewards with shape ``(B,)`` or ``(B, T)``, or binary
+            success values with shape ``(B,)``.
         """
 
         if SOLER1_COMPOSITE_IMAGE_KEY not in batch:
@@ -468,24 +494,12 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             )
 
         composites = batch[SOLER1_COMPOSITE_IMAGE_KEY]
-
         if not isinstance(composites, Tensor):
             composites = torch.as_tensor(composites)
 
         self._validate_composite_shape(composites)
 
-        batch_size = composites.shape[0]
-
-        if self._previous_progress is None:
-            previous_progress = [0.0] * batch_size
-        else:
-            if len(self._previous_progress) != batch_size:
-                raise ValueError(
-                    "SOLE-R1 batch size changed within an episode. Call "
-                    "reward_model.reset() before starting a new episode."
-                )
-
-            previous_progress = self._previous_progress.copy()
+        batch_size, trajectory_length = composites.shape[:2]
 
         task_value = _extract_task_value(
             batch,
@@ -497,57 +511,124 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             default_task=self.config.default_task,
         )
 
-        images = _composite_batch_to_pil(composites)
-
-        encoded = self._encode_batch(
-            images=images,
-            tasks=tasks,
-            previous_progress=previous_progress,
-        )
-
         model_device = next(self.model.parameters()).device
-        encoded = {
-            key: value.to(model_device) if isinstance(value, Tensor) else value
-            for key, value in encoded.items()
-        }
 
-        input_length = encoded["input_ids"].shape[1]
-
-        self.model.eval()
-        generated_ids = self.model.generate(
-            **encoded,
-            **self._generation_kwargs(),
+        # SOLE-R1 defines the first timestep as exactly 0% progress.
+        progress_values = [0.0] * batch_size
+        dense_progress = torch.zeros(
+            batch_size,
+            trajectory_length,
+            dtype=torch.float32,
+            device=model_device,
         )
 
-        generated_only_ids = generated_ids[:, input_length:]
+        self._previous_progress = progress_values.copy()
+        self.last_completions = [""] * batch_size
+        self.last_reasoning_traces = [""] * batch_size
 
-        completions = self.processor.batch_decode(
-            generated_only_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )
+        # Timesteps must be evaluated sequentially because the prediction for
+        # timestep t is conditioned on the predicted progress at timestep t-1.
+        for timestep in range(1, trajectory_length):
+            images = _composite_batch_to_pil(composites[:, timestep])
 
-        progress_values = [
-            parse_progress_percentage(
-                completion,
-                fallback=previous_value,
+            encoded = self._encode_batch(
+                images=images,
+                tasks=tasks,
+                previous_progress=progress_values,
             )
+            encoded = {
+                key: (value.to(model_device) if isinstance(value, Tensor) else value)
+                for key, value in encoded.items()
+            }
+
+            input_length = encoded["input_ids"].shape[1]
+
+            self.model.eval()
+            generated_ids = self.model.generate(
+                **encoded,
+                **self._generation_kwargs(),
+            )
+            generated_only_ids = generated_ids[:, input_length:]
+
+            completions = self.processor.batch_decode(
+                generated_only_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+
+            next_progress_values: list[float] = []
+
             for completion, previous_value in zip(
                 completions,
-                previous_progress,
+                progress_values,
                 strict=True,
+            ):
+                progress = _parse_progress(
+                    completion,
+                    minimum=self.config.min_progress,
+                    maximum=self.config.max_progress,
+                )
+
+                if progress is None:
+                    if not self.config.fallback_to_previous:
+                        raise ValueError(
+                            f"Could not parse SOLE-R1 completion at timestep {timestep}: {completion!r}"
+                        )
+                    progress = previous_value
+
+                next_progress_values.append(progress)
+
+            progress_values = next_progress_values
+            dense_progress[:, timestep] = torch.tensor(
+                progress_values,
+                dtype=torch.float32,
+                device=model_device,
             )
-        ]
 
-        self._previous_progress = progress_values
-        self.last_completions = list(completions)
-        self.last_reasoning_traces = [extract_reasoning_trace(completion) for completion in completions]
+            self._previous_progress = progress_values.copy()
+            self.last_completions = list(completions)
+            self.last_reasoning_traces = [extract_reasoning_trace(completion) for completion in completions]
 
-        return torch.tensor(
-            progress_values,
-            dtype=torch.float32,
-            device=self.config.device or model_device,
+        return self._format_rewards(
+            dense_progress,
+            dense=dense,
         )
+
+    def _format_rewards(
+        self,
+        progress_percentages: Tensor,
+        *,
+        dense: bool,
+    ) -> Tensor:
+        """Scale progress and select dense, sparse, or success output.
+
+        Args:
+            progress_percentages: Progress percentages with shape ``(B, T)``.
+            dense: Whether progress output should retain the time dimension.
+
+        Returns:
+            ``(B, T)`` for dense progress, or ``(B,)`` for sparse progress
+            and success.
+        """
+
+        if progress_percentages.ndim != 2:
+            raise ValueError(
+                "SOLE-R1 expected progress percentages with shape "
+                f"(B,T); got {tuple(progress_percentages.shape)}"
+            )
+
+        progress_rewards = progress_percentages.float() * self.config.reward_scale
+        final_progress = progress_rewards[:, -1]
+
+        if self.config.reward_output == "success":
+            # Success is always trajectory-level, including when dense=True.
+            rewards = (final_progress > self.config.success_threshold).float()
+        elif dense:
+            rewards = progress_rewards
+        else:
+            rewards = final_progress
+
+        return rewards.to(self.config.device or "cpu")
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save only the LeRobot SOLE-R1 configuration.
