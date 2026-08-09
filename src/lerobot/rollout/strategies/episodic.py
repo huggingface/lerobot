@@ -213,10 +213,12 @@ class EpisodicStrategy(RolloutStrategy):
         single_task: str,
     ) -> None:
         """Policy-driven recording loop for a single episode."""
+        cfg = ctx.runtime.cfg
         interpolator = self._interpolator
         control_interval = interpolator.get_control_interval(fps)
 
         timestamp = 0.0
+        actions_sent = 0
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
@@ -229,6 +231,10 @@ class EpisodicStrategy(RolloutStrategy):
             if ctx.runtime.shutdown_event.is_set():
                 break
 
+            if cfg.action_horizon > 0 and actions_sent >= cfg.action_horizon:
+                logger.info("Action horizon reached (%d)", cfg.action_horizon)
+                break
+
             obs = robot.get_observation()
             obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
@@ -238,6 +244,7 @@ class EpisodicStrategy(RolloutStrategy):
             action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
 
             if action_dict is not None:
+                actions_sent += 1
                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                 action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
                 dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
