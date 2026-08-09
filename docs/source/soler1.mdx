@@ -1,0 +1,468 @@
+# SOLE-R1
+
+[SOLE-R1](https://philip-mit.github.io/sole-r1/) is an inference-only vision-language reward model that predicts dense task progress from robot trajectories.
+
+At each timestep, SOLE-R1 compares:
+
+- the first observation in the trajectory;
+- the previous observation;
+- the current observation;
+- the progress predicted for the previous timestep.
+
+The published checkpoint is available at [`Philip-MIT/SOLE-R1-8B`](https://huggingface.co/Philip-MIT/SOLE-R1-8B).
+
+The LeRobot implementation is self-contained. It does not depend on RewardGen or vLLM and uses Transformers for inference.
+
+## Installation
+
+Install LeRobot with the SOLE-R1 dependency group:
+
+```bash
+pip install -e ".[soler1]"
+```
+
+## Input format
+
+SOLE-R1 operates on complete trajectories.
+
+The preprocessor accepts camera tensors with either of these shapes:
+
+- `(T, C, H, W)` for one unbatched trajectory;
+- `(B, T, C, H, W)` for a batch of trajectories.
+
+A single-frame input is also accepted and is interpreted as a trajectory with `T=1`.
+
+Each trajectory in a batch must have the same number of timesteps. `B` is the number of trajectories and `T` is the trajectory length.
+
+SOLE-R1 requires an external-camera trajectory and can optionally use a wrist-camera trajectory. When both camera views are configured, their batch and time dimensions must match.
+
+## Composite images
+
+For every timestep, the preprocessor creates the composite image expected by SOLE-R1.
+
+With the default `from_zero=False`, each camera row contains:
+
+```text
+first | previous | current
+```
+
+With `from_zero=True`, each camera row contains:
+
+```text
+first | current
+```
+
+When both external and wrist cameras are configured, the external-camera row is placed above the wrist-camera row.
+
+Each source frame is resized while preserving its aspect ratio and centered on a black `384 × 384` canvas. Adjacent frames and camera rows are separated by five black pixels.
+
+The resulting preprocessed tensor has shape:
+
+```text
+(B, T, 3, composite_height, composite_width)
+```
+
+The composite dimensions are:
+
+| Camera configuration | `from_zero` | Composite shape per timestep |
+| -------------------- | ----------: | ---------------------------- |
+| External only        |     `False` | `(3, 384, 1162)`             |
+| External and wrist   |     `False` | `(3, 773, 1162)`             |
+| External only        |      `True` | `(3, 384, 773)`              |
+| External and wrist   |      `True` | `(3, 773, 773)`              |
+
+## Reward output
+
+`compute_reward()` supports sparse and dense progress output:
+
+```python
+reward = reward_model.compute_reward(
+    batch,
+    dense=False,
+)
+```
+
+### Sparse progress
+
+With:
+
+```python
+reward_output="progress"
+dense=False
+```
+
+`compute_reward()` returns only the final progress value for each trajectory:
+
+```text
+input:  (B, T, C, H, W)
+output: (B,)
+```
+
+For example, if the predicted progress percentages are:
+
+```text
+[0%, 20%, 45%, 80%]
+```
+
+and `reward_scale=0.01`, the sparse reward is:
+
+```text
+0.80
+```
+
+### Dense progress
+
+With:
+
+```python
+reward_output="progress"
+dense=True
+```
+
+`compute_reward()` returns one progress value per timestep:
+
+```text
+input:  (B, T, C, H, W)
+output: (B, T)
+```
+
+For example, progress percentages of:
+
+```text
+[0%, 20%, 45%, 80%]
+```
+
+produce:
+
+```text
+[0.00, 0.20, 0.45, 0.80]
+```
+
+when `reward_scale=0.01`.
+
+The first timestep is always assigned `0%` progress and does not invoke the vision-language model.
+
+Subsequent timesteps are evaluated sequentially because each prediction is conditioned on the progress predicted for the preceding timestep. Trajectories within the batch are evaluated in parallel at each timestep.
+
+### Success output
+
+With:
+
+```python
+reward_output="success"
+```
+
+`compute_reward()` always returns one binary success value per trajectory:
+
+```text
+output: (B,)
+```
+
+This remains true when `dense=True`.
+
+Success is determined only from the final scaled progress value:
+
+```python
+success = (
+    final_progress > success_threshold
+).float()
+```
+
+Intermediate progress values do not affect the success result. For example, a trajectory with scaled progress:
+
+```text
+[0.00, 0.90, 0.40]
+```
+
+is unsuccessful when `success_threshold=0.5`, because its final progress is `0.40`.
+
+## Basic example
+
+```python
+import torch
+
+from lerobot.rewards.factory import (
+    make_reward_pre_post_processors,
+)
+from lerobot.rewards.soler1 import (
+    SOLER1Config,
+    SOLER1RewardModel,
+)
+
+config = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.front",
+    reward_output="progress",
+)
+
+preprocessor, _ = make_reward_pre_post_processors(config)
+
+reward_model = SOLER1RewardModel(config)
+reward_model = reward_model.to(config.device).eval()
+
+# One trajectory containing eight RGB frames.
+trajectory = torch.rand(
+    8,
+    3,
+    480,
+    640,
+)
+
+batch = preprocessor(
+    {
+        config.external_image_key: trajectory,
+        config.task_key: "pick up the cube",
+    }
+)
+
+# One final progress value for the trajectory.
+sparse_reward = reward_model.compute_reward(
+    batch,
+    dense=False,
+)
+
+assert sparse_reward.shape == (1,)
+```
+
+## Dense progress example
+
+```python
+dense_rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+assert dense_rewards.shape == (1, 8)
+assert dense_rewards[0, 0].item() == 0.0
+```
+
+## Batch example
+
+```python
+import torch
+
+# Two trajectories, each containing eight frames.
+trajectories = torch.rand(
+    2,
+    8,
+    3,
+    480,
+    640,
+)
+
+batch = preprocessor(
+    {
+        config.external_image_key: trajectories,
+        config.task_key: [
+            "pick up the cube",
+            "open the drawer",
+        ],
+    }
+)
+
+sparse_rewards = reward_model.compute_reward(
+    batch,
+    dense=False,
+)
+dense_rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+assert sparse_rewards.shape == (2,)
+assert dense_rewards.shape == (2, 8)
+```
+
+Calling both sparse and dense inference as shown above evaluates the model twice. If both forms are needed, request dense rewards once and select the final column:
+
+```python
+dense_rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+sparse_rewards = dense_rewards[:, -1]
+```
+
+This shortcut applies to progress output. Success output should use `reward_output="success"` so the configured threshold is applied by the model.
+
+## External and wrist cameras
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.front",
+    wrist_image_key="observation.images.wrist",
+    reward_output="progress",
+)
+
+preprocessor, _ = make_reward_pre_post_processors(config)
+
+reward_model = SOLER1RewardModel(config)
+reward_model = reward_model.to(config.device).eval()
+
+external_trajectory = torch.rand(
+    8,
+    3,
+    480,
+    640,
+)
+wrist_trajectory = torch.rand(
+    8,
+    3,
+    480,
+    640,
+)
+
+batch = preprocessor(
+    {
+        config.external_image_key: external_trajectory,
+        config.wrist_image_key: wrist_trajectory,
+        config.task_key: "place the object in the container",
+    }
+)
+
+rewards = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+assert rewards.shape == (1, 8)
+```
+
+## Success example
+
+```python
+config = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.front",
+    reward_output="success",
+    success_threshold=0.95,
+)
+
+preprocessor, _ = make_reward_pre_post_processors(config)
+
+reward_model = SOLER1RewardModel(config)
+reward_model = reward_model.to(config.device).eval()
+
+batch = preprocessor(
+    {
+        config.external_image_key: trajectory,
+        config.task_key: "pick up the cube",
+    }
+)
+
+# Success is always trajectory-level, even when dense=True.
+success = reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+
+assert success.shape == (1,)
+assert success.item() in {0.0, 1.0}
+```
+
+## Invalid model outputs
+
+SOLE-R1 expects progress in the following format:
+
+```text
+<answer>42%</answer>
+```
+
+If the preferred tags are missing, the parser falls back to the final percentage found in the generated text.
+
+By default, if no percentage can be parsed, SOLE-R1 reuses the progress predicted for the previous timestep:
+
+```python
+config = SOLER1Config(
+    fallback_to_previous=True,
+)
+```
+
+To raise an error instead:
+
+```python
+config = SOLER1Config(
+    fallback_to_previous=False,
+)
+```
+
+Parsed percentages are clamped to:
+
+```python
+[min_progress, max_progress]
+```
+
+before `reward_scale` is applied.
+
+## Configuration options
+
+Important configuration fields include:
+
+| Field                  |                    Default | Description                                                          |
+| ---------------------- | -------------------------: | -------------------------------------------------------------------- |
+| `model_name`           |  `"Philip-MIT/SOLE-R1-8B"` | Hugging Face model identifier or local checkpoint path.              |
+| `external_image_key`   | `"observation.images.top"` | External-camera observation key.                                     |
+| `wrist_image_key`      |                     `None` | Optional wrist-camera observation key.                               |
+| `task_key`             |                   `"task"` | Key containing the task description.                                 |
+| `default_task`         |                     `None` | Fallback task description when `task_key` is absent.                 |
+| `from_zero`            |                    `False` | Compare the first and current frames without previous-frame context. |
+| `reward_output`        |               `"progress"` | Output type: `"progress"` or `"success"`.                            |
+| `success_threshold`    |                     `0.95` | Threshold applied to final scaled progress for success output.       |
+| `reward_scale`         |                     `0.01` | Scale applied to predicted progress percentages.                     |
+| `min_progress`         |                   `-100.0` | Minimum accepted progress percentage.                                |
+| `max_progress`         |                    `100.0` | Maximum accepted progress percentage.                                |
+| `fallback_to_previous` |                     `True` | Reuse previous progress when parsing fails.                          |
+| `torch_dtype`          |               `"bfloat16"` | Torch dtype used to load the model.                                  |
+| `attn_implementation`  |                     `None` | Optional Transformers attention implementation.                      |
+| `max_new_tokens`       |                      `600` | Maximum generated tokens per timestep.                               |
+| `temperature`          |                      `1.0` | Generation sampling temperature. Zero enables greedy decoding.       |
+| `top_p`                |                      `0.9` | Nucleus-sampling probability.                                        |
+| `top_k`                |                       `50` | Top-k sampling parameter.                                            |
+| `max_input_length`     |                    `16384` | Maximum permitted tokenized input length.                            |
+
+## Model identifier
+
+Use `"sole-r1"` when selecting the model through LeRobot configuration or factory APIs:
+
+```python
+from lerobot.rewards.factory import (
+    get_reward_model_class,
+    make_reward_model_config,
+)
+
+config = make_reward_model_config(
+    "sole-r1",
+    device="cuda",
+)
+
+reward_model_class = get_reward_model_class(
+    "sole-r1"
+)
+```
+
+The command-line and factory identifier is `"sole-r1"`. Python package names, filenames, and class names use `soler1` and `SOLER1`, respectively.
+
+## Inference-only behavior
+
+SOLE-R1 is inference-only and cannot be trained through `lerobot-train`.
+
+Its `forward()` method intentionally remains unimplemented. Use:
+
+```python
+reward_model.compute_reward(
+    batch,
+    dense=False,
+)
+```
+
+or:
+
+```python
+reward_model.compute_reward(
+    batch,
+    dense=True,
+)
+```
+
+Saving a LeRobot SOLE-R1 wrapper stores only its `config.json`. The underlying vision-language model is loaded separately from `model_name`.
