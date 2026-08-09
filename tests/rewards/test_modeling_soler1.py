@@ -30,6 +30,8 @@ from lerobot.rewards.soler1.processor_soler1 import (
     COMPOSITE_WIDTH,
     SINGLE_VIEW_COMPOSITE_HEIGHT,
     SOLER1_COMPOSITE_IMAGE_KEY,
+    SOLER1_ORIGINAL_LENGTH_KEY,
+    SOLER1_SAMPLE_INDICES_KEY,
 )
 from tests.utils import skip_if_package_missing
 
@@ -196,6 +198,26 @@ def test_soler1_config_validation():
             device="cpu",
             reward_scale=0.0,
         )
+
+    with pytest.raises(ValueError, match="at least one"):
+        SOLER1Config(
+            device="cpu",
+            external_image_key=None,
+            wrist_image_key=None,
+        )
+
+
+def test_soler1_camera_features_are_channels_last():
+    external_key = "observation.images.front"
+    wrist_key = "observation.images.wrist"
+    config = SOLER1Config(
+        device="cpu",
+        external_image_key=external_key,
+        wrist_image_key=wrist_key,
+    )
+
+    assert config.input_features[external_key].shape == (224, 224, 3)
+    assert config.input_features[wrist_key].shape == (224, 224, 3)
 
 
 def test_parse_progress():
@@ -627,3 +649,75 @@ def test_soler1_is_not_trainable(monkeypatch):
         match="not trainable",
     ):
         model.forward({"x": torch.zeros(1)})
+
+
+@skip_if_package_missing("transformers")
+def test_unbatched_trajectory_returns_unbatched_rewards(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+    model.processor.completion_batches = [
+        ["<answer>20%</answer>"],
+        ["<answer>50%</answer>"],
+    ]
+
+    batch = _batch(trajectory_length=3)
+    batch[SOLER1_COMPOSITE_IMAGE_KEY] = batch[SOLER1_COMPOSITE_IMAGE_KEY].squeeze(0)
+    batch["task"] = "pick up the cube"
+
+    dense = model.compute_reward(batch, dense=True)
+
+    assert dense.shape == (3,)
+    assert dense.tolist() == pytest.approx([0.0, 0.2, 0.5])
+
+
+@skip_if_package_missing("transformers")
+def test_dense_progress_interpolates_sampled_predictions(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+
+    model.processor.completion_batches = [
+        ["<answer>20%</answer>"],
+        ["<answer>60%</answer>"],
+    ]
+
+    # Three composites correspond to original indices [0, 2, 4].
+    batch = _batch(trajectory_length=3)
+    batch[SOLER1_SAMPLE_INDICES_KEY] = torch.tensor([0, 2, 4])
+    batch[SOLER1_ORIGINAL_LENGTH_KEY] = torch.tensor(5)
+
+    rewards = model.compute_reward(
+        batch,
+        dense=True,
+    )
+
+    assert rewards.shape == (1, 5)
+    assert rewards.tolist()[0] == pytest.approx([0.0, 0.1, 0.2, 0.4, 0.6])
+
+
+@skip_if_package_missing("transformers")
+def test_wrist_only_uses_wrist_prompt(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            external_image_key=None,
+            wrist_image_key="observation.images.wrist",
+        )
+    )
+    model.processor.completion_batches = [
+        ["<answer>10%</answer>"],
+    ]
+
+    model.compute_reward(_batch(trajectory_length=2))
+
+    assert "robot's wrist camera" in model.processor.user_prompts[0]

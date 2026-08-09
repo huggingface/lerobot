@@ -20,87 +20,54 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
-SYSTEM_PROMPT = (
-    "You are an expert roboticist with the goal of predicting task progress percentages "
-    "given frames from a video of a robot attempting to complete a task. "
-    "You first think, in the form of an internal monologue, before providing your final answer. "
-    "Your reasoning process MUST BE enclosed within <think> </think> tags and should include "
-    "detailed reasoning. "
-    "Your final answer MUST BE enclosed within <answer> </answer> tags and should be an integer "
-    "(positive or negative) representing current task progress percentage. "
-    "Example output format: "
-    "<think>[detailed reasoning process]</think><answer>[current task progress]%</answer>"
-)
-
-DUAL_VIEW_QUESTION_TEMPLATE = (
-    "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views on the top are from an external camera. The views on the bottom are from the "
-    "robot's wrist camera. "
-    "The views from the very first timestep are shown to the left. The views from the previous "
-    "timestep are shown in the middle. The views from the current timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. The task progress for the previous "
-    "timestep is {previous_progress}%. Predict the task progress for the current timestep."
-)
-
-EXTERNAL_VIEW_QUESTION_TEMPLATE = (
-    "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views from the very first timestep are shown to the left. The views from the previous "
-    "timestep are shown in the middle. The views from the current timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. The task progress for the previous "
-    "timestep is {previous_progress}%. Predict the task progress for the current timestep."
-)
-
 
 @RewardModelConfig.register_subclass("sole-r1")
 @dataclass
 class SOLER1Config(RewardModelConfig):
     """Configuration for inference with SOLE-R1.
 
-    SOLE-R1 predicts dense task progress from the first, previous, and current
-    observations in an episode. The preprocessor maintains the visual episode
-    context, while the reward model maintains the previously predicted progress.
-
-    The first observation after reset returns zero without invoking the VLM.
-    Subsequent observations produce a composite image and a progress prediction.
+    SOLE-R1 predicts task progress using the first, previous, and current
+    observations in a trajectory. It supports an external camera, a wrist
+    camera, or both.
 
     Args:
-        model_name: Hugging Face Hub identifier or local path for SOLE-R1.
+        model_name: Hugging Face Hub identifier or local SOLE-R1 checkpoint.
         torch_dtype: Torch dtype passed to the Transformers model loader.
         attn_implementation: Optional Transformers attention implementation.
-        external_image_key: Observation key containing the external-camera image.
-        wrist_image_key: Optional observation key containing the wrist-camera image.
-        task_key: Complementary-data key containing the task description.
+        external_image_key: Optional external-camera observation key.
+        wrist_image_key: Optional wrist-camera observation key. At least one
+            camera key must be configured.
+        task_key: Key containing the task description.
         default_task: Task used when ``task_key`` is absent.
-        max_new_tokens: Maximum number of generated reasoning/answer tokens.
+        max_new_tokens: Maximum number of generated tokens.
         temperature: Sampling temperature. Zero enables greedy decoding.
         top_p: Nucleus-sampling probability.
         top_k: Top-k sampling parameter.
         max_input_length: Maximum tokenized prompt length.
-        min_progress: Minimum accepted percentage prediction.
-        max_progress: Maximum accepted percentage prediction.
-        reward_scale: Scale applied to percentages. The default maps percentages
-            to progress values in approximately ``[-1, 1]``.
-        fallback_to_previous: Reuse the previous prediction when output parsing fails.
-        reward_output: Output mode. ``"progress"`` returns scaled progress;
-            ``"success"`` returns a binary thresholded value.
-        success_threshold: Threshold applied to scaled progress when
+        min_progress: Minimum accepted progress percentage.
+        max_progress: Maximum accepted progress percentage.
+        reward_scale: Scale applied to predicted percentages.
+        fallback_to_previous: Reuse the previous prediction when parsing fails.
+        reward_output: ``"progress"`` or ``"success"``.
+        success_threshold: Threshold applied to scaled final progress when
             ``reward_output="success"``.
+        downsample_to: Maximum number of uniformly spaced frames processed
+            per trajectory. ``None`` processes every frame.
     """
 
-    # A LeRobot wrapper checkpoint contains only this configuration. The SOLE-R1
-    # weights are referenced separately by model_name.
+    # A saved LeRobot wrapper contains only this configuration. The underlying
+    # SOLE-R1 weights remain referenced by model_name.
     pretrained_path: str | None = None
 
     model_name: str = "Philip-MIT/SOLE-R1-8B"
     torch_dtype: str = "bfloat16"
     attn_implementation: str | None = None
 
-    external_image_key: str = OBS_IMAGES + ".top"
+    external_image_key: str | None = OBS_IMAGES + ".top"
     wrist_image_key: str | None = None
     task_key: str = "task"
     default_task: str | None = "Complete the task."
+    downsample_to: int | None = 10
 
     max_new_tokens: int = 600
     temperature: float = 1.0
@@ -155,24 +122,42 @@ class SOLER1Config(RewardModelConfig):
             raise ValueError(f"reward_scale must be > 0, got {self.reward_scale}")
         if self.reward_output not in {"progress", "success"}:
             raise ValueError(f"reward_output must be 'progress' or 'success', got {self.reward_output!r}")
+        if self.external_image_key is None and self.wrist_image_key is None:
+            raise ValueError("SOLE-R1 requires at least one of external_image_key or wrist_image_key")
+        if self.downsample_to is not None and self.downsample_to < 1:
+            raise ValueError(f"downsample_to must be >= 1 or None, got {self.downsample_to}")
 
-        self.input_features.setdefault(
-            self.external_image_key,
-            PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL),
-        )
+        if self.external_image_key is not None:
+            self.input_features.setdefault(
+                self.external_image_key,
+                PolicyFeature(
+                    shape=(224, 224, 3),
+                    type=FeatureType.VISUAL,
+                ),
+            )
+
         if self.wrist_image_key is not None:
             self.input_features.setdefault(
                 self.wrist_image_key,
-                PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL),
+                PolicyFeature(
+                    shape=(224, 224, 3),
+                    type=FeatureType.VISUAL,
+                ),
             )
 
         self.output_features.setdefault(
             "progress",
-            PolicyFeature(shape=(1,), type=FeatureType.REWARD),
+            PolicyFeature(
+                shape=(1,),
+                type=FeatureType.REWARD,
+            ),
         )
         self.output_features.setdefault(
             "success",
-            PolicyFeature(shape=(1,), type=FeatureType.REWARD),
+            PolicyFeature(
+                shape=(1,),
+                type=FeatureType.REWARD,
+            ),
         )
 
     @property
@@ -188,7 +173,8 @@ class SOLER1Config(RewardModelConfig):
         return None
 
     def validate_features(self) -> None:
-        if self.external_image_key not in self.input_features:
+        if self.external_image_key is not None and self.external_image_key not in self.input_features:
             raise ValueError(f"SOLE-R1 requires external image feature {self.external_image_key!r}")
+
         if self.wrist_image_key is not None and self.wrist_image_key not in self.input_features:
             raise ValueError(f"SOLE-R1 requires wrist image feature {self.wrist_image_key!r}")

@@ -40,23 +40,52 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-# SOLE-R1 was trained with every individual camera frame resized with
+# SOLE-R1 was trained with each camera frame resized with
 # aspect-ratio-preserving padding to exactly 384 x 384.
 FRAME_SIZE = 384
 PADDING = 5
 
-# Three temporal frames:
-# first | 5-pixel separator | previous | 5-pixel separator | current
+# first | separator | previous | separator | current
 COMPOSITE_WIDTH = FRAME_SIZE * 3 + PADDING * 2
 
-# One camera view.
 SINGLE_VIEW_COMPOSITE_HEIGHT = FRAME_SIZE
 
-# External view, 5-pixel separator, wrist view.
+# External view, separator, wrist view.
 TWO_VIEW_COMPOSITE_HEIGHT = FRAME_SIZE * 2 + PADDING
 
 SOLER1_FEATURE_PREFIX = f"{OBS_PREFIX}soler1."
 SOLER1_COMPOSITE_IMAGE_KEY = f"{SOLER1_FEATURE_PREFIX}composite_image"
+SOLER1_SAMPLE_INDICES_KEY = f"{SOLER1_FEATURE_PREFIX}sample_indices"
+SOLER1_ORIGINAL_LENGTH_KEY = f"{SOLER1_FEATURE_PREFIX}original_length"
+
+
+def _sample_frame_indices(
+    trajectory_length: int,
+    downsample_to: int | None,
+) -> Tensor:
+    """Return uniformly spaced frame indices.
+
+    When downsampling selects at least two frames, the first and final
+    trajectory frames are included.
+    """
+
+    if trajectory_length < 1:
+        raise ValueError("SOLE-R1 requires at least one frame per trajectory")
+
+    if downsample_to is not None and downsample_to < 1:
+        raise ValueError(f"downsample_to must be >= 1 or None, got {downsample_to}")
+
+    if downsample_to is None or trajectory_length <= downsample_to:
+        return torch.arange(
+            trajectory_length,
+            dtype=torch.long,
+        )
+
+    return torch.linspace(
+        0,
+        trajectory_length - 1,
+        steps=downsample_to,
+    ).long()
 
 
 def _to_btchw_uint8(
@@ -64,37 +93,43 @@ def _to_btchw_uint8(
     *,
     image_key: str,
 ) -> Tensor:
-    """Convert images to a CPU ``(B, T, C, H, W)`` uint8 tensor.
+    """Convert camera frames to a CPU ``(B,T,C,H,W)`` uint8 tensor.
 
-    Accepted input shapes after LeRobot's batch processor are:
+    Canonical input shapes are:
 
-    - ``(B, C, H, W)``
-    - ``(B, H, W, C)``
-    - ``(B, T, C, H, W)``
-    - ``(B, T, H, W, C)``
+    - ``(T,H,W,C)`` for an unbatched trajectory;
+    - ``(B,T,H,W,C)`` for batched trajectories.
 
-    A four-dimensional input is interpreted as a one-frame trajectory.
-    Floating-point inputs in ``[0, 1]`` are scaled to ``[0, 255]``.
+    Batched channels-first LeRobot tensors remain supported for
+    compatibility. Floating-point inputs in ``[0,1]`` are scaled to
+    ``[0,255]``.
     """
 
     tensor = images.detach().cpu() if isinstance(images, Tensor) else torch.as_tensor(images)
 
     if tensor.ndim == 4:
-        tensor = tensor.unsqueeze(1)
-    elif tensor.ndim != 5:
-        raise ValueError(
-            f"SOLE-R1 expected {image_key!r} to have shape "
-            "(B,C,H,W), (B,H,W,C), (B,T,C,H,W), or "
-            f"(B,T,H,W,C); got {tuple(tensor.shape)}"
-        )
-
-    if tensor.shape[2] in (1, 3):
-        pass
-    elif tensor.shape[-1] in (1, 3):
-        tensor = tensor.permute(0, 1, 4, 2, 3)
+        if tensor.shape[-1] in (1, 3):
+            # Unbatched channels-last trajectory: (T,H,W,C).
+            tensor = tensor.permute(0, 3, 1, 2).unsqueeze(0)
+        elif tensor.shape[1] in (1, 3):
+            # Backward-compatible batched single frames: (B,C,H,W).
+            tensor = tensor.unsqueeze(1)
+        else:
+            raise ValueError(
+                f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
+            )
+    elif tensor.ndim == 5:
+        if tensor.shape[-1] in (1, 3):
+            tensor = tensor.permute(0, 1, 4, 2, 3)
+        elif tensor.shape[2] not in (1, 3):
+            raise ValueError(
+                f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
+            )
     else:
         raise ValueError(
-            f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
+            f"SOLE-R1 expected {image_key!r} to have shape "
+            "(T,H,W,C) or (B,T,H,W,C); "
+            f"got {tuple(tensor.shape)}"
         )
 
     if tensor.shape[2] == 1:
@@ -112,10 +147,10 @@ def _to_btchw_uint8(
 
 
 def resize_with_padding(image: Tensor) -> Tensor:
-    """Resize one ``(3, H, W)`` frame to ``(3, 384, 384)``.
+    """Resize one ``(3,H,W)`` frame to ``(3,384,384)``.
 
-    The aspect ratio is preserved. The resized frame is centered on a black
-    384 x 384 canvas, matching the SOLE-R1 preprocessing used in RewardGen.
+    The aspect ratio is preserved. The resized image is centered on a
+    black canvas, matching the preprocessing used by RewardGen.
     """
 
     if image.ndim != 3:
@@ -171,8 +206,8 @@ def compose_temporal_frames(
 
     ``first | previous | current``
 
-    Each frame is 384 x 384 and adjacent frames are separated by five black
-    pixels. The returned tensor has shape ``(3, 384, 1162)``.
+    Each frame is 384 x 384. Adjacent frames are separated by five
+    black pixels. The output shape is ``(3,384,1162)``.
     """
 
     first = resize_with_padding(first_frame)
@@ -210,16 +245,16 @@ def compose_temporal_frames(
 
 
 def compose_camera_views(
-    external_row: Tensor,
+    external_row: Tensor | None = None,
     wrist_row: Tensor | None = None,
 ) -> Tensor:
-    """Combine the external and optional wrist temporal rows.
+    """Combine optional external and wrist temporal rows.
 
-    For one camera, the returned shape is ``(3, 384, 1162)``.
+    A single-camera composite has shape ``(3,384,1162)``.
 
-    For external and wrist cameras, the external row is placed on top and the
-    wrist row on the bottom, separated by five black pixels. The returned shape
-    is ``(3, 773, 1162)``.
+    With both cameras, the external row is placed above the wrist row,
+    separated by five black pixels. The result has shape
+    ``(3,773,1162)``.
     """
 
     expected_row_shape = (
@@ -228,18 +263,25 @@ def compose_camera_views(
         COMPOSITE_WIDTH,
     )
 
-    if tuple(external_row.shape) != expected_row_shape:
+    if external_row is None and wrist_row is None:
+        raise ValueError("SOLE-R1 requires at least one camera view")
+
+    if external_row is not None and tuple(external_row.shape) != expected_row_shape:
         raise ValueError(
             f"Unexpected external row shape {tuple(external_row.shape)}; expected {expected_row_shape}"
         )
 
     if wrist_row is None:
+        assert external_row is not None
         return external_row
 
     if tuple(wrist_row.shape) != expected_row_shape:
         raise ValueError(
             f"Unexpected wrist row shape {tuple(wrist_row.shape)}; expected {expected_row_shape}"
         )
+
+    if external_row is None:
+        return wrist_row
 
     separator = torch.zeros(
         (3, PADDING, COMPOSITE_WIDTH),
@@ -271,31 +313,47 @@ def compose_camera_views(
 
 def create_composite_frame(
     *,
-    first_external_frame: Tensor,
-    previous_external_frame: Tensor,
-    current_external_frame: Tensor,
+    first_external_frame: Tensor | None = None,
+    previous_external_frame: Tensor | None = None,
+    current_external_frame: Tensor | None = None,
     first_wrist_frame: Tensor | None = None,
     previous_wrist_frame: Tensor | None = None,
     current_wrist_frame: Tensor | None = None,
 ) -> Tensor:
-    """Create one complete SOLE-R1 composite frame."""
+    """Create one complete SOLE-R1 composite image."""
 
+    external_frames = (
+        first_external_frame,
+        previous_external_frame,
+        current_external_frame,
+    )
     wrist_frames = (
         first_wrist_frame,
         previous_wrist_frame,
         current_wrist_frame,
     )
 
-    if any(frame is not None for frame in wrist_frames) and not all(
-        frame is not None for frame in wrist_frames
+    for view_name, frames in (
+        ("external", external_frames),
+        ("wrist", wrist_frames),
     ):
-        raise ValueError("SOLE-R1 requires either all three wrist frames or no wrist frames")
+        if any(frame is not None for frame in frames) and not all(frame is not None for frame in frames):
+            raise ValueError(f"SOLE-R1 requires either all three {view_name} frames or no {view_name} frames")
 
-    external_row = compose_temporal_frames(
-        first_frame=first_external_frame,
-        previous_frame=previous_external_frame,
-        current_frame=current_external_frame,
-    )
+    if not any(frame is not None for frame in (*external_frames, *wrist_frames)):
+        raise ValueError("SOLE-R1 requires at least one camera view")
+
+    external_row = None
+    if all(frame is not None for frame in external_frames):
+        assert first_external_frame is not None
+        assert previous_external_frame is not None
+        assert current_external_frame is not None
+
+        external_row = compose_temporal_frames(
+            first_frame=first_external_frame,
+            previous_frame=previous_external_frame,
+            current_frame=current_external_frame,
+        )
 
     wrist_row = None
     if all(frame is not None for frame in wrist_frames):
@@ -318,43 +376,56 @@ def create_composite_frame(
 @dataclass
 @ProcessorStepRegistry.register(name="soler1_composite")
 class SOLER1CompositeProcessorStep(ProcessorStep):
-    """Build SOLE-R1 composites for complete trajectories.
+    """Build SOLE-R1 composites after downsampling raw trajectories.
 
-    Input camera tensors have shape ``(B, T, C, H, W)``. For every trajectory
-    and timestep, this step creates a composite containing:
+    Camera inputs use ``(B,T,H,W,C)`` or, without a batch dimension,
+    ``(T,H,W,C)``.
 
-    - the first frame;
-    - the previous frame;
-    - the current frame.
+    Downsampling is applied to the raw camera trajectories before any
+    composite images are constructed. Therefore, each composite contains:
 
+    - the first frame of the original trajectory;
+    - the previous sampled frame;
+    - the current sampled frame.
 
-    The output composite tensor has shape ``(B, T, C, H, W)``. This processor
-    is stateless: every call contains all context needed by SOLE-R1.
+    The output composite tensor uses shape ``(B,S,C,H,W)``, where ``S``
+    is the number of sampled frames.
     """
 
-    external_image_key: str
+    external_image_key: str | None = None
     wrist_image_key: str | None = None
+    downsample_to: int | None = 10
 
     def reset(self) -> None:
         """No-op because complete trajectories are processed per call."""
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
+    def __call__(
+        self,
+        transition: EnvTransition,
+    ) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
 
         if not isinstance(observation, dict):
             raise ValueError("SOLE-R1 preprocessing requires an observation dictionary")
 
-        if self.external_image_key not in observation:
-            raise KeyError(
-                f"SOLE-R1 expected external image key {self.external_image_key!r} in the observation"
+        if self.external_image_key is None and self.wrist_image_key is None:
+            raise ValueError("SOLE-R1 requires at least one camera view")
+
+        external_videos: Tensor | None = None
+
+        if self.external_image_key is not None:
+            if self.external_image_key not in observation:
+                raise KeyError(
+                    f"SOLE-R1 expected external image key {self.external_image_key!r} in the observation"
+                )
+
+            external_videos = _to_btchw_uint8(
+                observation[self.external_image_key],
+                image_key=self.external_image_key,
             )
 
-        external_videos = _to_btchw_uint8(
-            observation[self.external_image_key],
-            image_key=self.external_image_key,
-        )
-
         wrist_videos: Tensor | None = None
+
         if self.wrist_image_key is not None:
             if self.wrist_image_key not in observation:
                 raise KeyError(
@@ -366,67 +437,111 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
                 image_key=self.wrist_image_key,
             )
 
-            if wrist_videos.shape[:2] != external_videos.shape[:2]:
-                raise ValueError(
-                    "SOLE-R1 received different external and wrist "
-                    "batch/time dimensions: "
-                    f"{tuple(external_videos.shape[:2])} and "
-                    f"{tuple(wrist_videos.shape[:2])}"
-                )
+        if (
+            external_videos is not None
+            and wrist_videos is not None
+            and external_videos.shape[:2] != wrist_videos.shape[:2]
+        ):
+            raise ValueError(
+                "SOLE-R1 received different external and wrist "
+                "batch/time dimensions: "
+                f"{tuple(external_videos.shape[:2])} and "
+                f"{tuple(wrist_videos.shape[:2])}"
+            )
 
-        batch_size, trajectory_length = external_videos.shape[:2]
+        reference_videos = external_videos if external_videos is not None else wrist_videos
+        assert reference_videos is not None
+
+        batch_size, original_length = reference_videos.shape[:2]
+
+        sample_indices = _sample_frame_indices(
+            original_length,
+            self.downsample_to,
+        )
+        sampled_indices = sample_indices.tolist()
+
         batch_composites: list[Tensor] = []
 
         for batch_index in range(batch_size):
             trajectory_composites: list[Tensor] = []
 
-            for timestep in range(trajectory_length):
-                previous_timestep = max(timestep - 1, 0)
+            for sampled_position, current_timestep in enumerate(sampled_indices):
+                previous_position = max(
+                    sampled_position - 1,
+                    0,
+                )
+                previous_timestep = sampled_indices[previous_position]
+
+                first_external_frame = None
+                previous_external_frame = None
+                current_external_frame = None
+
+                if external_videos is not None:
+                    first_external_frame = external_videos[
+                        batch_index,
+                        0,
+                    ]
+                    previous_external_frame = external_videos[
+                        batch_index,
+                        previous_timestep,
+                    ]
+                    current_external_frame = external_videos[
+                        batch_index,
+                        current_timestep,
+                    ]
 
                 first_wrist_frame = None
                 previous_wrist_frame = None
                 current_wrist_frame = None
 
                 if wrist_videos is not None:
-                    first_wrist_frame = wrist_videos[batch_index, 0]
+                    first_wrist_frame = wrist_videos[
+                        batch_index,
+                        0,
+                    ]
                     previous_wrist_frame = wrist_videos[
                         batch_index,
                         previous_timestep,
                     ]
                     current_wrist_frame = wrist_videos[
                         batch_index,
-                        timestep,
+                        current_timestep,
                     ]
 
-                trajectory_composites.append(
-                    create_composite_frame(
-                        first_external_frame=external_videos[
-                            batch_index,
-                            0,
-                        ],
-                        previous_external_frame=external_videos[
-                            batch_index,
-                            previous_timestep,
-                        ],
-                        current_external_frame=external_videos[
-                            batch_index,
-                            timestep,
-                        ],
-                        first_wrist_frame=first_wrist_frame,
-                        previous_wrist_frame=previous_wrist_frame,
-                        current_wrist_frame=current_wrist_frame,
-                    )
+                composite = create_composite_frame(
+                    first_external_frame=first_external_frame,
+                    previous_external_frame=previous_external_frame,
+                    current_external_frame=current_external_frame,
+                    first_wrist_frame=first_wrist_frame,
+                    previous_wrist_frame=previous_wrist_frame,
+                    current_wrist_frame=current_wrist_frame,
                 )
 
-            batch_composites.append(torch.stack(trajectory_composites, dim=0))
+                trajectory_composites.append(composite)
 
-        composite_batch = torch.stack(batch_composites, dim=0)
+            batch_composites.append(
+                torch.stack(
+                    trajectory_composites,
+                    dim=0,
+                )
+            )
+
+        composite_batch = torch.stack(
+            batch_composites,
+            dim=0,
+        )
 
         new_observation = dict(observation)
         new_observation[SOLER1_COMPOSITE_IMAGE_KEY] = composite_batch
+        new_observation[SOLER1_SAMPLE_INDICES_KEY] = sample_indices
+        new_observation[SOLER1_ORIGINAL_LENGTH_KEY] = torch.tensor(
+            original_length,
+            dtype=torch.long,
+        )
 
         new_transition = transition.copy()
         new_transition[TransitionKey.OBSERVATION] = new_observation
+
         return new_transition
 
     def transform_features(
@@ -439,14 +554,14 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
         PipelineFeatureType,
         dict[str, PolicyFeature],
     ]:
-        # The composite contains a dynamic trajectory dimension, so it is
-        # intentionally not represented by a fixed PolicyFeature shape.
+        # The composite has a dynamic sampled-time dimension.
         return features
 
     def get_config(self) -> dict[str, Any]:
         return {
             "external_image_key": self.external_image_key,
             "wrist_image_key": self.wrist_image_key,
+            "downsample_to": self.downsample_to,
         }
 
 
@@ -454,8 +569,14 @@ def make_soler1_pre_post_processors(
     config: SOLER1Config,
     dataset_stats: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[
+        dict[str, Any],
+        dict[str, Any],
+    ],
+    PolicyProcessorPipeline[
+        PolicyAction,
+        PolicyAction,
+    ],
 ]:
     """Create the SOLE-R1 preprocessing and postprocessing pipelines."""
 
@@ -470,6 +591,7 @@ def make_soler1_pre_post_processors(
             SOLER1CompositeProcessorStep(
                 external_image_key=config.external_image_key,
                 wrist_image_key=config.wrist_image_key,
+                downsample_to=config.downsample_to,
             ),
         ],
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,
