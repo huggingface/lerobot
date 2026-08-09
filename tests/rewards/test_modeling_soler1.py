@@ -20,40 +20,77 @@ import pytest
 import torch
 
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
+from lerobot.rewards.factory import (
+    get_reward_model_class,
+    make_reward_model_config,
+)
 from lerobot.rewards.soler1.configuration_soler1 import SOLER1Config
 from lerobot.rewards.soler1.modeling_soler1 import _parse_progress
 from lerobot.rewards.soler1.processor_soler1 import (
-    SOLER1_COMPOSITE_KEY,
-    SOLER1_IS_FIRST_KEY,
-    SOLER1_TASK_KEY,
+    COMPOSITE_WIDTH,
+    SINGLE_VIEW_COMPOSITE_HEIGHT,
+    SOLER1_COMPOSITE_IMAGE_KEY,
 )
 from tests.utils import skip_if_package_missing
 
 
 class _FakeProcessor:
     def __init__(self) -> None:
-        self.completions = ["<think>progress</think><answer>42%</answer>"]
+        self.completion_batches: list[list[str]] = []
         self.user_prompts: list[str] = []
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):  # noqa: ARG003
         return cls()
 
-    def apply_chat_template(self, messages, **kwargs):  # noqa: ARG002
+    def apply_chat_template(
+        self,
+        messages,
+        **kwargs,  # noqa: ARG002
+    ):
         self.user_prompts.append(messages[-1]["content"][-1]["text"])
         return "templated prompt"
 
-    def __call__(self, text, images, **kwargs):  # noqa: ARG002
+    def __call__(
+        self,
+        text,
+        images,
+        **kwargs,  # noqa: ARG002
+    ):
         batch_size = len(text)
+
         return {
-            "input_ids": torch.ones(batch_size, 8, dtype=torch.long),
-            "attention_mask": torch.ones(batch_size, 8, dtype=torch.long),
-            "pixel_values": torch.zeros(batch_size, 3, 4, 4),
+            "input_ids": torch.ones(
+                batch_size,
+                8,
+                dtype=torch.long,
+            ),
+            "attention_mask": torch.ones(
+                batch_size,
+                8,
+                dtype=torch.long,
+            ),
+            "pixel_values": torch.zeros(
+                batch_size,
+                3,
+                4,
+                4,
+            ),
         }
 
-    def batch_decode(self, completion_ids, **kwargs):  # noqa: ARG002
-        return self.completions[: completion_ids.shape[0]]
+    def batch_decode(
+        self,
+        completion_ids,
+        **kwargs,  # noqa: ARG002
+    ):
+        if not self.completion_batches:
+            raise AssertionError("No fake SOLE-R1 completion batch configured")
+
+        completions = self.completion_batches.pop(0)
+
+        assert len(completions) == completion_ids.shape[0]
+
+        return completions
 
 
 class _FakeQwenModel(torch.nn.Module):
@@ -65,184 +102,528 @@ class _FakeQwenModel(torch.nn.Module):
     def from_pretrained(cls, *args, **kwargs):  # noqa: ARG003
         return cls()
 
-    def generate(self, input_ids, **kwargs):  # noqa: ARG002
-        suffix = torch.zeros(input_ids.shape[0], 4, dtype=torch.long)
+    def generate(
+        self,
+        input_ids,
+        **kwargs,  # noqa: ARG002
+    ):
+        suffix = torch.zeros(
+            input_ids.shape[0],
+            4,
+            dtype=torch.long,
+            device=input_ids.device,
+        )
         return torch.cat([input_ids, suffix], dim=-1)
 
 
 def _patch_model(monkeypatch) -> None:
     from lerobot.rewards.soler1 import modeling_soler1
 
-    monkeypatch.setattr(modeling_soler1, "AutoProcessor", _FakeProcessor)
     monkeypatch.setattr(
         modeling_soler1,
-        "Qwen3VLForConditionalGeneration",
+        "AutoProcessor",
+        _FakeProcessor,
+    )
+    monkeypatch.setattr(
+        modeling_soler1,
+        "AutoModelForImageTextToText",
         _FakeQwenModel,
     )
 
 
-def _batch(*, is_first: bool) -> dict[str, object]:
+def _batch(
+    *,
+    batch_size: int = 1,
+    trajectory_length: int = 1,
+) -> dict[str, object]:
+    composite_width = COMPOSITE_WIDTH
+
     return {
-        SOLER1_COMPOSITE_KEY: torch.zeros(1, 3, 8, 24, dtype=torch.uint8),
-        SOLER1_IS_FIRST_KEY: torch.tensor([is_first]),
-        SOLER1_TASK_KEY: ["pick up the cube"],
+        SOLER1_COMPOSITE_IMAGE_KEY: torch.zeros(
+            batch_size,
+            trajectory_length,
+            3,
+            SINGLE_VIEW_COMPOSITE_HEIGHT,
+            composite_width,
+            dtype=torch.uint8,
+        ),
+        "task": ["pick up the cube"] * batch_size,
     }
 
 
 def test_soler1_config_registered():
-    assert "soler1" in RewardModelConfig.get_known_choices()
-    assert RewardModelConfig.get_choice_class("soler1") is SOLER1Config
-    assert isinstance(make_reward_model_config("soler1", device="cpu"), SOLER1Config)
+    assert "sole-r1" in RewardModelConfig.get_known_choices()
+    assert RewardModelConfig.get_choice_class("sole-r1") is SOLER1Config
+    assert isinstance(
+        make_reward_model_config(
+            "sole-r1",
+            device="cpu",
+        ),
+        SOLER1Config,
+    )
 
 
 def test_soler1_factory_returns_in_tree_class():
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
-    assert get_reward_model_class("soler1") is SOLER1RewardModel
+    assert get_reward_model_class("sole-r1") is SOLER1RewardModel
 
 
 def test_soler1_config_validation():
-    with pytest.raises(ValueError, match="composite_image_size"):
-        SOLER1Config(device="cpu", composite_image_size=0)
+    with pytest.raises(ValueError, match="reward_output"):
+        SOLER1Config(
+            device="cpu",
+            reward_output="invalid",
+        )
+
     with pytest.raises(ValueError, match="top_p"):
-        SOLER1Config(device="cpu", top_p=0.0)
+        SOLER1Config(
+            device="cpu",
+            top_p=0.0,
+        )
+
     with pytest.raises(ValueError, match="min_progress"):
-        SOLER1Config(device="cpu", min_progress=100, max_progress=0)
+        SOLER1Config(
+            device="cpu",
+            min_progress=100.0,
+            max_progress=0.0,
+        )
+
+    with pytest.raises(ValueError, match="reward_scale"):
+        SOLER1Config(
+            device="cpu",
+            reward_scale=0.0,
+        )
 
 
 def test_parse_progress():
     assert (
         _parse_progress(
             "<think>reasoning</think><answer>42%</answer>",
-            minimum=-100,
-            maximum=100,
+            minimum=-100.0,
+            maximum=100.0,
         )
-        == 42
+        == 42.0
     )
+
     assert (
         _parse_progress(
             "<answer>250%</answer>",
-            minimum=-100,
-            maximum=100,
+            minimum=-100.0,
+            maximum=100.0,
         )
-        == 100
+        == 100.0
     )
-    assert _parse_progress("not parseable", minimum=-100, maximum=100) is None
+
+    assert (
+        _parse_progress(
+            "<answer>-250%</answer>",
+            minimum=-100.0,
+            maximum=100.0,
+        )
+        == -100.0
+    )
+
+    assert (
+        _parse_progress(
+            "reasoning says 10%, final estimate is 35%",
+            minimum=-100.0,
+            maximum=100.0,
+        )
+        == 35.0
+    )
+
+    assert (
+        _parse_progress(
+            "not parseable",
+            minimum=-100.0,
+            maximum=100.0,
+        )
+        is None
+    )
 
 
 @skip_if_package_missing("transformers")
-def test_first_timestep_is_zero_without_generation(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+def test_one_frame_trajectory_is_zero_without_generation(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
     model = SOLER1RewardModel(SOLER1Config(device="cpu"))
 
-    reward = model.compute_reward(_batch(is_first=True))
+    reward = model.compute_reward(_batch(trajectory_length=1))
 
     assert reward.shape == (1,)
     assert reward.item() == 0.0
-    assert model.last_reasoning_traces == [] or model.last_reasoning_traces == [""]
+    assert model.last_completions == [""]
+    assert model.last_reasoning_traces == [""]
 
 
 @skip_if_package_missing("transformers")
-def test_soler1_uses_previous_prediction_in_next_prompt(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+def test_trajectory_uses_previous_prediction_and_returns_final(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
     model = SOLER1RewardModel(SOLER1Config(device="cpu"))
 
-    model.compute_reward(_batch(is_first=True))
+    model.processor.completion_batches = [
+        ["<think>The gripper approached the cube.</think><answer>42%</answer>"],
+        ["<think>The gripper grasped the cube.</think><answer>55%</answer>"],
+    ]
 
-    model.processor.completions = ["<think>The gripper approached the cube.</think><answer>42%</answer>"]
-    second_reward = model.compute_reward(_batch(is_first=False))
-    assert second_reward.item() == pytest.approx(0.42)
+    reward = model.compute_reward(_batch(trajectory_length=3))
 
-    model.processor.completions = ["<think>The gripper grasped the cube.</think><answer>55%</answer>"]
-    third_reward = model.compute_reward(_batch(is_first=False))
+    assert reward.shape == (1,)
+    assert reward.item() == pytest.approx(0.55)
 
-    assert third_reward.item() == pytest.approx(0.55)
     assert "previous timestep is 42%" in model.processor.user_prompts[-1]
-    assert "<answer>55%</answer>" in model.last_reasoning_traces[0]
+    assert model.last_completions == ["<think>The gripper grasped the cube.</think><answer>55%</answer>"]
+    assert model.last_reasoning_traces == ["The gripper grasped the cube."]
 
 
 @skip_if_package_missing("transformers")
-def test_invalid_completion_falls_back_to_previous(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+def test_returns_one_sparse_value_per_trajectory(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
     model = SOLER1RewardModel(SOLER1Config(device="cpu"))
 
-    model.compute_reward(_batch(is_first=True))
-    model.processor.completions = ["<answer>42%</answer>"]
-    model.compute_reward(_batch(is_first=False))
+    model.processor.completion_batches = [
+        [
+            "<answer>25%</answer>",
+            "<answer>75%</answer>",
+        ]
+    ]
 
-    model.processor.completions = ["invalid output"]
-    reward = model.compute_reward(_batch(is_first=False))
+    rewards = model.compute_reward(
+        _batch(
+            batch_size=2,
+            trajectory_length=2,
+        )
+    )
 
-    assert reward.item() == pytest.approx(0.42)
-
-
-@skip_if_package_missing("transformers")
-def test_from_zero_prompt_omits_previous_progress(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
-
-    _patch_model(monkeypatch)
-    model = SOLER1RewardModel(SOLER1Config(device="cpu", from_zero=True))
-
-    model.compute_reward(_batch(is_first=True))
-    model.compute_reward(_batch(is_first=False))
-
-    assert "previous timestep" not in model.processor.user_prompts[-1]
+    assert rewards.shape == (2,)
+    assert rewards.tolist() == pytest.approx([0.25, 0.75])
 
 
 @skip_if_package_missing("transformers")
-def test_reset_restarts_episode_at_zero(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+def test_dense_progress_returns_one_value_per_timestep(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
     model = SOLER1RewardModel(SOLER1Config(device="cpu"))
 
-    model.compute_reward(_batch(is_first=True))
-    model.compute_reward(_batch(is_first=False))
+    model.processor.completion_batches = [
+        ["<answer>42%</answer>"],
+        ["<answer>55%</answer>"],
+    ]
+
+    rewards = model.compute_reward(
+        _batch(trajectory_length=3),
+        dense=True,
+    )
+
+    assert rewards.shape == (1, 3)
+    assert rewards.tolist()[0] == pytest.approx([0.0, 0.42, 0.55])
+
+
+@skip_if_package_missing("transformers")
+def test_dense_progress_supports_multiple_trajectories(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+
+    model.processor.completion_batches = [
+        [
+            "<answer>20%</answer>",
+            "<answer>60%</answer>",
+        ],
+        [
+            "<answer>40%</answer>",
+            "<answer>80%</answer>",
+        ],
+    ]
+
+    rewards = model.compute_reward(
+        _batch(
+            batch_size=2,
+            trajectory_length=3,
+        ),
+        dense=True,
+    )
+
+    assert rewards.shape == (2, 3)
+    assert rewards.tolist()[0] == pytest.approx([0.0, 0.20, 0.40])
+    assert rewards.tolist()[1] == pytest.approx([0.0, 0.60, 0.80])
+
+
+@skip_if_package_missing("transformers")
+def test_dense_false_returns_only_final_progress(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+
+    model.processor.completion_batches = [
+        ["<answer>42%</answer>"],
+        ["<answer>55%</answer>"],
+    ]
+
+    reward = model.compute_reward(
+        _batch(trajectory_length=3),
+        dense=False,
+    )
+
+    assert reward.shape == (1,)
+    assert reward.item() == pytest.approx(0.55)
+
+
+@skip_if_package_missing("transformers")
+def test_dense_success_checks_only_final_progress(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            reward_output="success",
+            success_threshold=0.5,
+        )
+    )
+
+    model.processor.completion_batches = [
+        [
+            "<answer>90%</answer>",
+            "<answer>10%</answer>",
+        ],
+        [
+            "<answer>40%</answer>",
+            "<answer>60%</answer>",
+        ],
+    ]
+
+    rewards = model.compute_reward(
+        _batch(
+            batch_size=2,
+            trajectory_length=3,
+        ),
+        dense=True,
+    )
+
+    # Final progress values are 0.40 and 0.60. The intermediate
+    # 0.90 value must not make the first trajectory successful.
+    assert rewards.shape == (2,)
+    assert rewards.tolist() == [0.0, 1.0]
+
+
+@skip_if_package_missing("transformers")
+def test_sparse_success_checks_final_progress(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            reward_output="success",
+            success_threshold=0.5,
+        )
+    )
+
+    model.processor.completion_batches = [
+        [
+            "<answer>49%</answer>",
+            "<answer>51%</answer>",
+        ]
+    ]
+
+    rewards = model.compute_reward(
+        _batch(
+            batch_size=2,
+            trajectory_length=2,
+        )
+    )
+
+    assert rewards.shape == (2,)
+    assert rewards.tolist() == [0.0, 1.0]
+
+
+@skip_if_package_missing("transformers")
+def test_invalid_completion_falls_back_to_previous(
+    monkeypatch,
+):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+
+    model.processor.completion_batches = [
+        ["<answer>42%</answer>"],
+        ["invalid output"],
+    ]
+
+    rewards = model.compute_reward(
+        _batch(trajectory_length=3),
+        dense=True,
+    )
+
+    assert rewards.shape == (1, 3)
+    assert rewards.tolist()[0] == pytest.approx([0.0, 0.42, 0.42])
+
+
+@skip_if_package_missing("transformers")
+def test_invalid_completion_can_raise(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            fallback_to_previous=False,
+        )
+    )
+
+    model.processor.completion_batches = [
+        ["invalid output"],
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="Could not parse SOLE-R1 completion",
+    ):
+        model.compute_reward(_batch(trajectory_length=2))
+
+
+@skip_if_package_missing("transformers")
+def test_input_length_limit_is_checked(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(
+        SOLER1Config(
+            device="cpu",
+            max_input_length=4,
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="input length",
+    ):
+        model.compute_reward(_batch(trajectory_length=2))
+
+
+@skip_if_package_missing("transformers")
+def test_reset_clears_diagnostic_state(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
+
+    _patch_model(monkeypatch)
+    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
+
+    model.processor.completion_batches = [
+        ["<think>reasoning</think><answer>42%</answer>"],
+    ]
+
+    model.compute_reward(_batch(trajectory_length=2))
+
+    assert model._previous_progress == [42.0]
+    assert model.last_completions
+    assert model.last_reasoning_traces == ["reasoning"]
+
     model.reset()
 
-    reward = model.compute_reward(_batch(is_first=True))
-    assert reward.item() == 0.0
+    assert model._previous_progress is None
+    assert model.last_completions == []
+    assert model.last_reasoning_traces == []
 
 
 @skip_if_package_missing("transformers")
-def test_soler1_save_load_is_config_only(monkeypatch, tmp_path):
-    from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
+def test_soler1_save_load_is_config_only(
+    monkeypatch,
+    tmp_path,
+):
+    from huggingface_hub.constants import (
+        CONFIG_NAME,
+        SAFETENSORS_SINGLE_FILE,
+    )
 
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
+
     config = SOLER1Config(
         device="cpu",
         external_image_key="observation.images.front",
         wrist_image_key="observation.images.wrist",
-        reward_scale=1.0,
+        reward_output="success",
+        success_threshold=0.75,
+        reward_scale=0.01,
     )
     model = SOLER1RewardModel(config)
+
     model.save_pretrained(tmp_path)
 
     assert (tmp_path / CONFIG_NAME).exists()
     assert not (tmp_path / SAFETENSORS_SINGLE_FILE).exists()
 
     reloaded = SOLER1RewardModel.from_pretrained(tmp_path)
+
     assert isinstance(reloaded.config, SOLER1Config)
     assert reloaded.config.external_image_key == "observation.images.front"
     assert reloaded.config.wrist_image_key == "observation.images.wrist"
-    assert reloaded.config.reward_scale == 1.0
+    assert reloaded.config.reward_output == "success"
+    assert reloaded.config.success_threshold == 0.75
+    assert reloaded.config.reward_scale == 0.01
 
 
 @skip_if_package_missing("transformers")
 def test_soler1_is_not_trainable(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+    from lerobot.rewards.soler1.modeling_soler1 import (
+        SOLER1RewardModel,
+    )
 
     _patch_model(monkeypatch)
     model = SOLER1RewardModel(SOLER1Config(device="cpu"))
 
     assert model.is_trainable is False
-    with pytest.raises(NotImplementedError, match="not trainable"):
+
+    with pytest.raises(
+        NotImplementedError,
+        match="not trainable",
+    ):
         model.forward({"x": torch.zeros(1)})

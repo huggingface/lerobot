@@ -16,18 +16,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 from torch import Tensor
 from torch.nn import functional
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -60,43 +59,49 @@ SOLER1_FEATURE_PREFIX = f"{OBS_PREFIX}soler1."
 SOLER1_COMPOSITE_IMAGE_KEY = f"{SOLER1_FEATURE_PREFIX}composite_image"
 
 
-def _to_bchw_uint8(images: Tensor | Any, *, image_key: str) -> Tensor:
-    """Convert an image or image batch to a CPU ``(B, C, H, W)`` uint8 tensor.
+def _to_btchw_uint8(
+    images: Tensor | Any,
+    *,
+    image_key: str,
+) -> Tensor:
+    """Convert images to a CPU ``(B, T, C, H, W)`` uint8 tensor.
 
-    Accepted input shapes are:
+    Accepted input shapes after LeRobot's batch processor are:
 
-    - ``(C, H, W)``
-    - ``(H, W, C)``
     - ``(B, C, H, W)``
     - ``(B, H, W, C)``
+    - ``(B, T, C, H, W)``
+    - ``(B, T, H, W, C)``
 
-    Floating-point inputs in the range ``[0, 1]`` are scaled to ``[0, 255]``.
+    A four-dimensional input is interpreted as a one-frame trajectory.
+    Floating-point inputs in ``[0, 1]`` are scaled to ``[0, 255]``.
     """
 
     tensor = images.detach().cpu() if isinstance(images, Tensor) else torch.as_tensor(images)
 
-    if tensor.ndim == 3:
-        tensor = tensor.unsqueeze(0)
-    elif tensor.ndim != 4:
+    if tensor.ndim == 4:
+        tensor = tensor.unsqueeze(1)
+    elif tensor.ndim != 5:
         raise ValueError(
             f"SOLE-R1 expected {image_key!r} to have shape "
-            f"(C,H,W), (H,W,C), (B,C,H,W), or (B,H,W,C); "
-            f"got {tuple(tensor.shape)}"
+            "(B,C,H,W), (B,H,W,C), (B,T,C,H,W), or "
+            f"(B,T,H,W,C); got {tuple(tensor.shape)}"
         )
 
-    # Convert channel-last images to channel-first. Restricting valid channel
-    # counts to 1 or 3 avoids interpreting an image with height 4 as RGBA.
-    if tensor.shape[1] in (1, 3):
+    if tensor.shape[2] in (1, 3):
         pass
     elif tensor.shape[-1] in (1, 3):
-        tensor = tensor.permute(0, 3, 1, 2)
+        tensor = tensor.permute(0, 1, 4, 2, 3)
     else:
         raise ValueError(
             f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
         )
 
-    if tensor.shape[1] == 1:
-        tensor = tensor.repeat(1, 3, 1, 1)
+    if tensor.shape[2] == 1:
+        tensor = tensor.repeat(1, 1, 3, 1, 1)
+
+    if tensor.shape[1] < 1:
+        raise ValueError("SOLE-R1 requires at least one frame per trajectory")
 
     if tensor.is_floating_point():
         tensor = tensor.float()
@@ -313,140 +318,109 @@ def create_composite_frame(
 @dataclass
 @ProcessorStepRegistry.register(name="soler1_composite")
 class SOLER1CompositeProcessorStep(ProcessorStep):
-    """Build SOLE-R1's first/previous/current composite image.
+    """Build SOLE-R1 composites for complete trajectories.
 
-    This processor is stateful. On the first call after ``reset()``, the
-    current frame is used for the first, previous, and current columns. On
-    later calls, the original first frame and the most recent previous frame
-    are retained.
+    Input camera tensors have shape ``(B, T, C, H, W)``. For every trajectory
+    and timestep, this step creates a composite containing:
 
-    Call ``preprocessor.reset()`` at the beginning of each episode.
+    - the first frame;
+    - the previous frame;
+    - the current frame.
+
+
+    The output composite tensor has shape ``(B, T, C, H, W)``. This processor
+    is stateless: every call contains all context needed by SOLE-R1.
     """
 
     external_image_key: str
     wrist_image_key: str | None = None
 
-    _first_external_frames: Tensor | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-    _previous_external_frames: Tensor | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-    _first_wrist_frames: Tensor | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-    _previous_wrist_frames: Tensor | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-
     def reset(self) -> None:
-        """Clear all episode-local frame history."""
-
-        self._first_external_frames = None
-        self._previous_external_frames = None
-        self._first_wrist_frames = None
-        self._previous_wrist_frames = None
+        """No-op because complete trajectories are processed per call."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         observation = transition.get(TransitionKey.OBSERVATION)
 
-        if observation is None:
-            raise ValueError("SOLE-R1 preprocessing requires an observation")
+        if not isinstance(observation, dict):
+            raise ValueError("SOLE-R1 preprocessing requires an observation dictionary")
 
         if self.external_image_key not in observation:
             raise KeyError(
                 f"SOLE-R1 expected external image key {self.external_image_key!r} in the observation"
             )
 
-        current_external_frames = _to_bchw_uint8(
+        external_videos = _to_btchw_uint8(
             observation[self.external_image_key],
             image_key=self.external_image_key,
         )
 
-        current_wrist_frames: Tensor | None = None
+        wrist_videos: Tensor | None = None
         if self.wrist_image_key is not None:
             if self.wrist_image_key not in observation:
                 raise KeyError(
                     f"SOLE-R1 expected wrist image key {self.wrist_image_key!r} in the observation"
                 )
 
-            current_wrist_frames = _to_bchw_uint8(
+            wrist_videos = _to_btchw_uint8(
                 observation[self.wrist_image_key],
                 image_key=self.wrist_image_key,
             )
 
-            if current_wrist_frames.shape[0] != current_external_frames.shape[0]:
+            if wrist_videos.shape[:2] != external_videos.shape[:2]:
                 raise ValueError(
-                    "SOLE-R1 received different external and wrist batch "
-                    f"sizes: {current_external_frames.shape[0]} and "
-                    f"{current_wrist_frames.shape[0]}"
+                    "SOLE-R1 received different external and wrist "
+                    "batch/time dimensions: "
+                    f"{tuple(external_videos.shape[:2])} and "
+                    f"{tuple(wrist_videos.shape[:2])}"
                 )
 
-        batch_size = current_external_frames.shape[0]
-
-        if self._first_external_frames is None:
-            self._first_external_frames = current_external_frames.clone()
-            self._previous_external_frames = current_external_frames.clone()
-
-            if current_wrist_frames is not None:
-                self._first_wrist_frames = current_wrist_frames.clone()
-                self._previous_wrist_frames = current_wrist_frames.clone()
-        else:
-            if self._first_external_frames.shape[0] != batch_size:
-                raise ValueError(
-                    "SOLE-R1 processor batch size changed within an episode. "
-                    "Call preprocessor.reset() before starting a new episode."
-                )
-
-            if self.wrist_image_key is not None and self._first_wrist_frames is None:
-                raise RuntimeError(
-                    "SOLE-R1 wrist-camera state is inconsistent. Call preprocessor.reset() before continuing."
-                )
-
-        assert self._first_external_frames is not None
-        assert self._previous_external_frames is not None
-
-        composite_frames: list[Tensor] = []
+        batch_size, trajectory_length = external_videos.shape[:2]
+        batch_composites: list[Tensor] = []
 
         for batch_index in range(batch_size):
-            first_wrist_frame = None
-            previous_wrist_frame = None
-            current_wrist_frame = None
+            trajectory_composites: list[Tensor] = []
 
-            if current_wrist_frames is not None:
-                assert self._first_wrist_frames is not None
-                assert self._previous_wrist_frames is not None
+            for timestep in range(trajectory_length):
+                previous_timestep = max(timestep - 1, 0)
 
-                first_wrist_frame = self._first_wrist_frames[batch_index]
-                previous_wrist_frame = self._previous_wrist_frames[batch_index]
-                current_wrist_frame = current_wrist_frames[batch_index]
+                first_wrist_frame = None
+                previous_wrist_frame = None
+                current_wrist_frame = None
 
-            composite_frames.append(
-                create_composite_frame(
-                    first_external_frame=self._first_external_frames[batch_index],
-                    previous_external_frame=self._previous_external_frames[batch_index],
-                    current_external_frame=current_external_frames[batch_index],
-                    first_wrist_frame=first_wrist_frame,
-                    previous_wrist_frame=previous_wrist_frame,
-                    current_wrist_frame=current_wrist_frame,
+                if wrist_videos is not None:
+                    first_wrist_frame = wrist_videos[batch_index, 0]
+                    previous_wrist_frame = wrist_videos[
+                        batch_index,
+                        previous_timestep,
+                    ]
+                    current_wrist_frame = wrist_videos[
+                        batch_index,
+                        timestep,
+                    ]
+
+                trajectory_composites.append(
+                    create_composite_frame(
+                        first_external_frame=external_videos[
+                            batch_index,
+                            0,
+                        ],
+                        previous_external_frame=external_videos[
+                            batch_index,
+                            previous_timestep,
+                        ],
+                        current_external_frame=external_videos[
+                            batch_index,
+                            timestep,
+                        ],
+                        first_wrist_frame=first_wrist_frame,
+                        previous_wrist_frame=previous_wrist_frame,
+                        current_wrist_frame=current_wrist_frame,
+                    )
                 )
-            )
 
-        composite_batch = torch.stack(composite_frames, dim=0)
+            batch_composites.append(torch.stack(trajectory_composites, dim=0))
 
-        # Save the current frames as the previous frames for the next call.
-        self._previous_external_frames = current_external_frames.clone()
-
-        if current_wrist_frames is not None:
-            self._previous_wrist_frames = current_wrist_frames.clone()
+        composite_batch = torch.stack(batch_composites, dim=0)
 
         new_observation = dict(observation)
         new_observation[SOLER1_COMPOSITE_IMAGE_KEY] = composite_batch
@@ -465,15 +439,8 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
         PipelineFeatureType,
         dict[str, PolicyFeature],
     ]:
-        composite_height = (
-            TWO_VIEW_COMPOSITE_HEIGHT if self.wrist_image_key is not None else SINGLE_VIEW_COMPOSITE_HEIGHT
-        )
-
-        features[PipelineFeatureType.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY] = PolicyFeature(
-            type=FeatureType.VISUAL,
-            shape=(3, composite_height, COMPOSITE_WIDTH),
-        )
-
+        # The composite contains a dynamic trajectory dimension, so it is
+        # intentionally not represented by a fixed PolicyFeature shape.
         return features
 
     def get_config(self) -> dict[str, Any]:
@@ -504,7 +471,6 @@ def make_soler1_pre_post_processors(
                 external_image_key=config.external_image_key,
                 wrist_image_key=config.wrist_image_key,
             ),
-            DeviceProcessorStep(device=config.device or "cpu"),
         ],
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,
     )
