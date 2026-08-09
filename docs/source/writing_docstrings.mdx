@@ -1,0 +1,287 @@
+# Writing docstrings
+
+LeRobot's API reference is generated directly from the docstrings in `src/lerobot/`. A docstring is not a
+comment — it is the published documentation for that object, and the format below is what the renderer and
+the CI checks parse.
+
+This page is the contract. If you are adding or editing anything public in `src/lerobot/`, follow it.
+
+> [!IMPORTANT]
+> **An undocumented public method is an invisible one.** `[[autodoc]]` silently skips members that have no
+> docstring — no warning, no error, it simply does not appear on the rendered page. Coverage and
+> API-reference completeness are the same problem.
+
+## The format in one example
+
+Google section headers, Hugging Face type formatting. Both, not one or the other.
+
+````python
+def send_action(self, action: RobotAction, rate_hz: float = 30.0) -> RobotAction:
+    """Command the robot to move to a target joint configuration.
+
+    Values are clipped by the configured maximum relative target before reaching the motors, so the
+    returned action may differ from the requested one.
+
+    Args:
+        action (`dict[str, float]`):
+            Target values keyed by motor name, e.g. `{"shoulder_pan.pos": 0.0}`. Keys must match the
+            robot's action features.
+        rate_hz (`float`, *optional*, defaults to `30.0`):
+            Control loop frequency.
+
+    Returns:
+        `dict[str, float]`: The action actually written to the motors after safety clipping.
+
+    Raises:
+        DeviceNotConnectedError: If the robot has not been connected.
+
+    Example:
+        ```python
+        >>> from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+        >>> robot = SO101Follower(SO101FollowerConfig(port="/dev/ttyACM0"))  # doctest: +SKIP
+        >>> robot.connect()  # doctest: +SKIP
+        >>> robot.send_action({"shoulder_pan.pos": 0.0})  # doctest: +SKIP
+        ```
+    """
+````
+
+Cross-references are omitted from the examples on this page — see [Cross-references](#cross-references) for
+their syntax and why they cannot be shown inside a code block.
+
+## Rules
+
+### Sections
+
+`Args:` · `Returns:` · `Raises:` · `Yields:` · `Example:` · `Note:`
+
+In that order. No other section headers. A one-line summary comes first, then an optional free-form
+description, then the sections.
+
+### The `Args:` line is machine-parsed
+
+```
+name (`type`, *optional*, defaults to `X`):
+    Description, indented on its own line.
+```
+
+The `*optional*, defaults to` clause is **checked against the real signature default** by
+`make check-docstrings`. It is not decorative — if you write a default that has drifted from the code, CI
+fails. Omit the clause entirely for required parameters:
+
+```python
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0`.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps the magnitude of the relative positional target vector. `None` disables clipping.
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Keep `True` for backward compatibility with existing policies and datasets.
+```
+
+Types go in backticks. Use `*optional*` with no `defaults to` when the default is `None` or is otherwise not
+worth restating.
+
+### `Returns:` is type-first
+
+One indented line, type first, then a colon, then the description:
+
+```python
+    Returns:
+        `dict[str, float]`: The action actually written to the motors after safety clipping.
+```
+
+`Yields:` takes the same shape.
+
+### `**Attributes**:`, never `Attributes:`
+
+doc-builder parses a bare `Attributes:` as a **synonym for `Parameters:`**, so your attributes get rendered
+as constructor arguments. This is silent and wrong. Whenever the attributes differ from the constructor
+parameters, use the bold form with a `--` separator:
+
+```python
+class Robot(abc.ABC):
+    """The base abstract class for all LeRobot-compatible robots.
+
+    **Attributes**:
+        - **config_class** (`type[RobotConfig]`) -- The expected configuration class for this robot.
+        - **name** (`str`) -- The unique robot name used to identify this robot type.
+    """
+```
+
+Note `--`, not `:`.
+
+### Cross-references
+
+Use doc-builder's bracket syntax: a square-bracketed backtick-quoted path. **Sphinx roles (`:pymeth:`,
+`:pyattr:`) are not supported** and render as literal text on the page.
+
+| Want                         | Write                               |
+| ---------------------------- | ----------------------------------- |
+| Class in the main package    | &#91;`Robot`&#93;                   |
+| Method, show the full path   | &#91;`Robot.connect`&#93;           |
+| Method, show the bare name   | &#91;`~Robot.connect`&#93;          |
+| Nested path                  | &#91;`~robots.Robot.connect`&#93;   |
+| Object in another HF library | &#91;`~accelerate.Accelerator`&#93; |
+
+The `~` strips the path from the **link text only**; the link still resolves to the full path.
+
+> [!NOTE]
+> doc-builder resolves this syntax everywhere in a page — including inside fenced code blocks. That is why
+> the docstring examples on this page use plain prose instead of cross-references: a code block containing
+> one would render the resolved link rather than the syntax you need to type. In your own docstrings, use
+> cross-references freely; this restriction only affects documentation _about_ the syntax.
+
+### Callouts
+
+Use GitHub-style blockquotes:
+
+```markdown
+> [!TIP]
+> Call this once at startup — it takes about two seconds.
+
+> [!WARNING]
+> Torque is disabled on disconnect. The arm will drop if it is holding a load.
+```
+
+The `<Tip>` component is legacy per doc-builder; don't add new ones.
+
+### Examples must be fenced
+
+An example lives inside a fenced ` ```python ` block containing `>>> `. The fence is what makes it render
+as a code block, and it is what the doctest preprocessor's regex looks for:
+
+````python
+    Example:
+        ```python
+        >>> from lerobot.robots.so_follower import SO101FollowerConfig
+        >>> cfg = SO101FollowerConfig(port="/dev/ttyACM0")
+        >>> cfg.use_degrees
+        True
+        ```
+````
+
+> [!WARNING]
+> An unfenced `>>>` is still collected — doctest finds prompts anywhere in a docstring. What you lose is the
+> rendering, so it shows up as a wall of prose on the page. Every example needs the fence.
+
+Every example either executes in CI or carries `# doctest: +SKIP`. Anything that touches hardware, a GPU, or
+downloads from the Hub gets `+SKIP`:
+
+````python
+    Example:
+        ```python
+        >>> robot.connect()  # doctest: +SKIP
+        >>> policy = ACTPolicy.from_pretrained("lerobot/act_aloha_sim_transfer_cube_human")  # doctest: +SKIP
+        ```
+````
+
+Add files containing runnable examples to `utils/documentation_tests.txt`.
+
+Put examples on the three to five genuine entry points of a module. Examples on trivial accessors are noise.
+
+## Three patterns you will hit constantly
+
+### Config dataclasses
+
+Configuration fields are historically documented with `#` comments above each field. **doc-builder cannot
+see inline comments** — such a class renders with every field listed and not a single description. Move them
+into an `Args:` block on the class docstring:
+
+```python
+@dataclass
+class SOFollowerConfig:
+    """Configuration for SO-family follower arms.
+
+    Args:
+        port (`str`):
+            Serial port the arm is connected to, e.g. `/dev/ttyACM0`.
+        max_relative_target (`float | dict[str, float]`, *optional*):
+            Caps the magnitude of the relative positional target vector. A scalar applies to all motors;
+            a dict maps motor name to a per-motor cap. `None` disables clipping.
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Keep `True` for backward compatibility with existing policies and datasets.
+    """
+
+    port: str
+    max_relative_target: float | dict[str, float] | None = None
+    use_degrees: bool = True
+```
+
+> [!IMPORTANT]
+> **doc-builder does not inherit docstrings from base classes.** LeRobot's registered config classes are
+> often thin multiple-inheritance shims:
+>
+> ```python
+> @RobotConfig.register_subclass("so101_follower")
+> @dataclass
+> class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
+>     pass
+> ```
+>
+> That class renders **every** field — including the ones it inherits — with no descriptions at all, no
+> matter how well the bases are documented. The `Args:` block must live on the concrete class that
+> `[[autodoc]]` names, and it must cover inherited fields too.
+
+### Base class, then concrete subclass
+
+The abstract base carries the canonical contract. Subclasses document only what deviates — port semantics,
+calibration quirks, motor layout, supported feature keys. Do not copy the base contract into every subclass.
+
+`Robot`, `Teleoperator`, `Camera`, `MotorsBus`, `ProcessorStep`, and `PreTrainedPolicy` all follow this
+shape.
+
+### Module-level aliases
+
+Several public names are aliases rather than distinct classes:
+
+```python
+SO100FollowerConfig = SOFollowerRobotConfig
+SO101FollowerConfig = SOFollowerRobotConfig
+```
+
+`[[autodoc]]` resolves the alias and renders the **canonical** class name, so a `## SO101FollowerConfig`
+heading will show `class lerobot.robots.so_follower.SOFollowerRobotConfig` in the body. Document the
+canonical class once, and mention the aliases in the page's prose rather than giving each alias its own
+autodoc block.
+
+## What not to document
+
+- **Private members.** Anything starting with `_` is not part of the public API.
+- **The type annotation restated as prose.** `port (`str`): A string.` adds nothing. Say what it is for.
+- **Vendored upstream code.** `src/lerobot/policies/molmoact2/molmoact2_hf_model/` is vendored from
+  `transformers` and already carries upstream-style docstrings. Leave it alone — restyling it only creates
+  conflicts on the next sync. It is excluded from the API reference and from the docstring checks.
+
+## How this is enforced
+
+| Check                     | What it catches                                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `make check-docstrings`   | An `Args:` entry that doesn't match the signature; a documented default that has drifted from the real one |
+| `make doctest`            | Examples that no longer run                                                                                |
+| `make check-doctest-list` | Stale or unsorted entries in `utils/documentation_tests.txt`                                               |
+| `ruff` (`D` rules)        | Google-convention style violations                                                                         |
+| `interrogate`             | Docstring coverage falling below the current threshold                                                     |
+| doc-builder               | A `[[autodoc]]` path that points at something that doesn't exist — this breaks the docs build              |
+
+Run them together before opening a PR:
+
+```bash
+make check-docstrings && make doctest && pre-commit run --all-files
+```
+
+Then render the page and actually look at it:
+
+```bash
+doc-builder build lerobot docs/source/ --build_dir /tmp/doc-build
+```
+
+## Checklist
+
+- [ ] Every public member you touched has a docstring.
+- [ ] Every `Args:` entry matches the signature, including the `*optional*, defaults to` clause.
+- [ ] `Returns:` is type-first on one indented line.
+- [ ] No bare `Attributes:` — use `**Attributes**:` with `--` separators.
+- [ ] No Sphinx roles — cross-references use &#91;`~module.Class.method`&#93;.
+- [ ] Examples are inside a fenced ` ```python ` block, and either run in CI or carry `# doctest: +SKIP`.
+- [ ] Config dataclass fields are in an `Args:` block on the concrete class, not `#` comments.
+- [ ] The rendered page has been eyeballed.
