@@ -1,6 +1,6 @@
 # Task1 response-v3 C-aligned-v2 ACT200k
 
-Status: `implementation_ready_training_not_started_hardware_not_authorized`.
+Status: `offline_training_complete_simseen6_software_gate_pass_hardware_not_authorized`.
 
 This experiment trains exactly one ACT model from frozen Real24 plus the newly
 collected human Quest response-v3 Sim-gap24 trajectories. The Sim rows are a
@@ -17,6 +17,20 @@ normalization, seed 1000, ACT chunk/action steps 67, and fixed step 200000.
 After training, software preparation is limited to the frozen Sim-seen6 paired
 gate: six poses x C-source/C-aligned-v2 = 12 trials. There is no automatic
 24-pose/48-trial fallback. Hardware remains unauthorized until a separate GO.
+
+## Frozen result
+
+- Fixed step-200000 C-aligned-v2 model SHA256:
+  `09803300b1b19a83629d56647e2d68e05050037391a96bec0558ca90347a6fc9`.
+- Formal training runtime: `2h 47m 17s` (log timestamps
+  2026-08-10 13:51:58--16:39:15 CST); final loss/l1 loss: `0.027/0.027`.
+- CUDA reload and finite `[1,6]` inference passed for one Real24 and one
+  response-v3 real-appearance Sim24 sample.
+- Frozen Sim-seen6 paired12 plan SHA256:
+  `a6ef2edf662e19120857985a84a08336ae11f5d2ebaba7c0bc69055f404867e2`.
+- Future first trial is C-source at `r2c3`: place the red cube center at
+  `X=27.5 cm, Y=+2.5 cm`, rotated `45 degrees`. Do not open Follower 12V or
+  start the rollout until a separate hardware GO.
 
 ## Main-lane commands
 

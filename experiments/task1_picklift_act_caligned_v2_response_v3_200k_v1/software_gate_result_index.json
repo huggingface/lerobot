@@ -1,0 +1,71 @@
+{
+  "automatic_full_eval24_fallback": false,
+  "created_at_utc": "2026-08-10T08:41:18.005258+00:00",
+  "dry_run": {
+    "path": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1/software_preparation_v1/dry_run.json",
+    "sha256": "0b1648fe76410ee414f28faa86e9491c3ba0592e6cb2b950d6e344d8b7dc7f09"
+  },
+  "evaluation_id": "task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1",
+  "first_trial": {
+    "artifact_stem": "t001_p01_csource",
+    "cell": "r2c3",
+    "column": 3,
+    "coverage_tier": "added_by_real48",
+    "eval_pose_id": "eval48_r2c3_seen_by_real48_275_p025_yaw45",
+    "localsim_plan_item_id": "localsim48_real96_s03_r2c3_core_center_rep01_yaw45",
+    "manual_pose_is_measurement_truth": false,
+    "model_id": "R24_localsim_gap24_200k",
+    "model_key": "S",
+    "nominal_x_forward_m": 0.275,
+    "nominal_y_lateral_m": 0.025,
+    "nominal_yaw_degrees_modulo_90": 45,
+    "operator_placement_prompt_zh": "\u6446\u653e\u65b9\u5757\uff1ar2c3\uff08\u7b2c2\u884c\u7b2c3\u5217\uff09\uff0c\u7ea2\u5757\u4e2d\u5fc3\u653e\u5728X=27.5 cm\u3001Y=+2.5 cm\uff1b\u7ed5\u4e2d\u5fc3\u8f6c45\u00b0\u3002",
+    "order": 1,
+    "policy_failure_retry_allowed": false,
+    "pose_order": 1,
+    "quadrant": null,
+    "restore_nominal_cube_pose_before_this_trial": true,
+    "row": 2,
+    "source_eval48_pose_order": 17,
+    "spawn_region": "t001_p01_csource",
+    "trial_id": "t001_p01_csource",
+    "within_pose_order": 1
+  },
+  "hardware_access": {
+    "camera": false,
+    "robot": false,
+    "rollout": false,
+    "serial": false,
+    "torque": false
+  },
+  "model_order": {
+    "aligned_first": 3,
+    "pattern": "SA/AS alternating",
+    "restore_nominal_cube_pose_before_every_trial": true,
+    "same_pose_contiguous": true,
+    "source_first": 3
+  },
+  "models": {
+    "A": "09803300b1b19a83629d56647e2d68e05050037391a96bec0558ca90347a6fc9",
+    "S": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f"
+  },
+  "plan": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_caligned_v2_response_v3_200k_v1/bound_simseen6_evaluation_plan.json",
+    "sha256": "a6ef2edf662e19120857985a84a08336ae11f5d2ebaba7c0bc69055f404867e2"
+  },
+  "poses": 6,
+  "schema": "task1_act_csource_caligned_response_v3_simseen6_software_gate_v1",
+  "status": "pass_hardware_not_authorized",
+  "success_early_stop": {
+    "enabled": true,
+    "explicit_opt_in": true,
+    "marker_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1/success_markers",
+    "profile_path": "experiments/task1_picklift_real24_act_v1/real_evaluation_success_early_stop_profile_v1.json",
+    "profile_sha256": "50f4f2a2771cf21f34d333d13f2b413a54c3d183704218c1b0d36abef8e2aa28"
+  },
+  "training_result": {
+    "path": "/home/ubuntu24/Teleop/lerobot/experiments/task1_picklift_act_caligned_v2_response_v3_200k_v1/training_result_v1.json",
+    "sha256": "0390683af30f8ee5e69152110ad677e115b183b949fdf974b3ca2bba5571e7d2"
+  },
+  "trials": 12
+}

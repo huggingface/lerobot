@@ -1,0 +1,157 @@
+{
+  "binding": {
+    "path": "/home/ubuntu24/Teleop/artifacts/evidence/task1_picklift_act_caligned_v2_response_v3_200k_v1/binding_v1/binding_result.json",
+    "sha256": "419d2dfb6adbe243e04839e195853a4bcd1f76372940e518df17be9e08d32e1b"
+  },
+  "boundaries": {
+    "fixed_checkpoint_selected_by_result": false,
+    "hardware_accessed": false,
+    "paper_effect_claim": false,
+    "rollout_started": false
+  },
+  "completed_at_utc": "2026-08-10T08:40:21.519234+00:00",
+  "formal": {
+    "checkpoints": {
+      "100000": "fa58cd41a7e6d6db5688ea74a9d1c8deb58478b3ca2ee475094021e514123c70",
+      "120000": "23582826be41809d8b36b8e51cc4cef66044ff26da6019752d6ee57799a80c15",
+      "140000": "c93408dca2ad6635d198446d13914a04e42dfc8cf4ec3140aa4c085cbc0738df",
+      "160000": "444c40397031b20dc6237d065d53298b4f5d193b295eadada6d0117ab869120a",
+      "180000": "2b6fde32f05119e8b23264fac5fceca103e1d0c60bb886be99075245c2b6b9ea",
+      "20000": "b62ca47a4447d7e0ecb9ce788e2918aa81b8f8c01370f00abb30266e670b1888",
+      "200000": "09803300b1b19a83629d56647e2d68e05050037391a96bec0558ca90347a6fc9",
+      "40000": "c637e9934114c88187a8ccb874900568dfb143886e30c118d4e6746be3768372",
+      "60000": "1de2feeb1336d730623bb38954c81ff8f75e0eadaa85fc80274f4caad5217aa1",
+      "80000": "ac3fa1b401d2d906dfa45d1ff476cce9324851426fb26531b4775667ce2c4947"
+    },
+    "log_sha256": "35354c61dc77acc0a0244dc91fa28652e48cbb4a5ff7ab31b40fa9f20c50d162",
+    "metrics": {
+      "grdn": "1.933",
+      "kld_loss": "0.000",
+      "l1_loss": "0.027",
+      "loss": "0.027",
+      "smp/s": "162",
+      "step": "200000",
+      "step_logged": "200K"
+    },
+    "sampling_counts": {
+      "actual_samples_seen_by_main_process": {
+        "real24": 800000,
+        "source_b": 800000
+      },
+      "batch_size_per_process": 8,
+      "note": "Counts reflect batches consumed by optimizer steps; stream order is fixed within each batch.",
+      "num_processes": 1,
+      "optimizer_steps": 200000,
+      "schema": "lerobot_matched_two_stream_sampling_counts_v1",
+      "seed": 1000,
+      "stream_episode_groups": {
+        "real24": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "source_b": [
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47
+        ]
+      }
+    }
+  },
+  "model": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_caligned_v2_response_v3_200k_v1/full_200k/checkpoints/200000/pretrained_model",
+    "config_sha256": "58b1d128ac6ac3b81729ed2ed1a8f10f93f74203fae443cff9dcef5ac641ea8e",
+    "model_id": "ACT_R24_LocalSim24Gap_ResponseV3_CAlignedV2_200k",
+    "model_sha256": "09803300b1b19a83629d56647e2d68e05050037391a96bec0558ca90347a6fc9",
+    "policy_preprocessor_sha256": "efa0df0e288722aa67eb13ae6198c80f897032524026b06aef162d3bbd007219",
+    "processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651",
+    "train_config_sha256": "3113867b5fd71c429c7bb4db803879c27a085c55cb7f98db36fcc5ca35156ffc"
+  },
+  "offline_validation": {
+    "checkpoint": "/home/ubuntu24/Teleop/artifacts/training/task1_picklift_act_caligned_v2_response_v3_200k_v1/full_200k/checkpoints/200000/pretrained_model",
+    "cuda_reload": true,
+    "hardware_accessed": false,
+    "samples": [
+      {
+        "action": [
+          -2.217764139175415,
+          -83.89788818359375,
+          44.626991271972656,
+          88.5450439453125,
+          -1.1493778228759766,
+          86.65460205078125
+        ],
+        "domain": "real24",
+        "finite": true,
+        "index": 0,
+        "shape": [
+          1,
+          6
+        ]
+      },
+      {
+        "action": [
+          -1.2333166599273682,
+          -86.9654769897461,
+          42.444332122802734,
+          92.38680267333984,
+          -2.6256818771362305,
+          99.87835693359375
+        ],
+        "domain": "response_v3_real_appearance_sim24",
+        "finite": true,
+        "index": 4263,
+        "shape": [
+          1,
+          6
+        ]
+      }
+    ],
+    "status": "pass"
+  },
+  "schema": "task1_act_caligned_v2_response_v3_training_result_v1",
+  "selected_step": 200000,
+  "status": "offline_training_complete_ready_for_simseen6_software_gate"
+}
