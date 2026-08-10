@@ -49,6 +49,20 @@ def test_render_messages_step_noops_without_language_columns_or_task():
     assert RenderMessagesStep(recipe)(transition) == transition
 
 
+def test_render_messages_step_preserves_runtime_rendered_messages():
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    messages = [[{"role": "user", "content": "What is visible?"}]]
+    transition = create_transition(
+        complementary_data={
+            "task": ["pick the cube"],
+            "messages": messages,
+        }
+    )
+
+    assert RenderMessagesStep(recipe)(transition) is transition
+    assert transition[TransitionKey.COMPLEMENTARY_DATA]["messages"] is messages
+
+
 def test_render_messages_step_renders_and_drops_raw_language():
     recipe = TrainingRecipe(
         messages=[
