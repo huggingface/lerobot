@@ -187,7 +187,13 @@ def test_policy_exposes_text_generation(monkeypatch):
     policy = _make_unloaded_policy()
     policy.model = Model()
     inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
-    monkeypatch.setattr(policy, "_build_text_inputs", lambda *args, **kwargs: inputs)
+    received_batches = []
+
+    def build_text_inputs(batch):
+        received_batches.append(batch)
+        return inputs
+
+    monkeypatch.setattr(policy, "_build_text_inputs", build_text_inputs)
 
     batch = {
         "observation.state": torch.zeros(1, 7),
@@ -195,10 +201,8 @@ def test_policy_exposes_text_generation(monkeypatch):
         "messages": [[{"role": "user", "content": "pick up the cup"}]],
     }
 
-    assert policy.generate_texts(batch, kind="vqa") == ["move toward the cup"]
-    # Runtime supplies caller text and kind before preprocessing; policy decoding
-    # receives only the resulting batch.
     assert policy.generate_text(batch) == "move toward the cup"
+    assert received_batches == [batch]
     assert policy.supports_text_generation()
     assert policy._format_generation_messages(
         [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
@@ -240,6 +244,36 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     ]
     assert "query_kind" not in batch
     assert "text" not in batch
+
+
+def test_wall_x_reconciles_generation_renderer_into_older_checkpoint_pipeline(tmp_path):
+    config = WallXConfig(device="cpu")
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        "observation.images.face_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
+    }
+    config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(7,))}
+    stats = {
+        "observation.state": {"mean": torch.zeros(7), "std": torch.ones(7)},
+        "action": {"mean": torch.zeros(7), "std": torch.ones(7)},
+    }
+    preprocessor, postprocessor = make_wall_x_pre_post_processors(config, dataset_stats=stats)
+    preprocessor.steps = preprocessor.steps[1:]
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    loaded_preprocessor, _ = make_pre_post_processors(config, pretrained_path=str(tmp_path))
+    batch = loaded_preprocessor(
+        {
+            "observation.state": torch.zeros(7),
+            "observation.images.face_view": torch.zeros(3, 8, 8),
+            "query_kind": "vqa",
+            "text": "what do you see",
+        }
+    )
+
+    assert isinstance(loaded_preprocessor.steps[0], RenderGenerationPromptStep)
+    assert batch["messages"] == [[{"role": "user", "content": "what do you see"}]]
 
 
 @require_cuda

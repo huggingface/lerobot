@@ -89,6 +89,17 @@ def make_wall_x_pre_post_processors(
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
 
 
+def reconcile_wall_x_processors(
+    config: WallXConfig,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Upgrade older checkpoint pipelines to WALL-X's current text contract."""
+    if not any(isinstance(step, RenderGenerationPromptStep) for step in preprocessor.steps):
+        preprocessor.steps = [RenderGenerationPromptStep(config.recipe), *preprocessor.steps]
+    return preprocessor, postprocessor
+
+
 @ProcessorStepRegistry.register(name="wall_x_task_processor")
 class WallXTaskProcessor(ComplementaryDataProcessorStep):
     """

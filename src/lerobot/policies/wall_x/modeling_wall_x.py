@@ -1978,14 +1978,6 @@ class WallXPolicy(PreTrainedPolicy):
             )
         return text, predicts_action
 
-    def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
-        return (
-            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"
-            f"Instruction: {instruction}<|im_end|>\n"
-            "<|im_start|>assistant\n"
-        )
-
     def _format_generation_messages(
         self,
         messages: list[dict[str, Any]],
@@ -2299,61 +2291,28 @@ class WallXPolicy(PreTrainedPolicy):
 
         return loss, loss_dict
 
-    def _build_text_inputs(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str,
-        user_text: str | list[str] | None,
-    ) -> BatchFeature:
+    def _build_text_inputs(self, batch: dict[str, Any]) -> BatchFeature:
         batch_size = batch[OBS_STATE].shape[0]
         img_keys = [key for key in self.config.image_features if key in batch]
         if not img_keys:
             raise ValueError("WALL-OSS text generation requires at least one image feature.")
+        if "messages" not in batch:
+            raise ValueError("WALL-OSS text generation requires preprocessed `messages`.")
 
         image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
         orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-        if "messages" in batch:
-            if user_text is not None:
-                raise ValueError("WALL-OSS received both preprocessed messages and caller text.")
-            messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
-            texts = [
-                process_grounding_points(
-                    self._format_generation_messages(messages, img_keys),
-                    orig_height,
-                    orig_width,
-                    resized_height,
-                    resized_width,
-                    MODEL_TYPE,
-                )
-                for messages in messages_batch
-            ]
-        else:
-            tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
-            if user_text is None:
-                instructions = (
-                    ["Describe what you observe in the current scene."] * batch_size
-                    if kind == "caption"
-                    else tasks
-                )
-            elif isinstance(user_text, str):
-                instructions = [user_text] * batch_size
-            elif len(user_text) == batch_size:
-                instructions = user_text
-            else:
-                raise ValueError(f"Expected one text prompt for each of the {batch_size} samples.")
-
-            texts = [
-                process_grounding_points(
-                    self._format_text_prompt(str(instruction), kind, img_keys),
-                    orig_height,
-                    orig_width,
-                    resized_height,
-                    resized_width,
-                    MODEL_TYPE,
-                )
-                for instruction in instructions
-            ]
+        messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
+        texts = [
+            process_grounding_points(
+                self._format_generation_messages(messages, img_keys),
+                orig_height,
+                orig_width,
+                resized_height,
+                resized_width,
+                MODEL_TYPE,
+            )
+            for messages in messages_batch
+        ]
         inputs = preprocesser_call(
             processor=self.model.processor,
             text=texts,
@@ -2374,61 +2333,25 @@ class WallXPolicy(PreTrainedPolicy):
 
     def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages and the current observation."""
-        if "messages" not in batch:
-            raise ValueError("WALL-OSS text generation requires preprocessed `messages`.")
-        return self._one_text(batch)
-
-    def _one_text(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        kind: str = "vqa",
-        user_text: str | None = None,
-    ) -> str:
-        outputs = self.generate_texts(
-            batch,
-            kind=kind,
-            user_text=user_text,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
-        if len(outputs) != 1:
-            raise ValueError(
-                f"The interactive runtime expected one WALL-OSS text output, got {len(outputs)}."
-            )
-        return outputs[0]
-
-    @torch.no_grad()
-    def generate_texts(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "vqa",
-        user_text: str | list[str] | None = None,
-        max_new_tokens: int = 100,
-        min_new_tokens: int = 0,
-        temperature: float = 0.0,
-        top_p: float = 1.0,
-    ) -> list[str]:
-        """Generate WALL-OSS text for VQA, grounding, and language subtasks over a batch."""
         self.eval()
-        if kind not in {"vqa", "caption", "grounding", "text"}:
-            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text'.")
-        inputs = self._build_text_inputs(batch, kind=kind, user_text=user_text)
+        inputs = self._build_text_inputs(batch)
         prompt_length = inputs.input_ids.shape[1]
-        sampling = temperature > 0
+        sampling = self.config.text_temperature > 0
         generation_kwargs: dict[str, Any] = {
-            "max_new_tokens": max_new_tokens,
-            "min_new_tokens": min_new_tokens,
+            "max_new_tokens": 100,
+            "min_new_tokens": 0,
             "do_sample": sampling,
             "eos_token_id": self.model.processor.tokenizer.eos_token_id,
             "pad_token_id": self.model.processor.tokenizer.pad_token_id,
             "use_cache": True,
         }
         if sampling:
-            generation_kwargs.update(temperature=temperature, top_p=top_p)
+            generation_kwargs.update(
+                temperature=self.config.text_temperature,
+                top_p=self.config.text_top_p,
+            )
         output_ids = self.model.generate(**inputs, **generation_kwargs)
-        return [
+        outputs = [
             value.strip()
             for value in self.model.processor.tokenizer.batch_decode(
                 output_ids[:, prompt_length:],
@@ -2436,6 +2359,11 @@ class WallXPolicy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
+        if len(outputs) != 1:
+            raise ValueError(
+                f"The interactive runtime expected one WALL-OSS text output, got {len(outputs)}."
+            )
+        return outputs[0]
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
