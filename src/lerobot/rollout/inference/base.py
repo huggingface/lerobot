@@ -31,6 +31,8 @@ from threading import Lock
 
 import torch
 
+from lerobot.utils.constants import QUERY_KIND
+
 logger = logging.getLogger(__name__)
 
 
@@ -398,20 +400,36 @@ class InferenceEngine(abc.ABC):
         )
 
     @staticmethod
-    def _policy_generate_text(policy, observation: dict, text: str, kind: QueryKind) -> str:
+    def _policy_generate_text(policy, observation: dict, text: str) -> str:
         """Call the policy's text head, with a clear error when it has none.
 
-        ``kind`` is passed through as a plain string so the policy's
-        preprocessor can format a high-level goal differently from a
-        free-form question without depending on this module's enum.
+        The kind of request is not an argument here: backends stamp it into
+        the batch under :data:`~lerobot.utils.constants.QUERY_KIND` *before*
+        preprocessing (see :meth:`_mark_query_kind`), so the preprocessor has
+        already formatted the prompt by the time this runs.
         """
         generate = getattr(policy, "generate_text", None)
         if not callable(generate):
             raise NotImplementedError(
-                f"{type(policy).__name__} has no generate_text(observation, text, kind) — "
+                f"{type(policy).__name__} has no generate_text(observation, text) — "
                 "this policy cannot answer questions or plan subtasks."
             )
-        return str(generate(observation, text, kind=kind.value))
+        return str(generate(observation, text))
+
+    @staticmethod
+    def _mark_query_kind(batch: dict, kind: QueryKind) -> dict:
+        """Tag ``batch`` with the kind of text query, for the preprocessor.
+
+        Call between ``prepare_observation_for_inference`` and the
+        preprocessor pipeline.  ``QUERY_KIND`` is in the converters'
+        complementary-data allowlist, so it survives ``batch_to_transition``
+        and lands beside ``task`` — where a ``ComplementaryDataProcessorStep``
+        can read it and rewrite the prompt accordingly.  Stored as the plain
+        enum value so processor steps need not import this module, and
+        unbatched because it describes the request, not a sample.
+        """
+        batch[QUERY_KIND] = kind.value
+        return batch
 
     def _publish_answer(self, answer: QueryAnswer) -> None:
         with self._query_lock:
