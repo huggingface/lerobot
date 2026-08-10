@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from conftest import ACTION_DIM, ACTION_HORIZON, IMAGE_SIZE, NUM_VIDEO_FRAMES, STATE_DIM, make_config
 
+from conftest import ACTION_DIM, ACTION_HORIZON, IMAGE_SIZE, NUM_VIDEO_FRAMES, STATE_DIM, make_config
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
