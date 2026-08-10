@@ -127,6 +127,17 @@ lerobot-edit-dataset \
 
 Or keep the dataset as-is and pass `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`.
 
+Recording, resuming, and merging aggregate quantiles from per-episode summaries, so `meta/stats.json` ends up holding a conservative envelope (`min` for `q <= 50`, `max` for `q > 50`) rather than whole-dataset quantiles. To estimate the latter, scan every episode with a running histogram:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+    --overwrite \
+    --skip-images
+```
+
+`--skip-images` keeps the existing image statistics and avoids video decoding when only `STATE`/`ACTION` need recomputing, and `--root` reads a local dataset instead of the Hub. These values are histogram estimates, subject to discretization and rebinning error, so they can differ from the conservative ones — which changes π₀.₅'s normalized targets and therefore its loss scale. Statistics already saved inside an existing checkpoint are not affected.
+
 ### Training Command Example
 
 The same finetune with the VLM frozen: less memory, at some cost in success rate. Swap `--dataset.repo_id` for your own dataset.
