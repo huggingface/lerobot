@@ -42,6 +42,12 @@ DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
 
+# Complementary-data flag naming what a text-generation call is being asked for
+# ("vqa", "next_subtask", ...).  Set by the rollout inference engines before the
+# preprocessor runs, so a processor step can format the prompt — and rewrite the
+# task — according to the kind of request.  Absent on ordinary action inference.
+QUERY_KIND = "query_kind"
+
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
 

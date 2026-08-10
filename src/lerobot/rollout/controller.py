@@ -114,8 +114,8 @@ class AskResult(Enum):
     """Rejected: no segment is running, so no fresh observation is flowing."""
 
     BUSY = "busy"
-    """Rejected: another query holds the channel — a previous question, or an
-    autosteer subtask query that has been queued but not yet served."""
+    """Rejected: another query holds the channel: a previous question, or
+    an autosteer subtask query queued but not yet served."""
 
 
 class RolloutEvent(Enum):

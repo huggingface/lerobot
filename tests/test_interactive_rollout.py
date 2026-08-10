@@ -1236,7 +1236,28 @@ def test_engine_reports_policy_without_text_head():
         pass
 
     with pytest.raises(NotImplementedError, match="has no generate_text"):
-        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?", QueryKind.VQA)
+        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?")
+
+
+@pytest.mark.parametrize("kind", [QueryKind.VQA, QueryKind.NEXT_SUBTASK])
+def test_query_kind_reaches_the_preprocessor_as_complementary_data(kind):
+    """The kind travels in the batch, not as a generate_text argument.
+
+    ``batch_to_transition`` forwards only an allowlisted set of keys to
+    complementary data, so an unregistered flag would be silently dropped and
+    the policy's preprocessor step would never see it.
+    """
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor.converters import batch_to_transition
+    from lerobot.utils.constants import QUERY_KIND
+
+    batch = InferenceEngine._mark_query_kind({"observation.state": np.zeros(2), "task": "tidy"}, kind)
+    complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA.value]
+
+    assert complementary[QUERY_KIND] == kind.value
+    # It lands beside the task, so a single ComplementaryDataProcessorStep can
+    # read the kind and rewrite the prompt.
+    assert complementary["task"] == "tidy"
 
 
 def test_controller_ask_rejected_while_idle():

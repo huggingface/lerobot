@@ -173,5 +173,6 @@ class SyncInferenceEngine(InferenceEngine):
         task = self.task
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
+            observation = self._mark_query_kind(observation, kind)
             observation = self._preprocessor(observation)
-            return self._policy_generate_text(self._policy, observation, text, kind)
+            return self._policy_generate_text(self._policy, observation, text)

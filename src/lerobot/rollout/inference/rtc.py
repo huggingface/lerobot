@@ -307,9 +307,10 @@ class RTCInferenceEngine(InferenceEngine):
             obs_batch, torch.device(self._device), task, self._robot.robot_type
         )
         obs_batch["task"] = [task]
+        obs_batch = self._mark_query_kind(obs_batch, kind)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            return self._policy_generate_text(self._policy, preprocessed, text, kind)
+            return self._policy_generate_text(self._policy, preprocessed, text)
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
