@@ -22,7 +22,6 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
 
-from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -55,6 +54,15 @@ class SentryStrategy(RolloutStrategy):
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
     to prevent disk I/O from blocking the control loop.
+
+    ``run()`` is restartable: each call records complete episodes plus one
+    final partial episode, and the dataset is only finalized in
+    ``teardown()`` — this is what lets ``--interactive=true`` drive sentry
+    in start/reset/start segments while the dataset stays open.  Frames are
+    labeled with ``engine.dispatched_task`` — the instruction that generated
+    the action actually sent.  A mid-run ``/subtask`` therefore cannot
+    relabel actions still queued or interpolated from the previous
+    instruction.
     """
 
     config: SentryStrategyConfig
@@ -70,6 +78,9 @@ class SentryStrategy(RolloutStrategy):
         """Initialise the inference engine and background push executor."""
         self._init_engine(ctx)
         self._push_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sentry-push")
+        # Instance state (not run()-local) so the upload cadence survives
+        # interactive run segments.
+        self._episodes_since_push = 0
         target_mb = self.config.target_video_file_size_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB
         self._episode_duration_s = estimate_max_episode_seconds(
             ctx.data.dataset_features, ctx.runtime.cfg.fps, target_size_mb=target_mb
@@ -97,79 +108,102 @@ class SentryStrategy(RolloutStrategy):
 
         start_time = time.perf_counter()
         episode_start = time.perf_counter()
-        episodes_since_push = 0
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Sentry recording started (episode_duration=%.0fs)", episode_duration_s)
 
-        with VideoEncodingManager(dataset):
-            try:
-                while not ctx.runtime.shutdown_event.is_set():
-                    loop_start = time.perf_counter()
+        # No dataset finalization here: run() must be restartable (interactive
+        # segments), so the dataset stays open until teardown() finalizes it.
+        try:
+            while not ctx.runtime.shutdown_event.is_set():
+                loop_start = time.perf_counter()
 
-                    if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
-                        logger.info("Duration limit reached (%.0fs)", cfg.duration)
-                        break
+                if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
+                    logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                    break
 
-                    obs = robot.get_observation()
-                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                obs = robot.get_observation()
+                obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-                    if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
-                        continue
+                if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
+                    continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
 
-                    if action_dict is not None:
-                        self._log_telemetry(obs_processed, action_dict, ctx.runtime)
-                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        frame = {**obs_frame, **action_frame, "task": task_str}
-                        # ``add_frame`` writes to the in-progress episode buffer; the
-                        # background pusher only ever touches *finalised* episode
-                        # artifacts on disk.  The two operate on disjoint state, so
-                        # ``add_frame`` does not need ``_episode_lock``.
-                        dataset.add_frame(frame)
+                if action_dict is not None:
+                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                    # ``dispatched_task`` is the instruction that generated the
+                    # action just sent.  Reading the live ``engine.task`` here
+                    # would expose a race where an action still queued or
+                    # interpolated from the previous instruction is labeled
+                    # with a newly requested one.
+                    frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
+                    # ``add_frame`` writes to the in-progress episode buffer; the
+                    # background pusher only ever touches *finalised* episode
+                    # artifacts on disk.  The two operate on disjoint state, so
+                    # ``add_frame`` does not need ``_episode_lock``.
+                    dataset.add_frame(frame)
 
-                    # Episode rotation derived from video file-size target.
-                    # The duration is a conservative estimate so the actual
-                    # video has crossed DEFAULT_VIDEO_FILE_SIZE_IN_MB by now,
-                    # keeping push_to_hub efficient (uploads complete files).
-                    elapsed = time.perf_counter() - episode_start
-                    if elapsed >= episode_duration_s:
-                        # ``save_episode`` finalises the in-progress episode and
-                        # flushes it to disk; ``_episode_lock`` serialises this with
-                        # ``push_to_hub`` (run in the background executor) so the
-                        # pusher never reads a half-written episode.
-                        with self._episode_lock:
-                            dataset.save_episode()
-                        episodes_since_push += 1
-                        self._needs_push.set()
-                        logger.info(
-                            "Episode saved (total: %d, elapsed: %.1fs)",
-                            dataset.num_episodes,
-                            elapsed,
-                        )
-                        log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
-
-                        if episodes_since_push >= self.config.upload_every_n_episodes:
-                            self._background_push(dataset, cfg)
-                            episodes_since_push = 0
-
-                        episode_start = time.perf_counter()
-
-                    dt = time.perf_counter() - loop_start
-                    if (sleep_t := control_interval - dt) > 0:
-                        precise_sleep(sleep_t)
-                    else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
-
-            finally:
-                logger.info("Sentry control loop ended — saving final episode")
-                with contextlib.suppress(Exception):
+                # Episode rotation derived from video file-size target.
+                # The duration is a conservative estimate so the actual
+                # video has crossed DEFAULT_VIDEO_FILE_SIZE_IN_MB by now,
+                # keeping push_to_hub efficient (uploads complete files).
+                elapsed = time.perf_counter() - episode_start
+                if elapsed >= episode_duration_s:
+                    # ``save_episode`` finalises the in-progress episode and
+                    # flushes it to disk; ``_episode_lock`` serialises this with
+                    # ``push_to_hub`` (run in the background executor) so the
+                    # pusher never reads a half-written episode.
                     with self._episode_lock:
                         dataset.save_episode()
+                    self._episodes_since_push += 1
                     self._needs_push.set()
+                    logger.info(
+                        "Episode saved (total: %d, elapsed: %.1fs)",
+                        dataset.num_episodes,
+                        elapsed,
+                    )
+                    log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
+
+                    if self._episodes_since_push >= self.config.upload_every_n_episodes:
+                        self._background_push(dataset, cfg)
+                        self._episodes_since_push = 0
+
+                    episode_start = time.perf_counter()
+
+                # Service the /vqa channel at the end of the tick, after the
+                # frame has been recorded: a sync backend answers here, and a
+                # multi-second generate must not land between this tick's
+                # observation and its ``add_frame``.
+                engine.pump_query(obs_processed)
+
+                dt = time.perf_counter() - loop_start
+                if (sleep_t := control_interval - dt) > 0:
+                    precise_sleep(sleep_t)
+                else:
+                    logger.warning(
+                        f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
+                    )
+
+        finally:
+            logger.info("Sentry control loop ended — saving final episode")
+            try:
+                with self._episode_lock:
+                    dataset.save_episode()
+                self._needs_push.set()
+            except Exception:
+                # The tail episode could not be committed (nothing was
+                # recorded, or the save failed mid-write).  Drop the in-flight
+                # streaming encode so teardown()'s finalize does not flush a
+                # half-written video, and discard the episode buffer: a failed
+                # save_episode leaves it half-mutated, which would crash the
+                # first add_frame of a restarted segment.  add_frame recreates
+                # a fresh buffer from None.
+                logger.warning("Tail episode was not saved — discarding it", exc_info=True)
+                if dataset.writer is not None:
+                    with contextlib.suppress(Exception):
+                        dataset.writer.cancel_pending_videos()
+                    dataset.writer.episode_buffer = None
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Flush pending pushes, finalise the dataset, and disconnect hardware."""
