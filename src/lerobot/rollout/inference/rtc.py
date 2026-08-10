@@ -44,7 +44,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine
+from .base import InferenceEngine, QueryKind
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +297,7 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = obs
 
-    def _generate_text(self, obs_processed: dict, question: str) -> str:
+    def _generate_text(self, obs_processed: dict, text: str, kind: QueryKind) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
         obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
         # The live task, read without consuming the task-changed edge — that
@@ -309,7 +309,7 @@ class RTCInferenceEngine(InferenceEngine):
         obs_batch["task"] = [task]
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            return self._policy_generate_text(self._policy, preprocessed, question)
+            return self._policy_generate_text(self._policy, preprocessed, text, kind)
 
     # ------------------------------------------------------------------
     # RTC: background inference thread

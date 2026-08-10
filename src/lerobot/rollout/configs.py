@@ -247,6 +247,13 @@ class RolloutConfig:
     # Supported with --strategy.type=base (no recording) and sentry
     # (continuous recording; frames carry dispatched-action task provenance).
     interactive: bool = False
+    # /autosteer: seconds of robot motion between two "what is the next
+    # subtask?" queries to the policy.  Measured from the moment a subtask is
+    # applied, so a slow text generation cannot compound into back-to-back
+    # queries.  Each query is a full generation pass, so this is a
+    # cost/responsiveness knob: lower values re-plan sooner but spend a larger
+    # share of the loop generating text instead of acting.
+    autosteer_interval_s: float = 3.0
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -312,6 +319,9 @@ class RolloutConfig:
             raise ValueError(
                 f"--interactive=true supports --strategy.type=base or sentry (got '{self.strategy.type}')."
             )
+
+        if self.autosteer_interval_s < 0:
+            raise ValueError(f"--autosteer_interval_s must be >= 0 (got {self.autosteer_interval_s}).")
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop
         if (

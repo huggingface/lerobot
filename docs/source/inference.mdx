@@ -256,14 +256,15 @@ lerobot-rollout \
     --interactive=true
 ```
 
-| Command           | Action                                                                                                                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/start`          | Start (or restart) the policy control loop                                                                                                                                         |
-| `/subtask <text>` | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
-| `/vqa <text>`     | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
-| `/reset`          | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
-| `/stop`           | End the session and run the normal shutdown routines                                                                                                                               |
-| `/help`           | List the commands                                                                                                                                                                  |
+| Command             | Action                                                                                                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | Start (or restart) the policy control loop                                                                                                                                         |
+| `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
+| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
+| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
+| `/stop`             | End the session and run the normal shutdown routines                                                                                                                               |
+| `/help`             | List the commands                                                                                                                                                                  |
 
 ```text
 > /start
@@ -297,6 +298,12 @@ With `--use_torch_compile=true`, a switch whose instruction tokenizes to a diffe
 **How `/vqa` reaches the policy.** Same publish/consume split as `/subtask`: the stdin reader queues the question and returns immediately, and the thread that owns the policy answers it — the control thread for sync, the inference thread for RTC. The answer is printed when it is ready, so you can keep issuing commands in the meantime. One question is held at a time; a second is rejected until the first resolves.
 
 Text generation takes much longer than a control tick, so while the policy answers it produces no new actions: the robot finishes any actions already queued and then holds position until the answer lands. Time spent answering counts against `--duration`.
+
+**How `/autosteer` works.** You give the policy a goal instead of an instruction, and every `--autosteer_interval_s` seconds (default 3) the engine asks it for the next subtask and applies that through the same path as `/subtask`. So RTC blends the switch into the next chunk and sync drops precomputed actions, exactly as with a hand-typed instruction. Successful subtasks are not announced separately — the task itself is what tells you the robot's intent, so watch it with `/subtask`.
+
+Progress through the plan lives in the policy, not in the rollout: every query re-sends the same goal, and the policy decides what comes next. That is why the sequencer does not survive a segment — restarting one resets the policy, and the plan with it. It also stops on `/reset`, on `/subtask` (setting the instruction by hand takes over), on `/autosteer off`, and on the first planning failure, which is reported rather than retried every interval.
+
+Each query is a full text-generation pass, so the interval is a real cost knob: lower values re-plan sooner but spend a larger share of the loop generating text instead of acting. It is measured from the moment a subtask is _applied_, not from when its query is issued, so a generation slower than the interval cannot queue the next one back-to-back and starve the robot of motion. On sync the control loop stalls for the duration of each query; on RTC the query competes with chunk generation, degrading smoothness instead of stopping motion.
 
 `/vqa` is only accepted while a run is in progress. Engines are fed observations by the control loop and by nothing else, so an idle engine has no current view to answer from — ask after `/start`, not before. For the same reason a question still unanswered when a segment ends is dropped and reported rather than carried over, so it can never be answered against a scene from before a `/reset`.
 
