@@ -163,6 +163,13 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
     def supports_rtc(self) -> bool:
+        """RTC guidance is implemented for the diffusion (DDPM/DDIM) objective
+        and for flow matching with euler integration. Returning False for
+        flow + rk4 makes the rollout engine reject the combination at startup
+        (supports_rtc_inference) instead of failing mid-episode on the first
+        guided chunk."""
+        if self.config.is_flow_matching and self.config.integration_method != "euler":
+            return False
         return True
 
     def init_rtc_processor(self) -> None:

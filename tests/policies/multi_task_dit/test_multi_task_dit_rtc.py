@@ -105,6 +105,14 @@ def flow_policy() -> MultiTaskDiTPolicy:
     return policy
 
 
+@pytest.fixture(scope="module")
+def ddpm_policy() -> MultiTaskDiTPolicy:
+    torch.manual_seed(42)
+    policy = MultiTaskDiTPolicy(_make_config(noise_scheduler_type="DDPM"))
+    policy.eval()
+    return policy
+
+
 def _make_engine_batch() -> dict[str, torch.Tensor]:
     """A single preprocessed frame, shaped as the RTC engine hands it over."""
     g = torch.Generator().manual_seed(7)
@@ -162,6 +170,25 @@ def test_signature_bindable_like_engine_gate(diffusion_policy):
 def test_real_engine_gate_returns_true(diffusion_policy):
     rtc_engine = pytest.importorskip("lerobot.rollout.inference.rtc")
     assert rtc_engine.supports_rtc_inference(diffusion_policy) is True
+
+
+def test_supports_rtc_false_for_flow_rk4():
+    """RTC guidance is not implemented for flow matching with rk4 integration;
+    supports_rtc() must say so up front so the rollout engine rejects the
+    combination at startup instead of raising mid-episode on the first guided
+    chunk."""
+    torch.manual_seed(42)
+    policy = MultiTaskDiTPolicy(
+        _make_config(
+            objective="flow_matching",
+            num_integration_steps=10,
+            integration_method="rk4",
+        )
+    )
+    assert policy.supports_rtc() is False
+
+    rtc_engine = pytest.importorskip("lerobot.rollout.inference.rtc")
+    assert rtc_engine.supports_rtc_inference(policy) is False
 
 
 def test_init_rtc_processor_wiring(diffusion_policy):
@@ -245,6 +272,34 @@ def test_rtc_prefix_reduces_boundary_mismatch_flow(flow_policy):
     err_unguided = (unguided[0, :delay] - prev[:delay]).abs().mean()
     assert torch.isfinite(guided).all()
     assert err_guided < err_unguided
+
+
+def test_rtc_no_prefix_matches_plain_ddpm(ddpm_policy):
+    batch = _make_engine_batch()
+    expected = _plain_chunk(ddpm_policy, batch, seed=321)
+
+    with _rtc(ddpm_policy):
+        torch.manual_seed(321)
+        actual = ddpm_policy.predict_action_chunk(dict(batch), inference_delay=0, prev_chunk_left_over=None)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+
+
+def test_rtc_prefix_pins_first_delay_actions_ddpm(ddpm_policy):
+    """The inpainting path is scheduler-generic (add_noise/step); verify the
+    DDPM branch pins and blends like DDIM."""
+    delay = 3
+    prev = torch.linspace(-0.5, 0.5, CHUNK_LEN * ACTION_DIM).reshape(CHUNK_LEN, ACTION_DIM)
+
+    with _rtc(ddpm_policy):
+        torch.manual_seed(9)
+        out = ddpm_policy.predict_action_chunk(
+            _make_engine_batch(), inference_delay=delay, prev_chunk_left_over=prev
+        )
+
+    assert out.shape == (1, CHUNK_LEN, ACTION_DIM)
+    assert torch.isfinite(out).all()
+    torch.testing.assert_close(out[0, :delay], prev[:delay], rtol=0, atol=1e-5)
+    assert not torch.allclose(out[0, delay:], prev[delay:], atol=1e-3)
 
 
 def test_disabled_config_keeps_plain_path(diffusion_policy):
