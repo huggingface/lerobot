@@ -132,4 +132,7 @@ class SyncInferenceEngine(InferenceEngine):
         # Reorder to match dataset action ordering so the caller can treat
         # the returned tensor uniformly across backends.
         action_dict = make_robot_action(action_tensor, self._dataset_features)
+        # ``task`` is the snapshot taken before inference, not the live value:
+        # a /subtask landing mid-inference must not relabel this action.
+        self._set_dispatched_task(task)
         return torch.tensor([action_dict[k] for k in self._ordered_action_keys])

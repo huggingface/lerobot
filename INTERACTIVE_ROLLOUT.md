@@ -17,7 +17,7 @@ cost again — reconnecting motors, re-homing, re-loading a multi-GB VLA onto th
 
 Since LeRobot gained subtask annotation and language conditioning, that model is the
 bottleneck. The **north star** is a chat-style CLI over stdin, where the operator issues
-commands *concurrently with the robot moving*:
+commands _concurrently with the robot moving_:
 
 ```
 /start                              begin (or resume) the policy control loop
@@ -36,13 +36,13 @@ stop. That turns a rollout from a batch job into a session you can steer.
 
 Phased, so each phase lands as a reviewable unit:
 
-| Phase | Scope | Status |
-|---|---|---|
-| **1** | `--interactive` flag, non-blocking stdin listener, command parser, `/start` `/reset` `/stop` `/help` | ✅ done |
-| **1.5** | Mute system logs so they stop fighting the prompt for the terminal | ✅ done |
-| **2** | `/subtask <text>` — change the policy's instruction mid-run | ✅ done |
+| Phase   | Scope                                                                                                                           | Status           |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| **1**   | `--interactive` flag, non-blocking stdin listener, command parser, `/start` `/reset` `/stop` `/help`                            | ✅ done          |
+| **1.5** | Mute system logs so they stop fighting the prompt for the terminal                                                              | ✅ done          |
+| **2**   | `/subtask <text>` — change the policy's instruction mid-run                                                                     | ✅ done          |
 | **2.5** | Round 2: `RolloutController` public API, sentry recording support, muting v2 (errors surface), stdin listener → `lerobot/utils` | ✅ done (see §5) |
-| **3** | `/ask` + hierarchical task-vs-subtask semantics (LLM in the loop) | not started |
+| **3**   | `/ask` + hierarchical task-vs-subtask semantics (LLM in the loop)                                                               | not started      |
 
 An explicit constraint through Phases 1–2: **do not couple this to the language runtime yet.**
 Build the mechanism; keep the door open.
@@ -52,19 +52,20 @@ Build the mechanism; keep the door open.
 We read all three and deliberately implemented none of them verbatim.
 
 **PR #4108 — online subtask switching.** Introduces a `PromptBroker` + `PromptListenerBase`
-+ `StdinPromptListener`, a `RuntimeContext.prompt_broker` field, `register_on_change`
-callbacks, an `--online_task_switching_flush` config flag, and `flush_action_queue()` /
-`_apply_pending_flush()` on `PreTrainedPolicy` — **with edits to 14 policy files** to call
-the flush at the top of `select_action`. Its architecture is designed for pluggable input
-sources (network, voice), which is the right long-term shape but more machinery than we
-need. *What we took:* the core insight that a mid-run instruction change must invalidate
-actions precomputed under the old instruction, and that the flush must happen on a thread
-that is safe to touch policy state from.
+
+- `StdinPromptListener`, a `RuntimeContext.prompt_broker` field, `register_on_change`
+  callbacks, an `--online_task_switching_flush` config flag, and `flush_action_queue()` /
+  `_apply_pending_flush()` on `PreTrainedPolicy` — **with edits to 14 policy files** to call
+  the flush at the top of `select_action`. Its architecture is designed for pluggable input
+  sources (network, voice), which is the right long-term shape but more machinery than we
+  need. _What we took:_ the core insight that a mid-run instruction change must invalidate
+  actions precomputed under the old instruction, and that the flush must happen on a thread
+  that is safe to touch policy state from.
 
 **PR #4183 — experimental full-UX draft.** Achieves the whole north-star vision, but does
 so by adding a `lerobot.runtime` / `language_runtime.py` that **duplicates** `BaseStrategy`,
-`send_next_action`, and the rollout control loop. *What we took:* the UX target and the
-command vocabulary. *What we rejected:* the parallel runtime — a second control loop is a
+`send_next_action`, and the rollout control loop. _What we took:_ the UX target and the
+command vocabulary. _What we rejected:_ the parallel runtime — a second control loop is a
 second thing to keep correct, and everything it does is already in `rollout/strategies/`.
 
 **PR #4234 — policy-side edits enabling #4183's runtime.** Read for context on where the
@@ -114,7 +115,7 @@ class LinkedEvent(Event):
 ```
 
 `lerobot-rollout` wraps the `ProcessSignalHandler`'s shutdown event in a `LinkedEvent` when
-`--interactive=true`. The session sets the **local** flag to end a run *segment*; SIGINT /
+`--interactive=true`. The session sets the **local** flag to end a run _segment_; SIGINT /
 SIGTERM still arrive through the **parent**, so Ctrl-C behaves exactly as before.
 
 `InteractiveSession.run()` then drives `strategy.run(ctx)` in restartable segments:
@@ -144,7 +145,7 @@ mirrors the existing DAgger events pattern rather than inventing a new concurren
 ### 4.3 stdin must be read with `os.read`, not `readline`
 
 Non-obvious and load-bearing. The first implementation used `select()` + `stream.readline()`
-and **two tests failed**: a buffered file object slurps *several* lines off the file
+and **two tests failed**: a buffered file object slurps _several_ lines off the file
 descriptor in one syscall, after which `select` reports the drained fd as not-ready and the
 buffered lines are never delivered. Pasted or piped command batches got stuck. The reader
 now does `select()` + `os.read(fd, 4096)` + manual `\n` splitting, with a
@@ -166,8 +167,8 @@ for the same reason. Consequence, documented: piped scripts must hold stdin open
 ### 4.5 Commands are last-write-wins
 
 `/reset` and `/stop` cancel a still-pending `/start`, so the robot never starts moving after
-the operator's most recent command said not to. Handlers set their intent flag *first* and
-the segment-stop event *second*; `_run_segment` clears the segment-stop flag *before*
+the operator's most recent command said not to. Handlers set their intent flag _first_ and
+the segment-stop event _second_; `_run_segment` clears the segment-stop flag _before_
 re-checking the intent flags. A `/reset` racing a `/start` is therefore either seen before
 the segment begins or ends it on its first tick.
 
@@ -189,7 +190,7 @@ for the duration of the session.**
   `propagate=False`.
 - `warnings.simplefilter("ignore")`, with `warnings.filters` saved and restored.
 - **File handlers are untouched** — anyone wanting a persistent log can attach one.
-- Restored in `run()`'s `finally`, *before* the closing `log_say`, so teardown logs are visible.
+- Restored in `run()`'s `finally`, _before_ the closing `log_say`, so teardown logs are visible.
 
 The obvious hazard: muting hides fatal errors. So `InferenceEngine` gained a
 `failure_traceback` property, RTC captures its traceback in the fatal handler, and the
@@ -198,7 +199,7 @@ session prints it on failure. **Do not remove that when touching the failure pat
 "See both logs and prompt" — a pinned input line, `prompt_toolkit`-style — was deliberately
 deferred: it needs a new dependency and a real TUI layer.
 
-### 4.8 `/subtask` — the engine *is* the broker
+### 4.8 `/subtask` — the engine _is_ the broker
 
 The pivotal call on Phase 2: **skip PR #4108's `PromptBroker`.** After Phase 1, the session
 already owns the stdin thread and the parser, so a broker + listener base + on-change
@@ -228,7 +229,7 @@ behavior. PR #4108 solved this by adding `flush_action_queue()` / `_apply_pendin
 to `PreTrainedPolicy` **and editing 14 policy files**, because its flush request arrived from
 a foreign thread and had to be deferred to a safe point inside `select_action`.
 
-Ours already runs *on* the thread that calls `select_action`. So: one concrete method on
+Ours already runs _on_ the thread that calls `select_action`. So: one concrete method on
 `PreTrainedPolicy` and **zero per-policy edits**.
 
 ```python
@@ -252,7 +253,7 @@ history of the current frame repeated — a visible discontinuity mid-motion. An
 Diffusion / VQBeT / TDMPC don't read `task` at all, so they'd pay that jerk for nothing.
 `drop_queued_actions` keeps episode state and drops only what is actually stale.
 
-**RTC deliberately does *not* flush.** Clearing its queue would leave the robot with no
+**RTC deliberately does _not_ flush.** Clearing its queue would leave the robot with no
 commands for a full inference latency (~1 s on a VLA). Instead the next chunk is generated
 under the new instruction and merged over the previous chunk's leftover prefix — the switch
 lands within one inference and the motion stays continuous. That is exactly what RTC's
@@ -261,8 +262,8 @@ default per backend.
 
 **`/reset` restores the launch task on the listener thread.** Subtle and worth preserving:
 the restore lives in `_cmd_reset`, not in `_reset_robot` (which runs later, on the main
-thread). Otherwise `/reset` followed immediately by `/subtask` would be ordered by *service*
-time rather than *command* time, and the deferred restore would silently revert the new
+thread). Otherwise `/reset` followed immediately by `/subtask` would be ordered by _service_
+time rather than _command_ time, and the deferred restore would silently revert the new
 instruction — deterministically so, for pasted or piped input. Both writers now run on the
 same thread, so command order wins. There is a regression test driving this through a real pipe.
 
@@ -321,13 +322,15 @@ So `--interactive=true` now supports `--strategy.type=sentry`:
 - **Finalization moved to `teardown()`** (which already called
   `dataset.finalize()`); `run()` is segment-restartable. Each segment saves
   complete episodes plus one tail partial episode; on a failed tail save the
-  in-flight streaming encode is cancelled *and* the half-mutated episode
+  in-flight streaming encode is cancelled _and_ the half-mutated episode
   buffer is discarded (see §6, round 2).
-- **Frames are labeled with the live `engine.task`** instead of a config
-  snapshot — the writer already stores a task per frame — so `/subtask`
-  changes the policy conditioning and the recorded label from the same frame
-  onward. This also resolved the "recorded frames ignore `/subtask`" open item
-  for sentry.
+- **Frames are labeled with `engine.dispatched_task`** — the instruction that
+  generated the action actually sent — instead of a config or live-command
+  snapshot (the writer already stores a task per frame). The RTC queue pairs
+  each chunk with the task that generated it and every `get_action` pop
+  updates the marker, so `/subtask` cannot relabel an old queued or
+  interpolated action with the new instruction. This also resolved the
+  "recorded frames ignore `/subtask`" open item for sentry.
 - `episodes_since_push` hoisted to instance state so upload cadence survives
   segments.
 - dagger / highlight / episodic stay excluded: keyboard conflicts plus per-run
@@ -338,10 +341,10 @@ So `--interactive=true` now supports `--strategy.type=sentry`:
 The ~30-line per-handler walk became `logging.disable(logging.WARNING)` with
 the previous disable level restored afterwards. Strictly better coverage: the
 gate applies before handler dispatch, so it covers `propagate=False` library
-loggers *and* loggers created mid-session (the old snapshot missed those) —
+loggers _and_ loggers created mid-session (the old snapshot missed those) —
 and **ERROR/CRITICAL now reach the console**, which the audit showed is safe:
 no ERROR-level emitter fires periodically in healthy operation (the periodic
-nuisances — slow-loop, camera hiccups — are WARNINGs and stay muted).
+nuisances — slow-loop, camera hiccups — are WARNING-level and stay muted).
 Documented trade-off: the gate also withholds INFO/WARNING from file handlers
 during the session; acceptable because no default code path attaches one
 (only `rl/actor`, `rl/learner`, `async_inference` pass `log_file`). The
@@ -374,14 +377,14 @@ findings adversarially verified before acting). The ones that mattered:
 **Round 2 (2 confirmed, 0 refuted):**
 
 - **Controller `start()` race → phantom segment.** `start()` gated on `_running`, but the
-  serve loop cleared `_start_requested` *before* setting `_running` — a second `start()`
+  serve loop cleared `_start_requested` _before_ setting `_running` — a second `start()`
   landing in that window (spanning `reset_control_state` and the SEGMENT_STARTED emission)
   returned `True` and re-armed the flag, which nothing consumed during the segment; the
   robot would start again, uncommanded, when the segment later ended on its own. Fixed:
   the serve loop consumes the request and sets `_running` atomically under the control
   lock, and `_running` spans the whole startup sequence.
 - **Sentry poisoned episode buffer.** `save_episode` mutates the buffer in place (pops
-  `size`/`task`) *before* the fallible writes; a failed tail save left a half-mutated dict
+  `size`/`task`) _before_ the fallible writes; a failed tail save left a half-mutated dict
   and the next segment's first `add_frame` crashed with `KeyError('size')`. Fixed: the
   except branch discards the buffer so `add_frame` recreates it.
 
@@ -426,8 +429,8 @@ rejection, failure surfacing, broken observers), session flows (start / reset /
 restart / stop, cancel-pending-start, engine failure with traceback, natural
 end, EOF, and a real `BaseStrategy` end-to-end), muting (INFO/WARNING blocked,
 ERROR surfaces, pre-existing disable level restored), `/subtask` semantics,
-sentry restartability + live labels + failed-tail-save recovery, the engine
-task holder, the sync flush, and `drop_queued_actions`.
+sentry restartability + action-provenance labels + failed-tail-save recovery,
+the engine task holder, the sync flush, and `drop_queued_actions`.
 `tests/utils/test_stdin_input.py` covers the listener (select path, batched
 lines, blocking fallback, EOF, handler errors, None-stdin, broken streams).
 
@@ -450,8 +453,7 @@ The design was built to make `/ask` an additive change:
 Open items, deliberately not addressed:
 
 - dagger / highlight / episodic remain non-interactive (keyboard conflicts + per-run
-  recording state); they also still snapshot the task label per run. Sentry is the
-  supported recording path for interactive sessions.
+  recording state). Sentry is the supported recording path for interactive sessions.
 - The "see logs and prompt simultaneously" TUI (pinned input line).
 - Non-stdin input sources (network, voice) — now unblocked by `RolloutController`; #4108's
   pluggable-listener shape remains the reference for the transport layer.

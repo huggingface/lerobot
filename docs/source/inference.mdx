@@ -293,7 +293,7 @@ With `--use_torch_compile=true`, a switch whose instruction tokenizes to a diffe
 
 Sessions work over SSH and on headless machines — the command reader uses the terminal (or pipe) directly and needs no display server.
 
-**Recording while interactive.** `--strategy.type=sentry` also supports `--interactive=true`: the session records continuously while you steer it. Each `/start`…`/reset` segment saves complete episodes plus one final partial episode, the dataset stays open until shutdown, and **frames are labeled with the live task** — a `/subtask` changes both the policy conditioning and the recorded label from the same frame onwards.
+**Recording while interactive.** `--strategy.type=sentry` also supports `--interactive=true`: the session records continuously while you steer it. Each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. **Each frame is labeled with the task provenance of the action actually sent**: actions already queued or interpolated under the old task retain that label, and the new `/subtask` label begins when an action inferred under the new instruction is dispatched.
 
 ```bash
 lerobot-rollout \
