@@ -1,0 +1,23 @@
+{
+  "schema": "task1_response_v3_simseen6_canonical_review_result_index_v1",
+  "status": "canonical_video_review_complete_independent_validation_pass",
+  "evaluation_id": "task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1",
+  "plan_sha256": "a6ef2edf662e19120857985a84a08336ae11f5d2ebaba7c0bc69055f404867e2",
+  "research_operator_result_manifest_sha256": "1cfb77e3ddbc7c7e36ce29d6c84de94362dfbd5f2c575220778aa3069694bc29",
+  "evidence_root": "/home/ubuntu24/Teleop/artifacts/evaluation/task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1/canonical_video_review_v1/final_review_v1",
+  "summary_sha256": "bc35a63ff99c450fcc6fb9c72ab290fb28d4a06708ab906c2d449730cbafe6a1",
+  "trials_sha256": "e8d3bd6891b95b5ace80e2d92c25928bd052220a8b26635ddc17a503ed3e05d4",
+  "manifest_sha256": "8f487c55d12b94a77554610b0cd65d728fb3b4bdaa26bfbe7c2422ee8c111747",
+  "independent_validation_sha256": "02e7b94d300b9d35a7883ddce10ae782b299ea96167a56eafcdad91bea8b3cf8",
+  "hashes_v2_sha256": "5859aedd436509a4a18ddbddace6c1484fe50b843f1539dbbde51a9b269123c3",
+  "reviewed_result": {
+    "c_source": {"success": 4, "total": 6},
+    "c_aligned_v2": {"success": 0, "total": 6},
+    "paired_outcomes": {"source_only": 4, "aligned_only": 0, "both_success": 0, "both_failure": 2},
+    "exact_mcnemar_two_sided_p": 0.125,
+    "operator_blind_disagreements": 0,
+    "adjudications": 0
+  },
+  "claim_boundary": "Six paired poses are a post-hoc engineering development gate; not a significant or causal paper conclusion.",
+  "provenance_caveat": "No independent research-control hardware-GO manifest exists; the owning conversation contains explicit user hardware authorization."
+}
