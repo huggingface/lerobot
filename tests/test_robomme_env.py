@@ -114,6 +114,24 @@ def test_robomme_camera_feature_names_are_configurable():
     assert cfg.features_map["pixels/wrist_image"] == f"{OBS_IMAGES}.wrist_image"
 
 
+def test_robomme_preserves_explicit_feature_mapping():
+    from lerobot.envs.configs import RoboMMEEnv
+    from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+    cfg = RoboMMEEnv(
+        features_map={
+            "pixels/camera1": f"{OBS_IMAGES}.custom_front",
+            "custom": "observation.custom",
+        }
+    )
+
+    assert cfg.features_map["pixels/camera1"] == f"{OBS_IMAGES}.custom_front"
+    assert cfg.features_map["pixels/camera2"] == f"{OBS_IMAGES}.camera2"
+    assert cfg.features_map["agent_pos"] == OBS_STATE
+    assert cfg.features_map[ACTION] == ACTION
+    assert cfg.features_map["custom"] == "observation.custom"
+
+
 def test_robomme_features_action_dim_joint_angle():
     from lerobot.envs.configs import RoboMMEEnv
     from lerobot.utils.constants import ACTION

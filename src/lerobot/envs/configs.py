@@ -879,12 +879,14 @@ class RoboMMEEnv(EnvConfig):
             wrist_camera_key: PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
         }
-        self.features_map = {
+        default_features_map = {
             ACTION: ACTION,
             front_camera_key: f"{OBS_IMAGES}.{self.front_camera_name}",
             wrist_camera_key: f"{OBS_IMAGES}.{self.wrist_camera_name}",
             "agent_pos": OBS_STATE,
         }
+        # Preserve explicit mappings while filling in the RoboMME defaults.
+        self.features_map = {**default_features_map, **self.features_map}
 
     @property
     def gym_kwargs(self) -> dict:

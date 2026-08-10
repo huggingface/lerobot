@@ -316,7 +316,15 @@ def make_policy(
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
-        action_names = ds_meta.features.get(ACTION, {}).get("names")
+        raw_action_feature = next(
+            (
+                feature
+                for raw_key, feature in ds_meta.features.items()
+                if (rename_map or {}).get(raw_key, raw_key) == ACTION
+            ),
+            None,
+        )
+        action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
         if action_names is not None:
             cfg.action_feature_names = list(action_names)
     if ds_meta is not None:

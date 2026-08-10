@@ -179,15 +179,17 @@ lerobot-train \
 
 The two forms are not interchangeable:
 
-|                                        | `--policy.path`                                | `--policy.pretrained_path`           |
-| -------------------------------------- | ---------------------------------------------- | ------------------------------------ |
-| Loads                                  | weights **and** the checkpoint's `config.json` | weights only                         |
-| Feature names                          | from the checkpoint                            | from your dataset                    |
-| Stored settings, e.g. `n_action_steps` | inherited                                      | reset to the defaults                |
-| `--policy.type`                        | must be omitted                                | required                             |
-| `--rename_map`                         | needed when your camera keys differ            | never — the keys come from your data |
+|                                        | `--policy.path`                                | `--policy.pretrained_path`                |
+| -------------------------------------- | ---------------------------------------------- | ----------------------------------------- |
+| Loads                                  | weights **and** the checkpoint's `config.json` | weights only                              |
+| Feature names                          | from the checkpoint                            | from your dataset, after `--rename_map`   |
+| Stored settings, e.g. `n_action_steps` | inherited                                      | reset to the defaults                     |
+| `--policy.type`                        | must be omitted                                | required                                  |
+| `--rename_map`                         | needed when your camera keys differ            | supported for canonicalizing dataset keys |
 
-Passing a `--rename_map` alongside `--policy.pretrained_path` renames the batch away from those names, and the first batch fails with `All image features are missing from the batch`.
+Use `--rename_map` with either loading form when raw dataset feature names differ from the policy
+feature names. For example, the RoboMME fine-tuning command maps its raw `image`, `wrist_image`,
+`state`, and `actions` columns while initializing weights with `--policy.pretrained_path`.
 
 ### Training Parameters Explained
 
