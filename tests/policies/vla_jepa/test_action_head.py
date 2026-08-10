@@ -16,7 +16,6 @@ from conftest import (
     make_config,
     set_seed_all,
 )  # noqa: E402
-
 from lerobot.policies.vla_jepa.action_head import (  # noqa: E402
     VLAJEPAActionHead,
 )
