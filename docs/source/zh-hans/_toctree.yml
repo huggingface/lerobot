@@ -41,6 +41,12 @@
     title: 实时分块（RTC）
   title: "推理"
 - sections:
+  - local: adding_benchmarks
+    title: 添加新的基准测试
+  - local: metaworld
+    title: Meta-World
+  title: "基准测试"
+- sections:
   - local: notebooks
     title: Notebooks
   - local: feetech
