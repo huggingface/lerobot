@@ -1,0 +1,81 @@
+{
+  "schema": "task1_picklift_act_caligned_v2_response_v3_200k_preparation_contract_v1",
+  "status": "implementation_ready_training_not_started",
+  "experiment_id": "task1_picklift_act_caligned_v2_response_v3_200k_v1",
+  "hardware_authorized": false,
+  "research_authority": {
+    "continuous_authorization_id": "GO_TASK1_LOCALSIM24_GAP_RESPONSE_V3_COLLECTION_TO_SIMSEEN6_SOFTWARE_GATE_V1",
+    "continuous_authorization_sha256": "69f3c374fa370c8a925f3a1f109b0bf5f9bcf2ca7ab0f5a73673262f496e82fe",
+    "finalization_research_commit": "c04e11ca7dc5d6f6cffe7131e3b9a84e2e52908a",
+    "finalization_manifest_sha256": "a271bcd613bb8cc19e8dd506380a722a0020f1bbd0b1d0cf2a0b8352e4e65b25",
+    "simseen6_contract_sha256": "f488689e72e2f51e580f8c26a2cecffd539fcd98dca7bc7e3f4d930eac2aeaad"
+  },
+  "real24": {
+    "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_real24_budget_extension_v1/accepted",
+    "repo_id": "local/task1_picklift_real24_budget_extension_v1_accepted",
+    "episodes": 24,
+    "frames": 4263,
+    "tree_hash_algorithm": "legacy_sha_rows",
+    "tree_sha256": "c01c45f9dcaee557248bff997f3c244a9fdba2b6c13211821ee335d4bfee0712",
+    "dataset_stats_json_sha256": "f1e71f8febee549d59c470508e1e3ed681436ed34099c35ef84896fd3de80fd8",
+    "frozen_checkpoint_processor_stats_sha256": "947d612d48280a98f3f6aeb37744e0aae9f8ea2034b6def24ebcf62c18ff4651"
+  },
+  "sim24": {
+    "root": "/home/ubuntu24/Teleop/artifacts/derived/task1_picklift_localsim24_gap_camera_v8_response_v3_real_appearance_v1/rerender_gap24/dataset",
+    "repo_id": "physicalai/task1_picklift_localsim24_gap_camera_v8_response_v3_real_appearance_v1",
+    "episodes": 24,
+    "frames": 3023,
+    "tree_hash_algorithm": "length_prefixed_v1",
+    "tree_sha256": "65229321ee1f91c09ab2af1fa790ad3fb3f71fb1f643f500ed2921c4351aff70",
+    "materialization_manifest_sha256": "e7eff6297cca06715d2ac958c5ec9b3e47a327a34d44c867a98504616af3d38d",
+    "source_to_derived_mapping_sha256": "005784d193b82103aaa26dc892dba17be9e2bc09f07c13f8bb4531ba547488a0",
+    "membership_sha256": "4fb0ec1660408b80b5d754696b4aa448f3bfd3564a138c79ace19b8fe0f336ec",
+    "camera_profile_id": "picklift_real96_crop_shift_zero_mirror_camera_v8",
+    "response_profile_id": "task1_picklift_real_actuator_response_aligned_v3",
+    "response_profile_sha256": "987e99a0f4ce68a07654db49b7a61166c2e2fa41a9606ae8c1580d0864fa7807",
+    "unity_source_rgb_training_eligible": false
+  },
+  "combined": {
+    "root": "/home/ubuntu24/Teleop/artifacts/datasets/task1_picklift_act_caligned_v2_response_v3_200k_v1/combined48_v1",
+    "repo_id": "local/task1_picklift_real24_localsim24gap_response_v3_real_appearance_additive_v1",
+    "episodes": 48,
+    "frames": 7286
+  },
+  "training": {
+    "from_scratch": true,
+    "seed": 1000,
+    "batch_size": 8,
+    "batch_composition": "4 Real24 + 4 response-v3 Sim24",
+    "optimizer_steps": 200000,
+    "smoke_steps": 500,
+    "formal_restarts_from_scratch": true,
+    "selected_checkpoint_step": 200000,
+    "sample_slots": {"real24": 800000, "sim24": 800000},
+    "act_chunk_size": 67,
+    "act_n_action_steps": 67,
+    "fps": 20,
+    "front_shape_chw": [3, 480, 640],
+    "state_shape": [6],
+    "action_shape": [6],
+    "old_c_real_stream_sha256_int64le": "f392d7b148905d90467a2565229df92d33e7805e8037a48eeca02c6d31730c53",
+    "old_sim_stream_equality_required": false
+  },
+  "evaluation": {
+    "evaluation_id": "task1_picklift_csource_vs_response_v3_simseen6_paired_eval_v1",
+    "poses": 6,
+    "models_per_pose": 2,
+    "planned_rollouts": 12,
+    "source_model_sha256": "dd5a7002d850da8ea45dc8097a14de89e51e98432fab05dc898b35e2cc34811f",
+    "first_model_balance": {"C_source": 3, "C_aligned_v2": 3},
+    "full_eval24_fallback": false,
+    "hardware_authorized": false
+  },
+  "boundaries": {
+    "training_started": false,
+    "rollout_started": false,
+    "hardware_accessed": false,
+    "old_sim_state_action_equality_required": false,
+    "only_new_human_response_v3_trajectory_dataset_is_eligible": true,
+    "historical_evidence_mutated": false
+  }
+}
