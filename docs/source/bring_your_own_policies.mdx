@@ -261,10 +261,28 @@ error instead of silently treating it as a query.
 
 ### Policy implementation
 
-The policy processor factory automatically places `RenderGenerationPromptStep` first in
-the normal input pipeline. Policy-specific processor steps then apply the model-native
-chat template, image markers, delimiters, and tokenization. The policy class implements
-only text decoding from the already-prepared batch:
+Text-capable policies explicitly place `RenderGenerationPromptStep(config.recipe)` in
+their normal input pipeline before batching or policy-native message formatting. This
+keeps its ordering and serialization policy-owned; the generic policy factory does not
+mutate processor pipelines. Subsequent policy-specific steps apply the model-native chat
+template, image markers, delimiters, and tokenization. The policy class implements only
+text decoding from the already-prepared batch:
+
+```python
+# processor_my_policy.py
+input_steps = [
+    RenderGenerationPromptStep(config.recipe),
+    steps.rename_observations,
+    steps.add_batch_dim,
+    MyPolicyMessageFormatter(),
+    steps.normalize,
+    steps.to_device,
+]
+```
+
+The generation step must also be present in the processor configuration shipped with a
+text-capable checkpoint. Policies supporting older processor configurations should add
+a policy-local migration when loading them rather than changing all policy pipelines.
 
 ```python
 # modeling_my_policy.py

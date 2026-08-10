@@ -12,7 +12,6 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.policies.factory import _attach_generation_prompt_step
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline, ProcessorStep
@@ -170,17 +169,14 @@ def test_two_policy_processor_formatters_need_no_client_api_changes():
     assert policy.generate_text(instruction_batch) == "[INST] What is visible?"
 
 
-def test_factory_attaches_renderer_before_batching_once():
+def test_policy_pipeline_serializes_explicit_renderer_before_batching():
     config = ContractConfig(recipe=_subtask_recipe())
-    preprocessor = PolicyProcessorPipeline([AddBatchDimensionProcessorStep()])
-    postprocessor = PolicyProcessorPipeline([])
-
-    preprocessor, postprocessor = _attach_generation_prompt_step(preprocessor, postprocessor, config)
-    preprocessor, postprocessor = _attach_generation_prompt_step(preprocessor, postprocessor, config)
+    preprocessor = PolicyProcessorPipeline(
+        [RenderGenerationPromptStep(config.recipe), AddBatchDimensionProcessorStep()]
+    )
 
     assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
-    assert sum(isinstance(step, RenderGenerationPromptStep) for step in preprocessor.steps) == 1
     assert preprocessor.get_config()["steps"][0]["registry_name"] == "render_generation_prompt_processor"
     assert preprocessor({"task": "ordinary action input"})["task"] == ["ordinary action input"]
     assert preprocessor({"query_kind": "vqa", "text": "Question?"})["messages"] == [
