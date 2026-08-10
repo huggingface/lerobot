@@ -57,6 +57,12 @@ class RenderMessagesStep(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         """Render messages, preserving unannotated samples and dropping unmatched annotated ones."""
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        # Runtime text requests are rendered by RenderGenerationPromptStep at the
+        # front of the same policy input pipeline. Do not replace that prompt with
+        # training-time language columns or the low-level task fallback.
+        if "messages" in complementary_data:
+            return transition
+
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []
 
