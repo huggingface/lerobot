@@ -230,12 +230,38 @@ messages:
     }
 ```
 
+### Runtime call pattern
+
+The runtime supplies the live values; the checkpoint's recipe supplies the wording. A
+subtask-and-action loop therefore does not contain a policy-specific prompt template:
+
 ```python
-prompt = policy.build_prompt("subtask", task="clear the table")
-subtask = policy.generate_text(batch, prompt)
+task = "clear the table"
+batch["task"] = task
+
+# Replays the recipe turns before the assistant turn targeting `${subtask}`.
+prompt = policy.build_prompt("subtask", task=task)
+subtask = policy.generate_text(batch, prompt).strip()
+
+# Empty text means that the runtime keeps its previous subtask.
+if subtask:
+    batch["subtask"] = subtask
+
+action_chunk = policy.predict_action_chunk(batch)
 ```
 
-`build_prompt` flattens the turns into one string; a policy applying a real chat template reads `prompt_messages` instead, which preserves the roles. Substitution uses `str.replace` rather than `str.format` — turns carry chat-control tokens, and a task may contain braces that `format` would choke on.
+For VQA or another free-form query, the caller already owns the complete prompt and
+passes it directly:
+
+```python
+answer = policy.generate_text(batch, "Which cup is closest to the gripper?")
+```
+
+The runtime always calls the same `generate_text(batch, prompt)` surface. The policy
+implementation owns its tokenizer and any native chat template; it must not require the
+runtime to know policy-specific role tokens or accept a separate `kind=` argument.
+
+`build_prompt` flattens the turns into one string; a policy applying a real chat template reads `prompt_messages` internally, which preserves the roles. Substitution uses `str.replace` rather than `str.format` — turns carry chat-control tokens, and a task may contain braces that `format` would choke on.
 
 Because training and inference read the same turns, the wording cannot drift. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess — down to the newline.
 
