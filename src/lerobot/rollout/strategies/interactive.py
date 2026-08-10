@@ -134,6 +134,12 @@ class InteractiveStrategy(RolloutStrategy):
 
             new_task = _drain_latest_instruction(self._instruction_queue)
             if new_task is not None:
+                # Deliberately no engine.reset() here: that would clear the
+                # policy's queued actions (and hidden state, for
+                # temporal-ensembling policies), which can make the robot's
+                # motion jerk or stop mid-trajectory. The in-flight action
+                # chunk is left to finish; most VLA policies only pick up the
+                # new task the next time they predict a fresh chunk.
                 engine.update_task(new_task)
                 if self.config.echo_on_change:
                     logger.info("Instruction updated: '%s'", new_task)

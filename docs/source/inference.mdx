@@ -47,7 +47,7 @@ lerobot-rollout \
 
 ### Interactive (`--strategy.type=interactive`)
 
-Autonomous policy execution with no data recording, like Base, but the language instruction can be changed while the rollout is running. A background thread reads full lines typed at the terminal; whenever you type a new instruction and press Enter, it is forwarded to the policy on the next control tick — no restart needed. Works with any VLA-capable policy (Pi0, Pi0.5, SmolVLA, etc.); non-language policies simply ignore the instruction.
+Autonomous policy execution with no data recording, like Base, but the language instruction can be changed while the rollout is running. A background thread reads full lines typed at the terminal; whenever you type a new instruction and press Enter, it is forwarded to the inference engine immediately — no restart needed. Works with any VLA-capable policy (Pi0, Pi0.5, SmolVLA, etc.); non-language policies simply ignore the instruction.
 
 ```bash
 lerobot-rollout \
@@ -67,7 +67,12 @@ lerobot-rollout \
 | `--strategy.prompt`         | Text shown before the current instruction at the input prompt  |
 | `--strategy.echo_on_change` | Log a message whenever the instruction changes (default: true) |
 
-With `--inference.type=sync` (default) the new instruction takes effect on the very next tick. With `--inference.type=rtc`, it takes effect once the currently in-flight action chunk drains — a bounded lag of roughly `execution_horizon / fps` seconds, not a bug. If stdin is not a TTY (e.g. piped input, some CI/headless setups), dynamic updates are disabled and the rollout runs with the fixed `--task` instruction only.
+**The new instruction is deliberately not applied instantly.** The strategy does not reset the policy when the instruction changes, by design — resetting would clear the policy's queued actions (and, for temporal-ensembling policies, its hidden state) and could make the robot's motion jerk or stop mid-trajectory. Instead, the currently in-flight action chunk is left to finish and the new instruction is picked up the next time the policy predicts a fresh chunk:
+
+- `--inference.type=sync` (default): most VLA policies (Pi0, Pi0.5, SmolVLA, ...) internally queue `n_action_steps` actions per forward pass and only call the model again once that queue is empty (see `_check_get_actions_condition` in each policy's `modeling_*.py`). The new instruction takes effect once the current queue drains — a lag of up to `n_action_steps` ticks, not the very next one.
+- `--inference.type=rtc`: same idea, but the queue lives in the RTC background thread. The new instruction takes effect once the currently in-flight action chunk drains — a bounded lag of roughly `execution_horizon / fps` seconds.
+
+In both cases this trades instant reaction for smooth, uninterrupted motion. If stdin is not a TTY (e.g. piped input, some CI/headless setups), dynamic updates are disabled and the rollout runs with the fixed `--task` instruction only.
 
 ### Sentry (`--strategy.type=sentry`)
 
