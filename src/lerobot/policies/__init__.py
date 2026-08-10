@@ -28,7 +28,7 @@ from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig as M
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
-from .pretrained import PreTrainedPolicy as PreTrainedPolicy
+from .pretrained import PreTrainedPolicy as PreTrainedPolicy, TextPromptTemplate as TextPromptTemplate
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
@@ -64,6 +64,7 @@ __all__ = [
     "XVLAConfig",
     # Base class
     "PreTrainedPolicy",
+    "TextPromptTemplate",
     # RTC utilities
     "ActionInterpolator",
     # Utility functions

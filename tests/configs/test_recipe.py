@@ -255,5 +255,5 @@ def test_prompt_turns_picks_the_first_matching_component_in_declaration_order():
 
 
 def test_prompt_turns_unknown_kind_lists_supervised_kinds():
-    with pytest.raises(ValueError, match=r"no target turn supervising 'memory'.*subtask"):
+    with pytest.raises(ValueError, match=r"no assistant target turn supervising \$\{memory\}.*subtask"):
         _subtask_blend().prompt_turns("memory")

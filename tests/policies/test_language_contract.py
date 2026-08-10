@@ -1,21 +1,20 @@
 #!/usr/bin/env python
 
-"""The recipe-driven language contract on `PreTrainedPolicy`.
-
-The recipe carried by ``config.recipe`` is the single source of prompt wording:
-`prompt_messages` / `build_prompt` replay its prompt turns, so inference prompts
-cannot drift from the phrasing the checkpoint was trained on.
-"""
+"""Client- and policy-facing tests for the flat text-generation contract."""
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import pytest
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
-from lerobot.policies.pretrained import DEFAULT_LANGUAGE_RECIPE, PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy
 
 
+@PreTrainedConfig.register_subclass("language_contract_test")
 @dataclass
 class ContractConfig(PreTrainedConfig):
     @property
@@ -60,126 +59,127 @@ class ContractPolicy(PreTrainedPolicy):
         raise NotImplementedError
 
 
-class TextHeadPolicy(ContractPolicy):
-    def generate_text(self, batch, prompt: str) -> str:
-        return f"echo: {prompt}"
+class ChatTemplatePolicy(ContractPolicy):
+    """A fake policy whose native formatter uses explicit chat role tokens."""
+
+    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> dict[str, Any]:
+        messages = semantic_inputs["messages"]
+        native_prompt = "".join(
+            f"<{message['role']}>{message['content']}</{message['role']}>" for message in messages
+        )
+        return {**semantic_inputs, "native_prompt": native_prompt}
+
+    def _generate_preprocessed_text(self, model_inputs: dict[str, Any]) -> str:
+        self.last_model_inputs = model_inputs
+        return model_inputs["native_prompt"]
 
 
-def _memory_recipe() -> TrainingRecipe:
+class InstructionTemplatePolicy(ContractPolicy):
+    """A second fake policy with a different valid model-native prompt."""
+
+    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> str:
+        return "[INST] " + "\n".join(message["content"] for message in semantic_inputs["messages"])
+
+    def _generate_preprocessed_text(self, model_inputs: str) -> str:
+        return model_inputs
+
+
+def _subtask_recipe() -> TrainingRecipe:
     return TrainingRecipe(
-        bindings={
-            "prior_memory": "nth_prev(style=memory, offset=1)",
-            "completed_subtask": "nth_prev(style=subtask, offset=1)",
-            "current_memory": "active_at(t, style=memory)",
-        },
         messages=[
-            MessageTurn(role="user", content="${task}", stream="high_level"),
-            MessageTurn(
-                role="assistant",
-                content="Previous memory: ${prior_memory}",
-                stream="high_level",
-                if_present="prior_memory",
-            ),
+            MessageTurn(role="system", content="You control a robot.", stream="high_level"),
             MessageTurn(
                 role="user",
-                content="Completed subtask: ${completed_subtask}",
+                content="Goal: ${task}\nPredict the next action in language.",
                 stream="high_level",
-                if_present="completed_subtask",
             ),
             MessageTurn(
                 role="assistant",
-                content="${current_memory}",
+                content="${subtask}",
                 stream="high_level",
                 target=True,
-                if_present="current_memory",
+                if_present="subtask",
             ),
-        ],
+        ]
     )
 
 
-def test_build_prompt_falls_back_to_the_default_recipe():
-    policy = ContractPolicy(ContractConfig())
-    assert policy.language_recipe() is DEFAULT_LANGUAGE_RECIPE
-    prompt = policy.build_prompt("subtask", task="clear the table")
-    assert prompt == "clear the table\nPredict the next action in language."
+def test_generate_text_defaults_to_raw_and_preserves_caller_payload():
+    policy = ChatTemplatePolicy(ContractConfig(recipe=_subtask_recipe()))
+    question = "Which {cup} is closest to the gripper?"
+
+    answer = policy.generate_text({}, question)
+
+    assert answer == f"<user>{question}</user>"
+    assert policy.last_model_inputs["messages"] == [{"role": "user", "content": question}]
 
 
-def test_checkpoint_recipe_overrides_the_wording():
-    config = ContractConfig(
-        recipe=TrainingRecipe(
-            messages=[
-                MessageTurn(role="user", content="Goal: ${task}\nNext step?", stream="high_level"),
-                MessageTurn(
-                    role="assistant",
-                    content="${subtask}",
-                    stream="high_level",
-                    target=True,
-                    if_present="subtask",
-                ),
-            ]
-        )
+def test_generate_text_subtask_applies_checkpoint_recipe_internally():
+    policy = ChatTemplatePolicy(ContractConfig(recipe=_subtask_recipe()))
+
+    generated = policy.generate_text({}, "Clear the table", template="subtask")
+
+    assert generated == (
+        "<system>You control a robot.</system>"
+        "<user>Goal: Clear the table\nPredict the next action in language.</user>"
     )
-    policy = ContractPolicy(config)
-    assert policy.build_prompt("subtask", task="fold the towel") == "Goal: fold the towel\nNext step?"
 
 
-def test_language_recipe_normalizes_the_reloaded_dict():
-    # A reloaded config.json carries the recipe as a plain dict.
-    config = ContractConfig(
-        recipe={
-            "messages": [
-                {"role": "user", "content": "${task}", "stream": "high_level"},
-                {
-                    "role": "assistant",
-                    "content": "${subtask}",
-                    "stream": "high_level",
-                    "target": True,
-                    "if_present": "subtask",
-                },
-            ]
-        }
-    )
-    policy = ContractPolicy(config)
-    recipe = policy.language_recipe()
-    assert isinstance(recipe, TrainingRecipe)
-    # Normalization is cached back onto the config so it runs once.
-    assert config.recipe is recipe
-    assert policy.build_prompt("subtask", task="stack the cups") == "stack the cups"
+def test_two_policies_format_identical_raw_text_without_client_changes():
+    text = "What is visible?"
+
+    chat_prompt = ChatTemplatePolicy(ContractConfig()).generate_text({}, text)
+    instruction_prompt = InstructionTemplatePolicy(ContractConfig()).generate_text({}, text)
+
+    assert chat_prompt == "<user>What is visible?</user>"
+    assert instruction_prompt == "[INST] What is visible?"
 
 
-def test_prompt_messages_skips_if_present_turns_without_values():
-    policy = ContractPolicy(ContractConfig(recipe=_memory_recipe()))
-    messages = policy.prompt_messages("current_memory", task="tidy the desk")
-    assert messages == [{"role": "user", "content": "tidy the desk"}]
+def test_subtask_requires_a_checkpoint_recipe():
+    policy = ChatTemplatePolicy(ContractConfig())
+
+    with pytest.raises(ValueError, match="Subtask generation requires a checkpoint recipe"):
+        policy.generate_text({}, "Clear the table", template="subtask")
 
 
-def test_prompt_messages_keeps_if_present_turns_with_values_and_roles():
-    policy = ContractPolicy(ContractConfig(recipe=_memory_recipe()))
-    messages = policy.prompt_messages("current_memory", task="tidy the desk", prior_memory="drawer is sorted")
-    assert messages == [
-        {"role": "user", "content": "tidy the desk"},
-        {"role": "assistant", "content": "Previous memory: drawer is sorted"},
-    ]
+def test_unsupported_public_template_is_rejected():
+    policy = ChatTemplatePolicy(ContractConfig())
+
+    with pytest.raises(ValueError, match="Unsupported text template: 'caption'"):
+        policy.generate_text({}, "Describe this", template="caption")  # type: ignore[arg-type]
 
 
-def test_prompt_messages_raises_on_a_missing_placeholder_value():
-    policy = ContractPolicy(ContractConfig())
-    with pytest.raises(ValueError, match=r"references \['task'\]"):
-        policy.build_prompt("subtask")
+def test_generate_text_does_not_mutate_batch_or_repeat_observation_processing():
+    policy = ChatTemplatePolicy(ContractConfig())
+    observation = torch.tensor([[1.0, 2.0]])
+    batch = {"observation.state": observation, "subtask": "keep this state"}
+
+    policy.generate_text(batch, "What is happening?")
+
+    assert batch == {"observation.state": observation, "subtask": "keep this state"}
+    assert policy.last_model_inputs["observation.state"] is observation
+    assert policy.last_model_inputs["subtask"] == "keep this state"
 
 
-def test_build_prompt_unknown_kind_lists_supervised_kinds():
-    policy = ContractPolicy(ContractConfig())
-    with pytest.raises(ValueError, match="no target turn supervising 'memory'"):
-        policy.build_prompt("memory", task="tidy")
+def test_config_save_load_restores_a_normalized_recipe(tmp_path: Path):
+    config = ContractConfig(recipe=_subtask_recipe())
+    config._save_pretrained(tmp_path)
+
+    loaded = PreTrainedConfig.from_pretrained(tmp_path)
+
+    assert isinstance(loaded, ContractConfig)
+    assert isinstance(loaded.recipe, TrainingRecipe)
+    policy = ChatTemplatePolicy(loaded)
+    assert "Goal: Fold the towel" in policy.generate_text({}, "Fold the towel", template="subtask")
 
 
-def test_supports_text_generation_detects_an_overridden_generate_text():
+def test_supports_text_generation_detects_the_protected_decoder_hook():
     assert not ContractPolicy(ContractConfig()).supports_text_generation()
-    assert TextHeadPolicy(ContractConfig()).supports_text_generation()
+    assert ChatTemplatePolicy(ContractConfig()).supports_text_generation()
 
 
-def test_generate_text_default_raises_with_guidance():
+def test_policy_without_text_head_raises_clear_error():
     policy = ContractPolicy(ContractConfig())
+
     with pytest.raises(NotImplementedError, match="has no text head"):
-        policy.generate_text({}, "what do you see?")
+        policy.generate_text({}, "What do you see?")

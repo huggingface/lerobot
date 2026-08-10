@@ -196,27 +196,33 @@ class TrainingRecipe:
         """The turns preceding the target turn that supervises the ``kind`` binding.
 
         Searches this recipe's messages — or each blend component in declaration
-        order — for the first ``target: true`` turn referencing the ``kind``
-        binding, and returns every turn before it. These are the turns an
-        inference caller replays to make the model produce the ``kind`` text the
-        recipe trained it on (see ``PreTrainedPolicy.prompt_messages``).
+        order — for the first assistant ``target: true`` turn whose content
+        references the ``kind`` binding, and returns every turn before it. This is
+        a lower-level recipe utility; the policy API maps its constrained public
+        templates to target bindings internally.
         """
         components = [self] if self.messages is not None else list((self.blend or {}).values())
         for component in components:
             turns = component.messages or []
             for index, turn in enumerate(turns):
-                if turn.target and kind in self._referenced_bindings(turn):
+                if (
+                    turn.target
+                    and turn.role == "assistant"
+                    and kind in _placeholders_in_content(turn.content)
+                ):
                     return turns[:index]
         supervised = sorted(
             {
                 name
                 for component in components
                 for turn in component.messages or []
-                if turn.target
-                for name in self._referenced_bindings(turn)
+                if turn.target and turn.role == "assistant"
+                for name in _placeholders_in_content(turn.content)
             }
         )
-        raise ValueError(f"Recipe has no target turn supervising {kind!r}. Supervised kinds: {supervised}.")
+        raise ValueError(
+            f"Recipe has no assistant target turn supervising ${{{kind}}}. Supervised bindings: {supervised}."
+        )
 
     def _referenced_bindings(self, turn: MessageTurn) -> set[str]:
         """Return the binding names that ``turn`` references via placeholders or attributes."""

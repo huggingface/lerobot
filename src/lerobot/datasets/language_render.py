@@ -22,7 +22,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, TrainingRecipe
+from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, MessageTurn, TrainingRecipe
 from lerobot.utils.utils import unwrap_scalar
 
 from .language import LANGUAGE_PERSISTENT, column_for_style
@@ -394,11 +394,33 @@ def _render_message_recipe(
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     if recipe.messages is None:
         raise ValueError("Cannot render a blend recipe as a message recipe.")
+    rendered = render_message_turns(recipe.messages, bindings)
+
+    # Keep samples with either text targets or low-level action supervision.
+    has_low_level = any(stream == "low_level" for stream in rendered["message_streams"])
+    if not rendered["target_message_indices"] and not has_low_level:
+        return None
+
+    _validate_rendered(rendered)
+    return rendered
+
+
+def render_message_turns(
+    turns: Sequence[MessageTurn],
+    bindings: dict[str, LanguageRow | str | None],
+) -> RenderedMessages:
+    """Render recipe turns with the substitution rules shared by training and inference.
+
+    Unlike :func:`_render_message_recipe`, this primitive does not require the
+    result to contain supervision. Text generation uses it to render only the
+    prefix before a target assistant turn, while training renders the complete
+    recipe and validates its target/stream sidecars afterwards.
+    """
     messages: list[dict[str, Any]] = []
     streams: list[str | None] = []
     target_indices: list[int] = []
 
-    for turn in recipe.messages:
+    for turn in turns:
         if turn.if_present is not None and bindings.get(turn.if_present) is None:
             continue
 
@@ -418,18 +440,11 @@ def _render_message_recipe(
         if turn.target:
             target_indices.append(message_idx)
 
-    # Keep samples with either text targets or low-level action supervision.
-    has_low_level = any(stream == "low_level" for stream in streams)
-    if not target_indices and not has_low_level:
-        return None
-
-    rendered = {
+    return {
         "messages": messages,
         "message_streams": streams,
         "target_message_indices": target_indices,
     }
-    _validate_rendered(rendered)
-    return rendered
 
 
 def _render_content(

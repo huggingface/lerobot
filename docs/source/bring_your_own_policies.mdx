@@ -193,25 +193,92 @@ def make_my_policy_pre_post_processors(
 
 ## Adding a text head: the language contract
 
-The policy API above is sufficient for training and standard evaluation. Language-conditioned policies can additionally expose a **text head** — for high-level subtask generation, grounded VQA, or captioning — through one optional method, `generate_text`, plus the recipe declaring the wording the checkpoint was trained on. Deployment tooling drives a policy exclusively through this contract; a policy without a text head still runs, on the operator's own instruction.
+Policies with a text head expose one flat method. Runtime and client code passes an
+already-preprocessed observation batch, caller-owned natural language, and one of two
+prompt templates:
 
-### Policies with a text head
+| Public template | Caller-owned `text`              | Recipe behavior                                      | Result                     |
+| --------------- | -------------------------------- | ---------------------------------------------------- | -------------------------- |
+| `raw` (default) | any question or free-form prompt | no recipe wording; preserve text as the user payload | best-effort generated text |
+| `subtask`       | a high-level task or instruction | render the checkpoint recipe before `${subtask}`     | next executable subtask    |
 
-Implement one method, `generate_text`, which answers an arbitrary prompt about the current observation:
+For an arbitrary question, use the ergonomic raw default:
+
+```python
+answer = policy.generate_text(
+    batch,
+    "Which cup is closest to the gripper?",
+)
+```
+
+`raw` does not claim the checkpoint was trained for VQA and does not require a VQA
+recipe. The policy attempts generation whenever it has a text head; a poor or empty
+answer is allowed. Raw text still passes through policy-native multimodal formatting,
+including system messages, roles, image markers, special tokens, and tokenization.
+
+For recipe-backed subtask generation, the runtime selects the public `subtask` mode and
+then explicitly decides whether to commit the result before predicting actions:
+
+```python
+task = "clear the table"
+subtask = policy.generate_text(batch, task, template="subtask").strip()
+
+# Empty text leaves the active runtime subtask unchanged.
+if subtask:
+    batch["subtask"] = subtask
+
+action_chunk = policy.predict_action_chunk(batch)
+```
+
+`generate_text` itself does not mutate `batch`, replace the active task, enqueue actions,
+or run a System-2/System-1 loop. A checkpoint without a valid subtask recipe raises a
+contract error instead of silently treating the request as raw.
+
+### Policy implementation
+
+The base class owns public prompt selection and recipe rendering. A policy implements
+protected hooks for the parts only its model can know:
 
 ```python
 # modeling_my_policy.py
 class MyPolicy(PreTrainedPolicy):
-    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
-        """Answer `prompt` about the current observation."""
-        return self._decode(prompt, batch)
+    def _format_text_generation_input(self, semantic_inputs):
+        messages = semantic_inputs["messages"]
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return self._tokenize_multimodal(prompt, semantic_inputs)
+
+    def _generate_preprocessed_text(self, model_inputs) -> str:
+        token_ids = self.model.generate(
+            **model_inputs,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
+        )
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True)
 ```
 
-That one method covers everything: VQA, captioning, grounding, and subtask prediction. Subtask prediction is not a separate method — the caller composes the prompt from the policy's recipe and calls `generate_text` with the result.
+The internal text preprocessor is deliberately separate from the ordinary observation
+preprocessor. It consumes the existing batch without repeating image or state
+normalization, renders role-preserving semantic messages, and then hands them to the
+policy formatter:
 
-### The recipe is the wording contract
+```text
+RenderGenerationPromptStep
+              ↓
+policy-native roles, images, and chat template
+              ↓
+tokenization and text decoding
+```
 
-Training renders language supervision through a [`TrainingRecipe`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/recipe.py) — chat-style message turns whose `${placeholder}` bindings are filled per sample. That same recipe ships with the checkpoint as `config.recipe` in `config.json`, and inference replays it: `prompt_messages(kind, **values)` returns the turns preceding the recipe's target turn for a _kind_ (the binding that target supervises, e.g. `subtask`), filled with the caller's values.
+Training renders complete recipe messages, including assistant targets. Subtask
+inference uses the same turn-rendering and substitution primitive but stops immediately
+before the assistant turn supervising `${subtask}`. Callers never read `config.recipe`,
+select blend components or bindings, or construct model prompts.
+
+Training recipes still ship with checkpoints through `config.recipe`:
 
 ```yaml
 # The high-level component of a subtask recipe
@@ -230,43 +297,6 @@ messages:
     }
 ```
 
-### Runtime call pattern
-
-The runtime supplies the live values; the checkpoint's recipe supplies the wording. A
-subtask-and-action loop therefore does not contain a policy-specific prompt template:
-
-```python
-task = "clear the table"
-batch["task"] = task
-
-# Replays the recipe turns before the assistant turn targeting `${subtask}`.
-prompt = policy.build_prompt("subtask", task=task)
-subtask = policy.generate_text(batch, prompt).strip()
-
-# Empty text means that the runtime keeps its previous subtask.
-if subtask:
-    batch["subtask"] = subtask
-
-action_chunk = policy.predict_action_chunk(batch)
-```
-
-For VQA or another free-form query, the caller already owns the complete prompt and
-passes it directly:
-
-```python
-answer = policy.generate_text(batch, "Which cup is closest to the gripper?")
-```
-
-The runtime always calls the same `generate_text(batch, prompt)` surface. The policy
-implementation owns its tokenizer and any native chat template; it must not require the
-runtime to know policy-specific role tokens or accept a separate `kind=` argument.
-
-`build_prompt` flattens the turns into one string; a policy applying a real chat template reads `prompt_messages` internally, which preserves the roles. Substitution uses `str.replace` rather than `str.format` — turns carry chat-control tokens, and a task may contain braces that `format` would choke on.
-
-Because training and inference read the same turns, the wording cannot drift. For a model that declares its mode in this very turn, the exact phrasing is the difference between an in-distribution answer and a guess — down to the newline.
-
-A checkpoint without a recipe falls back to `DEFAULT_LANGUAGE_RECIPE`, the subtask wording the WALL-OSS and EO-1 family were trained on, which more released checkpoints recognise than a sentence written for the occasion. Declare your own anyway: the default may be retuned, and a checkpoint that pins its recipe will not silently follow. Make it your config's default so training and deployment share one source:
-
 ```python
 def make_my_policy_recipe() -> TrainingRecipe:
     return TrainingRecipe.from_dict({...})  # or load_recipe(<yaml path>)
@@ -277,16 +307,11 @@ class MyPolicyConfig(PreTrainedConfig):
     recipe: TrainingRecipe | dict[str, Any] | None = field(default_factory=make_my_policy_recipe)
 ```
 
-Adding a kind is a recipe component and nothing else. A blend component whose target turn supervises `${current_memory}` makes `build_prompt("current_memory", task=..., completed_subtask=...)` work with no change to the base class.
-
-| Piece                              | Owned by       | Used for                                 |
-| ---------------------------------- | -------------- | ---------------------------------------- |
-| `config.recipe`                    | the checkpoint | the trained wording, per kind            |
-| `prompt_messages` / `build_prompt` | the base       | replaying the recipe's prompt turns      |
-| `generate_text(batch, prompt)`     | the policy     | every text call, subtask and VQA alike   |
-| the values                         | the caller     | the high-level goal, a question, history |
-
-The batch is a preprocessed observation with `batch["task"]` set to the operator's goal and `batch["subtask"]` set to the active subtask once one exists. Return `""` when the head produces nothing — callers keep the previous subtask.
+The public selector is intentionally restricted to `raw` and `subtask`; recipe binding
+names are not public templates. Structured outputs such as bounding boxes should keep
+their own typed interface. Existing policy PRs that override `generate_text(batch,
+prompt)` should migrate their model formatting into `_format_text_generation_input` and
+their decoding into `_generate_preprocessed_text`.
 
 ### Sampling settings
 

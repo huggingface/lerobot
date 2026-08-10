@@ -21,7 +21,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -31,8 +31,13 @@ from torch import Tensor, nn
 
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
-from lerobot.configs.recipe import PLACEHOLDER_RE, MessageTurn, TrainingRecipe
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.processor.pipeline import DataProcessorPipeline
+from lerobot.processor.text_generation_processor import (
+    RenderGenerationPromptStep,
+    text_generation_request_to_transition,
+    text_generation_transition_to_request,
+)
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -50,26 +55,7 @@ if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
-
-#: Fallback language contract for checkpoints whose ``config.json`` ships no recipe:
-#: the subtask wording the WALL-OSS and EO-1 family were trained on. See
-#: `PreTrainedPolicy.language_recipe`.
-DEFAULT_LANGUAGE_RECIPE = TrainingRecipe(
-    messages=[
-        MessageTurn(
-            role="user",
-            content="${task}\nPredict the next action in language.",
-            stream="high_level",
-        ),
-        MessageTurn(
-            role="assistant",
-            content="${subtask}",
-            stream="high_level",
-            target=True,
-            if_present="subtask",
-        ),
-    ]
-)
+TextPromptTemplate = Literal["raw", "subtask"]
 
 
 def _build_card_context(
@@ -140,6 +126,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
+        # This pipeline deliberately contains no observation transforms: callers
+        # pass an already-preprocessed batch and add text only at generation time.
+        # The recipe was normalized by PreTrainedConfig.__post_init__, so the step
+        # holds a prepared object and never opens/parses YAML while generating.
+        self.text_preprocessor = DataProcessorPipeline(
+            [RenderGenerationPromptStep(config.recipe)],
+            name="TextGenerationPreprocessor",
+            to_transition=text_generation_request_to_transition,
+            to_output=text_generation_transition_to_request,
+        )
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -334,91 +330,52 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def supports_text_generation(self) -> bool:
         """Whether this policy has a usable text head."""
-        return type(self).generate_text is not PreTrainedPolicy.generate_text
+        return type(self)._generate_preprocessed_text is not PreTrainedPolicy._generate_preprocessed_text
 
-    def language_recipe(self) -> TrainingRecipe:
-        """The training recipe whose message turns define this checkpoint's prompt wording.
+    def generate_text(
+        self,
+        batch: dict[str, Tensor],
+        text: str,
+        *,
+        template: TextPromptTemplate = "raw",
+    ) -> str:
+        """Generate text about an already-preprocessed observation batch.
 
-        The recipe is the language contract: the same turns that rendered this
-        checkpoint's training samples are replayed at inference to build prompts,
-        so the wording cannot drift from the trained phrasing — WALL-OSS declares
-        its mode in that turn, and a prompt that drifts is answered out of
-        distribution. The recipe ships in ``config.json``; a reloaded config
-        carries it as a plain dict, normalized here.
-
-        A checkpoint without one falls back to `DEFAULT_LANGUAGE_RECIPE` — the
-        wording the WALL-OSS and EO-1 family were trained on, which more released
-        checkpoints recognise than a sentence written for the occasion. Declare
-        your own even when it matches: the default may be retuned, and a
-        checkpoint that pins its recipe will not silently follow.
+        ``raw`` preserves arbitrary caller text as the user-message payload and
+        applies no recipe wording. ``subtask`` treats caller text as the high-level
+        task and renders the checkpoint recipe prefix that trained the model to
+        produce ``${subtask}``. Both paths then use the same policy-native formatter
+        and decoder. This method only returns text; it never mutates runtime state or
+        dispatches actions.
         """
-        recipe = self.config.recipe
-        if isinstance(recipe, dict):
-            recipe = TrainingRecipe.from_dict(recipe)
-            self.config.recipe = recipe
-        return recipe if recipe is not None else DEFAULT_LANGUAGE_RECIPE
+        if not self.supports_text_generation():
+            raise NotImplementedError(
+                f"{type(self).__name__} has no text head. Implement "
+                "`_generate_preprocessed_text` to query it."
+            )
 
-    def prompt_messages(self, kind: str, **values: str) -> list[dict[str, str]]:
-        """Chat-style turns asking this policy for the `kind` text it was trained to produce.
+        request: dict[str, Any] = {
+            **batch,
+            "text": text,
+            "text_template": template,
+        }
+        semantic_inputs = self.text_preprocessor(request)
+        model_inputs = self._format_text_generation_input(semantic_inputs)
+        return self._generate_preprocessed_text(model_inputs)
 
-        Replays the recipe turns preceding the target turn that supervises the
-        ``kind`` binding, filled with the caller's values — the recipe owns the
-        wording while the caller owns the values. Substitution uses `str.replace`
-        rather than `str.format`: turns may carry chat-control tokens, and a value
-        such as an operator's task may contain braces that `format` would choke on.
+    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> Any:
+        """Apply policy-native roles, image markers, chat templates, and tokenization.
 
-        A turn whose `if_present` binding is not among `values` is skipped, exactly
-        as it is for a training sample missing that annotation. A turn referencing
-        a placeholder the caller did not provide raises, naming the missing values.
+        Policies with a tokenizer chat template override this hook. The default
+        keeps the role-preserving semantic request intact for policies whose text
+        decoder consumes messages directly.
         """
-        rendered: list[dict[str, str]] = []
-        for turn in self.language_recipe().prompt_turns(kind):
-            if turn.if_present is not None and turn.if_present not in values:
-                continue
-            content = turn.content
-            if isinstance(content, list):
-                content = "\n".join(block["text"] for block in content if block.get("type") == "text")
-            if not content:
-                continue
-            missing = set(PLACEHOLDER_RE.findall(content)) - values.keys()
-            if missing:
-                raise ValueError(
-                    f"Prompt turn for {kind!r} references {sorted(missing)} — pass them as keyword values."
-                )
-            for name, value in values.items():
-                content = content.replace("${" + name + "}", value)
-            rendered.append({"role": turn.role, "content": content})
-        return rendered
+        return semantic_inputs
 
-    def build_prompt(self, kind: str, **values: str) -> str:
-        """Flatten `prompt_messages` into one prompt string, ready to pass to `generate_text`.
-
-        Policies applying a real chat template should prefer `prompt_messages`,
-        which preserves the roles.
-        """
-        return "\n".join(message["content"] for message in self.prompt_messages(kind, **values))
-
-    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
-        """Answer `prompt` about the current observation, for policies with a text head.
-
-        The single text entry point: the caller supplies the whole
-        question, so this covers VQA, captioning, grounding and anything else the
-        checkpoint can answer. Decode with `self.config.text_temperature` and
-        `self.config.text_top_p`, so a checkpoint decodes the way it was trained.
-
-        Note that most VLA text heads are blind to proprioception — the prompt carries
-        images and language only — so answers are grounded in pixels, not robot state.
-
-        Args:
-            batch: A preprocessed observation batch, with the operator's goal in
-                `batch["task"]`.
-            prompt: The question to answer.
-
-        Returns:
-            The decoded text, or an empty string when the head produced nothing.
-        """
+    def _generate_preprocessed_text(self, model_inputs: Any) -> str:
+        """Decode one text response from policy-native, model-ready inputs."""
         raise NotImplementedError(
-            f"{type(self).__name__} has no text head. Implement `generate_text` to query it."
+            f"{type(self).__name__} has no text head. Implement `_generate_preprocessed_text` to query it."
         )
 
     def push_model_to_hub(

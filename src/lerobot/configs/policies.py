@@ -84,12 +84,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
 
     # The training recipe this checkpoint's language supervision was rendered with.
-    # Its message turns are the single source of inference-time prompt wording (see
-    # `PreTrainedPolicy.language_recipe`), so a checkpoint prompts itself with the
-    # exact phrasing it was trained on. A reloaded config.json carries it as a plain
-    # dict — the same convention as `RenderMessagesProcessorStep` — and
-    # `language_recipe` normalizes it back into a `TrainingRecipe`. None falls back
-    # to the base WALL-OSS/EO-1 subtask recipe in `lerobot.policies.pretrained`.
+    # Its message turns are the single source of recipe-backed inference prompt
+    # wording. ``None`` is valid for policies/checkpoints that do not support the
+    # public ``template="subtask"`` contract.
     recipe: TrainingRecipe | dict[str, Any] | None = None
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
@@ -108,6 +105,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        # JSON and CLI decoding may leave this nested dataclass as a plain dict.
+        # Normalize it at config construction time so prompt generation never
+        # reparses a recipe file or rebuilds the recipe on every call.
+        if isinstance(self.recipe, dict):
+            self.recipe = TrainingRecipe.from_dict(self.recipe)
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
