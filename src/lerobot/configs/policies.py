@@ -68,28 +68,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
-    # Decoding settings for policies that implement `PreTrainedPolicy.generate_text`.
-    # Sampling is supported; these are the defaults a checkpoint ships with, which is
-    # why they belong in config.json. Greedy suits a subtask head trained with
-    # cross-entropy against one target per step, but raising the temperature is a
-    # useful probe for an under-trained head stuck on a single output. The `text_`
-    # prefix keeps these distinct from action-sampling settings such as
-    # `PI0FastConfig.temperature`.
-    #
-    # Only settings every text head shares belong here. A policy needing more —
-    # top-k, repetition penalty, beam count — declares it on its own config
-    # (e.g. `text_top_k` on `WallOSS05Config`) so the base does not accumulate
-    # knobs that most policies never read.
-    text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
-    text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
-
     # The training recipe this checkpoint's language supervision was rendered with.
-    # Its message turns are the single source of inference-time prompt wording (see
-    # `PreTrainedPolicy.language_recipe`), so a checkpoint prompts itself with the
-    # exact phrasing it was trained on. A reloaded config.json carries it as a plain
-    # dict — the same convention as `RenderMessagesProcessorStep` — and
-    # `language_recipe` normalizes it back into a `TrainingRecipe`. None falls back
-    # to the base WALL-OSS/EO-1 subtask recipe in `lerobot.policies.pretrained`.
+    # Its message turns are the single source of recipe-backed inference prompt
+    # wording. ``None`` is valid for policies/checkpoints that do not support the
+    # runtime ``query_kind="next_subtask"`` contract.
     recipe: TrainingRecipe | dict[str, Any] | None = None
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
@@ -108,6 +90,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        # JSON and CLI decoding may leave this nested dataclass as a plain dict.
+        # Normalize it at config construction time so prompt generation never
+        # reparses a recipe file or rebuilds the recipe on every call.
+        if isinstance(self.recipe, dict):
+            self.recipe = TrainingRecipe.from_dict(self.recipe)
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
