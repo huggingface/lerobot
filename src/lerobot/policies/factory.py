@@ -33,7 +33,6 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
-    RenderGenerationPromptStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -75,29 +74,6 @@ def _reconnect_relative_absolute_steps(
     for step in postprocessor.steps:
         if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
             step.relative_step = relative_step
-
-
-def _attach_generation_prompt_step(
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
-    policy_cfg: PreTrainedConfig,
-) -> tuple[
-    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
-]:
-    """Ensure runtime text metadata is rendered inside the normal input pipeline.
-
-    The renderer must run before batching so it consumes scalar ``query_kind`` and
-    ``text`` values and emits one role-preserving message list. Checkpoints that
-    already serialize the step keep their saved ordering and recipe.
-    """
-    if any(isinstance(step, RenderGenerationPromptStep) for step in preprocessor.steps):
-        return preprocessor, postprocessor
-
-    steps = list(preprocessor.steps)
-    steps.insert(0, RenderGenerationPromptStep(policy_cfg.recipe))
-    preprocessor.steps = steps
-    return preprocessor, postprocessor
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -205,7 +181,7 @@ def make_pre_post_processors(
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
-            preprocessor, postprocessor = make_groot_pre_post_processors_from_pretrained(
+            return make_groot_pre_post_processors_from_pretrained(
                 config=policy_cfg,
                 pretrained_path=pretrained_path,
                 revision=pretrained_revision,
@@ -220,7 +196,6 @@ def make_pre_post_processors(
                     "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
             )
-            return _attach_generation_prompt_step(preprocessor, postprocessor, policy_cfg)
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
@@ -251,16 +226,15 @@ def make_pre_post_processors(
                 preprocessor,
                 postprocessor,
             )
-        return _attach_generation_prompt_step(preprocessor, postprocessor, policy_cfg)
+        return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
-    preprocessor, postprocessor = _make_processors_from_policy_config(
+    return _make_processors_from_policy_config(
         config=policy_cfg,
         dataset_stats=kwargs.get("dataset_stats"),
         dataset_meta=kwargs.get("dataset_meta"),
     )
-    return _attach_generation_prompt_step(preprocessor, postprocessor, policy_cfg)
 
 
 def make_policy(
