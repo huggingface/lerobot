@@ -58,6 +58,8 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
+from .inference import QueryAnswer
+
 if TYPE_CHECKING:
     from .context import RolloutContext
     from .strategies import RolloutStrategy
@@ -102,6 +104,19 @@ class LinkedEvent(Event):
         return True
 
 
+class AskResult(Enum):
+    """Outcome of :meth:`RolloutController.ask`."""
+
+    QUEUED = "queued"
+    """The question was accepted; the answer arrives as a ``QUERY_ANSWERED`` event."""
+
+    NOT_RUNNING = "not_running"
+    """Rejected: no segment is running, so no fresh observation is flowing."""
+
+    BUSY = "busy"
+    """Rejected: a previous question is still waiting to be answered."""
+
+
 class RolloutEvent(Enum):
     """Lifecycle notifications emitted by :class:`RolloutController`.
 
@@ -126,6 +141,12 @@ class RolloutEvent(Enum):
     RESET_SKIPPED = "reset_skipped"
     """No initial position was captured; the robot holds its current pose."""
 
+    QUERY_ANSWERED = "query_answered"
+    """A question queued with :meth:`RolloutController.ask` was resolved.  The
+    event payload is a :class:`~lerobot.rollout.inference.QueryAnswer`; check
+    its ``ok`` before reading ``answer``, since it also reports questions the
+    policy could not handle and ones dropped when the run ended first."""
+
     ENGINE_FAILED = "engine_failed"
     """The inference engine hit an unrecoverable error; ``serve()`` is about
     to return.  Read :attr:`RolloutController.failure_traceback` for details."""
@@ -146,7 +167,8 @@ class RolloutController:
     pauses the inference engine, returns the robot to its initial position,
     and restores the launch task, while hardware and policy stay warm.
     :meth:`stop` ends :meth:`serve` so the caller can run
-    ``strategy.teardown(ctx)``.
+    ``strategy.teardown(ctx)``.  :meth:`ask` queues a question for the
+    policy's text head and reports the answer through ``on_event``.
 
     Requires ``ctx.runtime.shutdown_event`` to be a :class:`LinkedEvent`: the
     controller sets the local flag to end a segment, and process shutdown
@@ -169,7 +191,7 @@ class RolloutController:
         self,
         strategy: RolloutStrategy,
         ctx: RolloutContext,
-        on_event: Callable[[RolloutEvent], None] | None = None,
+        on_event: Callable[[RolloutEvent, QueryAnswer | None], None] | None = None,
     ) -> None:
         stop_event = ctx.runtime.shutdown_event
         if not isinstance(stop_event, LinkedEvent):
@@ -196,6 +218,12 @@ class RolloutController:
         self._stop_requested = Event()
         self._wake = Event()
         self._running = Event()
+
+        # Answers are produced on whichever thread owns the policy, but the
+        # engine only hands them over from ``pump_query`` — which the control
+        # loop and the idle poll below both call on the serve thread — so this
+        # observer keeps the "events fire on the serve thread" guarantee.
+        ctx.policy.inference.set_answer_observer(self._on_query_answer)
 
     # ------------------------------------------------------------------
     # Introspection
@@ -286,6 +314,33 @@ class RolloutController:
         with self._control_lock:
             return self._ctx.policy.inference.set_task(task)
 
+    def ask(self, question: str) -> AskResult:
+        """Queue a question about what the robot currently sees.
+
+        Returns immediately; the answer arrives later as a
+        :attr:`RolloutEvent.QUERY_ANSWERED` event carrying a
+        :class:`~lerobot.rollout.inference.QueryAnswer`.  The policy is
+        never touched on the caller's thread — the question is answered by
+        whichever thread owns the policy, which for async backends means the
+        robot keeps executing already-queued actions and then holds while the
+        text head runs.
+
+        Only accepted while a segment is running (:attr:`running`).  Engines
+        are fed observations by the control loop and by nothing else, so an
+        idle engine has no current view to answer from — and an async
+        backend's inference thread is parked and would never pick the
+        question up at all.
+        """
+        with self._control_lock:
+            # Checked under the same lock that _run_segment clears _running
+            # and drops the pending question under, so a question can never
+            # slip past this guard and be left orphaned in the slot.
+            if not self._running.is_set():
+                return AskResult.NOT_RUNNING
+            if not self._ctx.policy.inference.ask(question):
+                return AskResult.BUSY
+            return AskResult.QUEUED
+
     # ------------------------------------------------------------------
     # Serve loop (blocks the calling thread)
     # ------------------------------------------------------------------
@@ -323,6 +378,12 @@ class RolloutController:
                     if starting:
                         self._run_segment()
                     continue
+                # Deliver an answer that landed just as the segment ended.
+                # While a segment runs the control loop pumps every tick; this
+                # is the idle counterpart.  No observation to offer, so a
+                # pending question stays queued rather than being answered
+                # blind — _run_segment has already dropped it anyway.
+                self._ctx.policy.inference.pump_query()
                 self._wake.wait(timeout=self._POLL_INTERVAL_S)
                 self._wake.clear()
         finally:
@@ -354,7 +415,19 @@ class RolloutController:
             finally:
                 engine.pause()
         finally:
-            self._running.clear()
+            # Clear and drop together under the control lock: ask() gates on
+            # _running under the same lock, so a question either lands before
+            # this (and is dropped here) or is rejected outright.  Left in the
+            # slot it would be answered against a completely different scene
+            # whenever the robot next starts.
+            with self._control_lock:
+                self._running.clear()
+                dropped = engine.drop_pending_query()
+            if dropped is not None:
+                self._emit(
+                    RolloutEvent.QUERY_ANSWERED,
+                    QueryAnswer(question=dropped, error="the run ended before it could be answered"),
+                )
         if engine.failed:
             return  # the serve loop emits ENGINE_FAILED and shuts down
         if not (
@@ -373,10 +446,14 @@ class RolloutController:
             logger.warning("No initial position captured — skipping the return move")
             self._emit(RolloutEvent.RESET_SKIPPED)
 
-    def _emit(self, event: RolloutEvent) -> None:
+    def _on_query_answer(self, answer: QueryAnswer) -> None:
+        """Engine answer observer — runs on the serve thread (see ``__init__``)."""
+        self._emit(RolloutEvent.QUERY_ANSWERED, answer)
+
+    def _emit(self, event: RolloutEvent, payload: QueryAnswer | None = None) -> None:
         if self._on_event is None:
             return
         try:
-            self._on_event(event)
+            self._on_event(event, payload)
         except Exception:  # a broken observer must not kill the serve loop
             logger.exception("Error in RolloutController event callback for %s", event)

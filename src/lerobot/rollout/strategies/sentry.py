@@ -171,6 +171,12 @@ class SentryStrategy(RolloutStrategy):
 
                     episode_start = time.perf_counter()
 
+                # Service the /vqa channel at the end of the tick, after the
+                # frame has been recorded: a sync backend answers here, and a
+                # multi-second generate must not land between this tick's
+                # observation and its ``add_frame``.
+                engine.pump_query(obs_processed)
+
                 dt = time.perf_counter() - loop_start
                 if (sleep_t := control_interval - dt) > 0:
                     precise_sleep(sleep_t)

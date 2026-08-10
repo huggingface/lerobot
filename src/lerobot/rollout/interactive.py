@@ -19,6 +19,7 @@ rollout from the terminal while hardware and policy stay connected and warm:
 
     /start           start (or restart) the policy control loop
     /subtask <text>  change the instruction the policy follows, mid-run
+    /vqa <text>      ask the policy a question about what it currently sees
     /reset           stop movement, return the robot to its initial position,
                      and restore the instruction passed on the command line
     /stop            end the session and run the normal shutdown routines
@@ -66,7 +67,8 @@ from typing import IO, TYPE_CHECKING
 from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
-from .controller import RolloutController, RolloutEvent
+from .controller import AskResult, RolloutController, RolloutEvent
+from .inference import QueryAnswer
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -174,6 +176,7 @@ class InteractiveSession:
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
+            "vqa": (self._cmd_vqa, " <text>", "ask the policy a question about what it sees"),
             "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
             "stop": (self._cmd_stop, "", "end the session and shut down"),
             "help": (self._cmd_help, "", "show this help"),
@@ -198,8 +201,10 @@ class InteractiveSession:
     # Controller events (fired on the serve thread) -> terminal output
     # ------------------------------------------------------------------
 
-    def _on_event(self, event: RolloutEvent) -> None:
-        if event is RolloutEvent.SEGMENT_STARTED:
+    def _on_event(self, event: RolloutEvent, payload: QueryAnswer | None = None) -> None:
+        if event is RolloutEvent.QUERY_ANSWERED and payload is not None:
+            self._report_answer(payload)
+        elif event is RolloutEvent.SEGMENT_STARTED:
             log_say("Starting rollout", self._play_sounds)
             self._print(
                 f"Rollout running — task {_format_task(self.controller.task)}. "
@@ -219,6 +224,13 @@ class InteractiveSession:
             self._print("Robot paused — no initial position captured, holding current pose. /start to run.")
         elif event is RolloutEvent.ENGINE_FAILED:
             self._report_engine_failure()
+
+    def _report_answer(self, answer: QueryAnswer) -> None:
+        """Render a resolved ``/vqa`` question."""
+        if answer.ok:
+            self._print(f"Q: {answer.question}\nA: {answer.answer}")
+        else:
+            self._print(f"Could not answer {answer.question!r} — {answer.error}")
 
     def _report_engine_failure(self) -> None:
         """Surface a fatal engine error despite the muted console logging."""
@@ -267,6 +279,19 @@ class InteractiveSession:
             )
         else:
             self._print(f"Task unchanged: {_format_task(task)}")
+
+    def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
+        if not cmd.args:
+            self._print("Usage: /vqa <question> — e.g. /vqa is the cube inside the box?")
+            return
+        question = _strip_quotes(cmd.args)
+        result = self.controller.ask(question)
+        if result is AskResult.QUEUED:
+            self._print(f"Asked: {question!r} — answering from the next observation...")
+        elif result is AskResult.NOT_RUNNING:
+            self._print("Not running — /start first so the policy has a live view to answer from.")
+        else:
+            self._print("Still answering the previous question — try again in a moment.")
 
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         if self.controller.reset():

@@ -297,6 +297,20 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = obs
 
+    def _generate_text(self, obs_processed: dict, question: str) -> str:
+        """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
+        obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
+        # The live task, read without consuming the task-changed edge — that
+        # belongs to the chunk path, which logs and applies the switch.
+        task = self.task
+        obs_batch = prepare_observation_for_inference(
+            obs_batch, torch.device(self._device), task, self._robot.robot_type
+        )
+        obs_batch["task"] = [task]
+        preprocessed = self._preprocessor(obs_batch)
+        with torch.inference_mode():
+            return self._policy_generate_text(self._policy, preprocessed, question)
+
     # ------------------------------------------------------------------
     # RTC: background inference thread
     # ------------------------------------------------------------------
@@ -324,6 +338,16 @@ class RTCInferenceEngine(InferenceEngine):
                 if queue is None or obs is None:
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
+
+                # Answer a queued /vqa question here: this is the thread that
+                # owns the policy.  Above the refill branch on purpose — a
+                # question asked while the queue is full would otherwise wait
+                # for it to drain.  ``_service_query`` swallows its own errors,
+                # so a bad question never trips the consecutive-error counter
+                # below.  The chunk path re-runs the preprocessor on its own
+                # observation, so the stateful steps (relative-action
+                # anchoring) are not left holding this one.
+                self._service_query(obs)
 
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:

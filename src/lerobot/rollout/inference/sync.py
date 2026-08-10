@@ -25,6 +25,8 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.constants import OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine
 
@@ -136,3 +138,39 @@ class SyncInferenceEngine(InferenceEngine):
         # a /subtask landing mid-inference must not relabel this action.
         self._set_dispatched_task(task)
         return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+
+    # ------------------------------------------------------------------
+    # Text queries
+    # ------------------------------------------------------------------
+
+    def pump_query(self, obs_processed: dict | None = None) -> None:
+        """Answer a pending question inline, then deliver it.
+
+        This backend runs inference on the control thread, so the control
+        thread is also the one allowed to touch the policy — servicing the
+        question here keeps that invariant.  Deliberately *not* folded into
+        ``get_action``: text generation takes far longer than a control
+        tick, and stalling the action path mid-dispatch would leave a
+        recording strategy pairing a stale observation with a fresh
+        timestamp.  Strategies call this at the end of a tick instead.
+        """
+        self._service_query(obs_processed)
+        self._deliver_answer()
+
+    def _generate_text(self, obs_processed: dict, question: str) -> str:
+        """Run the policy's text head on the current observation."""
+        obs_frame = build_dataset_frame(self._dataset_features, obs_processed, prefix=OBS_STR)
+        autocast_ctx = (
+            torch.autocast(device_type=self._device.type)
+            if self._device.type == "cuda" and self._policy.config.use_amp
+            else nullcontext()
+        )
+        # The live task, read without consuming the task-changed edge: that
+        # edge belongs to the action path, which uses it to drop actions
+        # precomputed under the previous instruction.  A question must not
+        # swallow it.
+        task = self.task
+        with torch.inference_mode(), autocast_ctx:
+            observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
+            observation = self._preprocessor(observation)
+            return self._policy_generate_text(self._policy, observation, question)
