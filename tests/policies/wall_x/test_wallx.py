@@ -28,6 +28,7 @@ pytest.importorskip("torchdiffeq")
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors  # noqa: E402
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
@@ -163,6 +164,11 @@ def test_generation_preparation_synthesizes_cache_positions():
 
 
 def test_policy_exposes_text_generation(monkeypatch):
+    assert WallXPolicy.generate_text is PreTrainedPolicy.generate_text
+    assert WallXPolicy.supports_text_generation is PreTrainedPolicy.supports_text_generation
+    assert WallXPolicy._generate_preprocessed_text is not PreTrainedPolicy._generate_preprocessed_text
+    assert not hasattr(WallXPolicy, "generate_texts")
+
     class Inputs(dict):
         __getattr__ = dict.__getitem__
 

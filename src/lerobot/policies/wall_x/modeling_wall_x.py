@@ -2331,6 +2331,7 @@ class WallXPolicy(PreTrainedPolicy):
                 inputs[key] = value.to(batch[OBS_STATE].device)
         return inputs
 
+    @torch.no_grad()
     def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages and the current observation."""
         self.eval()
