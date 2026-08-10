@@ -58,7 +58,7 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
-from .inference import QueryAnswer
+from .inference import QueryAnswer, QueryKind
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -114,7 +114,8 @@ class AskResult(Enum):
     """Rejected: no segment is running, so no fresh observation is flowing."""
 
     BUSY = "busy"
-    """Rejected: a previous question is still waiting to be answered."""
+    """Rejected: another query holds the channel — a previous question, or an
+    autosteer subtask query that has been queued but not yet served."""
 
 
 class RolloutEvent(Enum):
@@ -207,6 +208,7 @@ class RolloutController:
         self._on_event = on_event
         # The instruction the rollout was launched with; reset() restores it.
         self._initial_task = ctx.policy.inference.task
+        self._autosteer_interval_s = ctx.runtime.cfg.autosteer_interval_s
 
         # Serializes the control methods so multi-writer task updates (e.g.
         # reset()'s restore followed by a set_task()) keep their call order.
@@ -285,6 +287,9 @@ class RolloutController:
             # asked it not to.  Flag first, segment-stop second (see the
             # ordering note in _run_segment).
             self._start_requested.clear()
+            # Reset means back to square one, so the sequencer stops too —
+            # otherwise it would overwrite the launch task being restored below.
+            self._ctx.policy.inference.stop_autosteer()
             # Restore the task here, under the control lock, rather than in
             # _reset_robot (which runs later, on the serve thread) so that a
             # set_task() issued right after this reset() is not silently
@@ -310,8 +315,13 @@ class RolloutController:
         a segment is running: the engine applies the switch on its own
         inference thread (sync backends also drop actions precomputed under
         the previous instruction).
+
+        Setting the instruction by hand stops :meth:`autosteer`: the operator
+        is taking the wheel, and leaving the sequencer on would silently
+        overwrite this instruction at the next interval.
         """
         with self._control_lock:
+            self._ctx.policy.inference.stop_autosteer()
             return self._ctx.policy.inference.set_task(task)
 
     def ask(self, question: str) -> AskResult:
@@ -340,6 +350,36 @@ class RolloutController:
             if not self._ctx.policy.inference.ask(question):
                 return AskResult.BUSY
             return AskResult.QUEUED
+
+    @property
+    def autosteer_goal(self) -> str | None:
+        """The high-level goal currently driving the task, if any."""
+        return self._ctx.policy.inference.autosteer_goal
+
+    def autosteer(self, goal: str) -> AskResult:
+        """Let the policy decompose ``goal`` and drive its own subtasks.
+
+        Every ``autosteer_interval_s`` seconds the engine asks the policy
+        for the next subtask and applies it through :meth:`set_task`,
+        so the switch takes the usual instruction-change path.  Progress
+        through the plan lives in the policy — each query re-sends the same
+        goal — which is why the sequencer does not survive a segment:
+        restarting a segment resets the policy, and with it the plan.
+
+        Subject to the same running-only guard as :meth:`ask`, and stopped by
+        :meth:`reset`, :meth:`set_task`, and the end of a segment.  Returns
+        :attr:`AskResult.NOT_RUNNING` when no segment is running.
+        """
+        with self._control_lock:
+            if not self._running.is_set():
+                return AskResult.NOT_RUNNING
+            self._ctx.policy.inference.start_autosteer(goal, self._autosteer_interval_s)
+            return AskResult.QUEUED
+
+    def stop_autosteer(self) -> str | None:
+        """Stop the sequencer, returning the goal it was driving (or ``None``)."""
+        with self._control_lock:
+            return self._ctx.policy.inference.stop_autosteer()
 
     # ------------------------------------------------------------------
     # Serve loop (blocks the calling thread)
@@ -422,11 +462,16 @@ class RolloutController:
             # whenever the robot next starts.
             with self._control_lock:
                 self._running.clear()
+                # The sequencer cannot outlive the segment: restarting one
+                # resets the policy, and the plan's progress lives there.
+                engine.stop_autosteer()
                 dropped = engine.drop_pending_query()
-            if dropped is not None:
+            # Only an operator question is worth reporting — a dropped
+            # next-subtask query is just the sequencer stopping with it.
+            if dropped is not None and dropped.kind is QueryKind.VQA:
                 self._emit(
                     RolloutEvent.QUERY_ANSWERED,
-                    QueryAnswer(question=dropped, error="the run ended before it could be answered"),
+                    QueryAnswer(question=dropped.text, error="the run ended before it could be answered"),
                 )
         if engine.failed:
             return  # the serve loop emits ENGINE_FAILED and shuts down

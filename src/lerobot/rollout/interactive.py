@@ -20,6 +20,8 @@ rollout from the terminal while hardware and policy stay connected and warm:
     /start           start (or restart) the policy control loop
     /subtask <text>  change the instruction the policy follows, mid-run
     /vqa <text>      ask the policy a question about what it currently sees
+    /autosteer <goal>  let the policy pick its own subtasks toward a goal
+                     (``/autosteer off`` hands control back)
     /reset           stop movement, return the robot to its initial position,
                      and restore the instruction passed on the command line
     /stop            end the session and run the normal shutdown routines
@@ -68,7 +70,7 @@ from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
 from .controller import AskResult, RolloutController, RolloutEvent
-from .inference import QueryAnswer
+from .inference import QueryAnswer, QueryKind
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -177,6 +179,11 @@ class InteractiveSession:
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
             "vqa": (self._cmd_vqa, " <text>", "ask the policy a question about what it sees"),
+            "autosteer": (
+                self._cmd_autosteer,
+                " <goal>|off",
+                "let the policy pick its own subtasks toward a high-level goal",
+            ),
             "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
             "stop": (self._cmd_stop, "", "end the session and shut down"),
             "help": (self._cmd_help, "", "show this help"),
@@ -226,8 +233,17 @@ class InteractiveSession:
             self._report_engine_failure()
 
     def _report_answer(self, answer: QueryAnswer) -> None:
-        """Render a resolved ``/vqa`` question."""
-        if answer.ok:
+        """Render a resolved text query.
+
+        Successful autosteer subtasks never arrive here — they show up as
+        the task itself, which is what tells the operator the robot's
+        intent.  A failure does, because the sequencer has just stopped.
+        """
+        if answer.kind is QueryKind.NEXT_SUBTASK:
+            self._print(
+                f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: {answer.error}"
+            )
+        elif answer.ok:
             self._print(f"Q: {answer.question}\nA: {answer.answer}")
         else:
             self._print(f"Could not answer {answer.question!r} — {answer.error}")
@@ -272,6 +288,9 @@ class InteractiveSession:
             return
         task = _strip_quotes(cmd.args)
         previous = self.controller.task
+        steering = self.controller.autosteer_goal
+        if steering is not None:
+            self._print(f"Autosteer off (was {steering!r}) — setting the instruction by hand takes over.")
         if self.controller.set_task(task):
             self._print(
                 f"Task: {_format_task(previous)} → {_format_task(task)} "
@@ -291,7 +310,33 @@ class InteractiveSession:
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
         else:
-            self._print("Still answering the previous question — try again in a moment.")
+            # Could be a previous /vqa or an autosteer subtask query — the
+            # channel holds one at a time and does not say which.
+            self._print("The policy is busy with another query — try again in a moment.")
+
+    def _cmd_autosteer(self, cmd: InteractiveCommand) -> None:
+        goal = _strip_quotes(cmd.args)
+        if not goal:
+            current = self.controller.autosteer_goal
+            self._print(
+                f"Autosteer on — goal {current!r}." if current else "Autosteer off. Usage: /autosteer <goal>"
+            )
+            return
+        if goal.lower() == "off":
+            stopped = self.controller.stop_autosteer()
+            self._print(
+                f"Autosteer off (was {stopped!r}). The last subtask stays in effect."
+                if stopped
+                else "Autosteer was not running."
+            )
+            return
+        if self.controller.autosteer(goal) is AskResult.NOT_RUNNING:
+            self._print("Not running — /start first so the policy has a live view to plan from.")
+            return
+        self._print(
+            f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
+            "watch them with /subtask, take over with /subtask <text> or /autosteer off."
+        )
 
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         if self.controller.reset():

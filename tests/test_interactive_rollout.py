@@ -37,6 +37,7 @@ from lerobot.rollout import (  # noqa: E402
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
+    QueryKind,
     RolloutController,
     RolloutEvent,
     parse_command,
@@ -184,16 +185,24 @@ class _FakeEngine(InferenceEngine):
         # backend, so tests drive the real service/deliver plumbing.
         self.text_error: Exception | None = None
         self.seen_query_obs: list = []
+        self.seen_queries: list = []
+        self.subtasks_planned = 0
 
     def pump_query(self, obs_processed=None) -> None:
+        self._poll_autosteer(obs_processed)
         self._service_query(obs_processed)
         self._deliver_answer()
 
-    def _generate_text(self, obs_processed: dict, question: str) -> str:
+    def _generate_text(self, obs_processed: dict, text: str, kind) -> str:
+        self.seen_queries.append((kind, text))
         self.seen_query_obs.append(obs_processed)
         if self.text_error is not None:
             raise self.text_error
-        return f"answer: {question}"
+        if kind is QueryKind.NEXT_SUBTASK:
+            # A stand-in decomposer: one subtask per query, advancing.
+            self.subtasks_planned += 1
+            return f"subtask {self.subtasks_planned} of {text}"
+        return f"answer: {text}"
 
 
 def _make_ctx(run_behavior=None):
@@ -203,7 +212,7 @@ def _make_ctx(run_behavior=None):
     engine = _FakeEngine()
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(
-            cfg=SimpleNamespace(play_sounds=False),
+            cfg=SimpleNamespace(play_sounds=False, autosteer_interval_s=0.0),
             shutdown_event=stop_event,
         ),
         policy=SimpleNamespace(inference=engine),
@@ -751,6 +760,7 @@ def test_session_drives_real_base_strategy():
                 use_torch_compile=False,
                 interpolation_multiplier=1,
                 display_data=False,
+                autosteer_interval_s=0.0,
             ),
             shutdown_event=stop_event,
         ),
@@ -1166,7 +1176,8 @@ def test_engine_query_channel_holds_one_question():
     # A second question must not silently displace the unanswered one.
     assert engine.ask("and now?") is False
 
-    assert engine.drop_pending_query() == "what do you see?"
+    dropped = engine.drop_pending_query()
+    assert (dropped.kind, dropped.text) == (QueryKind.VQA, "what do you see?")
     assert not engine.has_pending_query
     assert engine.drop_pending_query() is None
 
@@ -1225,7 +1236,7 @@ def test_engine_reports_policy_without_text_head():
         pass
 
     with pytest.raises(NotImplementedError, match="has no generate_text"):
-        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?")
+        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?", QueryKind.VQA)
 
 
 def test_controller_ask_rejected_while_idle():
@@ -1346,6 +1357,7 @@ def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
                 use_torch_compile=False,
                 interpolation_multiplier=1,
                 display_data=False,
+                autosteer_interval_s=0.0,
             ),
             shutdown_event=stop_event,
         ),
@@ -1387,6 +1399,235 @@ def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
         session._handle_line("/stop")
         thread.join(timeout=2.0)
         assert not thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# Autosteer (policy-driven subtask sequencing)
+# ---------------------------------------------------------------------------
+
+
+def test_engine_autosteer_queries_immediately_then_waits_for_the_interval():
+    engine = _FakeEngine()
+    engine.start_autosteer("tidy the table", interval_s=60.0)
+
+    # The first subtask is requested on the very next tick, not a full
+    # interval later.
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of tidy the table"
+
+    # Then nothing until the interval elapses, however many loops run.
+    for _ in range(10):
+        engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of tidy the table"
+
+    assert engine.seen_queries == [(QueryKind.NEXT_SUBTASK, "tidy the table")]
+
+
+def test_engine_autosteer_requeries_once_the_interval_elapses():
+    engine = _FakeEngine()
+    engine.start_autosteer("tidy the table", interval_s=0.1)
+
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of tidy the table"
+
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of tidy the table"
+
+    time.sleep(0.15)
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 2 of tidy the table"
+
+
+def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands():
+    """A generate slower than the interval must not queue the next back-to-back.
+
+    On the sync backend generation blocks the control loop, so timing the
+    interval from the *query* would leave the robot no time to act on the
+    subtask it was just given.
+    """
+    engine = _FakeEngine()
+    slow_generate = 0.15
+
+    original = engine._generate_text
+
+    def slow(obs_processed, text, kind):
+        time.sleep(slow_generate)
+        return original(obs_processed, text, kind)
+
+    engine._generate_text = slow
+    engine.start_autosteer("tidy the table", interval_s=0.1)
+
+    engine.pump_query({"joint.pos": 0.0})  # generation alone outlasts the interval
+    assert engine.task == "subtask 1 of tidy the table"
+
+    # The clock started when the subtask landed, so the next query is not due.
+    engine.pump_query({"joint.pos": 0.0})
+    assert len(engine.seen_queries) == 1
+
+
+def test_engine_autosteer_does_not_count_idle_pumps():
+    """The controller's idle poll passes no observation; it is not a control loop."""
+    engine = _FakeEngine()
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+
+    for _ in range(5):
+        engine.pump_query(None)
+
+    assert engine.seen_queries == []
+    assert engine.task == "pick up the cube"
+
+
+def test_engine_autosteer_success_is_not_published_as_an_answer():
+    """Subtasks surface as the task itself, not as operator-facing chatter."""
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+    engine.pump_query({"joint.pos": 0.0})
+
+    assert engine.task == "subtask 1 of tidy the table"
+    assert delivered == []
+
+
+def test_engine_autosteer_stops_and_reports_on_failure():
+    """A sequencer that cannot plan must stop, not re-fail every interval."""
+    engine = _FakeEngine()
+    engine.text_error = RuntimeError("no planner")
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+    engine.pump_query({"joint.pos": 0.0})
+
+    assert engine.autosteer_goal is None
+    assert len(delivered) == 1
+    assert delivered[0].kind is QueryKind.NEXT_SUBTASK
+    assert not delivered[0].ok
+    assert "RuntimeError: no planner" in delivered[0].error
+
+    # Stopped means stopped: no further queries.
+    engine.pump_query({"joint.pos": 0.0})
+    assert len(engine.seen_queries) == 1
+
+
+def test_engine_autosteer_retries_when_the_operator_query_is_in_flight():
+    """A pending /vqa must not cost the sequencer its turn."""
+    engine = _FakeEngine()
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+
+    # An operator question occupies the single slot before the tick lands.
+    assert engine.ask("what do you see?") is True
+    engine._poll_autosteer({"joint.pos": 0.0})
+    # The slot still holds the operator's question, not a subtask query.
+    assert engine.has_pending_query
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.seen_queries == [(QueryKind.VQA, "what do you see?")]
+
+    # The very next tick retries the missed subtask query.
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of tidy the table"
+
+
+def test_controller_autosteer_rejected_while_idle():
+    controller, _events, _strategy, engine, _parent, _run_started = _make_controller()
+    thread = _serve_thread(controller)
+
+    assert controller.autosteer("tidy the table") is AskResult.NOT_RUNNING
+    assert engine.autosteer_goal is None
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_autosteer_stopped_by_reset_set_task_and_segment_end():
+    started = Event()
+    controller, _events, _strategy, engine, _parent, _run_started = _make_controller(
+        run_behavior=_pumping_run(started)
+    )
+    thread = _serve_thread(controller)
+    controller.start()
+    assert _wait_for(started.is_set)
+
+    # The sequencer drives the task on its own.
+    assert controller.autosteer("tidy the table") is AskResult.QUEUED
+    assert _wait_for(lambda: controller.task.startswith("subtask "))
+
+    # Taking the wheel by hand stops it, and the hand-set task sticks.
+    controller.set_task("put the cube down")
+    assert engine.autosteer_goal is None
+    time.sleep(0.05)
+    assert controller.task == "put the cube down"
+
+    # A segment end stops it too: restarting resets the policy, and the
+    # plan's progress lives there.
+    assert controller.autosteer("tidy the table") is AskResult.QUEUED
+    assert _wait_for(lambda: engine.autosteer_goal is not None)
+    controller.reset()
+    assert _wait_for(lambda: engine.autosteer_goal is None)
+    assert controller.task == controller.initial_task
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_session_autosteer_reports_status_and_hands_control_back(capsys):
+    started = Event()
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(
+            reader, run_behavior=_pumping_run(started)
+        )
+        thread = _start_session_thread(session)
+
+        session._handle_line("/autosteer tidy the table")
+        assert "Not running" in capsys.readouterr().out
+
+        session._handle_line("/start")
+        assert _wait_for(started.is_set)
+
+        session._handle_line("/autosteer tidy the table")
+        assert _wait_for(lambda: session.controller.task.startswith("subtask "))
+        assert "Autosteer on — goal 'tidy the table'" in capsys.readouterr().out
+
+        session._handle_line("/autosteer")
+        assert "Autosteer on — goal 'tidy the table'." in capsys.readouterr().out
+
+        session._handle_line("/autosteer off")
+        out = capsys.readouterr().out
+        assert "Autosteer off (was 'tidy the table')" in out
+        assert engine.autosteer_goal is None
+
+        # The last subtask stays in effect once the sequencer is off.
+        steady = session.controller.task
+        time.sleep(0.05)
+        assert session.controller.task == steady
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_subtask_takes_over_from_autosteer(capsys):
+    started = Event()
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(
+            reader, run_behavior=_pumping_run(started)
+        )
+        thread = _start_session_thread(session)
+
+        session._handle_line("/start")
+        assert _wait_for(started.is_set)
+        session._handle_line("/autosteer tidy the table")
+        assert _wait_for(lambda: session.controller.task.startswith("subtask "))
+        capsys.readouterr()
+
+        session._handle_line("/subtask put the cube down")
+        out = capsys.readouterr().out
+        assert "Autosteer off (was 'tidy the table')" in out
+        assert engine.autosteer_goal is None
+        assert session.controller.task == "put the cube down"
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------
