@@ -869,6 +869,9 @@ def test_engine_discard_task_change():
     engine.set_task("b")
     engine._discard_task_change()
     assert engine._take_task() == ("b", False)
+    # The discard also re-primes the dispatched-task marker: queues were just
+    # cleared, so the next dispatched action can only come from the new task.
+    assert engine.dispatched_task == "b"
 
 
 def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
@@ -894,12 +897,16 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
         robot_type="mock",
     )
 
-    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    first = engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert first is not None
+    assert engine.dispatched_task == "pick up the cube"
     assert policy.drop_queued_actions.call_count == 0
     assert policy.select_action.call_args[0][0]["task"] == "pick up the cube"
 
     engine.set_task("fold the towel")
-    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    switched = engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert switched is not None
+    assert engine.dispatched_task == "fold the towel"
     # Precomputed chunk actions are dropped so the new task applies immediately,
     # without the wider episode reset (which would perturb observation history).
     assert policy.drop_queued_actions.call_count == 1
@@ -909,6 +916,39 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     # Only the first call after a switch flushes.
     engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
     assert policy.drop_queued_actions.call_count == 1
+
+
+def test_sync_action_keeps_task_snapshot_when_command_changes_during_inference():
+    """An in-flight A action must not be relabeled when /subtask changes the requested task to B."""
+    import torch
+
+    from lerobot.rollout.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=lambda action: action,
+        dataset_features={
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        ordered_action_keys=["j1.pos", "j2.pos"],
+        task="task A",
+        device="cpu",
+        robot_type="mock",
+    )
+
+    def change_task_during_inference(_observation):
+        engine.set_task("task B")
+        return torch.zeros(1, 2)
+
+    policy.select_action.side_effect = change_task_during_inference
+    result = engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
+
+    assert result is not None
+    assert engine.dispatched_task == "task A"
+    assert engine.task == "task B"
 
 
 def test_drop_queued_actions_clears_both_queue_conventions():
@@ -939,7 +979,7 @@ def test_drop_queued_actions_clears_both_queue_conventions():
 
 
 # ---------------------------------------------------------------------------
-# Sentry strategy: restartable run() segments + live task labels
+# Sentry strategy: restartable run() segments + dispatched-action task labels
 # ---------------------------------------------------------------------------
 
 
@@ -1024,16 +1064,23 @@ def test_sentry_run_is_restartable_and_finalizes_only_in_teardown(monkeypatch):
     dataset.finalize.assert_called_once()
 
 
-def test_sentry_labels_frames_with_live_engine_task(monkeypatch):
+def test_sentry_labels_frames_with_dispatched_action_task(monkeypatch):
     strategy, ctx, dataset, engine, stop_event = _make_sentry(monkeypatch)
 
     thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
     thread.start()
     assert _wait_for(lambda: dataset.add_frame.call_count >= 2)
 
-    # A live task change (e.g. /subtask through the controller) relabels
-    # recorded frames from that moment on.
+    frames_before_switch = dataset.add_frame.call_count
+    # The requested task changes immediately, but frames keep the old label
+    # until an action generated under the new instruction is dispatched —
+    # the engine updates ``dispatched_task`` on that pop, simulated below.
     engine.set_task("fold the towel")
+    assert _wait_for(lambda: dataset.add_frame.call_count >= frames_before_switch + 2)
+    tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
+    assert tasks[-1] == "pick up the cube"
+
+    engine._set_dispatched_task("fold the towel")
     assert _wait_for(
         lambda: any(call.args[0]["task"] == "fold the towel" for call in dataset.add_frame.call_args_list)
     )

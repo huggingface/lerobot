@@ -245,7 +245,7 @@ class RolloutConfig:
     # `/subtask` re-instructs the policy mid-run, and logs below ERROR are
     # muted while the session runs so they don't interleave with the prompt.
     # Supported with --strategy.type=base (no recording) and sentry
-    # (continuous recording; frames are labeled with the live task).
+    # (continuous recording; frames carry dispatched-action task provenance).
     interactive: bool = False
     interpolation_multiplier: int = 1
     device: str | None = None

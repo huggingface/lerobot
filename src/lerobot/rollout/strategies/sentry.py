@@ -59,9 +59,10 @@ class SentryStrategy(RolloutStrategy):
     final partial episode, and the dataset is only finalized in
     ``teardown()`` — this is what lets ``--interactive=true`` drive sentry
     in start/reset/start segments while the dataset stays open.  Frames are
-    labeled with the inference engine's *live* task, so a mid-run
-    ``/subtask`` changes both the policy conditioning and the recorded
-    label from the same frame onwards.
+    labeled with ``engine.dispatched_task`` — the instruction that generated
+    the action actually sent.  A mid-run ``/subtask`` therefore cannot
+    relabel actions still queued or interpolated from the previous
+    instruction.
     """
 
     config: SentryStrategyConfig
@@ -131,11 +132,12 @@ class SentryStrategy(RolloutStrategy):
                     self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                     obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                     action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                    # The task is read live from the engine (not snapshotted from
-                    # config) so an interactive /subtask relabels frames from the
-                    # moment it re-instructs the policy; the writer stores a task
-                    # per frame.  At launch the engine holds the configured task.
-                    frame = {**obs_frame, **action_frame, "task": engine.task}
+                    # ``dispatched_task`` is the instruction that generated the
+                    # action just sent.  Reading the live ``engine.task`` here
+                    # would expose a race where an action still queued or
+                    # interpolated from the previous instruction is labeled
+                    # with a newly requested one.
+                    frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
                     # ``add_frame`` writes to the in-progress episode buffer; the
                     # background pusher only ever touches *finalised* episode
                     # artifacts on disk.  The two operate on disjoint state, so

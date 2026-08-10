@@ -58,7 +58,10 @@ class InferenceEngine(abc.ABC):
     interactive session's ``/subtask`` command calls it from its stdin
     reader); subclasses pick the new value up on their own inference
     thread via :meth:`_take_task`, so no policy state is ever mutated
-    across threads.
+    across threads.  ``dispatched_task`` names the instruction that
+    generated the most recently returned action — it trails ``task``
+    while actions produced under the previous instruction are still
+    being consumed.
 
     Optional hooks
     --------------
@@ -72,6 +75,7 @@ class InferenceEngine(abc.ABC):
     def __init__(self, task: str = "") -> None:
         self._task = task
         self._task_changed = False
+        self._dispatched_task = task
         self._task_lock = Lock()
 
     # ------------------------------------------------------------------
@@ -109,10 +113,40 @@ class InferenceEngine(abc.ABC):
             changed, self._task_changed = self._task_changed, False
             return self._task, changed
 
+    @property
+    def dispatched_task(self) -> str:
+        """Instruction that generated the most recently returned action.
+
+        Unlike :attr:`task` — the *requested* instruction, which
+        ``set_task`` changes immediately — this follows the actions the
+        engine actually hands out: every successful ``get_action``
+        records the task that generated the returned action.  Recording
+        strategies label frames with it so actions still queued (or
+        being interpolated) from a previous instruction keep that
+        instruction's label.
+
+        Only meaningful on the control thread right after it consumed
+        ``get_action``; between a reset and the next dispatched action
+        it holds the requested task.
+        """
+        with self._task_lock:
+            return self._dispatched_task
+
+    def _set_dispatched_task(self, task: str) -> None:
+        """Record the task of the action a ``get_action`` call is returning."""
+        with self._task_lock:
+            self._dispatched_task = task
+
     def _discard_task_change(self) -> None:
-        """Drop a pending task-change edge, e.g. from ``reset`` (state is already cleared)."""
+        """Drop a pending task-change edge, e.g. from ``reset`` (state is already cleared).
+
+        Also re-primes ``dispatched_task``: the caller just cleared any
+        queued actions, so the next dispatched action can only come from
+        the current instruction.
+        """
         with self._task_lock:
             self._task_changed = False
+            self._dispatched_task = self._task
 
     @abc.abstractmethod
     def start(self) -> None:

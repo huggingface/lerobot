@@ -280,7 +280,17 @@ class RTCInferenceEngine(InferenceEngine):
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
         if self._action_queue is None:
             return None
-        return self._action_queue.get()
+        queued = self._action_queue.get_with_task()
+        if queued is None:
+            return None
+        # The queue pairs each action with the task that generated its chunk
+        # (paired under the queue lock, so a concurrent merge cannot cross
+        # labels between chunks); expose it for frame labeling.
+        action, task = queued
+        if task is None:
+            raise RuntimeError("RTC action queue returned an action without task provenance")
+        self._set_dispatched_task(task)
+        return action
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
@@ -385,7 +395,7 @@ class RTCInferenceEngine(InferenceEngine):
                         with self._obs_lock:
                             epoch_unchanged = epoch_before == self._reset_epoch
                         if epoch_unchanged:
-                            queue.merge(original, processed, new_delay, idx_before)
+                            queue.merge(original, processed, new_delay, idx_before, task=task)
                         else:
                             logger.info("Discarding action chunk computed before an engine reset")
 
