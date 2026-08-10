@@ -38,6 +38,13 @@ def test_dataset_config_empty_episodes_ok():
     DatasetConfig(repo_id="user/repo", episodes=[])
 
 
+def test_dataset_config_ignores_negative_excluded_episodes(caplog):
+    config = DatasetConfig(repo_id="user/repo", exclude_episodes=[-2, 1, -1, 3])
+
+    assert config.exclude_episodes == [1, 3]
+    assert "Ignoring negative exclude_episodes entries: [-2, -1]" in caplog.text
+
+
 def test_dataset_config_bucket_streaming_ok():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True)
 
