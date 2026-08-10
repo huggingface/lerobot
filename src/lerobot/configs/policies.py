@@ -86,7 +86,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # The training recipe this checkpoint's language supervision was rendered with.
     # Its message turns are the single source of recipe-backed inference prompt
     # wording. ``None`` is valid for policies/checkpoints that do not support the
-    # public ``template="subtask"`` contract.
+    # runtime ``text_kind="subtask"`` contract.
     recipe: TrainingRecipe | dict[str, Any] | None = None
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override

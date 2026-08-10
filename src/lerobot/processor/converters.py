@@ -155,6 +155,7 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
 
 _COMPLEMENTARY_KEYS = (
     "task",
+    "subtask",
     "index",
     "task_index",
     "episode_index",
@@ -164,6 +165,8 @@ _COMPLEMENTARY_KEYS = (
     "messages",
     "message_streams",
     "target_message_indices",
+    "text",
+    "text_kind",
 )
 
 

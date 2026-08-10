@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import DEFAULT_BINDINGS, TrainingRecipe, render_message_turns
 from lerobot.utils.utils import unwrap_scalar
 
 from .language import LANGUAGE_PERSISTENT, column_for_style
@@ -403,85 +402,6 @@ def _render_message_recipe(
 
     _validate_rendered(rendered)
     return rendered
-
-
-def render_message_turns(
-    turns: Sequence[MessageTurn],
-    bindings: dict[str, LanguageRow | str | None],
-) -> RenderedMessages:
-    """Render recipe turns with the substitution rules shared by training and inference.
-
-    Unlike :func:`_render_message_recipe`, this primitive does not require the
-    result to contain supervision. Text generation uses it to render only the
-    prefix before a target assistant turn, while training renders the complete
-    recipe and validates its target/stream sidecars afterwards.
-    """
-    messages: list[dict[str, Any]] = []
-    streams: list[str | None] = []
-    target_indices: list[int] = []
-
-    for turn in turns:
-        if turn.if_present is not None and bindings.get(turn.if_present) is None:
-            continue
-
-        message = {"role": turn.role}
-        if turn.content is not None:
-            message["content"] = _render_content(turn.content, bindings)
-
-        if turn.tool_calls_from is not None:
-            row = bindings.get(turn.tool_calls_from)
-            tool_calls = row.get("tool_calls") if isinstance(row, dict) else None
-            if tool_calls:
-                message["tool_calls"] = copy.deepcopy(tool_calls)
-
-        message_idx = len(messages)
-        messages.append(message)
-        streams.append(turn.stream)
-        if turn.target:
-            target_indices.append(message_idx)
-
-    return {
-        "messages": messages,
-        "message_streams": streams,
-        "target_message_indices": target_indices,
-    }
-
-
-def _render_content(
-    content: str | list[dict[str, Any]],
-    bindings: dict[str, LanguageRow | str | None],
-) -> str | list[dict[str, Any]]:
-    """Substitute bindings into a string or each string field of multimodal blocks."""
-    if isinstance(content, str):
-        return _substitute(content, bindings)
-
-    rendered_blocks = []
-    for block in content:
-        rendered_block = copy.deepcopy(block)
-        for key, value in rendered_block.items():
-            if isinstance(value, str):
-                rendered_block[key] = _substitute(value, bindings)
-        rendered_blocks.append(rendered_block)
-    return rendered_blocks
-
-
-def _substitute(template: str, bindings: dict[str, LanguageRow | str | None]) -> str:
-    """Replace ``${name}`` placeholders in ``template`` with their bound values."""
-
-    def replace(match: re.Match[str]) -> str:
-        """Resolve a single ``${name}`` match to its bound string value."""
-        name = match.group(1)
-        if name not in bindings:
-            raise ValueError(f"Unknown template binding: {name!r}")
-        value = bindings[name]
-        if value is None:
-            return ""
-        if isinstance(value, dict):
-            content = value.get("content")
-            return "" if content is None else str(content)
-        return str(value)
-
-    return PLACEHOLDER_RE.sub(replace, template)
 
 
 def _validate_rendered(rendered: RenderedMessages) -> None:

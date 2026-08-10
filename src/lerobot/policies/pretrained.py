@@ -21,7 +21,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
@@ -32,12 +32,6 @@ from torch import Tensor, nn
 from lerobot.__version__ import __version__
 from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.processor.pipeline import DataProcessorPipeline
-from lerobot.processor.text_generation_processor import (
-    RenderGenerationPromptStep,
-    text_generation_request_to_transition,
-    text_generation_transition_to_request,
-)
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -55,7 +49,6 @@ if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
-TextPromptTemplate = Literal["raw", "subtask"]
 
 
 def _build_card_context(
@@ -126,16 +119,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
             )
         self.config = config
-        # This pipeline deliberately contains no observation transforms: callers
-        # pass an already-preprocessed batch and add text only at generation time.
-        # The recipe was normalized by PreTrainedConfig.__post_init__, so the step
-        # holds a prepared object and never opens/parses YAML while generating.
-        self.text_preprocessor = DataProcessorPipeline(
-            [RenderGenerationPromptStep(config.recipe)],
-            name="TextGenerationPreprocessor",
-            to_transition=text_generation_request_to_transition,
-            to_output=text_generation_transition_to_request,
-        )
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -332,21 +315,14 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Whether this policy has a usable text head."""
         return type(self)._generate_preprocessed_text is not PreTrainedPolicy._generate_preprocessed_text
 
-    def generate_text(
-        self,
-        batch: dict[str, Tensor],
-        text: str,
-        *,
-        template: TextPromptTemplate = "raw",
-    ) -> str:
-        """Generate text about an already-preprocessed observation batch.
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode text from a batch prepared by the normal policy input pipeline.
 
-        ``raw`` preserves arbitrary caller text as the user-message payload and
-        applies no recipe wording. ``subtask`` treats caller text as the high-level
-        task and renders the checkpoint recipe prefix that trained the model to
-        produce ``${subtask}``. Both paths then use the same policy-native formatter
-        and decoder. This method only returns text; it never mutates runtime state or
-        dispatches actions.
+        Before preprocessing, runtime supplies caller text through complementary
+        ``text`` and selects ``query``, ``vqa``, or ``subtask`` through
+        ``text_kind``. The shared generation-prompt step consumes that metadata;
+        policy-specific processor steps then apply native chat formatting,
+        multimodal markers, and tokenization. This method only runs the text head.
         """
         if not self.supports_text_generation():
             raise NotImplementedError(
@@ -354,25 +330,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 "`_generate_preprocessed_text` to query it."
             )
 
-        request: dict[str, Any] = {
-            **batch,
-            "text": text,
-            "text_template": template,
-        }
-        semantic_inputs = self.text_preprocessor(request)
-        model_inputs = self._format_text_generation_input(semantic_inputs)
-        return self._generate_preprocessed_text(model_inputs)
+        return self._generate_preprocessed_text(batch)
 
-    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> Any:
-        """Apply policy-native roles, image markers, chat templates, and tokenization.
-
-        Policies with a tokenizer chat template override this hook. The default
-        keeps the role-preserving semantic request intact for policies whose text
-        decoder consumes messages directly.
-        """
-        return semantic_inputs
-
-    def _generate_preprocessed_text(self, model_inputs: Any) -> str:
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one text response from policy-native, model-ready inputs."""
         raise NotImplementedError(
             f"{type(self).__name__} has no text head. Implement `_generate_preprocessed_text` to query it."

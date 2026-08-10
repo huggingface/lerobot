@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import copy
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
@@ -248,6 +250,80 @@ def _placeholders_in_content(content: str | list[dict[str, Any]] | None) -> set[
             if isinstance(value, str):
                 names.update(PLACEHOLDER_RE.findall(value))
     return names
+
+
+def render_message_turns(
+    turns: Sequence[MessageTurn],
+    bindings: dict[str, Any],
+) -> dict[str, list[Any]]:
+    """Render recipe turns with substitution shared by training and inference.
+
+    This lightweight primitive intentionally has no dataset dependency. Training
+    renders complete recipes and validates supervision afterwards; the policy
+    input processor uses it for the prefix before a text-generation target.
+    """
+    messages: list[dict[str, Any]] = []
+    streams: list[str | None] = []
+    target_indices: list[int] = []
+
+    for turn in turns:
+        if turn.if_present is not None and bindings.get(turn.if_present) is None:
+            continue
+
+        message = {"role": turn.role}
+        if turn.content is not None:
+            message["content"] = _render_content(turn.content, bindings)
+
+        if turn.tool_calls_from is not None:
+            row = bindings.get(turn.tool_calls_from)
+            tool_calls = row.get("tool_calls") if isinstance(row, dict) else None
+            if tool_calls:
+                message["tool_calls"] = copy.deepcopy(tool_calls)
+
+        message_idx = len(messages)
+        messages.append(message)
+        streams.append(turn.stream)
+        if turn.target:
+            target_indices.append(message_idx)
+
+    return {
+        "messages": messages,
+        "message_streams": streams,
+        "target_message_indices": target_indices,
+    }
+
+
+def _render_content(content: str | list[dict[str, Any]], bindings: dict[str, Any]) -> Any:
+    """Substitute bindings into text or each string field of multimodal blocks."""
+    if isinstance(content, str):
+        return _substitute(content, bindings)
+
+    rendered_blocks = []
+    for block in content:
+        rendered_block = copy.deepcopy(block)
+        for key, value in rendered_block.items():
+            if isinstance(value, str):
+                rendered_block[key] = _substitute(value, bindings)
+        rendered_blocks.append(rendered_block)
+    return rendered_blocks
+
+
+def _substitute(template: str, bindings: dict[str, Any]) -> str:
+    """Replace ``${name}`` placeholders with string or language-row values."""
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in bindings:
+            raise ValueError(f"Unknown template binding: {name!r}")
+        value = bindings[name]
+        if value is None:
+            return ""
+        if isinstance(value, dict):
+            content = value.get("content")
+            return "" if content is None else str(content)
+        return str(value)
+
+    return PLACEHOLDER_RE.sub(replace, template)
 
 
 def load_recipe(path: str | Path) -> TrainingRecipe:

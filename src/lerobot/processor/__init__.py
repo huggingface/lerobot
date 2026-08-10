@@ -97,6 +97,7 @@ from .relative_action_processor import (
     to_relative_actions,
 )
 from .rename_processor import RenameObservationsProcessorStep, rename_stats
+from .text_generation_processor import RenderGenerationPromptStep, TextPromptKind
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
 # RenderMessagesStep is intentionally NOT re-exported here: it pulls in
@@ -160,12 +161,14 @@ __all__ = [
     "RobotObservation",
     "rename_stats",
     "RenameObservationsProcessorStep",
+    "RenderGenerationPromptStep",
     "RewardClassifierProcessorStep",
     "RewardProcessorStep",
     "DataProcessorPipeline",
     "IsaaclabArenaProcessorStep",
     "LiberoProcessorStep",
     "TimeLimitProcessorStep",
+    "TextPromptKind",
     "AddBatchDimensionProcessorStep",
     "RobotProcessorPipeline",
     "TokenizerProcessorStep",

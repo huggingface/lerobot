@@ -6,8 +6,7 @@ from dataclasses import asdict
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
-from lerobot.datasets.language_render import render_message_turns
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor.converters import create_transition
 from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
@@ -36,12 +35,13 @@ def _subtask_recipe() -> TrainingRecipe:
     )
 
 
-def _render(step: RenderGenerationPromptStep, text: str, template: str = "raw", **values):
-    transition = create_transition(complementary_data={"text": text, "text_template": template, **values})
-    return step(transition)[TransitionKey.COMPLEMENTARY_DATA]["messages"]
+def _process(step: RenderGenerationPromptStep, text: str, kind: str = "query", **values):
+    transition = create_transition(complementary_data={"text": text, "text_kind": kind, **values})
+    return step(transition)
 
 
-def test_raw_preserves_text_and_never_consults_the_recipe(monkeypatch):
+@pytest.mark.parametrize("kind", ["query", "vqa"])
+def test_query_and_vqa_preserve_text_and_never_consult_the_recipe(monkeypatch, kind: str):
     recipe = _subtask_recipe()
 
     def fail_if_called(kind: str):
@@ -50,14 +50,29 @@ def test_raw_preserves_text_and_never_consults_the_recipe(monkeypatch):
     monkeypatch.setattr(recipe, "prompt_turns", fail_if_called)
     text = "Use ${task} literally and keep {braces}."
 
-    assert _render(RenderGenerationPromptStep(recipe), text) == [{"role": "user", "content": text}]
+    output = _process(RenderGenerationPromptStep(recipe), text, kind)
+    data = output[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert data["messages"] == [{"role": "user", "content": text}]
+    assert "text" not in data
+    assert "text_kind" not in data
+
+
+def test_missing_text_kind_is_a_noop_for_ordinary_action_preprocessing():
+    transition = create_transition(complementary_data={"task": "pick up the cup"})
+
+    assert RenderGenerationPromptStep(_subtask_recipe())(transition) is transition
 
 
 def test_subtask_renders_roles_wording_substitution_and_conditional_turns():
     step = RenderGenerationPromptStep(_subtask_recipe())
 
-    without_context = _render(step, "Clear {the} table", "subtask")
-    with_context = _render(step, "Clear {the} table", "subtask", context="cup already moved")
+    without_context = _process(step, "Clear {the} table", "subtask")[TransitionKey.COMPLEMENTARY_DATA][
+        "messages"
+    ]
+    with_context = _process(step, "Clear {the} table", "subtask", context="cup already moved")[
+        TransitionKey.COMPLEMENTARY_DATA
+    ]["messages"]
 
     assert without_context == [
         {"role": "system", "content": "Robot assistant"},
@@ -80,7 +95,7 @@ def test_missing_required_prefix_binding_has_a_clear_error():
     )
 
     with pytest.raises(ValueError, match="Unknown template binding: 'context'"):
-        _render(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
+        _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
 
 
 @pytest.mark.parametrize(
@@ -100,7 +115,7 @@ def test_invalid_subtask_recipe_contract_is_rejected(target_turn: MessageTurn):
     recipe = TrainingRecipe(messages=[target_turn])
 
     with pytest.raises(ValueError, match=r"no assistant target turn supervising \$\{subtask\}"):
-        _render(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
+        _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
 
 
 def test_training_and_inference_use_the_same_rendered_prefix():
@@ -108,7 +123,9 @@ def test_training_and_inference_use_the_same_rendered_prefix():
     bindings = {"task": "Clear the table", "context": None, "subtask": "pick up the cup"}
     training_messages = render_message_turns(recipe.messages or [], bindings)["messages"]
 
-    inference_messages = _render(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
+    inference_messages = _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")[
+        TransitionKey.COMPLEMENTARY_DATA
+    ]["messages"]
 
     assert inference_messages == training_messages[:-1]
     assert training_messages[-1] == {"role": "assistant", "content": "pick up the cup"}
@@ -124,8 +141,8 @@ def test_recipe_is_prepared_once_and_step_is_stateless(monkeypatch):
 
     monkeypatch.setattr(TrainingRecipe, "from_dict", classmethod(fail_if_reparsed))
 
-    first = _render(step, "Clear the table", "subtask")
-    second = _render(step, "What do you see?")
+    first = _process(step, "Clear the table", "subtask")[TransitionKey.COMPLEMENTARY_DATA]["messages"]
+    second = _process(step, "What do you see?")[TransitionKey.COMPLEMENTARY_DATA]["messages"]
 
     assert first[-1]["content"] == "Task: Clear the table"
     assert second == [{"role": "user", "content": "What do you see?"}]
@@ -138,7 +155,7 @@ def test_step_does_not_mutate_recipe_transition_or_runtime_state():
     transition = create_transition(
         complementary_data={
             "text": "Clear the table",
-            "text_template": "subtask",
+            "text_kind": "subtask",
             "subtask": "currently reaching",
         }
     )
@@ -149,3 +166,8 @@ def test_step_does_not_mutate_recipe_transition_or_runtime_state():
     assert "messages" not in transition[TransitionKey.COMPLEMENTARY_DATA]
     assert transition[TransitionKey.COMPLEMENTARY_DATA]["subtask"] == "currently reaching"
     assert output[TransitionKey.COMPLEMENTARY_DATA]["subtask"] == "currently reaching"
+
+
+def test_unsupported_text_kind_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported text kind: 'caption'"):
+        _process(RenderGenerationPromptStep(), "Describe this", "caption")

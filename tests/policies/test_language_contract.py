@@ -1,17 +1,22 @@
 #!/usr/bin/env python
 
-"""Client- and policy-facing tests for the flat text-generation contract."""
+"""Runtime-, processor-, and policy-facing tests for text generation."""
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 import torch
 
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.policies.factory import _attach_generation_prompt_step
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
+from lerobot.processor.pipeline import PolicyProcessorPipeline, ProcessorStep
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
 
 @PreTrainedConfig.register_subclass("language_contract_test")
@@ -59,29 +64,46 @@ class ContractPolicy(PreTrainedPolicy):
         raise NotImplementedError
 
 
-class ChatTemplatePolicy(ContractPolicy):
-    """A fake policy whose native formatter uses explicit chat role tokens."""
+class TextHeadPolicy(ContractPolicy):
+    def _generate_preprocessed_text(self, batch) -> str:
+        self.last_model_inputs = batch
+        return batch["native_prompt"]
 
-    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> dict[str, Any]:
-        messages = semantic_inputs["messages"]
-        native_prompt = "".join(
-            f"<{message['role']}>{message['content']}</{message['role']}>" for message in messages
+
+@dataclass
+class ChatTemplateStep(ProcessorStep):
+    """Fake policy-native formatter using explicit chat role tokens."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        output = transition.copy()
+        data = dict(output[TransitionKey.COMPLEMENTARY_DATA])
+        data["native_prompt"] = "".join(
+            f"<{message['role']}>{message['content']}</{message['role']}>" for message in data["messages"]
         )
-        return {**semantic_inputs, "native_prompt": native_prompt}
+        output[TransitionKey.COMPLEMENTARY_DATA] = data
+        return output
 
-    def _generate_preprocessed_text(self, model_inputs: dict[str, Any]) -> str:
-        self.last_model_inputs = model_inputs
-        return model_inputs["native_prompt"]
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
 
 
-class InstructionTemplatePolicy(ContractPolicy):
-    """A second fake policy with a different valid model-native prompt."""
+@dataclass
+class InstructionTemplateStep(ProcessorStep):
+    """Fake policy-native formatter using instruction delimiters."""
 
-    def _format_text_generation_input(self, semantic_inputs: dict[str, Any]) -> str:
-        return "[INST] " + "\n".join(message["content"] for message in semantic_inputs["messages"])
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        output = transition.copy()
+        data = dict(output[TransitionKey.COMPLEMENTARY_DATA])
+        data["native_prompt"] = "[INST] " + "\n".join(message["content"] for message in data["messages"])
+        output[TransitionKey.COMPLEMENTARY_DATA] = data
+        return output
 
-    def _generate_preprocessed_text(self, model_inputs: str) -> str:
-        return model_inputs
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
 
 
 def _subtask_recipe() -> TrainingRecipe:
@@ -104,20 +126,31 @@ def _subtask_recipe() -> TrainingRecipe:
     )
 
 
-def test_generate_text_defaults_to_raw_and_preserves_caller_payload():
-    policy = ChatTemplatePolicy(ContractConfig(recipe=_subtask_recipe()))
-    question = "Which {cup} is closest to the gripper?"
-
-    answer = policy.generate_text({}, question)
-
-    assert answer == f"<user>{question}</user>"
-    assert policy.last_model_inputs["messages"] == [{"role": "user", "content": question}]
+def _generation_preprocessor(config: ContractConfig, formatter: ProcessorStep):
+    return PolicyProcessorPipeline([RenderGenerationPromptStep(config.recipe), formatter])
 
 
-def test_generate_text_subtask_applies_checkpoint_recipe_internally():
-    policy = ChatTemplatePolicy(ContractConfig(recipe=_subtask_recipe()))
+def test_runtime_query_metadata_is_formatted_by_the_input_pipeline():
+    config = ContractConfig(recipe=_subtask_recipe())
+    policy = TextHeadPolicy(config)
+    preprocessor = _generation_preprocessor(config, ChatTemplateStep())
+    request = {"text_kind": "query", "text": "Which {cup} is closest?"}
 
-    generated = policy.generate_text({}, "Clear the table", template="subtask")
+    batch = preprocessor(request)
+    answer = policy.generate_text(batch)
+
+    assert answer == "<user>Which {cup} is closest?</user>"
+    assert "text" not in batch
+    assert "text_kind" not in batch
+
+
+def test_runtime_subtask_metadata_applies_checkpoint_recipe_before_decoding():
+    config = ContractConfig(recipe=_subtask_recipe())
+    policy = TextHeadPolicy(config)
+    preprocessor = _generation_preprocessor(config, ChatTemplateStep())
+
+    batch = preprocessor({"text_kind": "subtask", "text": "Clear the table"})
+    generated = policy.generate_text(batch)
 
     assert generated == (
         "<system>You control a robot.</system>"
@@ -125,43 +158,59 @@ def test_generate_text_subtask_applies_checkpoint_recipe_internally():
     )
 
 
-def test_two_policies_format_identical_raw_text_without_client_changes():
-    text = "What is visible?"
+def test_two_policy_processor_formatters_need_no_client_api_changes():
+    config = ContractConfig()
+    request = {"text_kind": "vqa", "text": "What is visible?"}
 
-    chat_prompt = ChatTemplatePolicy(ContractConfig()).generate_text({}, text)
-    instruction_prompt = InstructionTemplatePolicy(ContractConfig()).generate_text({}, text)
+    chat_batch = _generation_preprocessor(config, ChatTemplateStep())(request)
+    instruction_batch = _generation_preprocessor(config, InstructionTemplateStep())(request)
+    policy = TextHeadPolicy(config)
 
-    assert chat_prompt == "<user>What is visible?</user>"
-    assert instruction_prompt == "[INST] What is visible?"
-
-
-def test_subtask_requires_a_checkpoint_recipe():
-    policy = ChatTemplatePolicy(ContractConfig())
-
-    with pytest.raises(ValueError, match="Subtask generation requires a checkpoint recipe"):
-        policy.generate_text({}, "Clear the table", template="subtask")
+    assert policy.generate_text(chat_batch) == "<user>What is visible?</user>"
+    assert policy.generate_text(instruction_batch) == "[INST] What is visible?"
 
 
-def test_unsupported_public_template_is_rejected():
-    policy = ChatTemplatePolicy(ContractConfig())
+def test_factory_attaches_renderer_before_batching_once():
+    config = ContractConfig(recipe=_subtask_recipe())
+    preprocessor = PolicyProcessorPipeline([AddBatchDimensionProcessorStep()])
+    postprocessor = PolicyProcessorPipeline([])
 
-    with pytest.raises(ValueError, match="Unsupported text template: 'caption'"):
-        policy.generate_text({}, "Describe this", template="caption")  # type: ignore[arg-type]
+    preprocessor, postprocessor = _attach_generation_prompt_step(preprocessor, postprocessor, config)
+    preprocessor, postprocessor = _attach_generation_prompt_step(preprocessor, postprocessor, config)
+
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
+    assert sum(isinstance(step, RenderGenerationPromptStep) for step in preprocessor.steps) == 1
+    assert preprocessor.get_config()["steps"][0]["registry_name"] == "render_generation_prompt_processor"
+    assert preprocessor({"task": "ordinary action input"})["task"] == ["ordinary action input"]
+    assert preprocessor({"text_kind": "query", "text": "Question?"})["messages"] == [
+        [{"role": "user", "content": "Question?"}]
+    ]
 
 
-def test_generate_text_does_not_mutate_batch_or_repeat_observation_processing():
-    policy = ChatTemplatePolicy(ContractConfig())
+def test_preprocessing_does_not_mutate_runtime_request_or_repeat_observation_transforms():
+    config = ContractConfig()
+    policy = TextHeadPolicy(config)
+    preprocessor = _generation_preprocessor(config, ChatTemplateStep())
     observation = torch.tensor([[1.0, 2.0]])
-    batch = {"observation.state": observation, "subtask": "keep this state"}
+    request = {
+        "observation.state": observation,
+        "subtask": "keep this state",
+        "text_kind": "query",
+        "text": "What is happening?",
+    }
 
-    policy.generate_text(batch, "What is happening?")
+    batch = preprocessor(request)
+    policy.generate_text(batch)
 
-    assert batch == {"observation.state": observation, "subtask": "keep this state"}
+    assert request["text_kind"] == "query"
+    assert request["text"] == "What is happening?"
+    assert request["subtask"] == "keep this state"
     assert policy.last_model_inputs["observation.state"] is observation
     assert policy.last_model_inputs["subtask"] == "keep this state"
 
 
-def test_config_save_load_restores_a_normalized_recipe(tmp_path: Path):
+def test_config_save_load_restores_recipe_used_by_input_pipeline(tmp_path: Path):
     config = ContractConfig(recipe=_subtask_recipe())
     config._save_pretrained(tmp_path)
 
@@ -169,17 +218,19 @@ def test_config_save_load_restores_a_normalized_recipe(tmp_path: Path):
 
     assert isinstance(loaded, ContractConfig)
     assert isinstance(loaded.recipe, TrainingRecipe)
-    policy = ChatTemplatePolicy(loaded)
-    assert "Goal: Fold the towel" in policy.generate_text({}, "Fold the towel", template="subtask")
+    batch = _generation_preprocessor(loaded, InstructionTemplateStep())(
+        {"text_kind": "subtask", "text": "Fold the towel"}
+    )
+    assert "Goal: Fold the towel" in TextHeadPolicy(loaded).generate_text(batch)
 
 
 def test_supports_text_generation_detects_the_protected_decoder_hook():
     assert not ContractPolicy(ContractConfig()).supports_text_generation()
-    assert ChatTemplatePolicy(ContractConfig()).supports_text_generation()
+    assert TextHeadPolicy(ContractConfig()).supports_text_generation()
 
 
 def test_policy_without_text_head_raises_clear_error():
     policy = ContractPolicy(ContractConfig())
 
     with pytest.raises(NotImplementedError, match="has no text head"):
-        policy.generate_text({}, "What do you see?")
+        policy.generate_text({})

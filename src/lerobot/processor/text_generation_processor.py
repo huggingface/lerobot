@@ -17,37 +17,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Literal
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.configs.recipe import TrainingRecipe
-from lerobot.datasets.language_render import render_message_turns
+from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_PREFIX
 
-from .converters import create_transition
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
-
-def text_generation_request_to_transition(request: dict[str, Any]) -> EnvTransition:
-    """Convert a generation request without dropping policy-specific batch values."""
-    if not isinstance(request, dict):
-        raise TypeError(f"Text generation request must be a dict, got {type(request).__name__}.")
-    observation = {key: value for key, value in request.items() if key.startswith(OBS_PREFIX)}
-    complementary_data = {key: value for key, value in request.items() if key not in observation}
-    return create_transition(
-        observation=observation or None,
-        complementary_data=complementary_data,
-    )
-
-
-def text_generation_transition_to_request(transition: EnvTransition) -> dict[str, Any]:
-    """Flatten a rendered request while preserving the original batch objects."""
-    request = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
-    observation = transition.get(TransitionKey.OBSERVATION)
-    if isinstance(observation, dict):
-        request.update(observation)
-    return request
+TextPromptKind = Literal["query", "vqa", "subtask"]
+TEXT_KIND = "text_kind"
+TEXT = "text"
 
 
 @dataclass
@@ -55,11 +35,12 @@ def text_generation_transition_to_request(transition: EnvTransition) -> dict[str
 class RenderGenerationPromptStep(ProcessorStep):
     """Render the semantic messages for one public text-generation request.
 
-    ``raw`` never consults the recipe and preserves caller text as one user
-    payload. ``subtask`` renders the recipe prefix immediately before the
-    assistant target that supervises ``${subtask}``, binding caller text to
-    ``${task}``. The step only prepares messages; model-native formatting,
-    tokenization, decoding, runtime state, and action dispatch remain outside.
+    Runtime adds ``text_kind`` and ``text`` to complementary data before the
+    ordinary policy input pipeline runs. ``query`` and ``vqa`` preserve the text
+    as one user payload. ``subtask`` renders the recipe prefix immediately before
+    the assistant target supervising ``${subtask}``, binding text to ``${task}``.
+    Inputs without ``text_kind`` pass through unchanged, so ordinary action
+    preprocessing is unaffected.
     """
 
     recipe: TrainingRecipe | None = None
@@ -73,15 +54,18 @@ class RenderGenerationPromptStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        text = complementary_data.get("text")
-        template = complementary_data.get("text_template", "raw")
+        kind = complementary_data.get(TEXT_KIND)
+        if kind is None:
+            return transition
+
+        text = complementary_data.get(TEXT)
 
         if not isinstance(text, str):
-            raise TypeError("Text generation requires caller-owned `text` to be a string.")
+            raise TypeError(f"Text generation requires complementary data {TEXT!r} to be a string.")
 
-        if template == "raw":
+        if kind in ("query", "vqa"):
             messages = [{"role": "user", "content": text}]
-        elif template == "subtask":
+        elif kind == "subtask":
             if self.recipe is None:
                 raise ValueError(
                     "Subtask generation requires a checkpoint recipe with an assistant target "
@@ -94,10 +78,12 @@ class RenderGenerationPromptStep(ProcessorStep):
             turns = self.recipe.prompt_turns("subtask")
             messages = render_message_turns(turns, bindings)["messages"]
         else:
-            raise ValueError(f"Unsupported text template: {template!r}. Expected one of: 'raw', 'subtask'.")
+            raise ValueError(f"Unsupported text kind: {kind!r}. Expected one of: 'query', 'vqa', 'subtask'.")
 
         new_transition = transition.copy()
         new_complementary_data = dict(complementary_data)
+        new_complementary_data.pop(TEXT_KIND)
+        new_complementary_data.pop(TEXT)
         new_complementary_data["messages"] = messages
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
         return new_transition
