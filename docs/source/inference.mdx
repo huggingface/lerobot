@@ -61,11 +61,11 @@ lerobot-rollout \
     --duration=300
 ```
 
-| Flag                       | Description                                                  |
-| --------------------------- | -------------------------------------------------------------- |
+| Flag                        | Description                                                           |
+| --------------------------- | --------------------------------------------------------------------- |
 | `--task`                    | Initial task description; type a new one at the prompt to override it |
-| `--strategy.prompt`         | Text shown before the current instruction at the input prompt  |
-| `--strategy.echo_on_change` | Log a message whenever the instruction changes (default: true) |
+| `--strategy.prompt`         | Text shown before the current instruction at the input prompt         |
+| `--strategy.echo_on_change` | Log a message whenever the instruction changes (default: true)        |
 
 **The new instruction is deliberately not applied instantly.** The strategy does not reset the policy when the instruction changes, by design — resetting would clear the policy's queued actions (and, for temporal-ensembling policies, its hidden state) and could make the robot's motion jerk or stop mid-trajectory. Instead, the currently in-flight action chunk is left to finish and the new instruction is picked up the next time the policy predicts a fresh chunk:
 
