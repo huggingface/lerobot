@@ -208,6 +208,11 @@ def encode_video_with_mem(
         raise TypeError("MEM visual memory requires a SigLIP encoder exposing a layers collection")
 
     layers = vision_model.encoder.layers
+    if temporal_attention_every > len(layers):
+        raise ValueError(
+            f"temporal_attention_every ({temporal_attention_every}) must not exceed the number of "
+            f"SigLIP encoder layers ({len(layers)})"
+        )
     temporal_layers = [i for i in range(len(layers)) if (i + 1) % temporal_attention_every == 0]
     last_temporal_index = temporal_layers[-1] if (temporal_layers and num_frames > 1) else -1
 

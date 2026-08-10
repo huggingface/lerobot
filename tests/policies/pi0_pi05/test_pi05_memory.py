@@ -247,6 +247,18 @@ def test_mem_rejects_incompatible_siglip_layer():
         )
 
 
+def test_mem_rejects_temporal_interval_larger_than_vision_depth():
+    model = _tiny_siglip()
+
+    with pytest.raises(ValueError, match=r"temporal_attention_every \(5\).*layers \(4\)"):
+        encode_video_with_mem(
+            model,
+            torch.randn(1, 3, 3, 16, 16),
+            torch.ones(1, 3, dtype=torch.bool),
+            temporal_attention_every=5,
+        )
+
+
 def test_mem_video_encoder_compresses_time_and_backpropagates():
     model = _tiny_siglip()
     parameter_ids = {id(parameter) for parameter in model.parameters()}
