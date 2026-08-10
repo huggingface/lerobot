@@ -35,6 +35,8 @@
     title: SmolVLA
   title: "策略"
 - sections:
+  - local: inference
+    title: 策略部署（lerobot-rollout）
   - local: async
     title: 异步推理
   - local: rtc
