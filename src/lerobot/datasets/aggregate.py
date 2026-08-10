@@ -24,11 +24,12 @@ from typing import Any, NotRequired, TypedDict
 import datasets
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import tqdm
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
-from .compute_stats import aggregate_stats
+from .compute_stats import aggregate_feature_stats, aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
@@ -41,12 +42,14 @@ from .io_utils import (
     write_tasks,
 )
 from .utils import (
+    DATA_DIR,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    EPISODES_DIR,
     update_chunk_file_indices,
 )
 from .video_utils import concatenate_video_files, get_video_duration_in_s
@@ -74,6 +77,9 @@ class VideoIndex(TypedDict):
 
 
 type VideoIndexState = dict[str, VideoIndex]
+
+_METADATA_REINDEXED_STATS_FEATURES = ("episode_index", "index")
+_REQUIRED_STATS = {"min", "max", "mean", "std", "count"}
 
 
 def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMetadata]) -> FeatureDict:
@@ -793,6 +799,198 @@ def append_or_create_parquet_file(
     return idx, (dst_chunk, dst_file)
 
 
+def _stack_episode_stat_values(values: list) -> np.ndarray:
+    """Stack scalar/vector episode-stat cells into one batch array."""
+    array = np.asarray(values)
+    if array.dtype != object:
+        return array.reshape(len(values), -1)
+    return np.stack([np.atleast_1d(np.asarray(value)) for value in values])
+
+
+def _aggregate_episode_stat_batch(feature_stats: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Vectorized equivalent of ``aggregate_feature_stats`` for episode rows."""
+    means = feature_stats["mean"]
+    variances = feature_stats["std"] ** 2
+    counts = feature_stats["count"]
+    total_count = counts.sum(axis=0)
+
+    weights = counts
+    while weights.ndim < means.ndim:
+        weights = np.expand_dims(weights, axis=-1)
+
+    mean = (means * weights).sum(axis=0) / total_count
+    variance = ((variances + (means - mean) ** 2) * weights).sum(axis=0) / total_count
+    aggregated = {
+        "min": feature_stats["min"].min(axis=0),
+        "max": feature_stats["max"].max(axis=0),
+        "mean": mean,
+        "std": np.sqrt(variance),
+        "count": total_count,
+    }
+    for stat, values in feature_stats.items():
+        if stat.startswith("q") and stat[1:].isdigit():
+            aggregated[stat] = values.min(axis=0) if int(stat[1:]) <= 50 else values.max(axis=0)
+    return aggregated
+
+
+def _aggregate_reindexed_stats_from_episode_metadata(
+    episodes_dir: Path,
+    reference_stats: dict[str, dict[str, np.ndarray]],
+) -> dict[str, dict[str, np.ndarray]]:
+    """Rebuild transformed bookkeeping stats from merged episode metadata.
+
+    ``update_meta_data`` has already shifted ``episode_index``/``index`` in
+    each episode's statistics. Source dataset-level statistics still describe
+    the pre-merge local values, so they cannot be used after aggregation.
+
+    Optional statistics follow the keys in ``reference_stats``. This preserves
+    the existing schema and leaves all ordinary feature aggregation unchanged.
+    """
+    parquet_files = sorted(episodes_dir.rglob("*.parquet"))
+    if not parquet_files:
+        return {}
+
+    columns_by_file = {path: set(pq.read_schema(path).names) for path in parquet_files}
+    stat_keys_by_feature: dict[str, tuple[str, ...]] = {}
+    for feature in _METADATA_REINDEXED_STATS_FEATURES:
+        if feature not in reference_stats:
+            continue
+        stat_keys = tuple(reference_stats[feature])
+        required_columns = {f"stats/{feature}/{stat}" for stat in _REQUIRED_STATS}
+        missing = sorted(
+            {
+                column.rsplit("/", 1)[-1]
+                for column in required_columns
+                if any(column not in columns for columns in columns_by_file.values())
+            }
+        )
+        if missing:
+            raise ValueError(f"Merged episode metadata is missing required {feature} statistics: {missing}")
+        stat_keys_by_feature[feature] = stat_keys
+
+    if not stat_keys_by_feature:
+        return {}
+
+    batch_stats: dict[str, list[dict[str, np.ndarray]]] = {feature: [] for feature in stat_keys_by_feature}
+    missing_optional: dict[str, set[str]] = {feature: set() for feature in stat_keys_by_feature}
+    for path in parquet_files:
+        parquet_file = pq.ParquetFile(path)
+        columns = sorted(
+            {
+                f"stats/{feature}/{stat}"
+                for feature, stat_keys in stat_keys_by_feature.items()
+                for stat in set(stat_keys) | _REQUIRED_STATS
+                if f"stats/{feature}/{stat}" in columns_by_file[path]
+            }
+        )
+        for batch in parquet_file.iter_batches(columns=columns):
+            for feature, stat_keys in stat_keys_by_feature.items():
+                feature_stats: dict[str, np.ndarray] = {}
+                for stat in _REQUIRED_STATS:
+                    column = f"stats/{feature}/{stat}"
+                    values = batch.column(batch.schema.get_field_index(column)).to_pylist()
+                    if any(value is None or bool(np.asarray(pd.isna(value)).any()) for value in values):
+                        raise ValueError(
+                            f"Merged episode metadata contains null required {feature} statistic: {stat}"
+                        )
+                    feature_stats[stat] = _stack_episode_stat_values(values)
+
+                for stat in stat_keys:
+                    if not (stat.startswith("q") and stat[1:].isdigit()):
+                        continue
+                    column = f"stats/{feature}/{stat}"
+                    fallback = feature_stats["min"] if int(stat[1:]) <= 50 else feature_stats["max"]
+                    if column not in columns_by_file[path]:
+                        feature_stats[stat] = fallback.copy()
+                        missing_optional[feature].add(stat)
+                        continue
+
+                    values = batch.column(batch.schema.get_field_index(column)).to_pylist()
+                    valid = [
+                        value is not None and not bool(np.asarray(pd.isna(value)).any()) for value in values
+                    ]
+                    if all(valid):
+                        feature_stats[stat] = _stack_episode_stat_values(values)
+                    else:
+                        feature_stats[stat] = _stack_episode_stat_values(
+                            [
+                                value if is_valid else fallback[i]
+                                for i, (value, is_valid) in enumerate(zip(values, valid, strict=True))
+                            ]
+                        )
+                        missing_optional[feature].add(stat)
+
+                batch_stats[feature].append(_aggregate_episode_stat_batch(feature_stats))
+
+    aggregated_stats = {
+        feature: aggregate_feature_stats(feature_batch_stats)
+        for feature, feature_batch_stats in batch_stats.items()
+        if feature_batch_stats
+    }
+    for feature, missing_stats in missing_optional.items():
+        if missing_stats:
+            logger.warning(
+                "Merged episode metadata has incomplete optional %s statistics %s; "
+                "using conservative per-episode min/max bounds.",
+                feature,
+                sorted(missing_stats),
+            )
+    return aggregated_stats
+
+
+def _compute_task_index_stats_from_data(
+    data_dir: Path,
+    reference_stats: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Compute exact task statistics from the merged frame-level task indices.
+
+    Episode metadata stores only each episode's distinct task strings, so it
+    cannot preserve frame frequencies for episodes containing multiple tasks.
+    A projected scan of the integer ``task_index`` column is sufficient to
+    recover the exact discrete distribution without loading ordinary features.
+    """
+    histogram: dict[int, int] = {}
+    for path in sorted(data_dir.rglob("*.parquet")):
+        parquet_file = pq.ParquetFile(path)
+        for batch in parquet_file.iter_batches(columns=["task_index"]):
+            values = batch.column(0).to_numpy(zero_copy_only=False)
+            task_indices, counts = np.unique(values, return_counts=True)
+            for task_index, count in zip(task_indices, counts, strict=True):
+                task_index = int(task_index)
+                histogram[task_index] = histogram.get(task_index, 0) + int(count)
+
+    if not histogram:
+        return {}
+
+    task_indices = np.array(sorted(histogram), dtype=np.float64)
+    counts = np.array([histogram[int(task_index)] for task_index in task_indices], dtype=np.int64)
+    total_count = int(counts.sum())
+    mean = float(np.average(task_indices, weights=counts))
+    variance = float(np.average((task_indices - mean) ** 2, weights=counts))
+    cumulative_counts = np.cumsum(counts)
+
+    stats = {
+        "min": np.array([task_indices[0]]),
+        "max": np.array([task_indices[-1]]),
+        "mean": np.array([mean]),
+        "std": np.array([np.sqrt(variance)]),
+        "count": np.array([total_count]),
+    }
+    for key in reference_stats:
+        if not (key.startswith("q") and key[1:].isdigit()):
+            continue
+        quantile = int(key[1:]) / 100
+        position = quantile * (total_count - 1)
+        lower_rank = int(np.floor(position))
+        upper_rank = int(np.ceil(position))
+        lower_value = task_indices[np.searchsorted(cumulative_counts, lower_rank, side="right")]
+        upper_value = task_indices[np.searchsorted(cumulative_counts, upper_rank, side="right")]
+        value = lower_value + (upper_value - lower_value) * (position - lower_rank)
+        stats[key] = np.array([value])
+
+    return {key: value for key, value in stats.items() if key in reference_stats}
+
+
 def finalize_aggregation(
     aggr_meta: LeRobotDatasetMetadata, all_metadata: list[LeRobotDatasetMetadata]
 ) -> None:
@@ -817,4 +1015,13 @@ def finalize_aggregation(
 
     logger.info("write stats")
     aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
+    reindexed_stats = _aggregate_reindexed_stats_from_episode_metadata(
+        aggr_meta.root / EPISODES_DIR, aggr_meta.stats
+    )
+    for feature, feature_stats in reindexed_stats.items():
+        aggr_meta.stats[feature].update(feature_stats)
+    if "task_index" in aggr_meta.stats:
+        aggr_meta.stats["task_index"].update(
+            _compute_task_index_stats_from_data(aggr_meta.root / DATA_DIR, aggr_meta.stats["task_index"])
+        )
     write_stats(aggr_meta.stats, aggr_meta.root)
