@@ -24,6 +24,7 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
+    RenderGenerationPromptStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -71,6 +72,7 @@ def make_wall_x_pre_post_processors(
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps = [
+        RenderGenerationPromptStep(config.recipe),
         steps.rename_observations,
         steps.add_batch_dim,
         WallXTaskProcessor(),  # Process task description
