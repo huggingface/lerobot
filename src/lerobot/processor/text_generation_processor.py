@@ -17,16 +17,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Literal
+from typing import Any
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.utils.constants import QUERY_KIND
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
-TextPromptKind = Literal["query", "vqa", "subtask"]
-TEXT_KIND = "text_kind"
 TEXT = "text"
 
 
@@ -35,11 +34,11 @@ TEXT = "text"
 class RenderGenerationPromptStep(ProcessorStep):
     """Render the semantic messages for one public text-generation request.
 
-    Runtime adds ``text_kind`` and ``text`` to complementary data before the
-    ordinary policy input pipeline runs. ``query`` and ``vqa`` preserve the text
-    as one user payload. ``subtask`` renders the recipe prefix immediately before
-    the assistant target supervising ``${subtask}``, binding text to ``${task}``.
-    Inputs without ``text_kind`` pass through unchanged, so ordinary action
+    Runtime adds ``query_kind`` and ``text`` to complementary data before the
+    ordinary policy input pipeline runs. ``vqa`` preserves the text as one user
+    payload. ``next_subtask`` renders the recipe prefix immediately before the
+    assistant target supervising ``${subtask}``, binding text to ``${task}``.
+    Inputs without ``query_kind`` pass through unchanged, so ordinary action
     preprocessing is unaffected.
     """
 
@@ -54,7 +53,7 @@ class RenderGenerationPromptStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
-        kind = complementary_data.get(TEXT_KIND)
+        kind = complementary_data.get(QUERY_KIND)
         if kind is None:
             return transition
 
@@ -63,9 +62,9 @@ class RenderGenerationPromptStep(ProcessorStep):
         if not isinstance(text, str):
             raise TypeError(f"Text generation requires complementary data {TEXT!r} to be a string.")
 
-        if kind in ("query", "vqa"):
+        if kind == "vqa":
             messages = [{"role": "user", "content": text}]
-        elif kind == "subtask":
+        elif kind == "next_subtask":
             if self.recipe is None:
                 raise ValueError(
                     "Subtask generation requires a checkpoint recipe with an assistant target "
@@ -78,11 +77,11 @@ class RenderGenerationPromptStep(ProcessorStep):
             turns = self.recipe.prompt_turns("subtask")
             messages = render_message_turns(turns, bindings)["messages"]
         else:
-            raise ValueError(f"Unsupported text kind: {kind!r}. Expected one of: 'query', 'vqa', 'subtask'.")
+            raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
 
         new_transition = transition.copy()
         new_complementary_data = dict(complementary_data)
-        new_complementary_data.pop(TEXT_KIND)
+        new_complementary_data.pop(QUERY_KIND)
         new_complementary_data.pop(TEXT)
         new_complementary_data["messages"] = messages
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data

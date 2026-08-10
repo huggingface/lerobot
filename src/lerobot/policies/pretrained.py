@@ -268,37 +268,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        with_text: bool = False,
-        **kwargs: Unpack[ActionSelectKwargs],
-    ) -> Tensor | tuple[Tensor, str | None]:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
 
-        `with_text` asks for the text this policy generated *inside this pass*, returning
-        `(chunk, text)` instead of the bare chunk. Only a policy that emits text and
-        actions from one inference stream honours it — G0.5's System 2 chain-of-thought,
-        where the flow head runs on a cache the reasoning extended, so the action is
-        conditioned on the text rather than merely accompanied by it.
-
-        A policy whose text head runs its own prefill must ignore `with_text`: the
-        subtask it was conditioned on is already runtime state, and returning it here
-        would claim a causal link inside this pass that does not exist. Use
-        `generate_text` for that policy instead.
-
-        Honouring `with_text` costs nothing extra. Whether a policy generates text in its
-        pass is a property of the checkpoint and its configuration, not of the flag.
-
-        Callers must tolerate either return shape, since a policy that ignores the flag
-        still returns a bare chunk:
-
-            result = policy.predict_action_chunk(batch, with_text=True)
-            chunk, text = result if isinstance(result, tuple) else (result, None)
         """
         raise NotImplementedError
 
@@ -319,8 +294,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Decode text from a batch prepared by the normal policy input pipeline.
 
         Before preprocessing, runtime supplies caller text through complementary
-        ``text`` and selects ``query``, ``vqa``, or ``subtask`` through
-        ``text_kind``. The shared generation-prompt step consumes that metadata;
+        ``text`` and selects ``vqa`` or ``next_subtask`` through ``query_kind``.
+        The shared generation-prompt step consumes that metadata;
         policy-specific processor steps then apply native chat formatting,
         multimodal markers, and tokenization. This method only runs the text head.
         """

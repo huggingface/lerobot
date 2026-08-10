@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
-from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, REWARD, TRUNCATED
+from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, REWARD, TRUNCATED
 
 
 @singledispatch
@@ -155,7 +155,6 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
 
 _COMPLEMENTARY_KEYS = (
     "task",
-    "subtask",
     "index",
     "task_index",
     "episode_index",
@@ -166,7 +165,7 @@ _COMPLEMENTARY_KEYS = (
     "message_streams",
     "target_message_indices",
     "text",
-    "text_kind",
+    QUERY_KIND,
 )
 
 

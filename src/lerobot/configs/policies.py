@@ -68,25 +68,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
-    # Decoding settings for policies that implement `PreTrainedPolicy.generate_text`.
-    # Sampling is supported; these are the defaults a checkpoint ships with, which is
-    # why they belong in config.json. Greedy suits a subtask head trained with
-    # cross-entropy against one target per step, but raising the temperature is a
-    # useful probe for an under-trained head stuck on a single output. The `text_`
-    # prefix keeps these distinct from action-sampling settings such as
-    # `PI0FastConfig.temperature`.
-    #
-    # Only settings every text head shares belong here. A policy needing more —
-    # top-k, repetition penalty, beam count — declares it on its own config
-    # (e.g. `text_top_k` on `WallOSS05Config`) so the base does not accumulate
-    # knobs that most policies never read.
-    text_temperature: float = 0.0  # 0.0 is greedy argmax; > 0 enables sampling
-    text_top_p: float = 1.0  # nucleus filtering threshold, applied when sampling
-
     # The training recipe this checkpoint's language supervision was rendered with.
     # Its message turns are the single source of recipe-backed inference prompt
     # wording. ``None`` is valid for policies/checkpoints that do not support the
-    # runtime ``text_kind="subtask"`` contract.
+    # runtime ``query_kind="next_subtask"`` contract.
     recipe: TrainingRecipe | dict[str, Any] | None = None
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override

@@ -35,13 +35,12 @@ def _subtask_recipe() -> TrainingRecipe:
     )
 
 
-def _process(step: RenderGenerationPromptStep, text: str, kind: str = "query", **values):
-    transition = create_transition(complementary_data={"text": text, "text_kind": kind, **values})
+def _process(step: RenderGenerationPromptStep, text: str, kind: str = "vqa", **values):
+    transition = create_transition(complementary_data={"text": text, "query_kind": kind, **values})
     return step(transition)
 
 
-@pytest.mark.parametrize("kind", ["query", "vqa"])
-def test_query_and_vqa_preserve_text_and_never_consult_the_recipe(monkeypatch, kind: str):
+def test_vqa_preserves_text_and_never_consults_the_recipe(monkeypatch):
     recipe = _subtask_recipe()
 
     def fail_if_called(kind: str):
@@ -50,15 +49,15 @@ def test_query_and_vqa_preserve_text_and_never_consult_the_recipe(monkeypatch, k
     monkeypatch.setattr(recipe, "prompt_turns", fail_if_called)
     text = "Use ${task} literally and keep {braces}."
 
-    output = _process(RenderGenerationPromptStep(recipe), text, kind)
+    output = _process(RenderGenerationPromptStep(recipe), text, "vqa")
     data = output[TransitionKey.COMPLEMENTARY_DATA]
 
     assert data["messages"] == [{"role": "user", "content": text}]
     assert "text" not in data
-    assert "text_kind" not in data
+    assert "query_kind" not in data
 
 
-def test_missing_text_kind_is_a_noop_for_ordinary_action_preprocessing():
+def test_missing_query_kind_is_a_noop_for_ordinary_action_preprocessing():
     transition = create_transition(complementary_data={"task": "pick up the cup"})
 
     assert RenderGenerationPromptStep(_subtask_recipe())(transition) is transition
@@ -67,10 +66,10 @@ def test_missing_text_kind_is_a_noop_for_ordinary_action_preprocessing():
 def test_subtask_renders_roles_wording_substitution_and_conditional_turns():
     step = RenderGenerationPromptStep(_subtask_recipe())
 
-    without_context = _process(step, "Clear {the} table", "subtask")[TransitionKey.COMPLEMENTARY_DATA][
+    without_context = _process(step, "Clear {the} table", "next_subtask")[TransitionKey.COMPLEMENTARY_DATA][
         "messages"
     ]
-    with_context = _process(step, "Clear {the} table", "subtask", context="cup already moved")[
+    with_context = _process(step, "Clear {the} table", "next_subtask", context="cup already moved")[
         TransitionKey.COMPLEMENTARY_DATA
     ]["messages"]
 
@@ -95,7 +94,7 @@ def test_missing_required_prefix_binding_has_a_clear_error():
     )
 
     with pytest.raises(ValueError, match="Unknown template binding: 'context'"):
-        _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
+        _process(RenderGenerationPromptStep(recipe), "Clear the table", "next_subtask")
 
 
 @pytest.mark.parametrize(
@@ -115,7 +114,7 @@ def test_invalid_subtask_recipe_contract_is_rejected(target_turn: MessageTurn):
     recipe = TrainingRecipe(messages=[target_turn])
 
     with pytest.raises(ValueError, match=r"no assistant target turn supervising \$\{subtask\}"):
-        _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")
+        _process(RenderGenerationPromptStep(recipe), "Clear the table", "next_subtask")
 
 
 def test_training_and_inference_use_the_same_rendered_prefix():
@@ -123,7 +122,7 @@ def test_training_and_inference_use_the_same_rendered_prefix():
     bindings = {"task": "Clear the table", "context": None, "subtask": "pick up the cup"}
     training_messages = render_message_turns(recipe.messages or [], bindings)["messages"]
 
-    inference_messages = _process(RenderGenerationPromptStep(recipe), "Clear the table", "subtask")[
+    inference_messages = _process(RenderGenerationPromptStep(recipe), "Clear the table", "next_subtask")[
         TransitionKey.COMPLEMENTARY_DATA
     ]["messages"]
 
@@ -141,7 +140,7 @@ def test_recipe_is_prepared_once_and_step_is_stateless(monkeypatch):
 
     monkeypatch.setattr(TrainingRecipe, "from_dict", classmethod(fail_if_reparsed))
 
-    first = _process(step, "Clear the table", "subtask")[TransitionKey.COMPLEMENTARY_DATA]["messages"]
+    first = _process(step, "Clear the table", "next_subtask")[TransitionKey.COMPLEMENTARY_DATA]["messages"]
     second = _process(step, "What do you see?")[TransitionKey.COMPLEMENTARY_DATA]["messages"]
 
     assert first[-1]["content"] == "Task: Clear the table"
@@ -155,7 +154,7 @@ def test_step_does_not_mutate_recipe_transition_or_runtime_state():
     transition = create_transition(
         complementary_data={
             "text": "Clear the table",
-            "text_kind": "subtask",
+            "query_kind": "next_subtask",
             "subtask": "currently reaching",
         }
     )
@@ -168,6 +167,6 @@ def test_step_does_not_mutate_recipe_transition_or_runtime_state():
     assert output[TransitionKey.COMPLEMENTARY_DATA]["subtask"] == "currently reaching"
 
 
-def test_unsupported_text_kind_is_rejected():
-    with pytest.raises(ValueError, match="Unsupported text kind: 'caption'"):
+def test_unsupported_query_kind_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported query kind: 'caption'"):
         _process(RenderGenerationPromptStep(), "Describe this", "caption")

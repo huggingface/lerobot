@@ -196,11 +196,10 @@ def make_my_policy_pre_post_processors(
 Runtime puts caller-owned text and its intent in complementary data before running the
 normal policy input pipeline:
 
-| `text_kind` | Caller-owned `text`              | Recipe behavior                                      | Result                     |
-| ----------- | -------------------------------- | ---------------------------------------------------- | -------------------------- |
-| `query`     | any free-form prompt             | no recipe wording; preserve text as the user payload | best-effort generated text |
-| `vqa`       | a question about the observation | no recipe wording; preserve text as the user payload | best-effort generated text |
-| `subtask`   | a high-level task or instruction | render the checkpoint recipe before `${subtask}`     | next executable subtask    |
+| `query_kind`   | Caller-owned `text`              | Recipe behavior                                      | Result                     |
+| -------------- | -------------------------------- | ---------------------------------------------------- | -------------------------- |
+| `vqa`          | a question about the observation | no recipe wording; preserve text as the user payload | best-effort generated text |
+| `next_subtask` | a high-level task or instruction | render the checkpoint recipe before `${subtask}`     | next executable subtask    |
 
 For an arbitrary visual question, runtime prepares the same input pipeline used for
 action prediction, then asks the policy to decode the processed batch:
@@ -208,44 +207,43 @@ action prediction, then asks the policy to decode the processed batch:
 ```python
 request = {
     **observation,
-    "text_kind": "vqa",
+    "query_kind": "vqa",
     "text": "Which cup is closest to the gripper?",
 }
 batch = preprocessor(request)
 answer = policy.generate_text(batch)
 ```
 
-`query` and `vqa` do not claim the checkpoint was trained for that question and do not
-require a recipe. The policy attempts generation whenever it has a text head; a poor or
-empty answer is allowed. The text still passes through policy-native multimodal
-formatting, including system messages, roles, image markers, special tokens, and
-tokenization.
+`vqa` does not claim the checkpoint was trained for that question and does not require a
+recipe. The policy attempts generation whenever it has a text head; a poor or empty
+answer is allowed. The text still passes through policy-native multimodal formatting,
+including system messages, roles, image markers, special tokens, and tokenization.
 
-For recipe-backed subtask generation, runtime selects `subtask` in complementary data
-and explicitly decides whether to commit the result before predicting actions:
+For recipe-backed subtask generation, runtime selects `next_subtask` in complementary
+data and explicitly decides whether to commit the result before predicting actions:
 
 ```python
-task = "clear the table"
-active_subtask = runtime_state.active_subtask
+goal = "clear the table"
 text_batch = preprocessor(
     {
         **observation,
-        "text_kind": "subtask",
-        "text": task,
+        "task": runtime_state.task,
+        "query_kind": "next_subtask",
+        "text": goal,
     }
 )
 subtask = policy.generate_text(text_batch).strip()
 
-# Empty text leaves the active runtime subtask unchanged.
+# Empty text leaves the active runtime task unchanged.
 if subtask:
-    active_subtask = subtask
+    runtime_state.set_task(subtask)
 
-batch = preprocessor({**observation, "task": task, "subtask": active_subtask})
+batch = preprocessor({**observation, "task": runtime_state.task})
 action_chunk = policy.predict_action_chunk(batch)
 ```
 
-The prompt-rendering step consumes `text_kind` and `text`; they do not leak into model
-inputs. Inputs without `text_kind` pass through unchanged, so the same preprocessor
+The prompt-rendering step consumes `query_kind` and `text`; they do not leak into model
+inputs. Inputs without `query_kind` pass through unchanged, so the same preprocessor
 continues to serve ordinary action prediction. `generate_text` only decodes its prepared
 batch—it does not mutate runtime state, replace the active task, enqueue actions, or run
 a System-2/System-1 loop. A checkpoint without a valid subtask recipe raises a contract
@@ -262,18 +260,14 @@ only text decoding from the already-prepared batch:
 # modeling_my_policy.py
 class MyPolicy(PreTrainedPolicy):
     def _generate_preprocessed_text(self, batch) -> str:
-        token_ids = self.model.generate(
-            **batch,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
+        token_ids = self.model.generate(**batch)
         return self.tokenizer.decode(token_ids, skip_special_tokens=True)
 ```
 
 Text generation therefore follows one processor chain:
 
 ```text
-runtime adds text_kind + text
+runtime adds query_kind + text
               ↓
 RenderGenerationPromptStep
               ↓
@@ -318,66 +312,17 @@ class MyPolicyConfig(PreTrainedConfig):
     recipe: TrainingRecipe | dict[str, Any] | None = field(default_factory=make_my_policy_recipe)
 ```
 
-The runtime selector is intentionally restricted to `query`, `vqa`, and `subtask`;
-recipe binding names are not runtime kinds. Structured outputs such as bounding boxes
-should keep their own typed interface. Existing policy PRs that override
+The runtime selector is intentionally restricted to `vqa` and `next_subtask`; recipe
+binding names such as `subtask` are not runtime kinds. Structured outputs such as
+bounding boxes should keep their own typed interface. Existing policy PRs that override
 `generate_text(batch, prompt)` should move prompt formatting into their policy input
 processor and decoding into `_generate_preprocessed_text`.
-
-### Sampling settings
-
-Decoding parameters live on the checkpoint, in [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/policies.py), so a head decodes the way it was trained:
-
-```python
-self.config.text_temperature  # 0.0 is greedy argmax
-self.config.text_top_p        # nucleus filtering threshold
-```
-
-The `text_` prefix keeps them distinct from action-sampling settings such as `PI0FastConfig.temperature`. Override them per run through the usual policy path — `--policy.text_temperature=0.5` on any CLI that loads the policy.
-
-Temperature `0.0` is greedy argmax and is the default; any value above `0.0` enables sampling with `text_top_p`. Greedy suits a subtask head trained with cross-entropy against one target per step, but raising the temperature is a useful probe for an under-trained head stuck on a single output.
-
-Only settings every text head shares live on `PreTrainedConfig`. If your policy needs more — top-k, a repetition penalty, a beam count — declare it on **your own** config and read it there:
-
-```python
-@dataclass
-class MyPolicyConfig(PreTrainedConfig):
-    text_top_k: int = 0
-```
-
-That keeps the base config free of knobs most policies never read, and your extra settings still ride in `config.json` and stay overridable as `--policy.text_top_k=50`.
-
-### Text emitted with the action
-
-Interactive callers ask for actions through `predict_action_chunk(batch, with_text=True)`. There is no second method: `with_text` asks for the text your policy generated **inside that pass**, returning `(chunk, text)` instead of the bare chunk.
-
-Honour it only if your policy emits text and actions from one inference stream, where the action is conditioned on the text rather than merely accompanied by it:
-
-```python
-def predict_action_chunk(self, batch, *, with_text=False, **kwargs):
-    action, metadata = self._run_inference(batch)
-    return (action, first_text(metadata)) if with_text else action
-```
-
-If your text head runs its own prefill, **ignore the flag** and keep returning the bare chunk. Do not echo `batch["subtask"]` — that string is already runtime state, and returning it here would claim a causal link inside this pass that does not exist. Expose `generate_text` instead.
-
-Because a policy may ignore the flag, callers tolerate both shapes:
-
-```python
-result = policy.predict_action_chunk(batch, with_text=True)
-chunk, text = result if isinstance(result, tuple) else (result, None)
-```
-
-Honouring `with_text` must never cost an extra generation pass. Whether text appears is a property of the checkpoint and its configuration, not of the flag.
-
-The returned text is display-only: unlike a generated subtask it never re-enters the observation batch, so it cannot replace the operator's task. Return the pair rather than caching text on the policy — a caller can then commit chunk and text together, so a chunk discarded mid-inference takes its text with it.
 
 ### Keep training and deployment aligned
 
 `generate_text` reconstructs prompts the model saw during training, so it is part of the model contract:
 
 - Use the same tokenizer, role formatting, special tokens, image ordering, and state encoding as training.
-- Condition actions on `batch["subtask"]`, falling back to `batch["task"]` before the first generation.
 - Return a full action chunk from `predict_action_chunk`; callers handle control-rate dispatch.
 - Keep optional model dependencies inside lazy imports.
 - Test it with a lightweight fake batch: the method is stateless, so it needs no robot to exercise.

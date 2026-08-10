@@ -87,7 +87,7 @@ def _attach_generation_prompt_step(
 ]:
     """Ensure runtime text metadata is rendered inside the normal input pipeline.
 
-    The renderer must run before batching so it consumes scalar ``text_kind`` and
+    The renderer must run before batching so it consumes scalar ``query_kind`` and
     ``text`` values and emits one role-preserving message list. Checkpoints that
     already serialize the step keep their saved ordering and recipe.
     """
