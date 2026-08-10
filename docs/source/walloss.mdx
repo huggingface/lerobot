@@ -53,28 +53,32 @@ answers = policy.generate_texts(
 )
 ```
 
-Use `kind="caption"` for scene descriptions, `kind="grounding"` for spatial
-queries, or `kind="subtask"` for WALL-OSS's language-level next action. The
-text comes from the policy's own Qwen vision-language expert.
+Use `kind="caption"` for scene descriptions or `kind="grounding"` for spatial
+queries. Recipe-backed next-subtask generation uses the runtime contract shown
+below. The text comes from the policy's own Qwen vision-language expert.
 
-`generate_texts` is the batched form. `generate_text` is the single-sample
-method the interactive language runtime calls; it decodes with the sampling
-settings stored on the checkpoint in `config.generation`.
+`generate_texts` is the lower-level batched form. The interactive runtime puts
+`query_kind` (`vqa` or `next_subtask`) and `text` into the normal input pipeline;
+the single-sample `generate_text(processed_batch)` call then decodes the rendered
+messages with the sampling settings stored on the WALL-X checkpoint.
 
 The interactive language runtime can generate a subtask and then condition
 WALL-OSS action prediction on it:
 
 ```bash
 lerobot-rollout \
-  --language \
+  --strategy.type=base \
   --policy.path=your-org/your-wall-oss-checkpoint \
-  --policy.device=cuda \
+  --robot.type=your_robot_type \
+  --robot.port=/dev/your_robot_port \
   --task="clear the table" \
-  --mode=action
+  --interactive=true
 ```
 
-Use `/ask <question>` for image-grounded VQA or `--direct_subtask` to bypass
-subtask generation and send the task directly to action inference.
+After `/start`, use `/vqa <question>` for image-grounded VQA or `/autosteer
+
+<goal>` for recipe-backed next-subtask generation. `/subtask <text>` bypasses
+generation and sends an instruction directly to action inference.
 
 ## Training
 

@@ -113,6 +113,8 @@ class WallXConfig(PreTrainedConfig):
     # itself with the recipe it was trained on.
     recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _wall_x_default_recipe())
     tokenizer_max_length: int = 768
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
     flow_loss_weight: float = 1.0
     text_loss_weight: float = 0.01
 

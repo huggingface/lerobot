@@ -1979,19 +1979,37 @@ class WallXPolicy(PreTrainedPolicy):
         return text, predicts_action
 
     def _format_text_prompt(self, instruction: str, kind: str, img_keys: list[str]) -> str:
-        # The subtask wording comes from the checkpoint's recipe (config.recipe),
-        # token-exact with the subtask branch of `get_wallx_normal_text` down to the
-        # newline before `<|im_end|>`: WALL-OSS declares its mode in this user turn, so
-        # a prompt that drifts from the trained template is answered out of
-        # distribution.
-        if kind == "subtask":
-            instruction = self.build_prompt("subtask", task=instruction)
         return (
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
             f"<|im_start|>user\n{self._observation_prompt(img_keys)}\n"
             f"Instruction: {instruction}<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
+
+    def _format_generation_messages(
+        self,
+        messages: list[dict[str, Any]],
+        img_keys: list[str],
+    ) -> str:
+        """Apply WALL-OSS chat and image formatting to contract-rendered messages."""
+        native_messages = [dict(message) for message in messages]
+        for message in native_messages:
+            if str(message.get("role", "user")) != "user":
+                continue
+            content = message.get("content", "")
+            if isinstance(content, str):
+                message["content"] = f"Instruction: {content}"
+            else:
+                message["content"] = f"Instruction: {self._message_content(message)}"
+            break
+        text, _ = self._format_recipe_text(
+            native_messages,
+            [None] * len(native_messages),
+            [],
+            "",
+            img_keys,
+        )
+        return f"{text}<|im_start|>assistant\n"
 
     def preprocess_inputs(
         self,
@@ -2295,31 +2313,47 @@ class WallXPolicy(PreTrainedPolicy):
 
         image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
         orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-        tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
-        if user_text is None:
-            instructions = (
-                ["Describe what you observe in the current scene."] * batch_size
-                if kind == "caption"
-                else tasks
-            )
-        elif isinstance(user_text, str):
-            instructions = [user_text] * batch_size
-        elif len(user_text) == batch_size:
-            instructions = user_text
+        if "messages" in batch:
+            if user_text is not None:
+                raise ValueError("WALL-OSS received both preprocessed messages and caller text.")
+            messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
+            texts = [
+                process_grounding_points(
+                    self._format_generation_messages(messages, img_keys),
+                    orig_height,
+                    orig_width,
+                    resized_height,
+                    resized_width,
+                    MODEL_TYPE,
+                )
+                for messages in messages_batch
+            ]
         else:
-            raise ValueError(f"Expected one text prompt for each of the {batch_size} samples.")
+            tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
+            if user_text is None:
+                instructions = (
+                    ["Describe what you observe in the current scene."] * batch_size
+                    if kind == "caption"
+                    else tasks
+                )
+            elif isinstance(user_text, str):
+                instructions = [user_text] * batch_size
+            elif len(user_text) == batch_size:
+                instructions = user_text
+            else:
+                raise ValueError(f"Expected one text prompt for each of the {batch_size} samples.")
 
-        texts = [
-            process_grounding_points(
-                self._format_text_prompt(str(instruction), kind, img_keys),
-                orig_height,
-                orig_width,
-                resized_height,
-                resized_width,
-                MODEL_TYPE,
-            )
-            for instruction in instructions
-        ]
+            texts = [
+                process_grounding_points(
+                    self._format_text_prompt(str(instruction), kind, img_keys),
+                    orig_height,
+                    orig_width,
+                    resized_height,
+                    resized_width,
+                    MODEL_TYPE,
+                )
+                for instruction in instructions
+            ]
         inputs = preprocesser_call(
             processor=self.model.processor,
             text=texts,
@@ -2338,11 +2372,19 @@ class WallXPolicy(PreTrainedPolicy):
                 inputs[key] = value.to(batch[OBS_STATE].device)
         return inputs
 
-    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
-        """Answer `prompt` about the current observation with WALL-OSS's own text head."""
-        return self._one_text(batch, kind="vqa", user_text=prompt)
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response from contract-rendered messages and the current observation."""
+        if "messages" not in batch:
+            raise ValueError("WALL-OSS text generation requires preprocessed `messages`.")
+        return self._one_text(batch)
 
-    def _one_text(self, batch: dict[str, Tensor], *, kind: str, user_text: str | None = None) -> str:
+    def _one_text(
+        self,
+        batch: dict[str, Tensor],
+        *,
+        kind: str = "vqa",
+        user_text: str | None = None,
+    ) -> str:
         outputs = self.generate_texts(
             batch,
             kind=kind,
@@ -2370,8 +2412,8 @@ class WallXPolicy(PreTrainedPolicy):
     ) -> list[str]:
         """Generate WALL-OSS text for VQA, grounding, and language subtasks over a batch."""
         self.eval()
-        if kind not in {"vqa", "caption", "grounding", "text", "subtask"}:
-            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask'.")
+        if kind not in {"vqa", "caption", "grounding", "text"}:
+            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text'.")
         inputs = self._build_text_inputs(batch, kind=kind, user_text=user_text)
         prompt_length = inputs.input_ids.shape[1]
         sampling = temperature > 0

@@ -27,7 +27,7 @@ pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
-from lerobot.policies.factory import make_policy_config  # noqa: E402
+from lerobot.policies.factory import make_policy_config, make_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
@@ -35,6 +35,7 @@ from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, Wall
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
+from lerobot.processor import RenderGenerationPromptStep  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -188,16 +189,57 @@ def test_policy_exposes_text_generation(monkeypatch):
     inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
     monkeypatch.setattr(policy, "_build_text_inputs", lambda *args, **kwargs: inputs)
 
-    batch = {"observation.state": torch.zeros(1, 7), "task": ["pick up the cup"]}
+    batch = {
+        "observation.state": torch.zeros(1, 7),
+        "task": ["pick up the cup"],
+        "messages": [[{"role": "user", "content": "pick up the cup"}]],
+    }
 
-    assert policy.generate_texts(batch, kind="subtask") == ["move toward the cup"]
-    # The runtime contract is the single-sample form, decoding with `config.generation`.
-    assert policy.generate_text(batch, "pick up the cup") == "move toward the cup"
+    assert policy.generate_texts(batch, kind="vqa") == ["move toward the cup"]
+    # Runtime supplies caller text and kind before preprocessing; policy decoding
+    # receives only the resulting batch.
+    assert policy.generate_text(batch) == "move toward the cup"
     assert policy.supports_text_generation()
-    # Token-exact with the trained subtask wording, trailing newline included.
-    assert policy.build_prompt("subtask", task="clear the table") == (
-        "clear the table\nPredict the next action in language.\n"
+    assert policy._format_generation_messages(
+        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
+        ["observation.images.face_view"],
+    ).endswith(
+        "Instruction: clear the table\nPredict the next action in language.\n"
+        "<|im_end|>\n<|im_start|>assistant\n"
     )
+
+
+def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
+    config = WallXConfig(device="cpu")
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        "observation.images.face_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
+    }
+    config.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+    }
+    stats = {
+        "observation.state": {"mean": torch.zeros(7), "std": torch.ones(7)},
+        "action": {"mean": torch.zeros(7), "std": torch.ones(7)},
+    }
+
+    preprocessor, _ = make_pre_post_processors(config, dataset_stats=stats)
+    batch = preprocessor(
+        {
+            "observation.state": torch.zeros(7),
+            "observation.images.face_view": torch.zeros(3, 8, 8),
+            "task": "current subtask",
+            "query_kind": "next_subtask",
+            "text": "clear the table",
+        }
+    )
+
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert batch["messages"] == [
+        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}]
+    ]
+    assert "query_kind" not in batch
+    assert "text" not in batch
 
 
 @require_cuda
@@ -314,10 +356,8 @@ def test_subtask_prompt_is_token_exact_with_the_trained_template():
     )
     assert generated_subtask
 
-    ours = WallXPolicy._format_text_prompt(
-        SimpleNamespace(_observation_prompt=WallXPolicy._observation_prompt.__get__(object())),
-        "clear the table",
-        "subtask",
+    ours = _make_unloaded_policy()._format_generation_messages(
+        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
         list(img_keys),
     )
 
