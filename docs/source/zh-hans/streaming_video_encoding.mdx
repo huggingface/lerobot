@@ -14,12 +14,12 @@
 
 ## 2. 调参参数
 
-| 参数                    | CLI 标志                           | 类型          | 默认值        | 描述                                                        |
-| ----------------------- | ---------------------------------- | ------------- | ------------- | ----------------------------------------------------------- |
-| `streaming_encoding`    | `--dataset.streaming_encoding`     | `bool`        | `True`        | 在采集过程中启用实时编码                                    |
-| `vcodec`                | `--dataset.vcodec`                 | `str`         | `"libsvtav1"` | 视频编解码器。`"auto"` 自动检测最佳硬件编码器               |
-| `encoder_threads`       | `--dataset.encoder_threads`        | `int \| None` | `None`（自动）| 每个编码器实例的线程数。`None` 由编解码器自行决定           |
-| `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize`  | `int`         | `60`          | 每个摄像头的最大缓冲帧数（30fps 下约 2 秒），消耗 RAM       |
+| 参数                    | CLI 标志                          | 类型          | 默认值         | 描述                                                  |
+| ----------------------- | --------------------------------- | ------------- | -------------- | ----------------------------------------------------- |
+| `streaming_encoding`    | `--dataset.streaming_encoding`    | `bool`        | `True`         | 在采集过程中启用实时编码                              |
+| `vcodec`                | `--dataset.vcodec`                | `str`         | `"libsvtav1"`  | 视频编解码器。`"auto"` 自动检测最佳硬件编码器         |
+| `encoder_threads`       | `--dataset.encoder_threads`       | `int \| None` | `None`（自动） | 每个编码器实例的线程数。`None` 由编解码器自行决定     |
+| `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize` | `int`         | `60`           | 每个摄像头的最大缓冲帧数（30fps 下约 2 秒），消耗 RAM |
 
 ## 3. 性能注意事项
 
@@ -32,11 +32,11 @@
 
 ### 分辨率与摄像头数量的影响
 
-| 配置                         | 吞吐量（像素/秒） | CPU 编码负载 | 备注                         |
-| ---------------------------- | ----------------- | ------------ | ---------------------------- |
-| 2摄像头×640x480x3 @30fps     | 55M               | 低           | 大多数系统可正常运行         |
-| 2摄像头×1280x720x3 @30fps    | 165M              | 中等         | 现代系统可轻松应对           |
-| 2摄像头×1920x1080x3 @30fps   | 373M              | 高           | 需要高性能 CPU               |
+| 配置                       | 吞吐量（像素/秒） | CPU 编码负载 | 备注                 |
+| -------------------------- | ----------------- | ------------ | -------------------- |
+| 2摄像头×640x480x3 @30fps   | 55M               | 低           | 大多数系统可正常运行 |
+| 2摄像头×1280x720x3 @30fps  | 165M              | 中等         | 现代系统可轻松应对   |
+| 2摄像头×1920x1080x3 @30fps | 373M              | 高           | 需要高性能 CPU       |
 
 ### `encoder_threads` 调优
 
@@ -74,23 +74,23 @@
 
 ### 选择编解码器
 
-| 编解码器              | CPU 占用 | 文件大小        | 质量 | 备注                                               |
-| --------------------- | -------- | --------------- | ---- | -------------------------------------------------- |
-| `libsvtav1`（默认）   | 高       | 最小            | 最佳 | 默认值。压缩率最高但 CPU 占用最高                  |
-| `h264`                | 中等     | 大约大 30-50%   | 良好 | 软件 H.264，CPU 占用较低                           |
-| 硬件编码器            | 极低     | 最大            | 良好 | 卸载至专用硬件，适合 CPU 受限系统                  |
+| 编解码器            | CPU 占用 | 文件大小      | 质量 | 备注                              |
+| ------------------- | -------- | ------------- | ---- | --------------------------------- |
+| `libsvtav1`（默认） | 高       | 最小          | 最佳 | 默认值。压缩率最高但 CPU 占用最高 |
+| `h264`              | 中等     | 大约大 30-50% | 良好 | 软件 H.264，CPU 占用较低          |
+| 硬件编码器          | 极低     | 最大          | 良好 | 卸载至专用硬件，适合 CPU 受限系统 |
 
 ### 可用硬件编码器
 
-| 编码器              | 平台          | 硬件                                                                               | CLI 值                                 |
-| ------------------- | ------------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
-| `h264_videotoolbox` | macOS         | Apple Silicon / Intel                                                              | `--dataset.vcodec=h264_videotoolbox`   |
-| `hevc_videotoolbox` | macOS         | Apple Silicon / Intel                                                              | `--dataset.vcodec=hevc_videotoolbox`   |
-| `h264_nvenc`        | Linux/Windows | NVIDIA GPU                                                                         | `--dataset.vcodec=h264_nvenc`          |
-| `hevc_nvenc`        | Linux/Windows | NVIDIA GPU                                                                         | `--dataset.vcodec=hevc_nvenc`          |
-| `h264_vaapi`        | Linux         | Intel/AMD GPU                                                                      | `--dataset.vcodec=h264_vaapi`          |
-| `h264_qsv`          | Linux/Windows | Intel Quick Sync                                                                   | `--dataset.vcodec=h264_qsv`            |
-| `auto`              | 任意          | 自动探测系统可用的硬件编码器，若未找到则回退到 `libsvtav1`                         | `--dataset.vcodec=auto`                |
+| 编码器              | 平台          | 硬件                                                       | CLI 值                               |
+| ------------------- | ------------- | ---------------------------------------------------------- | ------------------------------------ |
+| `h264_videotoolbox` | macOS         | Apple Silicon / Intel                                      | `--dataset.vcodec=h264_videotoolbox` |
+| `hevc_videotoolbox` | macOS         | Apple Silicon / Intel                                      | `--dataset.vcodec=hevc_videotoolbox` |
+| `h264_nvenc`        | Linux/Windows | NVIDIA GPU                                                 | `--dataset.vcodec=h264_nvenc`        |
+| `hevc_nvenc`        | Linux/Windows | NVIDIA GPU                                                 | `--dataset.vcodec=hevc_nvenc`        |
+| `h264_vaapi`        | Linux         | Intel/AMD GPU                                              | `--dataset.vcodec=h264_vaapi`        |
+| `h264_qsv`          | Linux/Windows | Intel Quick Sync                                           | `--dataset.vcodec=h264_qsv`          |
+| `auto`              | 任意          | 自动探测系统可用的硬件编码器，若未找到则回退到 `libsvtav1` | `--dataset.vcodec=auto`              |
 
 > [!NOTE]
 > 使用硬件加速编码器可能需要升级 GPU 驱动程序。
@@ -100,15 +100,15 @@
 
 ## 5. 故障排除
 
-| 症状                                                 | 可能原因                         | 解决方案                                                                                                                                                                                               |
-| ---------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 系统卡死、机器人运动不流畅或 Rerun 可视化滞后        | CPU 不足（占用率 100%）          | 关闭其他应用，降低编码吞吐量，减小 `encoder_threads`，使用 `h264`，设置 `display_data=False`。若 CPU 持续 100%，说明配置超出系统能力，考虑使用 `--dataset.streaming_encoding=false` 或硬件编码（`--dataset.vcodec=auto`） |
-| "Encoder queue full"警告或数据集中存在丢帧            | 编码器跟不上（队列溢出）         | 若 CPU 未达 100%：增大 `encoder_threads`，增大 `encoder_queue_maxsize`，或使用硬件编码（`--dataset.vcodec=auto`）                                                                                       |
-| RAM 占用过高                                          | 队列填充速度快于编码速度         | `encoder_threads` 过低或 CPU 不足，减小 `encoder_queue_maxsize` 或使用硬件编码                                                                                                                         |
-| 视频文件过大                                          | 使用了硬件编码器或 H.264         | 预期的权衡，若 CPU 允许可切换回 `libsvtav1`                                                                                                                                                            |
-| `save_episode()` 仍然很慢                             | `streaming_encoding` 为 `False`  | 设置 `--dataset.streaming_encoding=true`                                                                                                                                                               |
-| 编码器线程崩溃                                        | 编解码器不可用或设置无效         | 检查 `vcodec` 是否已安装，尝试 `--dataset.vcodec=auto`                                                                                                                                                 |
-| 录制的数据集缺少帧                                    | CPU/GPU 不足或偶发性负载峰值     | 若约 5% 的帧缺失，说明系统过载，请按上述建议操作；若缺失帧较少（约 2%），可能是启动时的偶发性瞬时负载峰值所致，属正常现象                                                                              |
+| 症状                                          | 可能原因                        | 解决方案                                                                                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 系统卡死、机器人运动不流畅或 Rerun 可视化滞后 | CPU 不足（占用率 100%）         | 关闭其他应用，降低编码吞吐量，减小 `encoder_threads`，使用 `h264`，设置 `display_data=False`。若 CPU 持续 100%，说明配置超出系统能力，考虑使用 `--dataset.streaming_encoding=false` 或硬件编码（`--dataset.vcodec=auto`） |
+| "Encoder queue full"警告或数据集中存在丢帧    | 编码器跟不上（队列溢出）        | 若 CPU 未达 100%：增大 `encoder_threads`，增大 `encoder_queue_maxsize`，或使用硬件编码（`--dataset.vcodec=auto`）                                                                                                         |
+| RAM 占用过高                                  | 队列填充速度快于编码速度        | `encoder_threads` 过低或 CPU 不足，减小 `encoder_queue_maxsize` 或使用硬件编码                                                                                                                                            |
+| 视频文件过大                                  | 使用了硬件编码器或 H.264        | 预期的权衡，若 CPU 允许可切换回 `libsvtav1`                                                                                                                                                                               |
+| `save_episode()` 仍然很慢                     | `streaming_encoding` 为 `False` | 设置 `--dataset.streaming_encoding=true`                                                                                                                                                                                  |
+| 编码器线程崩溃                                | 编解码器不可用或设置无效        | 检查 `vcodec` 是否已安装，尝试 `--dataset.vcodec=auto`                                                                                                                                                                    |
+| 录制的数据集缺少帧                            | CPU/GPU 不足或偶发性负载峰值    | 若约 5% 的帧缺失，说明系统过载，请按上述建议操作；若缺失帧较少（约 2%），可能是启动时的偶发性瞬时负载峰值所致，属正常现象                                                                                                 |
 
 ## 6. 推荐配置
 

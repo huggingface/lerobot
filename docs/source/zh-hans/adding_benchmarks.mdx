@@ -8,11 +8,11 @@
 
 开始前，请先了解当前已经集成的基准测试：
 
-| 基准测试 | 环境文件 | 配置类 | 任务 | 动作维度 | 处理器 |
-| -------- | -------- | ------ | ---- | -------- | ------ |
-| LIBERO | `envs/libero.py` | `LiberoEnv` | 5 个套件共 130 个 | 7 | `LiberoProcessorStep` |
-| Meta-World | `envs/metaworld.py` | `MetaworldEnv` | 50（MT50） | 4 | 无 |
-| IsaacLab Arena | Hub 托管 | `IsaaclabArenaEnv` | 可配置 | 可配置 | `IsaaclabArenaProcessorStep` |
+| 基准测试       | 环境文件            | 配置类             | 任务              | 动作维度 | 处理器                       |
+| -------------- | ------------------- | ------------------ | ----------------- | -------- | ---------------------------- |
+| LIBERO         | `envs/libero.py`    | `LiberoEnv`        | 5 个套件共 130 个 | 7        | `LiberoProcessorStep`        |
+| Meta-World     | `envs/metaworld.py` | `MetaworldEnv`     | 50（MT50）        | 4        | 无                           |
+| IsaacLab Arena | Hub 托管            | `IsaaclabArenaEnv` | 可配置            | 可配置   | `IsaaclabArenaProcessorStep` |
 
 请将 `src/lerobot/envs/libero.py` 和 `src/lerobot/envs/metaworld.py` 作为参考实现。
 
@@ -70,11 +70,11 @@ LeRobot 不强制规定严格的观测模式，而是依赖所有基准测试共
 
 你的 `gym.Env` 必须设置以下属性：
 
-| 属性 | 类型 | 用途 |
-| ---- | ---- | ---- |
-| `_max_episode_steps` | `int` | `rollout()` 使用它限制单回合长度 |
-| `task_description` | `str` | 作为语言指令传递给 VLA 策略 |
-| `task` | `str` | 未设置 `task_description` 时使用的备用标识符 |
+| 属性                 | 类型  | 用途                                         |
+| -------------------- | ----- | -------------------------------------------- |
+| `_max_episode_steps` | `int` | `rollout()` 使用它限制单回合长度             |
+| `task_description`   | `str` | 作为语言指令传递给 VLA 策略                  |
+| `task`               | `str` | 未设置 `task_description` 时使用的备用标识符 |
 
 ### 成功状态报告
 
@@ -89,13 +89,13 @@ return observation, reward, terminated, truncated, info
 
 最简单的方法是将仿真器的输出映射到 `preprocess_observation()` 已经能够识别的标准键名。在你的 `gym.Env` 中（例如在 `_format_raw_obs()` 辅助函数中）完成映射：
 
-| 环境应输出的键 | LeRobot 映射到的键 | 含义 |
-| -------------- | ------------------ | ---- |
-| `"pixels"`（单个数组） | `observation.image` | 单个摄像头图像，HWC uint8 |
-| `"pixels"`（字典） | `observation.images.<cam>` | 多个摄像头，每个都是 HWC uint8 |
-| `"agent_pos"` | `observation.state` | 本体感知状态向量 |
-| `"environment_state"` | `observation.env_state` | 完整环境状态（例如 PushT） |
-| `"robot_state"` | `observation.robot_state` | 嵌套的机器人状态字典（例如 LIBERO） |
+| 环境应输出的键         | LeRobot 映射到的键         | 含义                                |
+| ---------------------- | -------------------------- | ----------------------------------- |
+| `"pixels"`（单个数组） | `observation.image`        | 单个摄像头图像，HWC uint8           |
+| `"pixels"`（字典）     | `observation.images.<cam>` | 多个摄像头，每个都是 HWC uint8      |
+| `"agent_pos"`          | `observation.state`        | 本体感知状态向量                    |
+| `"environment_state"`  | `observation.env_state`    | 完整环境状态（例如 PushT）          |
+| `"robot_state"`        | `observation.robot_state`  | 嵌套的机器人状态字典（例如 LIBERO） |
 
 如果仿真器使用不同的键名，有两种选择：
 
@@ -116,21 +116,22 @@ return observation, reward, terminated, truncated, info
 ## 分步实施
 
 <Tip>
-  至少需要两个文件：一个 **gym.Env 封装器**，以及一个带有
-  `create_envs()` 重写方法的 **EnvConfig 子类**。其他内容都是可选的，或者用于补充文档。无需修改 `factory.py`。
+  至少需要两个文件：一个 **gym.Env 封装器**，以及一个带有 `create_envs()`
+  重写方法的 **EnvConfig 子类**。其他内容都是可选的，或者用于补充文档。无需修改
+  `factory.py`。
 </Tip>
 
 ### 检查清单
 
-| 文件 | 是否必需 | 用途 |
-| ---- | -------- | ---- |
-| `src/lerobot/envs/<benchmark>.py` | 是 | 将仿真器封装为标准 gym.Env |
-| `src/lerobot/envs/configs.py` | 是 | 注册基准测试及其供 CLI 使用的 `create_envs()` |
-| `src/lerobot/processor/env_processor.py` | 可选 | 自定义观测/动作变换 |
-| `src/lerobot/envs/utils.py` | 可选 | 仅在需要新的原始观测键时使用 |
-| `pyproject.toml` | 是 | 声明基准测试专用依赖 |
-| `docs/source/<benchmark>.mdx` | 是 | 面向用户的文档页面 |
-| `docs/source/_toctree.yml` | 是 | 将页面添加到文档侧边栏 |
+| 文件                                     | 是否必需 | 用途                                          |
+| ---------------------------------------- | -------- | --------------------------------------------- |
+| `src/lerobot/envs/<benchmark>.py`        | 是       | 将仿真器封装为标准 gym.Env                    |
+| `src/lerobot/envs/configs.py`            | 是       | 注册基准测试及其供 CLI 使用的 `create_envs()` |
+| `src/lerobot/processor/env_processor.py` | 可选     | 自定义观测/动作变换                           |
+| `src/lerobot/envs/utils.py`              | 可选     | 仅在需要新的原始观测键时使用                  |
+| `pyproject.toml`                         | 是       | 声明基准测试专用依赖                          |
+| `docs/source/<benchmark>.mdx`            | 是       | 面向用户的文档页面                            |
+| `docs/source/_toctree.yml`               | 是       | 将页面添加到文档侧边栏                        |
 
 ### 1. gym.Env 封装器（`src/lerobot/envs/<benchmark>.py`）
 
