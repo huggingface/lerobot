@@ -32,6 +32,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.rollout import (  # noqa: E402
+    AskResult,
     InferenceEngine,
     InteractiveCommand,
     InteractiveSession,
@@ -179,6 +180,20 @@ class _FakeEngine(InferenceEngine):
         self.resume = MagicMock()
         self.notify_observation = MagicMock()
         self.get_action = MagicMock(return_value=None)
+        # Text queries: answer inline on the caller's thread like the sync
+        # backend, so tests drive the real service/deliver plumbing.
+        self.text_error: Exception | None = None
+        self.seen_query_obs: list = []
+
+    def pump_query(self, obs_processed=None) -> None:
+        self._service_query(obs_processed)
+        self._deliver_answer()
+
+    def _generate_text(self, obs_processed: dict, question: str) -> str:
+        self.seen_query_obs.append(obs_processed)
+        if self.text_error is not None:
+            raise self.text_error
+        return f"answer: {question}"
 
 
 def _make_ctx(run_behavior=None):
@@ -212,10 +227,21 @@ def _make_ctx(run_behavior=None):
 # ---------------------------------------------------------------------------
 
 
-def _make_controller(run_behavior=None):
+def _event_recorder(events: list, answers: list | None = None):
+    """Adapter for the controller's ``(event, payload)`` callback."""
+
+    def record(event, payload=None):
+        events.append(event)
+        if answers is not None and payload is not None:
+            answers.append(payload)
+
+    return record
+
+
+def _make_controller(run_behavior=None, answers=None):
     ctx, strategy, engine, parent, run_started = _make_ctx(run_behavior)
     events: list[RolloutEvent] = []
-    controller = RolloutController(strategy, ctx, on_event=events.append)
+    controller = RolloutController(strategy, ctx, on_event=_event_recorder(events, answers))
     return controller, events, strategy, engine, parent, run_started
 
 
@@ -377,7 +403,7 @@ def test_controller_reset_skipped_without_initial_position():
     ctx, strategy, _engine, _parent, _run_started = _make_ctx()
     ctx.hardware.initial_position = {}
     events: list[RolloutEvent] = []
-    controller = RolloutController(strategy, ctx, on_event=events.append)
+    controller = RolloutController(strategy, ctx, on_event=_event_recorder(events))
     thread = _serve_thread(controller)
 
     controller.reset()
@@ -391,7 +417,7 @@ def test_controller_reset_skipped_without_initial_position():
 def test_controller_callback_errors_do_not_kill_serve():
     ctx, strategy, _engine, _parent, run_started = _make_ctx()
 
-    def broken_observer(event):
+    def broken_observer(event, payload=None):
         raise RuntimeError("observer boom")
 
     controller = RolloutController(strategy, ctx, on_event=broken_observer)
@@ -1111,6 +1137,256 @@ def test_sentry_discards_tail_episode_when_final_save_fails(monkeypatch):
     dataset.writer.cancel_pending_videos.assert_called_once()
     assert dataset.writer.episode_buffer is None
     dataset.finalize.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Text queries (/vqa)
+# ---------------------------------------------------------------------------
+
+
+def _pumping_run(started: Event, obs: dict | None = None):
+    """A fake control loop that pumps the engine's query channel every tick."""
+    tick_obs = obs if obs is not None else {"joint.pos": 0.0}
+
+    def run(ctx):
+        started.set()
+        while not ctx.runtime.shutdown_event.is_set():
+            ctx.policy.inference.pump_query(tick_obs)
+            time.sleep(0.005)
+
+    return run
+
+
+def test_engine_query_channel_holds_one_question():
+    engine = _FakeEngine()
+    assert not engine.has_pending_query
+
+    assert engine.ask("what do you see?") is True
+    assert engine.has_pending_query
+    # A second question must not silently displace the unanswered one.
+    assert engine.ask("and now?") is False
+
+    assert engine.drop_pending_query() == "what do you see?"
+    assert not engine.has_pending_query
+    assert engine.drop_pending_query() is None
+
+
+def test_engine_answers_question_and_delivers_once():
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.ask("is the cube in the box?")
+    engine.pump_query({"joint.pos": 1.0})
+
+    assert len(delivered) == 1
+    assert delivered[0].ok
+    assert delivered[0].question == "is the cube in the box?"
+    assert delivered[0].answer == "answer: is the cube in the box?"
+    # The answer was generated from the observation handed to pump_query.
+    assert engine.seen_query_obs == [{"joint.pos": 1.0}]
+
+    # The slot is drained, so a second pump delivers nothing.
+    engine.pump_query({"joint.pos": 1.0})
+    assert len(delivered) == 1
+
+
+def test_engine_query_without_observation_stays_queued():
+    """The controller's idle poll pumps with no observation; the question waits."""
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.ask("what do you see?")
+    engine.pump_query(None)
+
+    assert engine.has_pending_query
+    assert delivered == []
+    assert engine.seen_query_obs == []
+
+
+def test_engine_query_failure_becomes_an_error_answer():
+    """A policy that cannot answer must not take down the calling loop."""
+    engine = _FakeEngine()
+    engine.text_error = RuntimeError("no text head")
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.ask("what do you see?")
+    engine.pump_query({"joint.pos": 0.0})
+
+    assert len(delivered) == 1
+    assert not delivered[0].ok
+    assert "RuntimeError: no text head" in delivered[0].error
+
+
+def test_engine_reports_policy_without_text_head():
+    class _PolicyWithoutTextHead:
+        pass
+
+    with pytest.raises(NotImplementedError, match="has no generate_text"):
+        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?")
+
+
+def test_controller_ask_rejected_while_idle():
+    """No segment means no observation stream, so there is nothing to answer from."""
+    controller, _events, _strategy, engine, _parent, _run_started = _make_controller()
+    thread = _serve_thread(controller)
+
+    assert controller.ask("what do you see?") is AskResult.NOT_RUNNING
+    assert not engine.has_pending_query
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_ask_answers_via_event():
+    started = Event()
+    answers = []
+    controller, events, _strategy, _engine, _parent, _run_started = _make_controller(
+        run_behavior=_pumping_run(started), answers=answers
+    )
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(started.is_set)
+
+    assert controller.ask("is the cube in the box?") is AskResult.QUEUED
+    assert _wait_for(lambda: bool(answers))
+
+    assert RolloutEvent.QUERY_ANSWERED in events
+    assert answers[0].ok
+    assert answers[0].question == "is the cube in the box?"
+    assert answers[0].answer == "answer: is the cube in the box?"
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_ask_rejects_a_second_question_while_one_is_pending():
+    # The default run behaviour never pumps, so the first question stays queued.
+    controller, _events, _strategy, _engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(run_started.is_set)
+
+    assert controller.ask("first?") is AskResult.QUEUED
+    assert controller.ask("second?") is AskResult.BUSY
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_drops_pending_question_when_segment_ends():
+    """Left in the slot it would be answered against a different scene later."""
+    answers = []
+    controller, _events, _strategy, engine, _parent, run_started = _make_controller(answers=answers)
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    assert controller.ask("what do you see?") is AskResult.QUEUED
+
+    controller.reset()
+    assert _wait_for(lambda: bool(answers))
+
+    assert not answers[0].ok
+    assert answers[0].question == "what do you see?"
+    assert "run ended" in answers[0].error
+    assert not engine.has_pending_query
+
+    # A fresh segment must not resurrect it.
+    run_started.clear()
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    assert not engine.has_pending_query
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_session_vqa_usage_and_idle_rejection(capsys):
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/vqa")
+        session._handle_line("/vqa what do you see?")
+
+        out = capsys.readouterr().out
+        assert "Usage: /vqa <question>" in out
+        assert "Not running" in out
+        assert not engine.has_pending_query
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
+    """End-to-end: /vqa is answered from the live observation of a running loop."""
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    parent = Event()
+    stop_event = LinkedEvent(parent)
+    engine = _FakeEngine()
+
+    robot = MagicMock()
+    robot.get_observation.return_value = {"joint.pos": 0.42}
+
+    def identity(x):
+        return x
+
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                play_sounds=False,
+                fps=100.0,
+                duration=0.0,
+                use_torch_compile=False,
+                interpolation_multiplier=1,
+                display_data=False,
+            ),
+            shutdown_event=stop_event,
+        ),
+        policy=SimpleNamespace(inference=engine),
+        hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
+        processors=SimpleNamespace(
+            teleop_action_processor=identity,
+            robot_action_processor=identity,
+            robot_observation_processor=identity,
+        ),
+        data=SimpleNamespace(dataset=None, dataset_features={}, hw_features={}, ordered_action_keys=[]),
+    )
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(ctx)
+    strategy.return_to_initial_position = MagicMock()  # skip the 3s hardware sweep
+
+    with _pipe_stream() as (reader, _writer):
+        session = InteractiveSession(strategy, ctx, input_stream=reader)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/start")
+        assert _wait_for(lambda: robot.get_observation.call_count >= 3)
+
+        session._handle_line("/vqa is the cube in the box?")
+        assert _wait_for(lambda: bool(engine.seen_query_obs))
+        # The answer is delivered by the same pump call that produced it; let
+        # a couple more ticks run so the print has definitely landed.
+        ticks = robot.get_observation.call_count
+        assert _wait_for(lambda: robot.get_observation.call_count > ticks + 2)
+
+        out = capsys.readouterr().out
+        assert "Asked: 'is the cube in the box?'" in out
+        assert "Q: is the cube in the box?" in out
+        assert "A: answer: is the cube in the box?" in out
+        # Answered from the observation the running control loop just read.
+        assert engine.seen_query_obs[0] == {"joint.pos": 0.42}
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
 
 
 # ---------------------------------------------------------------------------

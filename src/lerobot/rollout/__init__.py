@@ -39,6 +39,7 @@ from .context import (
     build_rollout_context,
 )
 from .controller import (
+    AskResult,
     LinkedEvent,
     RolloutController,
     RolloutEvent,
@@ -46,6 +47,7 @@ from .controller import (
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
+    QueryAnswer,
     RTCInferenceConfig,
     RTCInferenceEngine,
     SyncInferenceConfig,
@@ -68,6 +70,7 @@ from .strategies import (
 )
 
 __all__ = [
+    "AskResult",
     "BaseStrategy",
     "BaseStrategyConfig",
     "DAggerKeyboardConfig",
@@ -87,6 +90,7 @@ __all__ = [
     "LinkedEvent",
     "PolicyContext",
     "ProcessorContext",
+    "QueryAnswer",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
     "RolloutConfig",

@@ -23,11 +23,33 @@ from __future__ import annotations
 
 import abc
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from threading import Lock
 
 import torch
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class QueryAnswer:
+    """Result of a policy text query (the interactive session's ``/vqa``).
+
+    Exactly one of ``answer`` / ``error`` is set: ``error`` carries the
+    reason the question could not be answered (policy without a text head,
+    inference failure, run ended first) so the caller can report it instead
+    of silently dropping the question.
+    """
+
+    question: str
+    answer: str | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when the policy produced an answer."""
+        return self.error is None
 
 
 class InferenceEngine(abc.ABC):
@@ -63,13 +85,27 @@ class InferenceEngine(abc.ABC):
     while actions produced under the previous instruction are still
     being consumed.
 
+    Text queries
+    ------------
+    ``ask`` queues a question for the policy's text head.  Like
+    ``set_task`` it is safe to call from any thread (the interactive
+    session's ``/vqa`` command calls it from its stdin reader) and never
+    touches the policy itself: the question is answered by the thread
+    that *owns* the policy — the control thread for sync backends, the
+    background inference thread for async ones — through
+    :meth:`_service_query`.  The answer lands in a slot and is handed to
+    the observer registered via :meth:`set_answer_observer` when the
+    control thread next calls :meth:`pump_query`, so observers never fire
+    on a background inference thread.
+
     Optional hooks
     --------------
-    ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
-    so rollout strategies can invoke them unconditionally.
+    ``notify_observation`` / ``pause`` / ``resume`` / ``pump_query`` have
+    a no-op default so rollout strategies can invoke them
+    unconditionally.
 
-    Subclasses must call ``super().__init__(task=...)``; the task holder
-    is set up there.
+    Subclasses must call ``super().__init__(task=...)``; the task and
+    query holders are set up there.
     """
 
     def __init__(self, task: str = "") -> None:
@@ -77,6 +113,13 @@ class InferenceEngine(abc.ABC):
         self._task_changed = False
         self._dispatched_task = task
         self._task_lock = Lock()
+
+        # Text-query channel.  Its own lock, so a slow generate never
+        # blocks a concurrent ``set_task`` (and vice versa).
+        self._query_lock = Lock()
+        self._pending_question: str | None = None
+        self._ready_answer: QueryAnswer | None = None
+        self._answer_observer: Callable[[QueryAnswer], None] | None = None
 
     # ------------------------------------------------------------------
     # Task (language instruction)
@@ -147,6 +190,118 @@ class InferenceEngine(abc.ABC):
         with self._task_lock:
             self._task_changed = False
             self._dispatched_task = self._task
+
+    # ------------------------------------------------------------------
+    # Text queries (VQA)
+    # ------------------------------------------------------------------
+
+    def set_answer_observer(self, observer: Callable[[QueryAnswer], None] | None) -> None:
+        """Register the callback :meth:`pump_query` hands ready answers to."""
+        with self._query_lock:
+            self._answer_observer = observer
+
+    @property
+    def has_pending_query(self) -> bool:
+        """True while a question is queued and not yet answered."""
+        with self._query_lock:
+            return self._pending_question is not None
+
+    def ask(self, question: str) -> bool:
+        """Queue ``question`` for the policy's text head.
+
+        Callable from any thread.  Returns ``False`` when a question is
+        already pending — the channel holds one at a time, so a second
+        question cannot silently displace an unanswered one.
+        """
+        with self._query_lock:
+            if self._pending_question is not None:
+                return False
+            self._pending_question = question
+        return True
+
+    def drop_pending_query(self) -> str | None:
+        """Discard an unanswered question, returning it (or ``None``).
+
+        The controller calls this when a run segment ends: the question
+        would otherwise sit in the slot and be answered against a
+        completely different scene the next time the robot starts.
+        """
+        with self._query_lock:
+            dropped, self._pending_question = self._pending_question, None
+        return dropped
+
+    def pump_query(self, obs_processed: dict | None = None) -> None:
+        """Service the query channel.  Call from the control thread only.
+
+        Backends whose policy is owned by a background thread answer
+        there and only *deliver* here (this default).  Backends that run
+        inference on the control thread override this to also answer, so
+        the policy is still only ever touched by its owning thread.
+
+        ``obs_processed`` is the processed observation of the current
+        control tick; pass ``None`` when none is available (the
+        controller's idle poll does) and any pending question is left
+        queued rather than answered without a view.
+        """
+        self._deliver_answer()
+
+    def _take_question(self) -> str | None:
+        """Claim the pending question.  Call from the policy-owning thread."""
+        with self._query_lock:
+            question, self._pending_question = self._pending_question, None
+            return question
+
+    def _service_query(self, obs_processed: dict | None) -> None:
+        """Answer a pending question.  Call ONLY from the policy-owning thread.
+
+        Failures are captured into the answer rather than raised: a
+        question the policy cannot handle must not take down the control
+        loop or the background inference thread.
+        """
+        if obs_processed is None:
+            return
+        question = self._take_question()
+        if question is None:
+            return
+        try:
+            answer = self._generate_text(obs_processed, question)
+        except Exception as e:
+            logger.exception("Policy text query failed for question %r", question)
+            self._publish_answer(QueryAnswer(question=question, error=f"{type(e).__name__}: {e}"))
+        else:
+            self._publish_answer(QueryAnswer(question=question, answer=answer))
+
+    def _generate_text(self, obs_processed: dict, question: str) -> str:
+        """Run the policy's text head on ``obs_processed``.  Backend-specific."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support text queries — no /vqa on this backend."
+        )
+
+    @staticmethod
+    def _policy_generate_text(policy, observation: dict, question: str) -> str:
+        """Call the policy's text head, with a clear error when it has none."""
+        generate = getattr(policy, "generate_text", None)
+        if not callable(generate):
+            raise NotImplementedError(
+                f"{type(policy).__name__} has no generate_text(observation, question) — "
+                "this policy cannot answer questions."
+            )
+        return str(generate(observation, question))
+
+    def _publish_answer(self, answer: QueryAnswer) -> None:
+        with self._query_lock:
+            self._ready_answer = answer
+
+    def _deliver_answer(self) -> None:
+        with self._query_lock:
+            answer, self._ready_answer = self._ready_answer, None
+            observer = self._answer_observer
+        if answer is None or observer is None:
+            return
+        try:
+            observer(answer)
+        except Exception:  # a broken observer must not kill the control loop
+            logger.exception("Error in inference-engine answer observer")
 
     @abc.abstractmethod
     def start(self) -> None:

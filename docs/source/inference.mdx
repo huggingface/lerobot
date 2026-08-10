@@ -260,6 +260,7 @@ lerobot-rollout \
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/start`          | Start (or restart) the policy control loop                                                                                                                                         |
 | `/subtask <text>` | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/vqa <text>`     | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
 | `/reset`          | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
 | `/stop`           | End the session and run the normal shutdown routines                                                                                                                               |
 | `/help`           | List the commands                                                                                                                                                                  |
@@ -269,6 +270,10 @@ lerobot-rollout \
 Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
 > /subtask put the cube in the box
 Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /vqa is the cube inside the box?
+Asked: 'is the cube inside the box?' — answering from the next observation...
+Q: is the cube inside the box?
+A: No — the cube is on the table to the left of the box.
 > /reset
 Task restored to 'pick up the cube'
 Resetting — returning the robot to its initial position...
@@ -288,6 +293,12 @@ Robot reset — holding at initial position. /start to run.
 - **RTC** (`--inference.type=rtc`) — the next chunk is generated under the new instruction and merged over the previous chunk's leftover prefix, so the switch lands within one inference and the motion stays continuous. The queue is deliberately not cleared: that would leave the robot without commands for a full inference latency. (With blending turned off via `--inference.rtc.enabled=false` the queued chunk drains first, so the switch lands up to one chunk later.)
 
 With `--use_torch_compile=true`, a switch whose instruction tokenizes to a different length can trigger a recompilation on the next forward pass, pausing inference for as long as the original warm-up took. Prefer leaving compilation off for sessions where you expect to re-instruct the policy often.
+
+**How `/vqa` reaches the policy.** Same publish/consume split as `/subtask`: the stdin reader queues the question and returns immediately, and the thread that owns the policy answers it — the control thread for sync, the inference thread for RTC. The answer is printed when it is ready, so you can keep issuing commands in the meantime. One question is held at a time; a second is rejected until the first resolves.
+
+Text generation takes much longer than a control tick, so while the policy answers it produces no new actions: the robot finishes any actions already queued and then holds position until the answer lands. Time spent answering counts against `--duration`.
+
+`/vqa` is only accepted while a run is in progress. Engines are fed observations by the control loop and by nothing else, so an idle engine has no current view to answer from — ask after `/start`, not before. For the same reason a question still unanswered when a segment ends is dropped and reported rather than carried over, so it can never be answered against a scene from before a `/reset`.
 
 **Logs below ERROR are muted while the session runs** so routine output doesn't interleave with what you're typing; errors and fatal inference failures still show, and normal logging resumes when the session ends. The gate is process-wide (it also withholds INFO/WARNING from any file handler you attached for the duration). Run without `--interactive` to watch the live log.
 
