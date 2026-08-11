@@ -38,14 +38,28 @@ from .context import (
     RuntimeContext,
     build_rollout_context,
 )
+from .controller import (
+    AskResult,
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+)
 from .inference import (
     InferenceEngine,
     InferenceEngineConfig,
+    PolicyQuery,
+    QueryAnswer,
+    QueryKind,
     RTCInferenceConfig,
     RTCInferenceEngine,
     SyncInferenceConfig,
     SyncInferenceEngine,
     create_inference_engine,
+)
+from .interactive import (
+    InteractiveCommand,
+    InteractiveSession,
+    parse_command,
 )
 from .strategies import (
     BaseStrategy,
@@ -58,6 +72,7 @@ from .strategies import (
 )
 
 __all__ = [
+    "AskResult",
     "BaseStrategy",
     "BaseStrategyConfig",
     "DAggerKeyboardConfig",
@@ -65,19 +80,27 @@ __all__ = [
     "DAggerStrategy",
     "DAggerStrategyConfig",
     "DatasetContext",
+    "EpisodicStrategy",
+    "EpisodicStrategyConfig",
     "HardwareContext",
     "HighlightStrategy",
     "HighlightStrategyConfig",
-    "EpisodicStrategy",
-    "EpisodicStrategyConfig",
     "InferenceEngine",
     "InferenceEngineConfig",
+    "InteractiveCommand",
+    "InteractiveSession",
+    "LinkedEvent",
     "PolicyContext",
+    "PolicyQuery",
     "ProcessorContext",
+    "QueryAnswer",
+    "QueryKind",
     "RTCInferenceConfig",
     "RTCInferenceEngine",
     "RolloutConfig",
     "RolloutContext",
+    "RolloutController",
+    "RolloutEvent",
     "RolloutStrategy",
     "RolloutStrategyConfig",
     "RuntimeContext",
@@ -88,4 +111,5 @@ __all__ = [
     "build_rollout_context",
     "create_inference_engine",
     "create_strategy",
+    "parse_command",
 ]
