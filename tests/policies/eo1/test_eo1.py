@@ -285,7 +285,8 @@ def test_lerobot_eo1_exposes_image_conditioned_text_generation(monkeypatch):
     policy._text_processor = DummyTextProcessor()
     batch = make_policy_batch(include_action=False)
 
-    assert EO1Policy.generate_text is PreTrainedPolicy.generate_text
+    assert EO1Policy.generate_text is not PreTrainedPolicy.generate_text
+    assert EO1Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert policy.generate_text(batch) == "the cup is left of the plate"
     assert policy.supports_text_generation()
     assert not hasattr(EO1Policy, "generate_texts")

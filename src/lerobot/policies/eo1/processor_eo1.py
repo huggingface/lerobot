@@ -22,8 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
+from lerobot.policies.language import normalize_semantic_messages
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -38,7 +40,7 @@ from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from .configuration_eo1 import EO1Config, _load_recipe
+from .configuration_eo1 import EO1Config
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.qwen2_5_vl import Qwen2_5_VLProcessor
@@ -112,11 +114,16 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
         recipe_streams = complementary_data.get("message_streams")
         recipe_targets = complementary_data.get("target_message_indices")
         generation_request = recipe_messages is not None and recipe_streams is None
+        conversations = (
+            normalize_semantic_messages(recipe_messages, policy_name="EO-1", batch_size=len(tasks))
+            if recipe_messages is not None
+            else None
+        )
         messages = []
         adjusted_targets: list[list[int]] = []
         for i in range(len(tasks)):
-            if recipe_messages is not None:
-                row_messages = recipe_messages[i] if len(tasks) > 1 else recipe_messages[0]
+            if conversations is not None:
+                row_messages = conversations[i]
                 row_streams = (
                     [] if generation_request else (recipe_streams[i] if len(tasks) > 1 else recipe_streams[0])
                 )
@@ -373,13 +380,10 @@ def make_eo1_pre_post_processors(
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
     language_steps: list[ProcessorStep] = []
-    if config.recipe_path:
-        # Re-resolve the path here, not only in `EO1Config.__post_init__`: a caller
-        # may set `recipe_path` after construction, and training must render the
-        # same recipe the checkpoint prompts itself with (`config.recipe`).
-        config.recipe = _load_recipe(config.recipe_path)
-
-    if config.use_language_recipe or config.recipe_path:
+    if language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    ):
         if config.recipe is None:
             raise ValueError("EO-1 language training requires a recipe in policy config.")
         language_steps.append(RenderMessagesStep(recipe=config.recipe))

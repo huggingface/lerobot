@@ -33,6 +33,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
+from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
 from .processor_eo1 import (
@@ -243,8 +244,11 @@ class EO1Policy(PreTrainedPolicy):
             "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
         }
 
+    def supports_text_generation(self) -> bool:
+        return True
+
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from EO-1 model-ready inputs."""
         self.eval()
         processor = self._get_text_processor()
@@ -276,9 +280,7 @@ class EO1Policy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
-        if len(outputs) != 1:
-            raise ValueError(f"The interactive runtime expected one EO-1 text output, got {len(outputs)}.")
-        return outputs[0]
+        return require_single_text_output(outputs, policy_name="EO-1")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:

@@ -97,7 +97,7 @@ answer = policy.generate_text(processed_batch)
 
 `vqa` preserves the caller's question. `next_subtask` applies the recipe stored
 in the EO-1 policy config. EO-1 inherits `generate_text(processed_batch)` and
-implements only `_generate_preprocessed_text`; no separate VLM is loaded.
+overrides `supports_text_generation` and `generate_text`; no separate VLM is loaded.
 
 With the interactive language runtime, EO-1 can generate a subtask and rebuild
 its action prompt from that current subtask:

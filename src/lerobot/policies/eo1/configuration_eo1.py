@@ -18,11 +18,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -59,11 +58,6 @@ def _eo1_default_recipe() -> TrainingRecipe:
             ),
         ]
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load an explicit external recipe override."""
-    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("eo1")
@@ -156,14 +150,7 @@ class EO1Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        if self.recipe_path is not None:
-            try:
-                self.recipe = _load_recipe(self.recipe_path)
-            except FileNotFoundError:
-                if self.recipe is None:
-                    raise
-                # A reloaded checkpoint already carries its recipe inline; a stale
-                # path only matters on the training machine that set it.
+        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
