@@ -49,6 +49,26 @@ def test_render_messages_step_noops_without_language_columns_or_task():
     assert RenderMessagesStep(recipe)(transition) == transition
 
 
+def test_render_messages_step_can_disable_training_fallback_for_action_inference():
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    transition = create_transition(complementary_data={"task": "pick up the cup"})
+
+    assert RenderMessagesStep(recipe, render_training=False)(transition) is transition
+
+
+def test_runtime_query_rejects_raw_training_language():
+    transition = create_transition(
+        complementary_data={
+            "query_kind": "vqa",
+            "text": "What is visible?",
+            "language_events": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        RenderMessagesStep(render_training=False)(transition)
+
+
 def test_render_messages_step_preserves_runtime_rendered_messages():
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     messages = [[{"role": "user", "content": "What is visible?"}]]
