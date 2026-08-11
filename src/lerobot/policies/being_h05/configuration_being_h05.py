@@ -22,7 +22,6 @@ from lerobot.configs import (
     NormalizationMode,
     PolicyFeature,
     PreTrainedConfig,
-    recipe as recipe_module,
 )
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -36,26 +35,18 @@ ROBOCASA_CAMERA_KEYS = [
 
 
 def _being_h05_default_recipe() -> TrainingRecipe:
-    """Being-H0.5's subtask wording.
-
-    The upstream release ships no subtask-generation prompt (its only official
-    template is the micro-step action instruction in ``prompt_template``), so this
-    wording is LeRobot's; the recipe pins it so training and inference share it.
-    """
+    """Being-H0.5's joint subtask-and-action language contract."""
     return TrainingRecipe(
         messages=[
             MessageTurn(
                 role="user",
-                content=(
-                    "The robot's task is: ${task}\n"
-                    "What is the next concise, executable subtask? Answer with only the subtask."
-                ),
-                stream="high_level",
+                content="${task}",
+                stream="low_level",
             ),
             MessageTurn(
                 role="assistant",
                 content="${subtask}",
-                stream="high_level",
+                stream="low_level",
                 target=True,
                 if_present="subtask",
             ),
@@ -64,13 +55,8 @@ def _being_h05_default_recipe() -> TrainingRecipe:
 
 
 def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
+    """Load an explicit external recipe override."""
+    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("being_h05")
@@ -99,14 +85,16 @@ class BeingH05Config(PreTrainedConfig):
         "According to the instruction '{task_description}', what's the micro-step actions "
         "in the next {k} steps?"
     )
-    # Setting `recipe_path` opts training into recipe-rendered language supervision
-    # and loads the YAML into `recipe` (relative paths resolve against
-    # src/lerobot/configs/recipes/).
+    use_language_recipe: bool = False
+    # Explicit external override for the built-in policy recipe.
     recipe_path: str | None = None
     # Being-H0.5's language contract; see `_being_h05_default_recipe`.
     recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _being_h05_default_recipe())
     action_loss_weight: float = 1.0
     text_loss_weight: float = 0.1
+    text_max_new_tokens: int = 96
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
     metadata: dict = field(default_factory=dict)
     optimizer_lr: float = 2e-5
     optimizer_weight_decay: float = 0.0
@@ -146,6 +134,12 @@ class BeingH05Config(PreTrainedConfig):
             raise ValueError("Being-H0.5 loss weights must be non-negative.")
         if self.action_loss_weight == 0 and self.text_loss_weight == 0:
             raise ValueError("At least one Being-H0.5 training loss must be enabled.")
+        if self.text_max_new_tokens < 1:
+            raise ValueError("text_max_new_tokens must be at least 1.")
+        if self.text_temperature < 0:
+            raise ValueError("text_temperature must be non-negative.")
+        if not 0 < self.text_top_p <= 1:
+            raise ValueError("text_top_p must be in (0, 1].")
 
     def validate_features(self) -> None:
         visual = [key for key, value in self.input_features.items() if value.type == FeatureType.VISUAL]
@@ -168,9 +162,14 @@ class BeingH05Config(PreTrainedConfig):
 
     @property
     def rebuild_pretrained_processors(self) -> bool:
-        return self.recipe_path is not None or any(
-            self.normalization_mapping.get(feature, NormalizationMode.IDENTITY) != NormalizationMode.IDENTITY
-            for feature in ("STATE", "ACTION")
+        return (
+            self.use_language_recipe
+            or self.recipe_path is not None
+            or any(
+                self.normalization_mapping.get(feature, NormalizationMode.IDENTITY)
+                != NormalizationMode.IDENTITY
+                for feature in ("STATE", "ACTION")
+            )
         )
 
     @property

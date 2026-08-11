@@ -32,8 +32,10 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.render_messages_processor import RenderMessagesStep
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
-from .configuration_being_h05 import BeingH05Config, _load_recipe
+from .configuration_being_h05 import BeingH05Config
 
 STATE_SLOTS = {
     "eef_position": (0, 3),
@@ -367,19 +369,13 @@ def make_being_h05_pre_post_processors(
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
     )
-    input_steps = [steps.add_batch_dim]
+    input_steps = [RenderGenerationPromptStep(config.recipe), steps.add_batch_dim]
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep())
     input_steps.append(steps.normalize)
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep(restore=True))
-    if config.recipe_path:
-        from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: PLC0415
-
-        # Re-resolve the path here, not only in `BeingH05Config.__post_init__`: a
-        # caller may set `recipe_path` after construction, and training must render
-        # the same recipe the checkpoint prompts itself with (`config.recipe`).
-        config.recipe = _load_recipe(config.recipe_path)
+    if config.use_language_recipe or config.recipe_path:
         input_steps.append(RenderMessagesStep(recipe=config.recipe))
     input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
     output_steps = [BeingH05SemanticUnpackStep()]

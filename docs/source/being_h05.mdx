@@ -31,7 +31,7 @@ attention, connector, semantic packing, and flow-action modules live in
 - Loading the released base and RoboCasa checkpoints from the Hub.
 - Training and fine-tuning through `lerobot-train`.
 - Inference through `predict_action_chunk` and `select_action`.
-- Grounded text generation through `generate_text` and `generate_texts`.
+- Grounded text generation through the shared `generate_text` policy API.
 - Interactive task planning and VQA through the language runtime adapter.
 - Three ordered camera inputs and natural-language task instructions.
 - Fixed semantic 200D state and action representations with validity masks.
@@ -134,13 +134,13 @@ remaining action dimensions. The published Base and RoboCasa checkpoints
 continue to use identity normalization; use the override only when training a
 new checkpoint.
 
-To jointly train an annotated subtask target and its action chunk, select the
-shared language recipe:
+To jointly train an annotated subtask target and its action chunk, enable the
+recipe built into `BeingH05Config`:
 
 ```bash
 lerobot-train \
   --policy.path=lerobot/being_h05_base \
-  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.use_language_recipe=true \
   --policy.action_loss_weight=1.0 \
   --policy.text_loss_weight=0.1 \
   --dataset.repo_id=your_name/your_language_dataset \
@@ -155,7 +155,7 @@ The recipe renderer consumes `language_persistent` and `language_events`, then
 produces `messages`, `message_streams`, and `target_message_indices`. A
 high-level recipe sample trains only its assistant text target. A low-level
 sample trains actions, and a low-level sample with an assistant target—such as
-`subtask_joint.yaml`—trains text and actions together. Non-target user,
+the built-in Being-H0.5 recipe—trains text and actions together. Non-target user,
 assistant, system, image, state, and action positions are ignored by the
 language loss.
 
@@ -228,26 +228,25 @@ using a custom evaluation loop.
 
 ### Text and VQA
 
-`BeingH05Policy.generate_text` uses the same InternVL vision tower, Qwen3
+The base `PreTrainedPolicy.generate_text` entry point uses the same InternVL vision tower, Qwen3
 understanding stream, and language-model head stored in the checkpoint. It
-supports greedy decoding by default and optional temperature and top-p
-sampling:
+receives a batch prepared by the normal input pipeline. The runtime puts
+`query_kind` (`vqa` or `next_subtask`) and caller-owned `text` into complementary
+data before that pipeline runs:
 
 ```python
-answer = policy.generate_texts(
-    processed_observation,
-    "What object is next to the bowl?",
-    max_new_tokens=64,
-)[0]
+request = {**observation, "query_kind": "vqa", "text": "What is next to the bowl?"}
+processed_request = preprocessor(request)
+answer = policy.generate_text(processed_request)
 ```
 
-`processed_observation` is the output of the Being-H0.5 preprocessor and must
-contain `being_h05.pixel_values` and `being_h05.image_valid`.
-
-`generate_texts` takes an explicit prompt. `generate_text` is the single-sample
-method the interactive language runtime calls: it builds the prompt from the
-batch for `kind="subtask"` or `kind="vqa"` and decodes with the sampling
-settings stored on the checkpoint in `config.generation`.
+The shared first processor step turns those two fields into semantic messages.
+Being-H0.5's policy-specific steps then insert camera embeddings, native roles,
+and tokenizer control tokens. The policy implements only
+`_generate_preprocessed_text`; it does not override the public API. Sampling
+settings live in the saved policy config. The released RoboCasa action-only
+fine-tune still raises a clear error because it does not retain a usable text
+head; use the base checkpoint for VQA.
 
 The policy also works with LeRobot's interactive language runtime:
 
@@ -279,7 +278,8 @@ described in [Language columns and recipes](./language_and_recipes).
 | `n_action_steps`      |       8 | Actions executed before replanning        |
 | `num_inference_steps` |       4 | Flow-matching sampling steps              |
 | `image_size`          |     224 | Required input image size                 |
-| `recipe_path`         |  `None` | Optional language-supervision recipe      |
+| `use_language_recipe` | `False` | Enable the built-in joint language recipe |
+| `recipe_path`         |  `None` | Explicit external recipe override         |
 | `action_loss_weight`  |     1.0 | Flow-matching loss weight                 |
 | `text_loss_weight`    |     0.1 | Assistant-token cross-entropy loss weight |
 

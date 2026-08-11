@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -69,6 +69,21 @@ else:
     TopPLogitsWarper = None
     apply_rotary_pos_emb = None
     create_causal_mask = None
+
+
+def _generation_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block["text"])
+            for block in content
+            if isinstance(block, Mapping) and block.get("type") == "text" and "text" in block
+        )
+    if content is None:
+        return ""
+    return str(content)
+
 
 _compiled_flex_attention = torch.compile(flex_attention)
 
@@ -877,20 +892,6 @@ def _create_attention_mask(
     )
 
 
-_RUNTIME_MAX_NEW_TOKENS = {"subtask": 32, "vqa": 96}
-
-
-def _runtime_prompt(policy: BeingH05Policy, kind: str, batch: dict[str, Any], user_text: str | None) -> str:
-    """Build the interactive-runtime prompt for one text `kind`."""
-    task = str(batch.get("task") or "")
-    if kind == "vqa":
-        return (user_text or task).strip()
-    if kind == "subtask":
-        # The wording comes from the checkpoint's recipe (config.recipe).
-        return policy.build_prompt("subtask", task=task)
-    raise ValueError(f"Unsupported Being-H0.5 text kind: {kind!r}.")
-
-
 class BeingH05Policy(PreTrainedPolicy):
     """Native LeRobot implementation of the released Being-H0.5 architecture."""
 
@@ -983,8 +984,8 @@ class BeingH05Policy(PreTrainedPolicy):
         kwargs.setdefault("tokenizer_load_revision", revision)
         return super().from_pretrained(pretrained_name_or_path, revision=revision, **kwargs)
 
-    def _save_pretrained(self, save_directory, state_dict: dict[str, torch.Tensor] | None = None) -> None:
-        super()._save_pretrained(save_directory, state_dict=state_dict)
+    def _save_pretrained(self, save_directory) -> None:
+        super()._save_pretrained(save_directory)
         self.tokenizer.save_pretrained(save_directory)
 
     def reset(self) -> None:
@@ -1001,34 +1002,68 @@ class BeingH05Policy(PreTrainedPolicy):
         self,
         pixels: Tensor,
         image_valid: Tensor,
-        prompt: str,
+        messages: Sequence[Mapping[str, Any]],
     ) -> Tensor:
         sample_images = pixels[image_valid]
         if sample_images.shape[0] == 0:
             raise ValueError("Being-H0.5 text generation requires at least one present camera.")
         image_embeddings = self.model.extract_feature(sample_images)
-        token_blocks = (
-            [
-                self._bos,
-                *self.tokenizer.encode(f"system\n{self.model.system_message}"),
-                self._eos,
-                self._newline,
-            ],
-            [self._bos, *self.tokenizer.encode("user\n")],
-            [*self.tokenizer.encode(prompt), self._eos, self._newline],
-            [self._bos, *self.tokenizer.encode("assistant\n")],
-        )
         embed_tokens = self.model.language_model.get_input_embeddings()
-        embeddings = [
-            embed_tokens(torch.tensor(block, dtype=torch.long, device=pixels.device))
-            for block in token_blocks
-        ]
+        system = embed_tokens(
+            torch.tensor(
+                [
+                    self._bos,
+                    *self.tokenizer.encode(f"system\n{self.model.system_message}"),
+                    self._eos,
+                    self._newline,
+                ],
+                dtype=torch.long,
+                device=pixels.device,
+            )
+        )
         image_start = embed_tokens(torch.tensor([self._image_start], device=pixels.device))
         image_end = embed_tokens(torch.tensor([self._image_end], device=pixels.device))
         interleaved_images = [part for image in image_embeddings for part in (image_start, image, image_end)]
-        return torch.cat([embeddings[0], embeddings[1], *interleaved_images, embeddings[2], embeddings[3]])[
-            None
-        ]
+        parts = [system]
+        images_inserted = False
+        for message in messages:
+            role = str(message.get("role"))
+            if role not in {"system", "user", "assistant"}:
+                raise ValueError(f"Being-H0.5 does not support the message role {role!r}.")
+            content = _generation_message_text(message.get("content"))
+            parts.append(
+                embed_tokens(
+                    torch.tensor(
+                        [self._bos, *self.tokenizer.encode(f"{role}\n")],
+                        dtype=torch.long,
+                        device=pixels.device,
+                    )
+                )
+            )
+            if role == "user" and not images_inserted:
+                parts.extend(interleaved_images)
+                images_inserted = True
+            parts.append(
+                embed_tokens(
+                    torch.tensor(
+                        [*self.tokenizer.encode(content), self._eos, self._newline],
+                        dtype=torch.long,
+                        device=pixels.device,
+                    )
+                )
+            )
+        if not images_inserted:
+            raise ValueError("Being-H0.5 text generation requires a user message.")
+        parts.append(
+            embed_tokens(
+                torch.tensor(
+                    [self._bos, *self.tokenizer.encode("assistant\n")],
+                    dtype=torch.long,
+                    device=pixels.device,
+                )
+            )
+        )
+        return torch.cat(parts)[None]
 
     @staticmethod
     def _sample_text_token(
@@ -1047,36 +1082,34 @@ class BeingH05Policy(PreTrainedPolicy):
         return torch.multinomial(logits.softmax(dim=-1), num_samples=1).squeeze(-1)
 
     @torch.no_grad()
-    def supports_text_generation(self) -> bool:
-        """The released RoboCasa action fine-tune does not retain usable text generation."""
-        return "robocasa" not in str(getattr(self.config, "author_model_id", "") or "").lower()
-
-    def generate_text(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        """Single-sample text generation, as the interactive language runtime calls it."""
-        if not self.supports_text_generation():
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response from observations and semantic recipe messages."""
+        if "robocasa" in str(getattr(self.config, "author_model_id", "") or "").lower():
             raise RuntimeError(
                 "The released Being-H0.5 RoboCasa action fine-tune does not retain usable text "
                 "generation; use lerobot/being_h05_base for VQA."
             )
-        generated = self.generate_texts(
+        messages = batch.get("being_h05_messages", batch.get("messages"))
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("Being-H0.5 text generation requires preprocessed `messages`.")
+        conversations = [messages] if isinstance(messages[0], Mapping) else messages
+        if len(conversations) != 1:
+            raise ValueError(
+                f"The interactive runtime expected one Being-H0.5 prompt, got {len(conversations)}."
+            )
+        generated = self._generate_texts(
             batch,
-            _runtime_prompt(self, kind, batch, user_text),
-            max_new_tokens=_RUNTIME_MAX_NEW_TOKENS.get(kind, 64),
+            conversations,
+            max_new_tokens=self.config.text_max_new_tokens,
             temperature=self.config.text_temperature,
             top_p=self.config.text_top_p,
         )
         return generated[0].strip() if generated else ""
 
-    def generate_texts(
+    def _generate_texts(
         self,
         batch: dict[str, Any],
-        prompts: str | Sequence[str],
+        conversations: Sequence[Sequence[Mapping[str, Any]]],
         *,
         max_new_tokens: int = 64,
         min_new_tokens: int = 0,
@@ -1099,21 +1132,19 @@ class BeingH05Policy(PreTrainedPolicy):
             "being_h05.image_valid",
             torch.ones((batch_size, views), dtype=torch.bool, device=pixels.device),
         )
-        if isinstance(prompts, str):
-            prompts = [prompts] * batch_size
-        elif len(prompts) != batch_size:
-            raise ValueError(f"Expected {batch_size} text prompts, got {len(prompts)}.")
+        if len(conversations) != batch_size:
+            raise ValueError(f"Expected {batch_size} text prompts, got {len(conversations)}.")
 
         eos_token_ids = {self._eos}
         if self.tokenizer.eos_token_id is not None:
             eos_token_ids.add(self.tokenizer.eos_token_id)
         outputs = []
         self.eval()
-        for sample, prompt in enumerate(prompts):
+        for sample, messages in enumerate(conversations):
             inputs_embeds = self._text_prompt_embeddings(
                 pixels[sample],
                 image_valid[sample],
-                prompt,
+                messages,
             )
             logits, cache = self.model.language_model.forward_understanding(
                 inputs_embeds,

@@ -30,7 +30,9 @@ from lerobot.policies.being_h05.processor_being_h05 import (
     pack_named,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 from lerobot.utils.constants import ACTION
 
 
@@ -169,10 +171,14 @@ def test_config_and_factories_are_wired_without_importing_author_dependencies():
     assert config.action_loss_weight == 1.0
     assert get_policy_class("being_h05").name == "being_h05"
     preprocessor, postprocessor = make_pre_post_processors(config)
-    assert isinstance(preprocessor.steps[1], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[2], BeingH05SemanticPackStep)
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[3], BeingH05SemanticPackStep)
     assert postprocessor.steps[0].get_config() == {}
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
+    policy_class = get_policy_class("being_h05")
+    assert policy_class.generate_text is PreTrainedPolicy.generate_text
+    assert not hasattr(policy_class, "generate_texts")
 
 
 def test_recipe_pipeline_renders_language_columns_before_being_serialization():
@@ -180,7 +186,7 @@ def test_recipe_pipeline_renders_language_columns_before_being_serialization():
     from lerobot.processor.render_messages_processor import RenderMessagesStep
 
     config = BeingH05Config(
-        recipe_path="recipes/subtask_joint.yaml",
+        use_language_recipe=True,
         input_features={
             **{
                 key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224))
@@ -196,9 +202,10 @@ def test_recipe_pipeline_renders_language_columns_before_being_serialization():
 
     preprocessor, _ = make_being_h05_pre_post_processors(config)
 
-    assert isinstance(preprocessor.steps[2], RenderMessagesStep)
-    assert isinstance(preprocessor.steps[3], BeingH05SemanticPackStep)
-    assert isinstance(preprocessor.steps[4], BeingH05MessagesStep)
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[3], RenderMessagesStep)
+    assert isinstance(preprocessor.steps[4], BeingH05SemanticPackStep)
+    assert isinstance(preprocessor.steps[5], BeingH05MessagesStep)
 
     batch = {
         **_named_state(),
@@ -287,9 +294,9 @@ def test_quantile_normalization_round_trips_continuous_and_binary_actions(tmp_pa
         config,
         pretrained_path=str(trained_checkpoint),
     )
-    assert isinstance(preprocessor.steps[1], BeingH05BinaryActionStep)
-    assert isinstance(preprocessor.steps[2], NormalizerProcessorStep)
-    assert isinstance(preprocessor.steps[3], BeingH05BinaryActionStep)
+    assert isinstance(preprocessor.steps[2], BeingH05BinaryActionStep)
+    assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)
+    assert isinstance(preprocessor.steps[4], BeingH05BinaryActionStep)
     assert isinstance(postprocessor.steps[1], BeingH05BinaryActionStep)
     assert isinstance(postprocessor.steps[2], UnnormalizerProcessorStep)
     assert isinstance(postprocessor.steps[3], BeingH05BinaryActionStep)
