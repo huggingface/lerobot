@@ -31,11 +31,10 @@ from lerobot.policies.language import normalize_semantic_messages, semantic_mess
 from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
+    RenderMessagesStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
 from .configuration_being_h05 import BeingH05Config
 
@@ -358,17 +357,21 @@ def make_being_h05_pre_post_processors(
         prompt_template=config.prompt_template,
         chunk_size=config.chunk_size,
     )
-    input_steps = [RenderGenerationPromptStep(config.recipe), steps.add_batch_dim]
+    render_training = language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    )
+    if render_training and config.recipe is None:
+        raise ValueError("Being-H0.5 language training requires a recipe in policy config.")
+    input_steps = [
+        RenderMessagesStep(config.recipe, render_training=render_training),
+        steps.add_batch_dim,
+    ]
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep())
     input_steps.append(steps.normalize)
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep(restore=True))
-    if language_recipe_enabled(
-        use_language_recipe=config.use_language_recipe,
-        recipe_path=config.recipe_path,
-    ):
-        input_steps.append(RenderMessagesStep(recipe=config.recipe))
     input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
     output_steps = [BeingH05SemanticUnpackStep()]
     if normalize_actions:
