@@ -52,7 +52,6 @@ logger = logging.getLogger(__name__)
 CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
 HISTORY_LEN = 10  # proprioception frames the decoder conditions on
-HISTORY_LEN = 10  # proprioception frames the decoder looks back over
 
 # Latent-token feature-key prefixes: action carries the token, obs echoes it back.
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
