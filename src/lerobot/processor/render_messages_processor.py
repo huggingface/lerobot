@@ -64,6 +64,13 @@ class RenderMessagesStep(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
         """Render messages, preserving unannotated samples and dropping unmatched annotated ones."""
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        # Preserve an already-rendered prompt only when there are no raw recipe
+        # columns to consume. If raw language is present, it remains authoritative
+        # for training and must still produce targets and stream metadata.
+        has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
+        if "messages" in complementary_data and not has_raw_language:
+            return transition
+
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []
 
