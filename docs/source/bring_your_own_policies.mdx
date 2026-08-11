@@ -287,7 +287,10 @@ a policy-local migration when loading them rather than changing all policy pipel
 ```python
 # modeling_my_policy.py
 class MyPolicy(PreTrainedPolicy):
-    def _generate_preprocessed_text(self, batch) -> str:
+    def supports_text_generation(self) -> bool:
+        return True
+
+    def generate_text(self, batch) -> str:
         token_ids = self.model.generate(**batch)
         return self.tokenizer.decode(token_ids, skip_special_tokens=True)
 ```
@@ -344,7 +347,7 @@ The runtime selector is intentionally restricted to `vqa` and `next_subtask`; re
 binding names such as `subtask` are not runtime kinds. Structured outputs such as
 bounding boxes should keep their own typed interface. Existing policy PRs that override
 `generate_text(batch, prompt)` should move prompt formatting into their policy input
-processor and decoding into `_generate_preprocessed_text`.
+processor and override `generate_text(processed_batch)` directly.
 
 ### Keep training and deployment aligned
 
