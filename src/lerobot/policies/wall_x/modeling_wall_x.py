@@ -34,7 +34,6 @@ lerobot-train \
 ```
 """
 
-import json
 import logging
 import math
 from collections import deque
@@ -53,25 +52,23 @@ from torch.nn import CrossEntropyLoss
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as tv_functional
 
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
 )
 
-from ..language import normalize_semantic_messages, require_single_text_output
+from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import (
-    GENERATE_SUBTASK_RATIO,
     IMAGE_FACTOR,
     MAX_PIXELS,
     MIN_PIXELS,
-    MODEL_TYPE,
-    PRIORITY_ORDER,
     RESOLUTION,
 )
+from .processor_wall_x import WALL_X_GENERATION_PROMPT_IDS
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
@@ -106,15 +103,6 @@ else:
     Qwen2_5_VLMoEModel = None
     configure_wall_x_vision_attention = None
 
-from .utils import (
-    TEXT_TARGET_END,
-    TEXT_TARGET_START,
-    get_wallx_normal_text,
-    img_key_mapping,
-    preprocesser_call,
-    process_grounding_points,
-    replace_action_token,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -1149,6 +1137,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         num_inference_timesteps: int | None = 10,
         dof_mask: torch.FloatTensor | None = None,
         agent_pos_mask: torch.FloatTensor | None = None,
+        generation_prompt_ids: torch.LongTensor | None = None,
         re_generate: bool = False,
         **kwargs,
     ):
@@ -1314,15 +1303,12 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Split input sequence for text and fast modes (not needed for diffusion)
         if predict_mode == "text" or predict_mode == "fast":
-            generation_prompt = "<|im_start|>assistant\n"
-            generation_prompt_ids = torch.tensor(
-                self.processor.tokenizer.encode(generation_prompt, add_special_tokens=False),
-                device=input_ids.device,
-                dtype=input_ids.dtype,
-            )
+            if generation_prompt_ids is None:
+                raise ValueError(
+                    "WALL-X fast/text prediction requires generation_prompt_ids from its input processor."
+                )
+            generation_prompt_ids = generation_prompt_ids.to(device=input_ids.device, dtype=input_ids.dtype)
             prompt_length = generation_prompt_ids.numel()
-            if prompt_length == 0:
-                raise ValueError(f"Tokenizer produced no tokens for generation prompt {generation_prompt!r}")
             if input_ids.shape[1] < prompt_length:
                 matches = torch.empty(0, device=input_ids.device, dtype=torch.bool)
             else:
@@ -1888,322 +1874,40 @@ class WallXPolicy(PreTrainedPolicy):
         """Get parameters for optimization."""
         return self.parameters()
 
-    @staticmethod
-    def _batched_recipe_field(value: Any, batch_size: int, field_name: str) -> list[list[Any]]:
-        if not isinstance(value, list):
-            raise TypeError(f"{field_name} must be a list.")
-        if len(value) == batch_size and all(isinstance(row, list) for row in value):
-            return value
-        if batch_size == 1:
-            return [value]
-        raise ValueError(f"Expected {field_name} for exactly {batch_size} samples.")
-
-    @staticmethod
-    def _message_content(message: dict[str, Any]) -> str:
-        content = message.get("content", "")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            text = "\n".join(
-                str(block.get("text", ""))
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
-        else:
-            text = "" if content is None else str(content)
-        say_texts = []
-        for call in message.get("tool_calls") or []:
-            function = call.get("function", {}) if isinstance(call, dict) else {}
-            if function.get("name") != "say":
-                continue
-            arguments = function.get("arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except (TypeError, ValueError):
-                    arguments = {}
-            if isinstance(arguments, dict) and arguments.get("text"):
-                say_texts.append(str(arguments["text"]))
-        suffix = "".join(f"<say>{value}</say>" for value in say_texts)
-        if suffix:
-            text = f"{text}\n{suffix}" if text else suffix
-        return text
-
-    def _observation_prompt(self, img_keys: list[str]) -> str:
-        prompt = "Observation:"
-        for label in img_key_mapping(img_keys):
-            prompt += f" {label}: <|vision_start|><|image_pad|><|vision_end|>"
-        return prompt
-
-    def _format_recipe_text(
-        self,
-        messages: list[dict[str, Any]],
-        message_streams: list[str | None],
-        target_message_indices: list[int],
-        task: str,
-        img_keys: list[str],
-    ) -> tuple[str, bool]:
-        if len(messages) != len(message_streams):
-            raise ValueError("WALL-OSS recipe messages and streams must have equal length.")
-        target_indices = set(target_message_indices)
-        invalid_targets = [index for index in target_indices if not 0 <= index < len(messages)]
-        if invalid_targets:
-            raise ValueError(f"WALL-OSS recipe target indices are out of range: {invalid_targets}.")
-
-        predicts_action = any(stream == "low_level" for stream in message_streams)
-        text = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-        observation_injected = not any(str(message.get("role", "user")) == "user" for message in messages)
-        if observation_injected:
-            text += f"<|im_start|>user\n{self._observation_prompt(img_keys)}<|im_end|>\n"
-        for index, message in enumerate(messages):
-            role = str(message.get("role", "user"))
-            content = self._message_content(message)
-            if TEXT_TARGET_START in content or TEXT_TARGET_END in content:
-                raise ValueError("Recipe content contains a reserved WALL-OSS text-target marker.")
-            if role == "user" and not observation_injected:
-                content = f"{self._observation_prompt(img_keys)}\n{content}"
-                observation_injected = True
-            text += f"<|im_start|>{role}\n"
-            payload = f"{content}<|im_end|>"
-            if index in target_indices:
-                payload = f"{TEXT_TARGET_START}{payload}{TEXT_TARGET_END}"
-            text += f"{payload}\n"
-
-        if predicts_action:
-            text += (
-                "<|im_start|>user\n"
-                f"Instruction: {task}\n"
-                "Predict the next action in robot action.\nProprioception: <|propri|>\n"
-                "<|im_end|>\n<|im_start|>assistant\n"
-                "<|action_fast|><|im_end|>\n" + "<|action|>" * self.config.chunk_size
-            )
-        return text, predicts_action
-
-    def _format_generation_messages(
-        self,
-        messages: list[dict[str, Any]],
-        img_keys: list[str],
-    ) -> str:
-        """Apply WALL-OSS chat and image formatting to contract-rendered messages."""
-        native_messages = [dict(message) for message in messages]
-        for message in native_messages:
-            if str(message.get("role", "user")) != "user":
-                continue
-            content = message.get("content", "")
-            if isinstance(content, str):
-                message["content"] = f"Instruction: {content}"
-            else:
-                message["content"] = f"Instruction: {self._message_content(message)}"
-            break
-        text, _ = self._format_recipe_text(
-            native_messages,
-            [None] * len(native_messages),
-            [],
-            "",
-            img_keys,
-        )
-        return f"{text}<|im_start|>assistant\n"
-
-    def preprocess_inputs(
+    def _pretokenized_inputs(
         self,
         batch: dict[str, Any],
         *,
         compute_position_ids: bool = False,
+        text_generation: bool = False,
     ) -> BatchFeature:
-        """
-        Convert a batch of LeRobot dataset items to Wall-X model input format.
-
-        This processes a batched dictionary where tensors have batch dimension first.
-
-        Args:
-            batch: Dictionary with batched tensors:
-                - "observation.state": (batch_size, state_dim) or (batch_size, n_obs_steps, state_dim)
-                - "action": (batch_size, chunk_size, action_dim)
-                - "observation.images.<key>": (batch_size, C, H, W)
-                - "task": List[str] of length batch_size
-
-        Returns:
-            BatchFeature containing batched model inputs
-        """
-        use_fast_tokenizer = self.config.use_fast_tokenizer
-
-        # Get batch size from state tensor
-        batch_size = batch[OBS_STATE].shape[0]
-
-        # Find image keys in batch
-        img_keys = [key for key in self.config.image_features if key in batch]
-        if not img_keys:
-            raise ValueError("Wall-X requires at least one image feature in each batch")
-
-        # Resize one camera batch at a time on the tensors' current device. Reassembling
-        # sample-major keeps image_grid_thw aligned with each sample's image placeholders.
-        all_image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
-        all_texts = []
-
-        # Preserve the existing grounding behavior for multi-camera inputs: the old camera
-        # loop left these values set to the final configured camera's dimensions.
-        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-
-        tasks = batch["task"] if isinstance(batch["task"], list) else [batch["task"]] * batch_size
-        if "messages" in batch:
-            messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
-            streams_batch = self._batched_recipe_field(
-                batch.get("message_streams", []),
-                batch_size,
-                "message_streams",
-            )
-            targets_batch = self._batched_recipe_field(
-                batch.get("target_message_indices", []),
-                batch_size,
-                "target_message_indices",
-            )
-            for messages, streams, targets, task_text in zip(
-                messages_batch,
-                streams_batch,
-                targets_batch,
-                tasks,
-                strict=True,
-            ):
-                complete_text, _ = self._format_recipe_text(
-                    messages,
-                    streams,
-                    targets,
-                    str(task_text),
-                    img_keys,
-                )
-                all_texts.append(
-                    process_grounding_points(
-                        complete_text,
-                        orig_height,
-                        orig_width,
-                        resized_height,
-                        resized_width,
-                        MODEL_TYPE,
-                    )
-                )
-        else:
-            for i, task_text in enumerate(tasks):
-                instruction_info = {"instruction": task_text}
-                frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
-                complete_text, _ = get_wallx_normal_text(
-                    instruction_info,
-                    self.config.chunk_size,
-                    frame_index,
-                    PRIORITY_ORDER,
-                    img_keys,
-                    generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
-                )
-                all_texts.append(
-                    process_grounding_points(
-                        complete_text,
-                        orig_height,
-                        orig_width,
-                        resized_height,
-                        resized_width,
-                        MODEL_TYPE,
-                    )
-                )
-
-        # ==================== PROCESS AGENT POS ====================
-        agent_pos = batch[OBS_STATE]  # (batch_size, state_dim)
-        if agent_pos.dim() == 2:
-            agent_pos = agent_pos.unsqueeze(1)  # (batch_size, 1, state_dim)
-        agent_pos_mask = (~torch.isnan(agent_pos)).float()
-        agent_pos = agent_pos.nan_to_num(nan=0.0)
-
-        if agent_pos.shape[-1] < self.config.max_state_dim:
-            pad_size = self.config.max_state_dim - agent_pos.shape[-1]
-            agent_pos = torch.cat(
-                [
-                    agent_pos,
-                    torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size, device=agent_pos.device),
-                ],
-                dim=-1,
-            )
-            agent_pos_mask = torch.cat(
-                [
-                    agent_pos_mask,
-                    torch.zeros(
-                        agent_pos_mask.shape[0],
-                        agent_pos_mask.shape[1],
-                        pad_size,
-                        device=agent_pos_mask.device,
-                    ),
-                ],
-                dim=-1,
-            )
-        elif agent_pos.shape[-1] > self.config.max_state_dim:
+        names = (
+            "input_ids",
+            "attention_mask",
+            "pixel_values",
+            "image_grid_thw",
+            "video_grid_thw",
+            "second_per_grid_ts",
+            "labels",
+            "text_labels",
+            "proprioception",
+            "agent_pos_mask",
+            "action_chunk",
+            "dof_mask",
+            "moe_token_types",
+            "frame_index",
+        )
+        inputs = BatchFeature({name: batch[name] for name in names if name in batch})
+        required = {"input_ids", "attention_mask", "pixel_values", "image_grid_thw", "moe_token_types"}
+        missing = sorted(required - inputs.keys())
+        if missing:
             raise ValueError(
-                f"State dimension {agent_pos.shape[-1]} exceeds max_state_dim {self.config.max_state_dim}"
+                f"WALL-X requires tokenized inputs from its policy preprocessor; missing {missing}."
             )
-
-        # ==================== PROCESS ACTIONS ====================
-        action = batch.get(ACTION)  # (batch_size, chunk_size, action_dim)
-        if action is not None:
-            if action.dim() == 2:
-                action = action.unsqueeze(1)
-            dof_mask = (~torch.isnan(action)).float()
-            action = action.nan_to_num(nan=0.0)
-
-            if action.shape[-1] < self.config.max_action_dim:
-                pad_size = self.config.max_action_dim - action.shape[-1]
-                action = torch.cat(
-                    [action, torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)],
-                    dim=-1,
-                )
-                dof_mask = torch.cat(
-                    [
-                        dof_mask,
-                        torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device),
-                    ],
-                    dim=-1,
-                )
-            elif action.shape[-1] > self.config.max_action_dim:
-                raise ValueError(
-                    f"Action dimension {action.shape[-1]} exceeds max_action_dim {self.config.max_action_dim}"
-                )
-        else:
-            action_dim = self.config.output_features[ACTION].shape[0]
-            dof_mask = torch.cat(
-                [
-                    torch.ones(
-                        batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device
-                    ),
-                    torch.zeros(
-                        batch_size,
-                        self.config.chunk_size,
-                        self.config.max_action_dim - action_dim,
-                        device=batch[OBS_STATE].device,
-                    ),
-                ],
-                dim=-1,
-            )
-
-        # ==================== ACTION TOKEN REPLACEMENT ====================
-        all_texts = replace_action_token(
-            all_texts,
-            action,
-            self.model.action_tokenizer if use_fast_tokenizer else None,
-            dof_mask,
-        )
-
-        # ==================== TOKENIZATION ====================
-        inputs = preprocesser_call(
-            processor=self.model.processor,
-            text=all_texts,
-            images=all_image_inputs,
-            videos=None,
-            device=batch[OBS_STATE].device,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=self.config.tokenizer_max_length,
-            targeted_text_only="messages" in batch,
-        )
-
+        if text_generation:
+            keep = required | {"video_grid_thw", "second_per_grid_ts"}
+            inputs = BatchFeature({name: value for name, value in inputs.items() if name in keep})
         if compute_position_ids:
-            # Qwen's RoPE indexing uses Python list/scalar conversions. Run it while the
-            # tokenizer and grid metadata are still on CPU, then move the compact result.
             position_ids, rope_deltas = self.model.get_rope_index(
                 inputs.input_ids,
                 inputs.get("image_grid_thw"),
@@ -2213,28 +1917,6 @@ class WallXPolicy(PreTrainedPolicy):
             )
             inputs["position_ids"] = position_ids
             inputs["rope_deltas"] = rope_deltas
-
-        # ==================== ADDITIONAL INPUTS ====================
-        action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
-        moe_token_types = inputs.input_ids == action_token_id
-
-        inputs["proprioception"] = agent_pos
-        inputs["agent_pos_mask"] = agent_pos_mask
-        inputs["action_chunk"] = action
-        inputs["dof_mask"] = dof_mask
-        inputs["moe_token_types"] = moe_token_types
-        inputs["frame_index"] = (
-            batch["frame_index"]
-            if "frame_index" in batch
-            else torch.zeros(batch_size, device=batch[OBS_STATE].device)
-        )
-
-        # Move all tensors to the correct device
-        device = batch[OBS_STATE].device
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor):
-                inputs[key] = value.to(device)
-
         return inputs
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
@@ -2251,7 +1933,7 @@ class WallXPolicy(PreTrainedPolicy):
             tuple: (loss, loss_dict)
         """
         recipe_supervision = "messages" in batch
-        batch = self.preprocess_inputs(batch, compute_position_ids=True)
+        batch = self._pretokenized_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(**batch, mode="train")
@@ -2292,48 +1974,6 @@ class WallXPolicy(PreTrainedPolicy):
 
         return loss, loss_dict
 
-    def _build_text_inputs(self, batch: dict[str, Any]) -> BatchFeature:
-        batch_size = batch[OBS_STATE].shape[0]
-        img_keys = [key for key in self.config.image_features if key in batch]
-        if not img_keys:
-            raise ValueError("WALL-OSS text generation requires at least one image feature.")
-        if "messages" not in batch:
-            raise ValueError("WALL-OSS text generation requires preprocessed `messages`.")
-
-        image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
-        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-        messages_batch = normalize_semantic_messages(
-            batch["messages"], policy_name="WALL-OSS", batch_size=batch_size
-        )
-        texts = [
-            process_grounding_points(
-                self._format_generation_messages(messages, img_keys),
-                orig_height,
-                orig_width,
-                resized_height,
-                resized_width,
-                MODEL_TYPE,
-            )
-            for messages in messages_batch
-        ]
-        inputs = preprocesser_call(
-            processor=self.model.processor,
-            text=texts,
-            images=image_inputs,
-            videos=None,
-            device=batch[OBS_STATE].device,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=self.config.tokenizer_max_length,
-        )
-        inputs.pop("labels", None)
-        inputs["moe_token_types"] = torch.zeros_like(inputs.input_ids, dtype=torch.bool)
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor):
-                inputs[key] = value.to(batch[OBS_STATE].device)
-        return inputs
-
     def supports_text_generation(self) -> bool:
         return True
 
@@ -2341,7 +1981,7 @@ class WallXPolicy(PreTrainedPolicy):
     def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages and the current observation."""
         self.eval()
-        inputs = self._build_text_inputs(batch)
+        inputs = self._pretokenized_inputs(batch, text_generation=True)
         prompt_length = inputs.input_ids.shape[1]
         sampling = self.config.text_temperature > 0
         generation_kwargs: dict[str, Any] = {
@@ -2366,7 +2006,7 @@ class WallXPolicy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
-        return require_single_text_output(outputs, policy_name="WALL-OSS")
+        return require_single_text_output(outputs, policy_name="WALL-X")
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
@@ -2374,9 +2014,8 @@ class WallXPolicy(PreTrainedPolicy):
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        batch = self.preprocess_inputs(
-            batch,
-        )
+        generation_prompt_ids = batch.get(WALL_X_GENERATION_PROMPT_IDS)
+        batch = self._pretokenized_inputs(batch)
 
         if self.config.prediction_mode == "diffusion":
             output = self.model(
@@ -2387,8 +2026,13 @@ class WallXPolicy(PreTrainedPolicy):
                 predict_mode="diffusion",
             )
         elif self.config.prediction_mode == "fast":
+            if not isinstance(generation_prompt_ids, Tensor):
+                raise ValueError(
+                    "WALL-X fast prediction requires generation-prompt tokens from its input processor."
+                )
             output = self.model(
                 **batch,
+                generation_prompt_ids=generation_prompt_ids,
                 action_dim=self.config.output_features[ACTION].shape[0],
                 pred_horizon=self.config.chunk_size,
                 mode="predict",

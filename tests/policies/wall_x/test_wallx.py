@@ -33,10 +33,17 @@ from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
 from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
-from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
+from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
+    WallXTokenizerStep,
+    make_wall_x_pre_post_processors,
+)
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
-from lerobot.processor import RenderMessagesStep  # noqa: E402
+from lerobot.processor import (  # noqa: E402
+    RenderMessagesStep,
+    batch_to_transition,
+    transition_to_batch,
+)
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -91,9 +98,30 @@ def _make_unloaded_policy(**config_values):
     return policy
 
 
+def _tokenizer_step() -> WallXTokenizerStep:
+    return WallXTokenizerStep(
+        processor_name="unused",
+        image_keys=["observation.images.face_view"],
+        chunk_size=3,
+        max_state_dim=20,
+        max_action_dim=20,
+        output_action_dim=7,
+    )
+
+
+def _model_inputs() -> dict[str, torch.Tensor]:
+    return {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.ones(1, 3, dtype=torch.long),
+        "pixel_values": torch.zeros(1, 3, 2, 2),
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "moe_token_types": torch.zeros(1, 3, dtype=torch.bool),
+    }
+
+
 def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervision():
-    policy = _make_unloaded_policy()
-    prompt, predicts_action = policy._format_recipe_text(
+    step = _tokenizer_step()
+    prompt, predicts_action = step._recipe_text(
         [
             {"role": "user", "content": "What should the robot do?"},
             {"role": "assistant", "content": "Reach for the cup."},
@@ -101,7 +129,7 @@ def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervis
         ["high_level", "low_level"],
         [1],
         "pick up the cup",
-        ["observation.images.face_view"],
+        ["front view"],
     )
 
     clean_prompt, spans = _extract_text_target_spans(prompt)
@@ -124,11 +152,9 @@ def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatc
         channel_loss_dict=None,
     )
     policy.model = lambda **kwargs: outputs
-    monkeypatch.setattr(policy, "preprocess_inputs", lambda batch, compute_position_ids: batch)
+    monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
 
-    loss, metrics = policy.forward(
-        {"input_ids": torch.ones(1, 1, dtype=torch.long), "messages": [[{"role": "user"}]]}
-    )
+    loss, metrics = policy.forward({**_model_inputs(), "messages": [[{"role": "user"}]]})
 
     assert loss.item() == 7.0
     assert metrics["flow_loss"].item() == 3.0
@@ -144,9 +170,9 @@ def test_policy_preserves_original_action_only_loss(monkeypatch):
         channel_loss_dict=None,
     )
     policy.model = lambda **kwargs: outputs
-    monkeypatch.setattr(policy, "preprocess_inputs", lambda batch, compute_position_ids: batch)
+    monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
 
-    loss, _ = policy.forward({"input_ids": torch.ones(1, 1, dtype=torch.long)})
+    loss, _ = policy.forward(_model_inputs())
 
     assert loss.item() == 9.0
 
@@ -163,13 +189,10 @@ def test_generation_preparation_synthesizes_cache_positions():
     assert torch.equal(prepared["cache_position"], torch.arange(3))
 
 
-def test_policy_exposes_text_generation(monkeypatch):
+def test_policy_exposes_text_generation():
     assert WallXPolicy.generate_text is not PreTrainedPolicy.generate_text
     assert WallXPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert not hasattr(WallXPolicy, "generate_texts")
-
-    class Inputs(dict):
-        __getattr__ = dict.__getitem__
 
     class Tokenizer:
         eos_token_id = 2
@@ -191,30 +214,20 @@ def test_policy_exposes_text_generation(monkeypatch):
 
     policy = _make_unloaded_policy()
     policy.model = Model()
-    inputs = Inputs(input_ids=torch.tensor([[1, 2, 3]]), attention_mask=torch.ones(1, 3))
-    received_batches = []
-
-    def build_text_inputs(batch):
-        received_batches.append(batch)
-        return inputs
-
-    monkeypatch.setattr(policy, "_build_text_inputs", build_text_inputs)
-
-    batch = {
-        "observation.state": torch.zeros(1, 7),
-        "task": ["pick up the cup"],
-        "messages": [[{"role": "user", "content": "pick up the cup"}]],
-    }
+    batch = _model_inputs()
 
     assert policy.generate_text(batch) == "move toward the cup"
-    assert received_batches == [batch]
     assert policy.supports_text_generation()
-    assert policy._format_generation_messages(
-        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
-        ["observation.images.face_view"],
-    ).endswith(
-        "Instruction: clear the table\nPredict the next action in language.\n"
-        "<|im_end|>\n<|im_start|>assistant\n"
+    assert (
+        _tokenizer_step()
+        ._generation_text(
+            [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
+            ["front view"],
+        )
+        .endswith(
+            "Instruction: clear the table\nPredict the next action in language.\n"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
     )
 
 
@@ -233,20 +246,24 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     }
 
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=stats)
-    batch = preprocessor(
-        {
-            "observation.state": torch.zeros(7),
-            "observation.images.face_view": torch.zeros(3, 8, 8),
-            "task": "current subtask",
-            "query_kind": "next_subtask",
-            "text": "clear the table",
-        }
+    batch = transition_to_batch(
+        preprocessor.steps[0](
+            batch_to_transition(
+                {
+                    "observation.state": torch.zeros(7),
+                    "observation.images.face_view": torch.zeros(3, 8, 8),
+                    "task": "current subtask",
+                    "query_kind": "next_subtask",
+                    "text": "clear the table",
+                }
+            )
+        )
     )
 
     assert isinstance(preprocessor.steps[0], RenderMessagesStep)
     assert preprocessor.steps[0].render_training is False
     assert batch["messages"] == [
-        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}]
+        {"role": "user", "content": "clear the table\nPredict the next action in language.\n"}
     ]
     assert "query_kind" not in batch
     assert "text" not in batch
@@ -375,9 +392,9 @@ def test_subtask_prompt_is_token_exact_with_the_trained_template():
     )
     assert generated_subtask
 
-    ours = _make_unloaded_policy()._format_generation_messages(
+    ours = _tokenizer_step()._generation_text(
         [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
-        list(img_keys),
+        ["front view"],
     )
 
     # Compare the user turn only: upstream appends its own assistant target, ours ends
