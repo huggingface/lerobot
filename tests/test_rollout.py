@@ -368,6 +368,55 @@ def test_create_inference_engine_sync():
 # ---------------------------------------------------------------------------
 
 
+def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(caplog):
+    from lerobot.rollout.context import _align_state_feature_order
+    from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+
+    features = {
+        "wrist_camera": (480, 640, 3),
+        "joint_b.pos": float,
+        "joint_a.pos": float,
+    }
+
+    aligned = _align_state_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+
+    assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
+    assert aligned["wrist_camera"] == (480, 640, 3)
+    assert "reordering state" in caplog.text
+
+    dataset_features = hw_to_dataset_features(aligned, "observation")
+    frame = build_dataset_frame(
+        dataset_features,
+        {"joint_a.pos": 1.0, "joint_b.pos": 2.0, "wrist_camera": object()},
+        "observation",
+    )
+    assert frame["observation.state"].tolist() == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("policy_action_names", "feature_names"),
+    [
+        (None, ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_b.pos", "joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_a.pos", "gripper.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+    ],
+)
+def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_action_names, feature_names):
+    from lerobot.rollout.context import _align_state_feature_order
+
+    features = {
+        "joint_b.pos": float,
+        "joint_a.pos": float,
+        "wrist_camera": (480, 640, 3),
+    }
+
+    aligned = _align_state_feature_order(features, policy_action_names)
+
+    assert aligned is features
+    assert list(aligned) == feature_names
+
+
 def test_estimate_max_episode_seconds_no_video():
     from lerobot.rollout.strategies import estimate_max_episode_seconds
 
