@@ -34,16 +34,18 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.rollout import (  # noqa: E402
     AskResult,
     InferenceEngine,
-    InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
-    PolicyQuery,
     QueryAnswer,
     QueryKind,
     RolloutController,
     RolloutEvent,
-    parse_command,
 )
+
+# Front-end and engine internals, deliberately not part of the package's
+# top-level compatibility surface — imported from their defining modules.
+from lerobot.rollout.inference import PolicyQuery  # noqa: E402
+from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
 
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:

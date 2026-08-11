@@ -58,7 +58,16 @@ class RolloutStrategy(abc.ABC):
       lives on the instance (initialised in ``setup()``), not in ``run()``
       locals;
     - never bind keyboard/terminal listeners — stdin belongs to the
-      interactive command prompt.
+      interactive command prompt;
+    - call ``engine.pump_query(obs_processed)`` once per tick, at the *end*
+      of the tick (recording strategies: after ``add_frame``, so a slow
+      generate cannot separate an observation from its recorded frame).
+      Every ``/vqa`` answer and every autosteer turn is served or delivered
+      through that call — skipping it silently degrades text queries: on
+      sync backends a queued question is never answered during the run, on
+      async backends computed answers only surface at segment end.  Do not
+      fold it into the action path: text generation is far slower than a
+      control tick.
 
     One-shot strategies (``supports_interactive = False``, the default)
     are free to finalize on ``run()`` exit, e.g. via
@@ -233,6 +242,10 @@ class RolloutStrategy(abc.ABC):
         Implementations must call ``engine.resume()`` before entering their
         loop: async backends start with inference paused, and the interactive
         controller pauses the engine again at the end of every segment.
+        Interactive strategies must also call
+        ``engine.pump_query(obs_processed)`` at the end of every tick — the
+        text-query channel only advances through it (see the class
+        docstring).
         """
 
     @abc.abstractmethod
