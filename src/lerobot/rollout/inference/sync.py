@@ -176,4 +176,7 @@ class SyncInferenceEngine(InferenceEngine):
             # lifted — a query advancing a stateful step would let the action
             # path notice the query.
             observation = self._preprocessor(observation)
-            return str(self._policy.generate_text(observation))
+            # No str() coercion: _service_query validates the return value, so
+            # a contract-violating policy (None, a tensor) surfaces as an
+            # error answer instead of steering the robot with "None".
+            return self._policy.generate_text(observation)

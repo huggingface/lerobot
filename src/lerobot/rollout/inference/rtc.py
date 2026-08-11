@@ -332,7 +332,10 @@ class RTCInferenceEngine(InferenceEngine):
         obs_batch = self._mark_query(obs_batch, query)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            return str(self._policy.generate_text(preprocessed))
+            # No str() coercion: _service_query validates the return value, so
+            # a contract-violating policy (None, a tensor) surfaces as an
+            # error answer instead of steering the robot with "None".
+            return self._policy.generate_text(preprocessed)
 
     # ------------------------------------------------------------------
     # RTC: background inference thread

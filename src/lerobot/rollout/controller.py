@@ -489,6 +489,11 @@ class RolloutController:
                 # resets the policy, and the plan's progress lives there.
                 engine.stop_autosteer()
                 dropped = engine.drop_pending_query()
+                # An undelivered sequencer answer would otherwise be handed
+                # to the observer by the idle pump, announcing a subtask
+                # after the segment (and the sequencer) ended.  VQA answers
+                # stay deliverable — see the idle pump in serve().
+                engine.drop_ready_subtask_answers()
             # Only an operator question is worth reporting — a dropped
             # next-subtask query is just the sequencer stopping with it.
             if dropped is not None and dropped.kind is QueryKind.VQA:

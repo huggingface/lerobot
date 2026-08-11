@@ -24,6 +24,7 @@ from __future__ import annotations
 import abc
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -128,10 +129,10 @@ class InferenceEngine(abc.ABC):
     that *owns* the policy — declared by each backend through
     :attr:`control_thread_owns_policy`: the control thread for sync
     backends, the background inference thread for async ones — through
-    :meth:`_service_query`.  The answer lands in a slot and is handed to
-    the observer registered via :meth:`set_answer_observer` when the
-    control thread next calls :meth:`pump_query`, so observers never fire
-    on a background inference thread.  Whether the channel can be served
+    :meth:`_service_query`.  The answer lands in a small queue and is
+    handed to the observer registered via :meth:`set_answer_observer` when
+    the control thread next calls :meth:`pump_query`, so observers never
+    fire on a background inference thread.  Whether the channel can be served
     at all is reported by :attr:`supports_text_queries`, which callers
     check *before* queueing so a policy without a text head is refused up
     front instead of failing one tick later.
@@ -158,7 +159,17 @@ class InferenceEngine(abc.ABC):
         # concurrent ``set_task`` or ``ask``.
         self._query_lock = Lock()
         self._pending_query: PolicyQuery | None = None
-        self._ready_answer: QueryAnswer | None = None
+        # True from the moment the policy-owning thread claims a query
+        # (``_take_query``) until its answer is published (or the turn is
+        # discarded).  Async backends generate lock-free for seconds, and the
+        # autosteer poll must not queue a duplicate turn in that window.
+        self._query_in_flight = False
+        # Answers awaiting delivery.  A queue, not a single slot: with an
+        # async backend a second query can be accepted and answered while the
+        # control thread is between pumps (e.g. during torch.compile warmup),
+        # and an undelivered answer must never be silently overwritten.
+        # Bounded in practice — queries are single-slot at the source.
+        self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
 
         # Autosteer sequencer state (same lock: it writes _pending_query).
@@ -332,7 +343,7 @@ class InferenceEngine(abc.ABC):
         delivers finished answers.
         """
 
-    def pump_query(self, obs_processed: dict | None = None) -> None:
+    def pump_query(self, obs_processed: dict | None = None) -> bool:
         """Advance the text-query channel by one tick.  Control thread only.
 
         Runs, in order: :meth:`_poll_autosteer` (so the sequencer can queue
@@ -348,6 +359,11 @@ class InferenceEngine(abc.ABC):
         of a tick instead, where an inline-serving tick is simply expected
         to overrun its budget.
 
+        Returns ``True`` when a query was served inline on this call, so
+        strategies can skip the loop-overrun warning for a tick whose
+        overrun is exactly that expected generation.  Async backends always
+        return ``False`` — they generate on their own thread.
+
         ``obs_processed`` is the processed observation of the current
         control tick; pass ``None`` when none is available (the
         controller's idle poll does).  A pending query is then left queued
@@ -355,9 +371,11 @@ class InferenceEngine(abc.ABC):
         not advance.
         """
         self._poll_autosteer(obs_processed)
+        served = False
         if self.control_thread_owns_policy:
-            self._service_query(obs_processed)
+            served = self._service_query(obs_processed)
         self._deliver_answer()
+        return served
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         with self._query_lock:
@@ -380,40 +398,50 @@ class InferenceEngine(abc.ABC):
                 return
             if time.perf_counter() < self._autosteer_due_at:
                 return
-            if self._pending_query is not None:
-                # The operator's /vqa (or our own previous query) is still in
-                # flight.  The deadline stays in the past, so the next tick
-                # retries rather than losing this turn entirely.
+            if self._pending_query is not None or self._query_in_flight:
+                # The operator's /vqa (or our own previous query) is still
+                # queued or being generated — async backends free the slot at
+                # claim time, so the in-flight flag is what stops a duplicate
+                # turn from queueing during the whole generation latency.  The
+                # deadline stays in the past, so the next tick retries rather
+                # than losing this turn entirely.
                 return
             self._pending_query = PolicyQuery(kind=QueryKind.NEXT_SUBTASK, text=self._autosteer_goal)
-
-    def _schedule_next_autosteer(self) -> None:
-        """Arm the next query, measured from now.  Called once a subtask lands."""
-        with self._query_lock:
-            if self._autosteer_goal is None:
-                return  # stopped while this subtask was being generated
-            self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
 
     def _take_query(self) -> PolicyQuery | None:
         """Claim the pending query.  Call from the policy-owning thread."""
         with self._query_lock:
             query, self._pending_query = self._pending_query, None
+            if query is not None:
+                # In flight until the answer is published (or the turn is
+                # discarded); see _poll_autosteer.
+                self._query_in_flight = True
             return query
 
-    def _service_query(self, obs_processed: dict | None) -> None:
+    def _service_query(self, obs_processed: dict | None) -> bool:
         """Serve a pending query.  Call ONLY from the policy-owning thread.
 
         Failures are captured into an answer rather than raised: a query
         the policy cannot handle must not take down the control loop or
-        the background inference thread.
+        the background inference thread.  Returns ``True`` when a query was
+        claimed and served (successfully or not) — i.e. when this call
+        spent a text generation's worth of time.
         """
         if obs_processed is None:
-            return
+            return False
         query = self._take_query()
         if query is None:
-            return
+            return False
         try:
             text = self._generate_text(obs_processed, query)
+            if not isinstance(text, str) or not text.strip():
+                # Contract violation (a forgotten return, a tensor, an empty
+                # string).  Fail here so the garbage becomes an error answer
+                # instead of steering the robot and labeling recorded frames.
+                raise TypeError(
+                    f"generate_text() must return a non-empty str, got {text!r} "
+                    f"({type(text).__name__})"
+                )
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
             if query.kind is QueryKind.NEXT_SUBTASK:
@@ -423,17 +451,47 @@ class InferenceEngine(abc.ABC):
             self._publish_answer(
                 QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
             )
-            return
-        if query.kind is QueryKind.NEXT_SUBTASK:
-            # Applied here, on the policy-owning thread, so the subtask is live
-            # for the very next inference.
-            self.set_task(text)
-            # Armed only now, so the interval measures robot motion between
-            # subtasks rather than wall-clock that a slow generate ate into.
-            self._schedule_next_autosteer()
+            return True
+        if query.kind is QueryKind.NEXT_SUBTASK and not self._apply_subtask(query, text):
+            return True  # sequencer stopped meanwhile; the turn was discarded
         # Published after being applied, so an observer announcing the subtask
         # never gets ahead of the task it describes.
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
+        return True
+
+    def _apply_subtask(self, query: PolicyQuery, subtask: str) -> bool:
+        """Apply a generated subtask, unless the sequencer stopped meanwhile.
+
+        Between ``_take_query`` and this call the generation ran lock-free
+        for up to seconds, during which a ``/reset``, ``/subtask``, or
+        ``/autosteer off`` may have stopped the sequencer (or pointed it at
+        a different goal).  Applying unconditionally would silently
+        overwrite the operator's newer instruction with a stale plan, so
+        the check and the apply run atomically under ``_query_lock``
+        (``_task_lock`` nests inside it; nothing acquires them in the
+        reverse order).  Returns ``True`` when the subtask was applied.
+        When it was not, the turn is discarded without an answer: the
+        sequencer that requested it is gone, and announcing the discard
+        would describe a sequencer the operator already stopped.
+        """
+        with self._query_lock:
+            live = self._autosteer_goal == query.text
+            if live:
+                # Applied here, on the policy-owning thread, so the subtask is
+                # live for the very next inference.
+                self.set_task(subtask)
+                # Armed only now, so the interval measures robot motion
+                # between subtasks rather than wall-clock that a slow
+                # generate ate into.
+                self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
+            else:
+                self._query_in_flight = False  # no answer will be published
+        if not live:
+            logger.info(
+                "Discarding autosteer subtask %r — the sequencer stopped while it was being generated",
+                subtask,
+            )
+        return live
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on ``obs_processed``.  Backend-specific.
@@ -465,20 +523,40 @@ class InferenceEngine(abc.ABC):
         batch[QUERY_TEXT] = query.text
         return batch
 
+    def drop_ready_subtask_answers(self) -> None:
+        """Discard undelivered ``NEXT_SUBTASK`` answers.
+
+        The controller calls this when a run segment ends, right after
+        stopping the sequencer: delivered later (by the idle pump), such an
+        answer would announce a subtask from a sequencer that no longer
+        drives anything.  Operator (VQA) answers stay deliverable — a
+        question answered during the segment is still worth reporting after
+        it ends.
+        """
+        with self._query_lock:
+            kept = [a for a in self._ready_answers if a.kind is not QueryKind.NEXT_SUBTASK]
+            dropped = len(self._ready_answers) - len(kept)
+            self._ready_answers = deque(kept)
+        if dropped:
+            logger.debug("Dropped %d undelivered autosteer answer(s) at segment end", dropped)
+
     def _publish_answer(self, answer: QueryAnswer) -> None:
         with self._query_lock:
-            self._ready_answer = answer
+            self._query_in_flight = False
+            self._ready_answers.append(answer)
 
     def _deliver_answer(self) -> None:
         with self._query_lock:
-            answer, self._ready_answer = self._ready_answer, None
+            answers = list(self._ready_answers)
+            self._ready_answers.clear()
             observer = self._answer_observer
-        if answer is None or observer is None:
+        if observer is None:
             return
-        try:
-            observer(answer)
-        except Exception:  # a broken observer must not kill the control loop
-            logger.exception("Error in inference-engine answer observer")
+        for answer in answers:
+            try:
+                observer(answer)
+            except Exception:  # a broken observer must not kill the control loop
+                logger.exception("Error in inference-engine answer observer")
 
     @abc.abstractmethod
     def start(self) -> None:

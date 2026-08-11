@@ -38,6 +38,7 @@ from lerobot.rollout import (  # noqa: E402
     InteractiveSession,
     LinkedEvent,
     PolicyQuery,
+    QueryAnswer,
     QueryKind,
     RolloutController,
     RolloutEvent,
@@ -1231,6 +1232,68 @@ def test_engine_query_failure_becomes_an_error_answer():
     assert "RuntimeError: no text head" in delivered[0].error
 
 
+@pytest.mark.parametrize("bad_output", [None, 42, "", "   "])
+def test_engine_rejects_invalid_generate_text_output(bad_output):
+    """A contract-violating generate_text (None, tensor, empty) becomes an error answer.
+
+    Without central validation, str() coercion would turn a forgotten return
+    into the live task 'None' — steering the robot and labeling frames with it.
+    """
+    engine = _FakeEngine()
+    engine._generate_text = lambda obs_processed, query: bad_output
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.ask("what do you see?")
+    engine.pump_query({"joint.pos": 0.0})
+
+    assert len(delivered) == 1
+    assert not delivered[0].ok
+    assert "TypeError" in delivered[0].error
+    assert engine.task == "pick up the cube"  # nothing steered the robot
+
+
+def test_engine_pump_query_reports_inline_service():
+    """pump_query returns True only for the tick that generated inline."""
+    engine = _FakeEngine()
+    assert engine.pump_query({"joint.pos": 0.0}) is False  # nothing queued
+
+    engine.ask("what do you see?")
+    assert engine.pump_query({"joint.pos": 0.0}) is True  # generated inline
+    assert engine.pump_query({"joint.pos": 0.0}) is False  # drained
+
+    # Async backends never serve on the control thread, so they never
+    # report an inline generation.
+    engine.control_thread_owns_policy = False
+    engine.ask("and now?")
+    assert engine.pump_query({"joint.pos": 0.0}) is False
+    assert engine.has_pending_query
+
+
+def test_engine_undelivered_answers_queue_up_instead_of_being_overwritten():
+    """Two answers landing between pumps must both reach the observer.
+
+    On an async backend the query slot frees at claim time, so a second /vqa
+    can be accepted and answered while the control thread is not pumping
+    (e.g. during torch.compile warmup).  A single-slot answer channel would
+    silently drop the first answer.
+    """
+    engine = _FakeEngine()
+    engine.control_thread_owns_policy = False
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    assert engine.ask("first?") is True
+    engine._service_query({"joint.pos": 0.0})  # the async thread answers it
+    assert engine.ask("second?") is True
+    engine._service_query({"joint.pos": 0.0})
+
+    # The next pump delivers both, oldest first.
+    engine.pump_query({"joint.pos": 0.0})
+    assert [a.question for a in delivered] == ["first?", "second?"]
+    assert all(a.ok for a in delivered)
+
+
 def test_policy_text_generation_contract_defaults_off():
     """The base policy declares the text-head contract as opt-in.
 
@@ -1586,6 +1649,100 @@ def test_engine_autosteer_retries_when_the_operator_query_is_in_flight():
     # The very next tick retries the missed subtask query.
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
+
+
+def test_engine_autosteer_does_not_double_queue_while_generation_is_in_flight():
+    """Async backends free the query slot at claim time; the sequencer must not requeue.
+
+    Without in-flight tracking, every control tick during the (seconds-long)
+    generation would queue a duplicate NEXT_SUBTASK, so a second generation
+    replaces the just-applied subtask after only generation-latency of motion.
+    """
+    engine = _FakeEngine()
+    engine.control_thread_owns_policy = False  # RTC-style backend
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+
+    engine.pump_query({"joint.pos": 0.0})  # the sequencer queues its turn
+    claimed = engine._take_query()  # the async thread claims it and starts generating
+    assert claimed is not None and claimed.kind is QueryKind.NEXT_SUBTASK
+
+    # Control ticks during the in-flight generation must not queue a duplicate.
+    for _ in range(5):
+        engine.pump_query({"joint.pos": 0.0})
+    assert not engine.has_pending_query
+
+    # Once the answer lands, the channel frees and the next turn queues again.
+    engine._publish_answer(QueryAnswer(question=claimed.text, answer="subtask", kind=claimed.kind))
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.has_pending_query
+
+
+@pytest.mark.parametrize(
+    "stop_mid_generation",
+    [
+        lambda engine: engine.stop_autosteer(),  # /autosteer off (or /reset, or segment end)
+        lambda engine: (engine.stop_autosteer(), engine.set_task("operator override")),  # /subtask
+    ],
+    ids=["autosteer_off", "subtask_takeover"],
+)
+def test_engine_discards_subtask_generated_after_sequencer_stopped(stop_mid_generation):
+    """A stale in-flight subtask must not overwrite the operator's newer intent.
+
+    The generation runs lock-free for seconds on async backends; a /reset,
+    /subtask, or /autosteer off landing in that window used to be silently
+    overwritten when the generation finished — and announced as applied.
+    """
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    original = engine._generate_text
+
+    def generate_then_stop(obs_processed, query):
+        text = original(obs_processed, query)
+        stop_mid_generation(engine)  # the operator's command lands mid-generation
+        return text
+
+    engine._generate_text = generate_then_stop
+    engine.start_autosteer("tidy the table", interval_s=0.0)
+    engine.pump_query({"joint.pos": 0.0})
+
+    # The stale subtask was neither applied nor announced.
+    assert not engine.task.startswith("subtask ")
+    assert delivered == []
+    # The channel is free again (no stuck in-flight flag).
+    assert engine.ask("what do you see?") is True
+
+
+def test_controller_segment_end_drops_stale_autosteer_answer_but_delivers_vqa():
+    """An undelivered sequencer answer must not be announced after reset/stop.
+
+    The idle serve loop pumps to deliver answers that landed just as the
+    segment ended — that is meant for operator questions, not for turns of a
+    sequencer the segment end already stopped.
+    """
+    answers = []
+    controller, _events, _strategy, engine, _parent, run_started = _make_controller(answers=answers)
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(run_started.is_set)
+    assert controller.autosteer("tidy the table") is AskResult.QUEUED
+
+    # The async backend publishes a sequencer answer and a VQA answer that
+    # the (never-pumping) segment leaves undelivered.
+    engine._publish_answer(
+        QueryAnswer(question="tidy the table", answer="subtask 1", kind=QueryKind.NEXT_SUBTASK)
+    )
+    engine._publish_answer(QueryAnswer(question="is the cube in the box?", answer="yes", kind=QueryKind.VQA))
+
+    controller.reset()
+    # The idle pump delivers the operator's answer but not the stale turn.
+    assert _wait_for(lambda: any(a.kind is QueryKind.VQA for a in answers))
+    assert not any(a.kind is QueryKind.NEXT_SUBTASK for a in answers)
+
+    controller.stop()
+    thread.join(timeout=2.0)
 
 
 def test_controller_autosteer_rejected_while_idle():
