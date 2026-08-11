@@ -158,6 +158,20 @@ def test_recipe_messages_are_serialized_and_route_joint_action_training():
     assert complementary["being_h05_predict_actions"].tolist() == [True]
 
 
+def test_runtime_messages_do_not_require_training_sidecars():
+    transition = {
+        TransitionKey.COMPLEMENTARY_DATA: {
+            "messages": [{"role": "user", "content": "What do you see?"}],
+        }
+    }
+
+    complementary = BeingH05MessagesStep()(transition)[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert complementary["being_h05_messages"] == [[{"role": "user", "content": "What do you see?"}]]
+    assert complementary["being_h05_target_message_indices"] == [[]]
+    assert complementary["being_h05_predict_actions"].tolist() == [False]
+
+
 def test_recipe_text_targets_must_be_assistant_messages():
     transition = {
         TransitionKey.COMPLEMENTARY_DATA: {

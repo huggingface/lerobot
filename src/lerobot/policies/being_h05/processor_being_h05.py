@@ -151,7 +151,10 @@ class BeingH05MessagesStep(ProcessorStep):
         streams = complementary.get("message_streams")
         targets = complementary.get("target_message_indices")
         if streams is None:
-            streams = [[] for _ in messages]
+            # Runtime generation requests carry semantic messages only. Streams
+            # and target indices are training sidecars, so use aligned neutral
+            # entries without turning the request into action supervision.
+            streams = [[None] * len(sample_messages) for sample_messages in messages]
         elif not is_batched:
             streams = [streams]
         if targets is None:
