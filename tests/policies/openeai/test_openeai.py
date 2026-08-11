@@ -166,6 +166,14 @@ def test_get_policy_class():
     assert issubclass(policy_cls, object)
 
 
+def test_fsdp_wrap_units_name_real_classes():
+    """The declared `_fsdp_wrap_modules` names must track the modeling code — pins the drift."""
+    from lerobot.policies.openeai import modeling_openeai
+
+    for name in modeling_openeai.OpenEAIVLAPolicy._fsdp_wrap_modules:
+        assert isinstance(getattr(modeling_openeai, name), type), name
+
+
 # == CrossAttention Tests ==
 
 

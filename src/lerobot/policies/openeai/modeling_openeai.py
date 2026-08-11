@@ -34,12 +34,17 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor, nn
-from transformers import Qwen3VLForConditionalGeneration
-from transformers.utils import cached_file
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import Qwen3VLForConditionalGeneration
+    from transformers.utils import cached_file
+else:
+    Qwen3VLForConditionalGeneration = None  # keeps the symbol bindable at import time
+    cached_file = None
 
 from ..pretrained import PreTrainedPolicy, T
 from .blocks import (
@@ -440,6 +445,7 @@ class OpenEAIVLAPolicy(PreTrainedPolicy):
 
     config_class = OpenEAIVLAConfig
     name = "openeai"
+    _fsdp_wrap_modules = ["DiTBlock"]
 
     def __init__(
         self,

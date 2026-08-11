@@ -13,5 +13,7 @@
 # limitations under the License.
 
 from .configuration_openeai import OpenEAIVLAConfig
+from .modeling_openeai import OpenEAIVLAPolicy
+from .processor_openeai import make_openeai_pre_post_processors
 
-__all__ = ["OpenEAIVLAConfig"]
+__all__ = ["OpenEAIVLAConfig", "OpenEAIVLAPolicy", "make_openeai_pre_post_processors"]

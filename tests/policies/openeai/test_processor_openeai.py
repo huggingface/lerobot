@@ -262,8 +262,8 @@ def test_qwen3vl_processor_step_transform_features():
 
 def test_qwen3vl_processor_step_get_task_prompt_priority():
     """Test _get_task prefers 'prompt' over 'task' in complementary data."""
-    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
 
     transition = {
         TransitionKey.COMPLEMENTARY_DATA: {
@@ -277,8 +277,8 @@ def test_qwen3vl_processor_step_get_task_prompt_priority():
 
 def test_qwen3vl_processor_step_get_task_fallback_to_task():
     """Test _get_task falls back to 'task' when 'prompt' is absent."""
-    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
 
     transition = {
         TransitionKey.COMPLEMENTARY_DATA: {"task": "task_42"},
@@ -289,8 +289,8 @@ def test_qwen3vl_processor_step_get_task_fallback_to_task():
 
 def test_qwen3vl_processor_step_get_task_none_when_missing():
     """Test _get_task returns None when no task/prompt info is provided."""
-    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
 
     assert Qwen3VLProcessorStep._get_task({}) is None
     assert Qwen3VLProcessorStep._get_task({TransitionKey.COMPLEMENTARY_DATA: None}) is None
@@ -299,8 +299,8 @@ def test_qwen3vl_processor_step_get_task_none_when_missing():
 
 def test_qwen3vl_processor_step_get_task_list_input():
     """Test _get_task handles list input (multi-batch task)."""
-    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
 
     transition = {
         TransitionKey.COMPLEMENTARY_DATA: {
@@ -313,8 +313,8 @@ def test_qwen3vl_processor_step_get_task_list_input():
 
 def test_qwen3vl_processor_step_detect_device_from_observation():
     """Test _detect_device finds device from observation tensors."""
-    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.policies.openeai.processor_openeai import Qwen3VLProcessorStep
 
     cpu = torch.device("cpu")
     transition = {

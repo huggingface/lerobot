@@ -37,6 +37,7 @@ from typing import Any, ClassVar
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -49,7 +50,6 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGE,
     OBS_IMAGES,
