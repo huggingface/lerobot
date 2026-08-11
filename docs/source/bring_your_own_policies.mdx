@@ -332,7 +332,7 @@ messages:
 
 ```python
 def make_my_policy_recipe() -> TrainingRecipe:
-    return TrainingRecipe.from_dict({...})  # or load_recipe(<yaml path>)
+    return TrainingRecipe.from_dict({...})
 
 @PreTrainedConfig.register_subclass("my_policy")
 @dataclass
