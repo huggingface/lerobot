@@ -68,7 +68,13 @@ def make_wall_x_pre_post_processors(
         # Re-resolve the path here, not only in `WallXConfig.__post_init__`: a caller
         # may set `recipe_path` after construction, and training must render the
         # same recipe the checkpoint prompts itself with (`config.recipe`).
-        config.recipe = _load_recipe(config.recipe_path)
+        try:
+            config.recipe = _load_recipe(config.recipe_path)
+        except FileNotFoundError:
+            if config.recipe is None:
+                raise
+            # Checkpoints carry the resolved recipe inline, so deployment and
+            # resumed training do not depend on the original machine's path.
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps = [
@@ -87,17 +93,6 @@ def make_wall_x_pre_post_processors(
     ]
 
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
-
-
-def reconcile_wall_x_processors(
-    config: WallXConfig,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Upgrade older checkpoint pipelines to WALL-X's current text contract."""
-    if not any(isinstance(step, RenderGenerationPromptStep) for step in preprocessor.steps):
-        preprocessor.steps = [RenderGenerationPromptStep(config.recipe), *preprocessor.steps]
-    return preprocessor, postprocessor
 
 
 @ProcessorStepRegistry.register(name="wall_x_task_processor")

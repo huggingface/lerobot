@@ -51,9 +51,9 @@ def _load_recipe(path_str: str) -> TrainingRecipe:
     """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
     path = Path(path_str)
     if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
+        config_dir = Path(recipe_module.__file__).resolve().parent
+        candidates = (config_dir / path, config_dir / "recipes" / path)
+        path = next((candidate for candidate in candidates if candidate.exists()), path)
     return TrainingRecipe.from_yaml(path)
 
 

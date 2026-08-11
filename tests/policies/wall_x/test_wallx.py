@@ -252,34 +252,11 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     assert "text" not in batch
 
 
-def test_wall_x_reconciles_generation_renderer_into_older_checkpoint_pipeline(tmp_path):
-    config = WallXConfig(device="cpu")
-    config.input_features = {
-        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
-        "observation.images.face_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
-    }
-    config.output_features = {"action": PolicyFeature(type=FeatureType.ACTION, shape=(7,))}
-    stats = {
-        "observation.state": {"mean": torch.zeros(7), "std": torch.ones(7)},
-        "action": {"mean": torch.zeros(7), "std": torch.ones(7)},
-    }
-    preprocessor, postprocessor = make_wall_x_pre_post_processors(config, dataset_stats=stats)
-    preprocessor.steps = preprocessor.steps[1:]
-    preprocessor.save_pretrained(tmp_path)
-    postprocessor.save_pretrained(tmp_path)
+def test_wall_x_recipe_name_resolves_from_the_canonical_recipe_directory():
+    config = WallXConfig(device="cpu", recipe_path="subtask_joint.yaml")
 
-    loaded_preprocessor, _ = make_pre_post_processors(config, pretrained_path=str(tmp_path))
-    batch = loaded_preprocessor(
-        {
-            "observation.state": torch.zeros(7),
-            "observation.images.face_view": torch.zeros(3, 8, 8),
-            "query_kind": "vqa",
-            "text": "what do you see",
-        }
-    )
-
-    assert isinstance(loaded_preprocessor.steps[0], RenderGenerationPromptStep)
-    assert batch["messages"] == [[{"role": "user", "content": "what do you see"}]]
+    assert config.recipe is not None
+    assert config.recipe.messages is not None
 
 
 @require_cuda
