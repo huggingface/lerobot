@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig, recipe as recipe_module
+from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -38,12 +38,12 @@ def _wall_default_recipe() -> TrainingRecipe:
             MessageTurn(
                 role="user",
                 content="${task}\nPredict the next action in language.\n",
-                stream="high_level",
+                stream="low_level",
             ),
             MessageTurn(
                 role="assistant",
                 content="${subtask}",
-                stream="high_level",
+                stream="low_level",
                 target=True,
                 if_present="subtask",
             ),
@@ -52,13 +52,8 @@ def _wall_default_recipe() -> TrainingRecipe:
 
 
 def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
+    """Load an explicit external recipe override."""
+    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("wall_oss_05")
@@ -85,15 +80,18 @@ class WallOSS05Config(PreTrainedConfig):
     postprocess_action_dim: int | None = None
     num_inference_timesteps: int = 10
     action_branch: str = "flow"
-    # Setting `recipe_path` opts training into recipe-rendered language supervision
-    # and loads the YAML into `recipe` (relative paths resolve against
-    # src/lerobot/configs/recipes/).
+    # The built-in recipe lives in this policy config. Enable it for annotated
+    # training with `use_language_recipe`; `recipe_path` is only an explicit
+    # external override.
+    use_language_recipe: bool = False
     recipe_path: str | None = None
     # Wall's language contract: defaults to the trained subtask wording; a
     # fine-tune with `recipe_path` replaces it, and the checkpoint then prompts
     # itself with the recipe it was trained on.
     recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _wall_default_recipe())
     tokenizer_max_length: int = 1000
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
     flow_loss_weight: float = 1.0
     text_loss_weight: float = 0.1
 
@@ -149,6 +147,10 @@ class WallOSS05Config(PreTrainedConfig):
             raise ValueError("Wall loss weights must be non-negative.")
         if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
             raise ValueError("At least one Wall training loss must be enabled.")
+        if self.text_temperature < 0:
+            raise ValueError("text_temperature must be non-negative.")
+        if not 0 < self.text_top_p <= 1:
+            raise ValueError("text_top_p must be in (0, 1].")
 
     @property
     def vlm_backbone_config(self) -> Qwen2_5_VLConfig:

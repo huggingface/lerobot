@@ -93,43 +93,38 @@ deploying a saved LeRobot checkpoint.
 
 ### Text and VQA
 
-`WallOSS05Policy.generate_texts` accepts the same batched observation used for
-action inference. Supply a question for VQA or grounding:
+Wall-OSS-0.5 uses the shared policy text contract. Runtime supplies
+`query_kind` and `text`, then runs the normal policy input processor:
 
 ```python
-answers = policy.generate_texts(
-    batch,
-    kind="vqa",
-    user_text="Which object is closest to the right gripper?",
-)
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the right gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
 ```
 
-Use `kind="caption"` for scene descriptions, `kind="grounding"` for spatial
-queries, or `kind="subtask"` to produce Wall's trained language-level next
-action. Text generation uses the checkpoint's tied Qwen vocabulary head and
-vision-language expert; it does not call a separate VLM.
-
-`generate_texts` is the batched form. `generate_text` is the single-sample
-method the interactive language runtime calls; it decodes with the sampling
-settings stored on the checkpoint in `config.generation`.
+`vqa` preserves the caller question. `next_subtask` applies the recipe owned by
+`WallOSS05Config`. The policy inherits `generate_text(processed_batch)` and
+implements only `_generate_preprocessed_text`. Generation uses the checkpoint's
+tied Qwen vocabulary head and vision-language expert; it does not call a
+separate VLM.
 
 The language runtime can generate a subtask and then condition Wall's action
 prediction on it:
 
 ```bash
 lerobot-rollout \
-  --language \
   --policy.path=your-org/your-finetuned-wall-oss-0.5 \
   --policy.device=cuda \
   --task="clear the table" \
-  --mode=action
+  --interactive=true
 ```
 
-In the interactive runtime, use `/ask <question>` (or `/vqa <question>`) for
-vision-grounded VQA; action dispatch pauses before the current observation is
-sent to Wall. A bare text message remains a runtime interjection. Use
-`--direct_subtask` to skip language subtask generation and send the task
-directly to action inference.
+After `/start`, use `/vqa <question>`, `/autosteer <goal>`, or
+`/subtask <text>`.
 
 Wall retains useful embodied VQA and grounding capabilities, but it is
 specialized for robot observations and is not intended to replace a
@@ -180,16 +175,16 @@ through your distributed training configuration.
 
 ### Train with language annotations
 
-Set `recipe_path` to train from LeRobot's optional language columns. For
-example, the joint subtask recipe supervises the assistant's subtask response
-and the continuous action chunk in one causal sequence:
+Enable the recipe owned by `WallOSS05Config` to train from LeRobot's optional
+language columns. Its joint subtask recipe supervises the assistant response
+and continuous action chunk in one causal sequence:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=your-org/your-language-annotated-dataset \
   --policy.type=wall_oss_05 \
   --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
-  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.use_language_recipe=true \
   --policy.text_loss_weight=0.1 \
   --policy.flow_loss_weight=1.0 \
   --policy.device=cuda \
@@ -206,25 +201,27 @@ Recipe streams determine which objectives run for each sample:
 
 Only the targeted assistant payload and its `<|im_end|>` token are used as
 language labels. User prompts, padding, images, proprioception, and continuous
-action-query tokens are masked from text cross-entropy. If `recipe_path` is
+action-query tokens are masked from text cross-entropy. If `use_language_recipe` is
 unset, training follows the original action-only path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
-schema and available recipes.
+schema and recipe structure. `recipe_path` may point to an explicit external
+YAML override; LeRobot does not provide shared default recipe files.
 
 ## Key Configuration Parameters
 
-| Parameter                 | Default                    | Description                                                  |
-| ------------------------- | -------------------------- | ------------------------------------------------------------ |
-| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                                |
-| `chunk_size`              | `32`                       | Number of actions predicted per chunk                        |
-| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning       |
-| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots        |
-| `recipe_path`             | `None`                     | Enables recipe-driven text and per-sample action supervision |
-| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy          |
-| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                       |
-| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length   |
-| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                  |
+| Parameter                 | Default                    | Description                                                |
+| ------------------------- | -------------------------- | ---------------------------------------------------------- |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                              |
+| `chunk_size`              | `32`                       | Number of actions predicted per chunk                      |
+| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning     |
+| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots      |
+| `use_language_recipe`     | `false`                    | Enables the recipe stored in the policy config             |
+| `recipe_path`             | `None`                     | Optional explicit external recipe override                 |
+| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy        |
+| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                     |
+| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length |
+| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                |
 
 ## Evaluation and Inference
 

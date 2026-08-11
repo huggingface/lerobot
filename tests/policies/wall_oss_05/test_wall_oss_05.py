@@ -26,6 +26,7 @@ from torch import nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.wall_oss_05.configuration_wall_oss_05 import WallOSS05Config
 from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
     WallOSS05Model,
@@ -33,6 +34,7 @@ from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
     WallOSS05VisionMLP,
 )
 from lerobot.policies.wall_oss_05.processor_wall_oss_05 import WallOSS05TaskPassthrough
+from lerobot.processor import RenderGenerationPromptStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -200,7 +202,7 @@ def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
 def test_recipe_processor_renders_joint_text_and_action_supervision():
     pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
 
-    config = _config(recipe_path="recipes/subtask_joint.yaml")
+    config = _config(use_language_recipe=True)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
     batch = _batch(batch_size=1)
     batch.update(
@@ -225,6 +227,7 @@ def test_recipe_processor_renders_joint_text_and_action_supervision():
 
     processed = preprocessor(batch)
 
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
     assert processed["messages"][0][-1]["content"] == "pick up the red block"
     assert processed["message_streams"] == [["low_level", "low_level"]]
     assert processed["target_message_indices"] == [[1]]
@@ -253,14 +256,24 @@ def test_native_text_prompts_cover_subtask_and_vqa_contracts():
 
     policy = WallOSS05Policy(_config(), load_model=False)
 
-    subtask = policy._get_text_prompt("put the cup away", "subtask")
-    vqa = policy._get_text_prompt("Where is the cup?", "vqa")
+    subtask, _, _ = policy._format_recipe_prompt(
+        [{"role": "user", "content": "put the cup away\nPredict the next action in language.\n"}],
+        [None],
+        [],
+        "",
+    )
+    vqa, _, _ = policy._format_recipe_prompt(
+        [{"role": "user", "content": "Where is the cup?"}],
+        [None],
+        [],
+        "",
+    )
 
-    assert "Instruction: put the cup away" in subtask
+    assert "put the cup away" in subtask
     assert "Predict the next action in language." in subtask
-    assert "Question: Where is the cup?" in vqa
+    assert "Where is the cup?" in vqa
+    assert "Question:" not in vqa
     assert "front view:" in vqa
-    assert vqa.endswith("<|im_start|>assistant\n")
 
 
 def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
@@ -378,19 +391,14 @@ def test_policy_text_generation_decodes_native_model_tokens():
         "attention_mask": torch.tensor([[1]]),
     }
 
-    output = policy.generate_texts(
-        {"task": "locate cup"},
-        kind="vqa",
-        user_text="Where is it?",
-        max_new_tokens=8,
+    output = policy.generate_text(
+        {"task": ["locate cup"], "messages": [[{"role": "user", "content": "Where is it?"}]]}
     )
 
-    assert output == ["the cup is left"]
-    assert policy.model.kwargs["max_new_tokens"] == 8
-    # The runtime contract is the single-sample form, decoding with `config.generation`.
-    assert policy.generate_text({"task": "locate cup"}, kind="vqa", user_text="Where is it?") == (
-        "the cup is left"
-    )
+    assert output == "the cup is left"
+    assert policy.model.kwargs["max_new_tokens"] == 100
+    assert WallOSS05Policy.generate_text is PreTrainedPolicy.generate_text
+    assert not hasattr(WallOSS05Policy, "generate_texts")
     assert policy.supports_text_generation()
     assert policy.model.kwargs["eos_token_id"] == 2
 

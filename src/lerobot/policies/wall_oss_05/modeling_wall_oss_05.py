@@ -834,19 +834,6 @@ class WallOSS05Policy(PreTrainedPolicy):
         )
         return prompt, _ACTION_TOKEN * self.config.chunk_size
 
-    def _get_text_prompt(self, instruction: str, kind: str) -> str:
-        prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nObservation:"
-        for camera_name in self.config.camera_key_mapping.values():
-            label = _CAMERA_LABELS.get(camera_name, camera_name.replace("_", " "))
-            prompt += f" {label}: <|vision_start|>{_IMAGE_TOKEN}<|vision_end|>"
-        if kind == "subtask":
-            # The wording comes from the checkpoint's recipe (config.recipe),
-            # token-exact with the trained subtask turn.
-            prompt += f"\nInstruction: {self.build_prompt('subtask', task=instruction)}"
-        else:
-            prompt += f"\nQuestion: {instruction}\n"
-        return prompt + "<|im_end|>\n<|im_start|>assistant\n"
-
     @staticmethod
     def _message_content(message: dict[str, Any]) -> str:
         content = message.get("content", "")
@@ -1210,24 +1197,20 @@ class WallOSS05Policy(PreTrainedPolicy):
     def _build_text_model_inputs(
         self,
         batch: dict[str, Any],
-        *,
-        kind: str,
-        user_text: str | list[str] | None,
     ) -> dict[str, Any]:
         observations, _, _, tasks = self._build_observations(batch)
-        if user_text is None:
-            instructions = (
-                ["Describe what you observe in the current scene."] * len(tasks)
-                if kind == "caption"
-                else tasks
+        if "messages" not in batch:
+            raise ValueError("Wall-OSS-0.5 text generation requires preprocessed `messages`.")
+        messages_batch = self._batched_recipe_field(batch["messages"], len(tasks), "messages")
+        prefixes = []
+        for messages in messages_batch:
+            prompt, _, _ = self._format_recipe_prompt(
+                messages,
+                [None] * len(messages),
+                [],
+                "",
             )
-        elif isinstance(user_text, str):
-            instructions = [user_text] * len(tasks)
-        elif len(user_text) == len(tasks) and all(isinstance(value, str) for value in user_text):
-            instructions = user_text
-        else:
-            raise ValueError(f"Expected exactly {len(tasks)} text prompts.")
-        prefixes = [self._get_text_prompt(instruction, kind) for instruction in instructions]
+            prefixes.append(f"{prompt}<|im_start|>assistant\n")
         return self._construct_model_input(observations, prefixes, [""] * len(prefixes))
 
     def _sample_time(self, batch_size: int, device: torch.device) -> Tensor:
@@ -1317,51 +1300,20 @@ class WallOSS05Policy(PreTrainedPolicy):
         return output["predict_action"]
 
     @torch.no_grad()
-    def generate_text(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
-        """Single-sample text generation, as the interactive language runtime calls it."""
-        outputs = self.generate_texts(
-            batch,
-            kind=kind,
-            user_text=user_text,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
-        if len(outputs) != 1:
-            raise ValueError(f"The interactive runtime expected one Wall text output, got {len(outputs)}.")
-        return outputs[0]
-
-    def generate_texts(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "vqa",
-        user_text: str | list[str] | None = None,
-        max_new_tokens: int = 100,
-        min_new_tokens: int = 0,
-        temperature: float = 0.0,
-        top_p: float = 1.0,
-    ) -> list[str]:
-        """Generate Wall text for VQA, grounding, or language subtasks over a batch."""
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response from contract-rendered messages."""
         if self.processor is None or not hasattr(self, "model"):
             raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
-        if kind not in {"vqa", "caption", "grounding", "text", "subtask"}:
-            raise ValueError("kind must be one of: 'vqa', 'caption', 'grounding', 'text', 'subtask'.")
-        inputs = self._build_text_model_inputs(batch, kind=kind, user_text=user_text)
+        inputs = self._build_text_model_inputs(batch)
         output_ids = self.model.generate_text(
             **inputs,
-            max_new_tokens=max_new_tokens,
-            min_new_tokens=min_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
+            max_new_tokens=100,
+            min_new_tokens=0,
+            temperature=self.config.text_temperature,
+            top_p=self.config.text_top_p,
             eos_token_id=self.processor.tokenizer.eos_token_id,
         )
-        return [
+        outputs = [
             text.strip()
             for text in self.processor.tokenizer.batch_decode(
                 output_ids,
@@ -1369,6 +1321,9 @@ class WallOSS05Policy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
+        if len(outputs) != 1:
+            raise ValueError(f"The interactive runtime expected one Wall text output, got {len(outputs)}.")
+        return outputs[0]
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:

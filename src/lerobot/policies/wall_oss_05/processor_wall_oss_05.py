@@ -32,6 +32,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RenderGenerationPromptStep,
     UnnormalizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -267,10 +268,15 @@ def make_wall_oss_05_pre_post_processors(
         # caller may set `recipe_path` after construction, and training must render
         # the same recipe the checkpoint prompts itself with (`config.recipe`).
         config.recipe = _load_recipe(config.recipe_path)
+
+    if config.use_language_recipe or config.recipe_path:
+        if config.recipe is None:
+            raise ValueError("Wall-OSS-0.5 language training requires a recipe in policy config.")
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
     native_dim_holder: dict[str, int] = {}
     return make_policy_processor_pipelines(
         input_steps=[
+            RenderGenerationPromptStep(config.recipe),
             steps.rename_observations,
             steps.add_batch_dim,
             WallOSS05TaskPassthrough(),
