@@ -81,6 +81,14 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
     # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
     _cp_plan: ClassVar[dict[str, Any] | None] = None
+    # Attribute names `drop_queued_actions` recognizes as this policy's action queue.
+    # The defaults cover the two in-tree chunking idioms: a `_queues` dict holding an
+    # ACTION deque (the `populate_queues` convention) and a bare `_action_queue` deque.
+    # A chunking policy that stores its queue under a different name MUST extend this
+    # ClassVar (or override `drop_queued_actions`), otherwise the method silently
+    # becomes a no-op and stale queued actions keep executing after a mid-episode
+    # conditioning change (e.g. an interactive /subtask).
+    _action_queue_attrs: ClassVar[tuple[str, ...]] = ("_queues", "_action_queue")
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -98,6 +106,19 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
+        # generate_text() and supports_text_generation() must be overridden in
+        # tandem: the rollout stack consults the flag before accepting text
+        # queries (/vqa, /autosteer), so a text head without the flag is
+        # unreachable — and the operator is told the policy has none.  Caught
+        # here so the mismatch fails at class-definition time instead of
+        # silently in the field.  Checkpoint-conditional support stays
+        # possible: the override just has to exist.
+        if "generate_text" in cls.__dict__ and "supports_text_generation" not in cls.__dict__:
+            raise TypeError(
+                f"{cls.__name__} overrides generate_text() but not supports_text_generation(). "
+                "Override supports_text_generation() too (returning True, or a "
+                "checkpoint-conditional value), otherwise the text head is never used."
+            )
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Serialize this policy's parameters (and config) into `save_directory`.
@@ -226,14 +247,21 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         on it.  Call it from the thread that calls ``select_action``: it
         mutates the same queues that thread pops from.
 
+        The queue is found by name: the attributes listed in
+        :attr:`_action_queue_attrs` (a dict clears only its ``ACTION``
+        entry; anything else is ``clear()``-ed).  Policies whose queue lives
+        under a different name must extend that ClassVar — see its comment.
         Policies that keep no action queue inherit a no-op.
         """
-        queues = getattr(self, "_queues", None)
-        if isinstance(queues, dict) and ACTION in queues:
-            queues[ACTION].clear()
-        action_queue = getattr(self, "_action_queue", None)
-        if action_queue is not None:
-            action_queue.clear()
+        for attr in self._action_queue_attrs:
+            queue = getattr(self, attr, None)
+            if isinstance(queue, dict):
+                # populate_queues-style dict; other entries (observation
+                # history) are deliberately left alone.
+                if ACTION in queue:
+                    queue[ACTION].clear()
+            elif queue is not None:
+                queue.clear()
 
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""

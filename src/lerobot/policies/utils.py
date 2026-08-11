@@ -30,6 +30,14 @@ from lerobot.utils.feature_utils import build_dataset_frame
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
 ):
+    """Append the batch's values to their per-key deques (filling them on first use).
+
+    Convention: policies using this helper store the dict as ``self._queues``
+    — one of the attribute names ``PreTrainedPolicy.drop_queued_actions``
+    recognizes (see ``PreTrainedPolicy._action_queue_attrs``) so a
+    mid-episode conditioning change can clear the ACTION queue.  A policy
+    that picks a different attribute name must extend that ClassVar.
+    """
     if exclude_keys is None:
         exclude_keys = []
     for key in batch:

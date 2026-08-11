@@ -1188,23 +1188,27 @@ def test_drop_queued_actions_clears_both_queue_conventions():
 
     # Subclassing PreTrainedPolicy demands a config_class (enforced in its
     # __init_subclass__), so exercise the method against stand-ins carrying
-    # each queue idiom.
+    # each queue idiom and the class's recognized attribute names.
     flush = PreTrainedPolicy.drop_queued_actions
+    attrs = PreTrainedPolicy._action_queue_attrs
 
     queues_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
-        _queues={ACTION: deque([1, 2, 3]), "observation.state": deque([9])}
+        _action_queue_attrs=attrs,
+        _queues={ACTION: deque([1, 2, 3]), "observation.state": deque([9])},
     )
     flush(queues_policy)
     assert len(queues_policy._queues[ACTION]) == 0
     # Other episode state is intentionally left alone.
     assert len(queues_policy._queues["observation.state"]) == 1
 
-    action_queue_policy = SimpleNamespace(_action_queue=deque([1, 2, 3]))  # act / pi0 / groot style
+    action_queue_policy = SimpleNamespace(  # act / pi0 / groot style
+        _action_queue_attrs=attrs, _action_queue=deque([1, 2, 3])
+    )
     flush(action_queue_policy)
     assert len(action_queue_policy._action_queue) == 0
 
     # Queue-less policies inherit a no-op.
-    flush(SimpleNamespace())
+    flush(SimpleNamespace(_action_queue_attrs=attrs))
 
 
 # ---------------------------------------------------------------------------
