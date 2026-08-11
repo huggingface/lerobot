@@ -206,6 +206,10 @@ def arm_for_publish(robot, mocks, kp_value: float = 50.0, kd_value: float = 1.0)
     return robot
 
 
+def published_targets(robot):
+    return {motor.name: robot.msg.motor_cmd[motor.value].q for motor in G1_29_JointIndex}
+
+
 def hardware_mode(robot):
     """Switch to the real-robot branch after construction.
 
@@ -460,6 +464,59 @@ class TestPublishLowcmd:
 
 
 # ---------------------------------------------------------------------------
+# Action dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestSendAction:
+    def test_token_only_action_stays_off_the_wire(self, make_robot):
+        """With a controller loaded, a token-only action has nothing for send_action to publish.
+
+        Writing anyway just repeats the controller thread's last command with a fresh CRC, so
+        the robot sees commands at the policy rate on top of the controller rate.
+        """
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"motion_token.{i}.pos": 0.5 for i in range(TOKEN_DIM)})
+
+        mocks["publisher_mock"].Write.assert_not_called()
+
+    def test_tokens_still_reach_the_controller(self, make_robot):
+        """Skipping the publish must not skip handing the action to the controller thread."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+
+        robot.send_action({"motion_token.0.pos": 1.5, "remote.lx": 0.25})
+
+        assert robot.controller_input["motion_token.0.pos"] == 1.5
+        assert robot.controller_input["remote.lx"] == 0.25
+
+    def test_arm_targets_are_published(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
+        shoulder = G1_29_JointArmIndex.kLeftShoulderPitch
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"{shoulder.name}.q": 0.3, "motion_token.0.pos": 0.5})
+
+        mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+        assert robot.msg.motor_cmd[shoulder.value].q == pytest.approx(0.3)
+
+    def test_joint_action_is_published_without_ctrl(self, make_robot):
+        """Without a controller the caller owns every joint, so nothing is filtered out."""
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        mocks["publisher_mock"].Write.reset_mock()
+
+        robot.send_action({f"{motor.name}.q": 0.2 for motor in G1_29_JointIndex})
+
+        mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
+        assert all(q == pytest.approx(0.2) for q in published_targets(robot).values())
+
+
+# ---------------------------------------------------------------------------
 # Reset
 # ---------------------------------------------------------------------------
 
@@ -468,10 +525,6 @@ def sim_ready(robot):
     """Point the robot at a stub sim env so reset() takes its single-publish branch."""
     robot.sim_env = MagicMock()
     return robot
-
-
-def published_targets(robot):
-    return {motor.name: robot.msg.motor_cmd[motor.value].q for motor in G1_29_JointIndex}
 
 
 class TestReset:

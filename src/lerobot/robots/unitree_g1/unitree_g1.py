@@ -514,6 +514,11 @@ class UnitreeG1(Robot):
                 for key, value in action.items()
                 if key.endswith(".q") and key.startswith(arm_prefixes)
             }
+            if not action_to_publish:
+                # Nothing here for the arms, so publishing would only re-send the controller
+                # thread's own last command with a fresh CRC, at the caller's rate on top of the
+                # controller's. Token-only actions (a SONIC policy) hit this on every step.
+                return action
 
         tau = None
         if self.config.gravity_compensation and self.arm_ik is not None:
