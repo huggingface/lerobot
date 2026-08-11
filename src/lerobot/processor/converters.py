@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
-from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, REWARD, TRUNCATED
+from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, QUERY_TEXT, REWARD, TRUNCATED
 
 
 @singledispatch
@@ -165,6 +165,7 @@ _COMPLEMENTARY_KEYS = (
     "message_streams",
     "target_message_indices",
     QUERY_KIND,
+    QUERY_TEXT,
 )
 
 
