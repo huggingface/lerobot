@@ -134,6 +134,9 @@ class UnitreeG1(Robot):
         self._env_wrapper = None
         self._lowstate = None
         self._lowstate_lock = threading.Lock()
+        # Guards the shared lowcmd message: the controller thread, send_action(), reset() and
+        # the shutdown path all publish through it, and a torn update still carries a valid CRC.
+        self._lowcmd_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
@@ -194,21 +197,22 @@ class UnitreeG1(Robot):
         kd: np.ndarray | list[float] | None = None,
         tau: np.ndarray | list[float] | None = None,
     ) -> None:  # writes robot command whenever requested
-        for motor in G1_29_JointIndex:
-            key = f"{motor.name}.q"
-            if key in action:
-                self.msg.motor_cmd[motor.value].q = action[key]
-                self.msg.motor_cmd[motor.value].qd = 0
-                self.msg.motor_cmd[motor.value].kp = (
-                    kp[motor.value] if kp is not None else self.kp[motor.value]
-                )
-                self.msg.motor_cmd[motor.value].kd = (
-                    kd[motor.value] if kd is not None else self.kd[motor.value]
-                )
-                self.msg.motor_cmd[motor.value].tau = tau[motor.value] if tau is not None else 0.0
+        with self._lowcmd_lock:
+            for motor in G1_29_JointIndex:
+                key = f"{motor.name}.q"
+                if key in action:
+                    self.msg.motor_cmd[motor.value].q = action[key]
+                    self.msg.motor_cmd[motor.value].qd = 0
+                    self.msg.motor_cmd[motor.value].kp = (
+                        kp[motor.value] if kp is not None else self.kp[motor.value]
+                    )
+                    self.msg.motor_cmd[motor.value].kd = (
+                        kd[motor.value] if kd is not None else self.kd[motor.value]
+                    )
+                    self.msg.motor_cmd[motor.value].tau = tau[motor.value] if tau is not None else 0.0
 
-        self.msg.crc = self.crc.Crc(self.msg)
-        self.lowcmd_publisher.Write(self.msg)
+            self.msg.crc = self.crc.Crc(self.msg)
+            self.lowcmd_publisher.Write(self.msg)
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:

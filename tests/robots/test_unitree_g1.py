@@ -20,6 +20,7 @@ The Unitree SDK, the cameras and the arm IK are all mocked, so these run without
 or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.py``.
 """
 
+import threading
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -350,6 +351,57 @@ class TestPublishLowcmd:
         cmd = robot.msg.motor_cmd[G1_29_JointIndex.kWaistYaw.value]
         assert cmd.kp == pytest.approx(10.0)
         assert cmd.kd == pytest.approx(0.5)
+
+    def test_concurrent_publishes_dont_tear(self, make_robot):
+        """Publishes from two threads must never emit a half-updated command.
+
+        The controller thread, ``send_action()``, ``reset()`` and the shutdown path share one
+        lowcmd message, and the CRC covers whatever it holds at that moment, so an interleaved
+        update goes out as a valid-CRC mix of two commands. One publisher is parked after
+        writing its first joint and the other is let through, which forces that interleaving
+        instead of relying on timing.
+        """
+        first_joint_written = threading.Event()
+        other_publish_done = threading.Event()
+
+        class ParkedAction(dict):
+            """Blocks once the first joint has been written, inviting an interleaved publish."""
+
+            reads = 0
+
+            def __getitem__(self, key):
+                self.reads += 1
+                if self.reads == 2:
+                    first_joint_written.set()
+                    other_publish_done.wait(timeout=0.5)
+                return super().__getitem__(key)
+
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        knees = (G1_29_JointIndex.kLeftKnee, G1_29_JointIndex.kRightKnee)
+
+        published = []
+        robot.lowcmd_publisher.Write = lambda msg: published.append(
+            tuple(msg.motor_cmd[knee.value].q for knee in knees)
+        )
+
+        def publish_parked():
+            robot.publish_lowcmd(ParkedAction({f"{knee.name}.q": 1.0 for knee in knees}))
+
+        def publish_other():
+            first_joint_written.wait(timeout=1.0)
+            robot.publish_lowcmd({f"{knee.name}.q": 2.0 for knee in knees})
+            other_publish_done.set()
+
+        threads = [threading.Thread(target=publish_parked), threading.Thread(target=publish_other)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(published) == 2
+        for left, right in published:
+            assert left == right, f"published a mix of both commands: {left} and {right}"
 
     def test_zero_gains_make_joints_passive(self, make_robot):
         """Shutdown path: zero kp/kd/tau must reach the message."""
