@@ -313,19 +313,57 @@ lerobot-rollout \
 
 ### Run on the Physical Robot
 
-Start the robot server (see Part 2), then point the rollout at the robot instead of the sim:
+On hardware, run the policy with [async inference](./async) rather than a single `lerobot-rollout` loop. A rollout driven from your laptop puts the network in the middle of the control loop: every step blocks on inference, and one hiccup stalls the 50 Hz balance loop while the robot is standing on it. Async inference splits the two — the policy runs on your GPU machine, while the robot client runs on the G1's Jetson, so the SONIC controller thread and `rt/lowcmd` stay onboard and only 64-D token chunks cross the network.
+
+Three processes, with the robot server from Part 2 running the whole time:
+
+```text
+GPU machine                     G1 (Jetson)
+policy_server  ◄── gRPC ──►  robot_client: UnitreeG1 + SONIC decoder @ 50 Hz
+  checkpoint                        │ ZMQ (lowcmd 6000, lowstate 6001, camera 5555)
+                                    ▼
+                             run_g1_server.py  ◄──► rt/lowcmd, rt/lowstate (DDS)
+```
+
+Start the policy server on the GPU machine first:
 
 ```bash
-lerobot-rollout \
-  --strategy.type=base \
-  --policy.path=nepyope/sonic_walk \
-  --policy.device=cuda \
+python -m lerobot.async_inference.policy_server \
+  --host=0.0.0.0 \
+  --port=8080 \
+  --fps=30
+```
+
+On the robot, start the server (bridge + camera):
+
+```bash
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
+```
+
+Then, in a second terminal on the robot, start the client. Everything robot-side is loopback, since the bridge runs on the same machine:
+
+```bash
+python -m lerobot.async_inference.robot_client \
+  --server_address=<GPU_MACHINE_IP>:8080 \
+  --policy_type=pi05 \
+  --pretrained_name_or_path=nepyope/sonic_walk \
+  --policy_device=cuda \
+  --actions_per_chunk=50 \
+  --fps=30 \
+  --task="walk forward" \
   --robot.type=unitree_g1 \
   --robot.is_simulation=false \
-  --robot.robot_ip=<ROBOT_IP> \
+  --robot.robot_ip=127.0.0.1 \
   --robot.controller=SonicWholeBodyController \
-  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
 ```
+
+A few things to keep in mind:
+
+- Start the client as a module (`python -m`); running the file path directly fails on its relative imports.
+- `--policy_device` is the device the _server_ loads the policy onto — the client sends it during the handshake.
+- `--actions_per_chunk` must not exceed the checkpoint's chunk size (50 for `nepyope/sonic_walk`).
+- With `SonicWholeBodyController` the observation state is the 64-D token echo instead of the 29 joint positions, so the checkpoint has to be trained against that same state.
 
 On connect, the robot eases every joint to the decoder's `default_angles` before the controller takes over, so the first policy commands don't snap from the connect-time pose.
 
