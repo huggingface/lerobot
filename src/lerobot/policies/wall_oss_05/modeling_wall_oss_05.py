@@ -33,6 +33,7 @@ from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.language import normalize_semantic_messages, require_single_text_output
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -1201,7 +1202,9 @@ class WallOSS05Policy(PreTrainedPolicy):
         observations, _, _, tasks = self._build_observations(batch)
         if "messages" not in batch:
             raise ValueError("Wall-OSS-0.5 text generation requires preprocessed `messages`.")
-        messages_batch = self._batched_recipe_field(batch["messages"], len(tasks), "messages")
+        messages_batch = normalize_semantic_messages(
+            batch["messages"], policy_name="Wall-OSS-0.5", batch_size=len(tasks)
+        )
         prefixes = []
         for messages in messages_batch:
             prompt, _, _ = self._format_recipe_prompt(
@@ -1299,8 +1302,11 @@ class WallOSS05Policy(PreTrainedPolicy):
         )
         return output["predict_action"]
 
+    def supports_text_generation(self) -> bool:
+        return True
+
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages."""
         if self.processor is None or not hasattr(self, "model"):
             raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
@@ -1321,9 +1327,7 @@ class WallOSS05Policy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
-        if len(outputs) != 1:
-            raise ValueError(f"The interactive runtime expected one Wall text output, got {len(outputs)}.")
-        return outputs[0]
+        return require_single_text_output(outputs, policy_name="Wall-OSS-0.5")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:

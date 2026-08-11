@@ -18,11 +18,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -49,11 +48,6 @@ def _wall_default_recipe() -> TrainingRecipe:
             ),
         ]
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load an explicit external recipe override."""
-    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("wall_oss_05")
@@ -122,14 +116,7 @@ class WallOSS05Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.recipe_path is not None:
-            try:
-                self.recipe = _load_recipe(self.recipe_path)
-            except FileNotFoundError:
-                if self.recipe is None:
-                    raise
-                # A reloaded checkpoint already carries its recipe inline; a stale
-                # path only matters on the training machine that set it.
+        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
         if self.max_action_dim != 26 or self.max_state_dim != 26:
             raise ValueError("Wall-OSS-0.5 has a fixed 26D action/state contract.")
         if self.n_action_steps > self.chunk_size:

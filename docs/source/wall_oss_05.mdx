@@ -108,7 +108,7 @@ answer = policy.generate_text(processed_batch)
 
 `vqa` preserves the caller question. `next_subtask` applies the recipe owned by
 `WallOSS05Config`. The policy inherits `generate_text(processed_batch)` and
-implements only `_generate_preprocessed_text`. Generation uses the checkpoint's
+overrides `supports_text_generation` and `generate_text`. Generation uses the checkpoint's
 tied Qwen vocabulary head and vision-language expert; it does not call a
 separate VLM.
 

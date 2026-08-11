@@ -397,7 +397,8 @@ def test_policy_text_generation_decodes_native_model_tokens():
 
     assert output == "the cup is left"
     assert policy.model.kwargs["max_new_tokens"] == 100
-    assert WallOSS05Policy.generate_text is PreTrainedPolicy.generate_text
+    assert WallOSS05Policy.generate_text is not PreTrainedPolicy.generate_text
+    assert WallOSS05Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert not hasattr(WallOSS05Policy, "generate_texts")
     assert policy.supports_text_generation()
     assert policy.model.kwargs["eos_token_id"] == 2

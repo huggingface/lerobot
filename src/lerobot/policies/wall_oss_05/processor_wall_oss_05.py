@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
@@ -40,7 +41,7 @@ from lerobot.processor import (
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from .configuration_wall_oss_05 import WallOSS05Config, _load_recipe
+from .configuration_wall_oss_05 import WallOSS05Config
 
 
 @ProcessorStepRegistry.register(name="wall_oss_05_task_passthrough")
@@ -263,13 +264,10 @@ def make_wall_oss_05_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
     language_steps = []
-    if config.recipe_path:
-        # Re-resolve the path here, not only in `WallOSS05Config.__post_init__`: a
-        # caller may set `recipe_path` after construction, and training must render
-        # the same recipe the checkpoint prompts itself with (`config.recipe`).
-        config.recipe = _load_recipe(config.recipe_path)
-
-    if config.use_language_recipe or config.recipe_path:
+    if language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    ):
         if config.recipe is None:
             raise ValueError("Wall-OSS-0.5 language training requires a recipe in policy config.")
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
