@@ -36,17 +36,7 @@ from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
-from .processor_eo1 import (
-    ACTION_END_TOKEN,
-    ACTION_START_TOKEN,
-    DEFAULT_ACTION_TOKEN,
-    DEFAULT_STATE_TOKEN,
-    EO1_SPECIAL_TOKENS,
-    STATE_END_TOKEN,
-    STATE_START_TOKEN,
-    SYSTEM_MESSAGE,
-    TASK_VLA_TOKEN,
-)
+from .processor_eo1 import EO1_SPECIAL_TOKENS
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.activations import ACT2FN
@@ -151,98 +141,6 @@ class EO1Policy(PreTrainedPolicy):
             )
             self._text_processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         return self._text_processor
-
-    @staticmethod
-    def _batch_tasks(task: str | list[str] | None, batch_size: int) -> list[str]:
-        if isinstance(task, str):
-            return [task] * batch_size
-        if isinstance(task, list) and len(task) == batch_size and all(isinstance(v, str) for v in task):
-            return task
-        raise ValueError(f"EO-1 expected exactly {batch_size} task strings.")
-
-    def _runtime_images(self, batch: dict[str, Any], batch_size: int) -> list[list[dict[str, Any]]]:
-        image_keys = [key for key in self.config.image_features if key in batch]
-        if not image_keys:
-            raise ValueError("EO-1 text generation requires at least one observation image.")
-        rows: list[list[dict[str, Any]]] = []
-        for row in range(batch_size):
-            blocks = []
-            for key in image_keys:
-                image = batch[key]
-                if image.ndim == 3:
-                    image = image.unsqueeze(0)
-                image = image[row].detach().cpu()
-                if image.is_floating_point():
-                    image = image.clamp(0, 1).mul(255).round().to(torch.uint8)
-                blocks.append({"type": "image", "image": image})
-            rows.append(blocks)
-        return rows
-
-    def prepare_runtime_action_batch(self, batch: dict[str, Any], task: str | list[str]) -> dict[str, Any]:
-        """Rebuild the EO-1 action prompt from the runtime's current subtask."""
-        state = batch[OBS_STATE]
-        batch_size = state.shape[0]
-        tasks = self._batch_tasks(task, batch_size)
-        image_rows = self._runtime_images(batch, batch_size)
-        messages = []
-        for row, instruction in enumerate(tasks):
-            messages.append(
-                [
-                    {"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]},
-                    {
-                        "role": "user",
-                        "content": [
-                            *image_rows[row],
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}"
-                                    f"{instruction}{TASK_VLA_TOKEN}"
-                                ),
-                            },
-                        ],
-                    },
-                    {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"{ACTION_START_TOKEN}"
-                                    f"{DEFAULT_ACTION_TOKEN * self.config.chunk_size}"
-                                    f"{ACTION_END_TOKEN}"
-                                ),
-                            }
-                        ],
-                    },
-                ]
-            )
-
-        processor = self._get_text_processor()
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=False,
-            return_dict=True,
-            return_tensors="pt",
-            processor_kwargs={
-                "padding": True,
-                "padding_side": "left",
-                "min_pixels": self.config.image_min_pixels,
-                "max_pixels": self.config.image_max_pixels,
-            },
-        )
-        device = state.device
-        return {
-            OBS_STATE: state,
-            "input_ids": inputs["input_ids"].to(device),
-            "attention_mask": inputs["attention_mask"].to(device),
-            "pixel_values": inputs["pixel_values"].to(device),
-            "image_grid_thw": inputs["image_grid_thw"].to(device),
-            "mm_token_type_ids": inputs["mm_token_type_ids"].to(device),
-            "state_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN),
-            "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
-        }
 
     def supports_text_generation(self) -> bool:
         return True

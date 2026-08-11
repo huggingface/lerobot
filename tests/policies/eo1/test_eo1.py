@@ -322,6 +322,7 @@ def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
     assert "messages" not in processed
     assert "query_kind" not in processed
     assert "text" not in processed
+    assert not hasattr(EO1Policy, "prepare_runtime_action_batch")
 
 
 def test_eo1_recipe_processor_builds_sparse_joint_labels():
