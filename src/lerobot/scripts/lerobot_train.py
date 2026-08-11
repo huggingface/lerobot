@@ -59,6 +59,7 @@ from lerobot.common.train_utils import (
 )
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import JobConfig, parser
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import EpisodeAwareSampler, compute_sampler_state
 from lerobot.datasets.factory import make_train_eval_datasets
@@ -484,6 +485,16 @@ def train(cfg: TrainPipelineConfig):
     processor_kwargs = ProcessorConfigKwargs()
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
+    if processor_pretrained_path and not cfg.resume:
+        rebuild_pretrained_processors = bool(
+            getattr(active_cfg, "rebuild_pretrained_processors", False)
+            or language_recipe_enabled(
+                use_language_recipe=getattr(active_cfg, "use_language_recipe", False),
+                recipe_path=getattr(active_cfg, "recipe_path", None),
+            )
+        )
+        if rebuild_pretrained_processors:
+            processor_kwargs["rebuild_pretrained_processors"] = True
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:

@@ -42,6 +42,9 @@ from .constant import (
     CAMERA_NAME_MAPPING,
 )
 
+TEXT_TARGET_START = "<|wall_text_target_start|>"
+TEXT_TARGET_END = "<|wall_text_target_end|>"
+
 
 @dataclass
 class X2RDataProcessingConfig:
@@ -121,6 +124,7 @@ def preprocesser_call(
     truncation: bool | None = None,
     max_length: int | None = None,
     return_tensors: str = "pt",
+    targeted_text_only: bool = False,
 ) -> BatchFeature:
     """Unified preprocessing function for Wall-X model handling text, image and video inputs.
 
@@ -140,6 +144,8 @@ def preprocesser_call(
         truncation: Whether to truncate sequences longer than max_length
         max_length: Maximum length for truncation/padding
         return_tensors: Format for returned tensors ('pt', 'np', etc.)
+        targeted_text_only: Disable the legacy assistant-label fallback when no
+            explicit recipe target markers are present.
 
     Returns:
         BatchFeature containing processed inputs with keys:
@@ -211,6 +217,15 @@ def preprocesser_call(
                 index += 1
             text[i] = text[i].replace("<|placeholder|>", "<|video_pad|>")
 
+    target_spans: list[list[tuple[int, int]]] = []
+    clean_text = []
+    for value in text:
+        cleaned, spans = _extract_text_target_spans(value)
+        clean_text.append(cleaned)
+        target_spans.append(spans)
+    text = clean_text
+    has_text_targets = any(target_spans)
+
     # Tokenize complete input text
     text_inputs = processor.tokenizer(
         text,
@@ -218,6 +233,7 @@ def preprocesser_call(
         padding=padding,
         truncation=truncation,
         max_length=max_length,
+        return_offsets_mapping=has_text_targets,
     )
 
     # Get pad token ID for label generation
@@ -225,50 +241,54 @@ def preprocesser_call(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id
 
-    # Generate labels for multi-turn dialogue, keeping only assistant response loss
     labels = torch.full_like(text_inputs.input_ids, -100)
-    assistant_marker = "<|im_start|>assistant\n"
-    im_end_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
-    assistant_tokens = processor.tokenizer("<|im_start|>assistant\n", add_special_tokens=False).input_ids
+    if has_text_targets:
+        offsets = text_inputs.pop("offset_mapping")
+        for row, spans in enumerate(target_spans):
+            for start, end in spans:
+                overlap = (
+                    (offsets[row, :, 1] > start)
+                    & (offsets[row, :, 0] < end)
+                    & text_inputs.attention_mask[row].bool()
+                )
+                labels[row, overlap] = text_inputs.input_ids[row, overlap]
+    elif not targeted_text_only:
+        # Preserve the original action-only labeling path.
+        assistant_marker = "<|im_start|>assistant\n"
+        im_end_token_id = processor.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        assistant_tokens = processor.tokenizer("<|im_start|>assistant\n", add_special_tokens=False).input_ids
 
-    for i in range(len(text)):
-        assistant_regions = []
-        parts = text[i].split(assistant_marker)
-
-        # Process each part to determine which tokens belong to assistant responses
-        # Count left padding tokens
-        num_left_pads = 0
-        for token_id in text_inputs.input_ids[i]:
-            if token_id == pad_token_id:
-                num_left_pads += 1
-            else:
-                break
-        current_pos = num_left_pads
-
-        for j, part in enumerate(parts):
-            part_tokens = processor.tokenizer(part, add_special_tokens=False).input_ids
-            if j == 0:
-                # First part is system prompt or user question, all labels are -100
-                current_pos += len(part_tokens)
-                continue
-
-            # From second part onwards, each part starts with assistant response
-            for k in range(current_pos + 1, len(text_inputs.input_ids[i])):
-                if text_inputs.input_ids[i][k] == im_end_token_id:
-                    assistant_regions.append((current_pos + len(assistant_tokens), k + 2))
+        for i in range(len(text)):
+            assistant_regions = []
+            parts = text[i].split(assistant_marker)
+            num_left_pads = 0
+            for token_id in text_inputs.input_ids[i]:
+                if token_id == pad_token_id:
+                    num_left_pads += 1
+                else:
                     break
-            current_pos += len(part_tokens) + 3
+            current_pos = num_left_pads
 
-        # Set labels for assistant response regions
-        for start, end in assistant_regions:
-            labels[i][start:end] = text_inputs.input_ids[i][start:end]
+            for j, part in enumerate(parts):
+                part_tokens = processor.tokenizer(part, add_special_tokens=False).input_ids
+                if j == 0:
+                    current_pos += len(part_tokens)
+                    continue
+                for k in range(current_pos + 1, len(text_inputs.input_ids[i])):
+                    if text_inputs.input_ids[i][k] == im_end_token_id:
+                        assistant_regions.append((current_pos + len(assistant_tokens), k + 2))
+                        break
+                current_pos += len(part_tokens) + 3
+
+            for start, end in assistant_regions:
+                labels[i][start:end] = text_inputs.input_ids[i][start:end]
 
     # Mask special action tokens in labels
     action_token_id = processor.tokenizer.encode("<|action|>")[0]
     propri_token_id = processor.tokenizer.encode("<|propri|>")[0]
     labels[labels == action_token_id] = -100
     labels[labels == propri_token_id] = -100
-    labels[labels == processor.tokenizer.pad_token_id] = -100
+    labels[labels == pad_token_id] = -100
 
     # Set labels to None if all are invalid to skip cross entropy loss
     if (labels != -100).any().item():
@@ -277,6 +297,35 @@ def preprocesser_call(
         text_inputs["labels"] = None
 
     return BatchFeature(data={**text_inputs, **image_inputs, **videos_inputs})
+
+
+def _extract_text_target_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
+    clean_parts: list[str] = []
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    clean_length = 0
+    while True:
+        start = text.find(TEXT_TARGET_START, cursor)
+        if start < 0:
+            clean_parts.append(text[cursor:])
+            break
+        prefix = text[cursor:start]
+        clean_parts.append(prefix)
+        clean_length += len(prefix)
+        payload_start = start + len(TEXT_TARGET_START)
+        end = text.find(TEXT_TARGET_END, payload_start)
+        if end < 0:
+            raise ValueError("WALL-OSS text-target start marker has no matching end marker.")
+        payload = text[payload_start:end]
+        span_start = clean_length
+        clean_parts.append(payload)
+        clean_length += len(payload)
+        spans.append((span_start, clean_length))
+        cursor = end + len(TEXT_TARGET_END)
+    cleaned = "".join(clean_parts)
+    if TEXT_TARGET_END in cleaned:
+        raise ValueError("WALL-OSS text-target end marker has no matching start marker.")
+    return cleaned, spans
 
 
 def process_grounding_points(
