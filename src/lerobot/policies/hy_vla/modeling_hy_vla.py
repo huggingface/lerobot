@@ -2083,14 +2083,31 @@ class HyVLAPolicy(PreTrainedPolicy):
             raise RuntimeError(f"Expected {2 * horizon} rel/abs tokens, got {actions.shape[-2]}.")
         return torch.cat((actions[:, :horizon], actions[:, horizon:]), dim=-1)
 
+    @staticmethod
+    def _generation_prompt(batch: dict[str, Any]) -> str:
+        messages = batch.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("Hy-VLA text generation requires preprocessed `messages`.")
+        conversation = messages[0] if isinstance(messages[0], list) else messages
+        parts = []
+        for message in conversation:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                parts.extend(
+                    str(block["text"])
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text" and "text" in block
+                )
+        if not parts:
+            raise ValueError("Hy-VLA text generation requires text content in `messages`.")
+        return "\n".join(parts)
+
     @torch.no_grad()
-    def generate_text(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "subtask",
-        user_text: str | None = None,
-    ) -> str:
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
         """Decode from the VLM tower's tied vocabulary head.
 
         Hy's action expert never produces vocabulary logits, so its head is dropped at
@@ -2101,22 +2118,7 @@ class HyVLAPolicy(PreTrainedPolicy):
         `predict_action_chunk` deliberately ignores `with_text` and returns a bare chunk.
         """
         self.eval()
-        if kind == "subtask":
-            prompt = batch.get("task") or ""
-        elif kind == "vqa":
-            prompt = user_text or ""
-        else:
-            raise ValueError(f"Hy-VLA supports kind 'subtask' or 'vqa', got {kind!r}.")
-        if isinstance(prompt, list | tuple):
-            if len(prompt) != 1:
-                raise ValueError("Hy-VLA text generation is single-sample.")
-            prompt = prompt[0]
-        if not prompt:
-            return ""
-        if kind == "subtask":
-            # The wording comes from the checkpoint's recipe (config.recipe): the bare
-            # goal — Hy's chat suffix already marks where the assistant turn begins.
-            prompt = self.build_prompt("subtask", task=prompt)
+        prompt = self._generation_prompt(batch)
 
         model_batch = self._with_inference_history(batch) if self.config.use_video_encoder else batch
         images, image_masks = self.prepare_images(model_batch)

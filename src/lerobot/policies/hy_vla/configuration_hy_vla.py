@@ -82,6 +82,8 @@ class HyVLAConfig(PreTrainedConfig):
     flow_loss_weight: float = 1.0
     text_loss_weight: float = 0.01
     text_max_new_tokens: int = 64
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
 
     proj_width: int = 1024
     num_steps: int = 10
@@ -158,6 +160,10 @@ class HyVLAConfig(PreTrainedConfig):
             raise ValueError("At least one Hy-VLA training loss must be enabled.")
         if self.text_max_new_tokens < 1:
             raise ValueError("text_max_new_tokens must be at least 1.")
+        if self.text_temperature < 0:
+            raise ValueError("text_temperature must be non-negative.")
+        if not 0 < self.text_top_p <= 1:
+            raise ValueError("text_top_p must be in (0, 1].")
         if self.embodiment not in {"umi_dual_arm", "robotwin_dual_arm"}:
             raise ValueError(
                 "Hy-VLA supports only the released UMI and RoboTwin dual-arm embodiments; "

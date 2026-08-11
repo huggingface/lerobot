@@ -72,16 +72,22 @@ settings.
 Hy-VLA is a dual-tower model: a VLM tower and an action expert. The expert never
 produces vocabulary logits, so its language-modelling head is dropped at load —
 in the released checkpoints it is randomly initialized and unused. The **VLM
-tower keeps its own head**, tied to the embedding matrix, and `generate_text`
-drives it:
+tower keeps its own head**, tied to the embedding matrix. The normal input
+pipeline consumes runtime `query_kind`/`text`, renders semantic messages, and
+the shared base `generate_text` method drives the policy hook:
 
 ```python
-subtask = policy.generate_text(batch, kind="subtask")
-answer = policy.generate_text(batch, kind="vqa", user_text="Which cup is closest?")
+subtask_request = preprocessor({**observation, "query_kind": "next_subtask", "text": task})
+subtask = policy.generate_text(subtask_request)
+vqa_request = preprocessor(
+    {**observation, "query_kind": "vqa", "text": "Which cup is closest?"}
+)
+answer = policy.generate_text(vqa_request)
 ```
 
+Hy-VLA implements `_generate_preprocessed_text`, not the public method.
 Decoding runs through Hy's own `embed_prefix`, so the images, modality masks and
-visual-segment attention match training rather than a generic chat prompt.
+visual-segment attention match training.
 
 <Tip warning={true}>
 

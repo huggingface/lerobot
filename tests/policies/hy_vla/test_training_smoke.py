@@ -26,6 +26,7 @@ pytest.importorskip("transformers", reason="Hy-VLA requires the `hy_vla` extra (
 
 from lerobot.policies.hy_vla.configuration_hy_vla import HyVLAConfig
 from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy
 
 
 class _CapturingTokenizer:
@@ -290,7 +291,7 @@ def test_text_cross_entropy_supervises_only_labelled_next_tokens():
     assert model.text_cross_entropy(prefix_out, lang_tokens, torch.full((1, 3), -100)) is None
 
 
-def test_generate_text_dispatches_kinds_and_reuses_the_hy_prefix():
+def test_generate_text_uses_base_contract_and_reuses_the_hy_prefix():
     policy = _lightweight_policy()
     captured = {}
 
@@ -300,19 +301,18 @@ def test_generate_text_dispatches_kinds_and_reuses_the_hy_prefix():
         return torch.tensor([[5, 6]])
 
     policy.model.generate_text_tokens = fake_generate_text_tokens
-    batch = _text_batch()
+    batch = {**_text_batch(), "messages": [[{"role": "user", "content": "pick the cup"}]]}
 
-    subtask = policy.generate_text(batch, kind="subtask")
+    assert HyVLAPolicy.generate_text is PreTrainedPolicy.generate_text
+    assert policy.supports_text_generation()
+    subtask = policy.generate_text(batch)
     assert subtask == "decoded"
     assert captured["max_new_tokens"] == policy.config.text_max_new_tokens
     # The task went through Hy's own tokenizer path, so the chat suffix is applied.
     assert policy.language_tokenizer.received == ["pick the cup" + policy.config.task_suffix]
 
-    policy.generate_text(batch, kind="vqa", user_text="which cup is closest?")
+    policy.generate_text({**batch, "messages": [[{"role": "user", "content": "which cup is closest?"}]]})
     assert policy.language_tokenizer.received == ["which cup is closest?" + policy.config.task_suffix]
 
-    with pytest.raises(ValueError, match="kind 'subtask' or 'vqa'"):
-        policy.generate_text(batch, kind="caption")
-
-    # No instruction means nothing to condition on, so no decode is attempted.
-    assert policy.generate_text({**batch, "task": [""]}, kind="subtask") == ""
+    with pytest.raises(ValueError, match="preprocessed `messages`"):
+        policy.generate_text(_text_batch())

@@ -34,6 +34,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_hy_vla import HyVLAConfig
@@ -798,6 +799,7 @@ def make_hy_vla_pre_post_processors(
     steps = make_default_policy_processor_steps(config, dataset_stats=None)
     preprocessor, postprocessor = make_policy_processor_pipelines(
         input_steps=[
+            RenderGenerationPromptStep(config.recipe),
             steps.rename_observations,
             steps.add_batch_dim,
             encoder,

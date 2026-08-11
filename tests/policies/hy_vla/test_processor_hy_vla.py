@@ -30,6 +30,7 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
 
 def _native_state() -> torch.Tensor:
@@ -79,6 +80,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
     stats = _stats(50)
     stats["action_std"] = stats["action_std"].double()
     preprocessor, postprocessor = make_hy_vla_pre_post_processors(config, norm_stats=stats)
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
     state = _native_state()
     processed = preprocessor(_batch(state, state.repeat(50, 1)))
     assert processed["task"] == ["raw_task_with_underscore\nkeep-newline"]
@@ -88,7 +90,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
 
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
-    assert (tmp_path / "policy_preprocessor_step_2_hy_vla_encode_v1.safetensors").is_file()
+    assert (tmp_path / "policy_preprocessor_step_3_hy_vla_encode_v1.safetensors").is_file()
     assert (tmp_path / "policy_postprocessor_step_0_hy_vla_decode_v1.safetensors").is_file()
 
     loaded_pre = PolicyProcessorPipeline.from_pretrained(
@@ -104,7 +106,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
         to_output=transition_to_policy_action,
     )
     reconnect_hy_vla_processors(loaded_pre, loaded_post)
-    loaded_encoder = loaded_pre.steps[2]
+    loaded_encoder = loaded_pre.steps[3]
     loaded_decoder = loaded_post.steps[0]
     assert loaded_encoder.action_std.dtype == torch.float64
     assert loaded_decoder.action_std.dtype == torch.float64
