@@ -43,6 +43,26 @@ class RolloutStrategy(abc.ABC):
     Each concrete strategy implements a self-contained control loop with
     its own recording/interaction semantics.  Strategies are mutually
     exclusive — only one runs per session.
+
+    Lifecycle: ``setup()`` once, then ``run()``, then ``teardown()`` once.
+    A strategy whose config declares ``supports_interactive = True`` can
+    additionally be driven by ``--interactive=true``, which calls ``run()``
+    any number of times between ``setup()`` and ``teardown()`` (one call
+    per start/stop segment).  Such a strategy must keep ``run()``
+    restartable:
+
+    - never finalize the dataset in ``run()`` — finalization belongs in
+      ``teardown()``; at most save a partial tail episode when a segment
+      ends (see ``SentryStrategy`` for the reference implementation);
+    - state that must survive a segment (upload cadence counters, etc.)
+      lives on the instance (initialised in ``setup()``), not in ``run()``
+      locals;
+    - never bind keyboard/terminal listeners — stdin belongs to the
+      interactive command prompt.
+
+    One-shot strategies (``supports_interactive = False``, the default)
+    are free to finalize on ``run()`` exit, e.g. via
+    ``VideoEncodingManager``.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -192,11 +212,19 @@ class RolloutStrategy(abc.ABC):
 
     @abc.abstractmethod
     def run(self, ctx: RolloutContext) -> None:
-        """Main rollout loop.  Returns when shutdown is requested or duration expires."""
+        """Main rollout loop.  Returns when shutdown is requested or duration expires.
+
+        Called exactly once per session — unless the strategy declares
+        ``supports_interactive``, in which case it is called once per
+        interactive segment and must be restartable (see the class
+        docstring for the contract).
+        """
 
     @abc.abstractmethod
     def teardown(self, ctx: RolloutContext) -> None:
-        """Cleanup: save dataset, stop threads, disconnect hardware."""
+        """Cleanup: finalize dataset, stop threads, disconnect hardware.
+
+        Called exactly once, after the last ``run()`` call."""
 
 
 # ---------------------------------------------------------------------------
