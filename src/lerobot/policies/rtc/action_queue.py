@@ -43,6 +43,11 @@ class ActionQueue:
     1. RTC-enabled: Replaces the entire queue with new actions, accounting for inference delay
     2. RTC-disabled: Appends new actions to the queue, maintaining continuity
 
+    Each queued action also carries the task (instruction) whose inference
+    produced its chunk, kept in lockstep with the action queues under the same
+    lock; ``get_with_task`` returns it so consumers can label dispatched
+    actions with the instruction they were actually computed under.
+
     Args:
         cfg (RTCConfig): Configuration for Real-Time Chunking behavior.
 
@@ -199,6 +204,7 @@ class ActionQueue:
             original_actions: Unprocessed actions from policy.
             processed_actions: Post-processed actions for robot.
             real_delay: Number of time steps to skip due to inference delay.
+            task: Instruction that generated the chunk; labels every queued action.
         """
         clamped_delay = max(0, min(real_delay, len(original_actions), len(processed_actions)))
         self.original_queue = original_actions[clamped_delay:].clone()
@@ -220,6 +226,8 @@ class ActionQueue:
         Args:
             original_actions: Unprocessed actions from policy.
             processed_actions: Post-processed actions for robot.
+            task: Instruction that generated the appended chunk; actions already
+                queued keep the label of the chunk that produced them.
         """
         if self.queue is None:
             self.original_queue = original_actions.clone()

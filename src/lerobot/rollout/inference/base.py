@@ -69,10 +69,10 @@ class QueryAnswer:
     inference failure, run ended first) so the caller can report it instead
     of silently dropping it.
 
-    Successful ``NEXT_SUBTASK`` queries never reach here — they are applied
-    to the task directly, and the task is how the operator sees the robot's
-    intent.  Failures do, because a sequencer that stalls silently is worse
-    than one that says so.
+    ``NEXT_SUBTASK`` answers report the sequencer's turns: a success carries
+    the subtask the engine has *already applied* through ``set_task`` (the
+    receiver only announces it, never applies it again), a failure the reason
+    the sequencer just stopped.
     """
 
     question: str
@@ -125,8 +125,9 @@ class InferenceEngine(abc.ABC):
     ``set_task`` it is safe to call from any thread (the interactive
     session's ``/vqa`` command calls it from its stdin reader) and never
     touches the policy itself: the question is answered by the thread
-    that *owns* the policy — the control thread for sync backends, the
-    background inference thread for async ones — through
+    that *owns* the policy — declared by each backend through
+    :attr:`control_thread_owns_policy`: the control thread for sync
+    backends, the background inference thread for async ones — through
     :meth:`_service_query`.  The answer lands in a slot and is handed to
     the observer registered via :meth:`set_answer_observer` when the
     control thread next calls :meth:`pump_query`, so observers never fire
@@ -150,8 +151,11 @@ class InferenceEngine(abc.ABC):
         self._dispatched_task = task
         self._task_lock = Lock()
 
-        # Text-query channel.  Its own lock, so a slow generate never
-        # blocks a concurrent ``set_task`` (and vice versa).
+        # Text-query channel.  Its own lock, separate from the task holder's;
+        # both only guard short slot handoffs — no lock is ever held across
+        # text generation (``_service_query`` claims the query, generates
+        # lock-free, then publishes), so a slow generate never blocks a
+        # concurrent ``set_task`` or ``ask``.
         self._query_lock = Lock()
         self._pending_query: PolicyQuery | None = None
         self._ready_answer: QueryAnswer | None = None
@@ -315,16 +319,34 @@ class InferenceEngine(abc.ABC):
             dropped, self._pending_query = self._pending_query, None
         return dropped
 
+    @property
     @abc.abstractmethod
-    def pump_query(self, obs_processed: dict | None = None) -> None:
-        """Service the query channel.  Call from the control thread only.
+    def control_thread_owns_policy(self) -> bool:
+        """Whether the control thread is the one allowed to touch the policy.
 
-        Implementations must run, in order: :meth:`_poll_autosteer` (so
-        the sequencer can queue its next-subtask query), then
-        :meth:`_service_query` — but *only* when this backend's policy is
-        owned by the control thread; async backends answer on their
-        inference thread instead and skip it here — and finally
-        :meth:`_deliver_answer`, so observers always fire on this thread.
+        This single fact is what varies between backends in the query
+        channel: when True (inline backends), :meth:`pump_query` serves a
+        pending query on the control thread; when False (async backends),
+        the backend's own inference thread must call :meth:`_service_query`
+        itself, and :meth:`pump_query` only advances the sequencer and
+        delivers finished answers.
+        """
+
+    def pump_query(self, obs_processed: dict | None = None) -> None:
+        """Advance the text-query channel by one tick.  Control thread only.
+
+        Runs, in order: :meth:`_poll_autosteer` (so the sequencer can queue
+        its next-subtask query), then :meth:`_service_query` — only when
+        :attr:`control_thread_owns_policy`; async backends answer on their
+        inference thread instead — and finally :meth:`_deliver_answer`, so
+        observers always fire on this thread.
+
+        Deliberately separate from :meth:`get_action`: text generation takes
+        far longer than a control tick, and stalling the action path
+        mid-dispatch would leave a recording strategy pairing a stale
+        observation with a fresh timestamp.  Strategies call this at the end
+        of a tick instead, where an inline-serving tick is simply expected
+        to overrun its budget.
 
         ``obs_processed`` is the processed observation of the current
         control tick; pass ``None`` when none is available (the
@@ -332,6 +354,10 @@ class InferenceEngine(abc.ABC):
         rather than served without a view, and the autosteer sequencer does
         not advance.
         """
+        self._poll_autosteer(obs_processed)
+        if self.control_thread_owns_policy:
+            self._service_query(obs_processed)
+        self._deliver_answer()
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         with self._query_lock:
@@ -400,15 +426,16 @@ class InferenceEngine(abc.ABC):
             return
         if query.kind is QueryKind.NEXT_SUBTASK:
             # Applied here, on the policy-owning thread, so the subtask is live
-            # for the very next inference.  Not published as an answer: the
-            # task is how the operator sees the robot's intent.
+            # for the very next inference and before the observer announces it.
             subtask = text.strip()
             if subtask:
                 self.set_task(subtask)
+            text = subtask
             # Armed only now, so the interval measures robot motion between
             # subtasks rather than wall-clock that a slow generate ate into.
             self._schedule_next_autosteer()
-            return
+        # Published after being applied, so an observer announcing the subtask
+        # never gets ahead of the task it describes.
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:

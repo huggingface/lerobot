@@ -694,8 +694,10 @@ def test_get_left_over_is_thread_safe(action_queue_rtc_enabled, sample_actions):
     # Should not have errors
     assert len(errors) == 0
 
-    # Leftovers should be monotonically decreasing or stable
-    # (as actions are consumed, leftover size decreases)
+    # Only liveness is asserted: some snapshots were taken and no reader
+    # crashed.  Snapshot sizes do shrink as the consumer drains the queue,
+    # but three reader threads append to `leftovers` concurrently, so the
+    # list order is nondeterministic and monotonicity cannot be checked.
     assert len(leftovers) > 0
 
 

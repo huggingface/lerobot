@@ -116,8 +116,8 @@ class SyncInferenceEngine(InferenceEngine):
         with torch.inference_mode(), autocast_ctx:
             if task_changed:
                 # Chunking policies serve actions from an internal queue filled
-                # under the previous instruction (up to chunk_size ticks of stale
-                # behavior), so drop them and let the new instruction take effect
+                # under the previous instruction (up to n_action_steps ticks of
+                # stale behavior), so drop them and let the new instruction take effect
                 # on this very tick.  Deliberately narrower than ``policy.reset``:
                 # observation history and other episode state are kept, so a
                 # policy that conditions on them (and one that ignores the task
@@ -148,20 +148,10 @@ class SyncInferenceEngine(InferenceEngine):
         """True when the policy has a text head."""
         return self._policy.supports_text_generation()
 
-    def pump_query(self, obs_processed: dict | None = None) -> None:
-        """Serve a pending query inline, then deliver its answer.
-
-        This backend runs inference on the control thread, so the control
-        thread is also the one allowed to touch the policy — servicing the
-        query here keeps that invariant.  Deliberately *not* folded into
-        ``get_action``: text generation takes far longer than a control
-        tick, and stalling the action path mid-dispatch would leave a
-        recording strategy pairing a stale observation with a fresh
-        timestamp.  Strategies call this at the end of a tick instead.
-        """
-        self._poll_autosteer(obs_processed)
-        self._service_query(obs_processed)
-        self._deliver_answer()
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """Inference runs inline on the control thread, so queries are served there too."""
+        return True
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on the current observation."""
@@ -179,5 +169,11 @@ class SyncInferenceEngine(InferenceEngine):
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
             observation = self._mark_query(observation, query)
+            # Reuses the action path's preprocessor, which is safe only while
+            # its steps are stateless per call: the one stateful step that
+            # matters (an enabled RelativeActionsProcessorStep) is rejected for
+            # this backend at context-build time.  Revisit if that rejection is
+            # lifted — a query advancing a stateful step would let the action
+            # path notice the query.
             observation = self._preprocessor(observation)
             return str(self._policy.generate_text(observation))

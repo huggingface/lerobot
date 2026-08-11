@@ -148,10 +148,13 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     QUERY_ANSWERED = "query_answered"
-    """A question queued with :meth:`RolloutController.ask` was resolved.  The
-    event payload is a :class:`~lerobot.rollout.inference.QueryAnswer`; check
-    its ``ok`` before reading ``answer``, since it also reports questions the
-    policy could not handle and ones dropped when the run ended first."""
+    """A text query was resolved: a question queued with
+    :meth:`RolloutController.ask`, or one of the autosteer sequencer's turns
+    (kind ``NEXT_SUBTASK`` — a success carries the subtask just applied to the
+    task, a failure the reason the sequencer stopped).  The event payload is a
+    :class:`~lerobot.rollout.inference.QueryAnswer`; check its ``ok`` before
+    reading ``answer``, since it also reports questions the policy could not
+    handle and ones dropped when the run ended first."""
 
     ENGINE_FAILED = "engine_failed"
     """The inference engine hit an unrecoverable error; ``serve()`` is about
@@ -182,7 +185,8 @@ class RolloutController:
     ``build_rollout_context(cfg, LinkedEvent(shutdown_event))``.
 
     Thread safety: the control methods (:meth:`start`, :meth:`reset`,
-    :meth:`stop`, :meth:`set_task`) may be called from any thread and are
+    :meth:`stop`, :meth:`set_task`, :meth:`ask`, :meth:`autosteer`,
+    :meth:`stop_autosteer`) may be called from any thread and are
     serialized by an internal lock, so calls issued in order from one thread
     keep that order — e.g. a ``set_task`` right after a ``reset`` is not
     clobbered by the reset's task restore.  Commands are last-write-wins:
@@ -374,8 +378,9 @@ class RolloutController:
         """Let the policy decompose ``goal`` and drive its own subtasks.
 
         Every ``autosteer_interval_s`` seconds the engine asks the policy
-        for the next subtask and applies it through :meth:`set_task`,
-        so the switch takes the usual instruction-change path.  Progress
+        for the next subtask and applies it through the *engine's*
+        ``set_task`` (not this controller's, which would stop the
+        sequencer), so the switch takes the usual instruction-change path.  Progress
         through the plan lives in the policy — each query re-sends the same
         goal — which is why the sequencer does not survive a segment:
         restarting a segment resets the policy, and with it the plan.
