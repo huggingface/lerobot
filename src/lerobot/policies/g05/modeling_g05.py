@@ -50,6 +50,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
+from lerobot.policies.language import last_semantic_message_text, require_single_semantic_conversation
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -2768,28 +2769,14 @@ class G05Policy(PreTrainedPolicy):
 
     @staticmethod
     def _generation_request_text(batch: Mapping[str, Any]) -> str:
-        messages = batch.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("G0.5 text generation requires preprocessed `messages`.")
-        conversation = messages[0] if isinstance(messages[0], list) else messages
-        for message in reversed(conversation):
-            if not isinstance(message, Mapping) or message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                texts = [
-                    str(block["text"])
-                    for block in content
-                    if isinstance(block, Mapping) and block.get("type") == "text" and "text" in block
-                ]
-                if texts:
-                    return "\n".join(texts)
-        raise ValueError("G0.5 text generation requires a user text turn in `messages`.")
+        conversation = require_single_semantic_conversation(batch.get("messages"), policy_name="G0.5")
+        return last_semantic_message_text(conversation, role="user")
+
+    def supports_text_generation(self) -> bool:
+        return True
 
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Generate G0.5's native System-2 text from model-ready observations."""
         if not self.config.predict_cot:
             raise ValueError("G0.5 text generation requires a checkpoint with predict_cot=True.")

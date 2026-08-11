@@ -17,11 +17,15 @@
 """Configuration for the OpenGalaxea G0.5 policy adapter."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import (
+    MessageTurn,
+    TrainingRecipe,
+    language_recipe_enabled,
+    resolve_recipe_override,
+)
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
@@ -53,11 +57,6 @@ def _g05_default_recipe() -> TrainingRecipe:
             ),
         ],
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load an explicit external recipe override."""
-    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
@@ -275,13 +274,7 @@ class G05Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.recipe_path is not None:
-            try:
-                self.recipe = _load_recipe(self.recipe_path)
-            except FileNotFoundError:
-                if self.recipe is None:
-                    raise
-                # Reloaded checkpoints already carry the selected recipe inline.
+        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
         self.optional_camera_keys = tuple(self.optional_camera_keys)
@@ -322,7 +315,13 @@ class G05Config(PreTrainedConfig):
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
-        if (self.use_language_recipe or self.recipe_path is not None) and not self.predict_cot:
+        if (
+            language_recipe_enabled(
+                use_language_recipe=self.use_language_recipe,
+                recipe_path=self.recipe_path,
+            )
+            and not self.predict_cot
+        ):
             raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
@@ -433,7 +432,10 @@ class G05Config(PreTrainedConfig):
     @property
     def rebuild_pretrained_processors(self) -> bool:
         # Recipe steps and projected dataset stats only exist on freshly built pipelines.
-        return self.use_language_recipe or self.recipe_path is not None
+        return language_recipe_enabled(
+            use_language_recipe=self.use_language_recipe,
+            recipe_path=self.recipe_path,
+        )
 
     @property
     def observation_delta_indices(self) -> list[int]:

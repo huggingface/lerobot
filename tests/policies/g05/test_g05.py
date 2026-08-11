@@ -238,7 +238,8 @@ def test_text_generation_uses_base_policy_contract():
     batch = _policy_batch("operator task")
     batch["messages"] = [[{"role": "user", "content": "what do you see?"}]]
 
-    assert G05Policy.generate_text is PreTrainedPolicy.generate_text
+    assert G05Policy.generate_text is not PreTrainedPolicy.generate_text
+    assert G05Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert policy.supports_text_generation()
     assert policy.generate_text(batch) == "Subtask: move carefully"
     assert backend.last_samples[0]["command"] == "what do you see?"

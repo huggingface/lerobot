@@ -28,6 +28,7 @@ import torchvision.transforms.functional as vision_functional
 from torch import Tensor
 from transformers import AutoTokenizer
 
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
@@ -759,7 +760,10 @@ def make_g05_pre_post_processors(
         RenderGenerationPromptStep(config.recipe),
         RenameObservationsProcessorStep(rename_map={}),
     ]
-    if config.use_language_recipe or config.recipe_path:
+    if language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    ):
         steps.extend(
             [
                 G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),
