@@ -42,7 +42,14 @@ from lerobot.policies.g05.modeling_g05 import (
     G05Policy,
     G05TextGeneration,
 )
-from lerobot.policies.g05.processor_g05 import G05TokenType
+from lerobot.policies.g05.processor_g05 import (
+    G05_INPUT_IDS,
+    G05_LABELS,
+    G05_SPLIT_INDEX,
+    G05_TOKEN_TYPES,
+    G05TokenizerStep,
+    G05TokenType,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline, RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
@@ -223,7 +230,61 @@ def _policy_batch(task: str = "  Pick café cup\nverbatim  "):
         "observation.images.wrist_image": torch.zeros(1, 3, 8, 8),
         "task": [task],
         "proprio_dim_is_pad": torch.zeros(20, dtype=torch.bool),
+        **_sequence_fields(),
     }
+
+
+def _sequence_fields(batch_size: int = 1) -> dict[str, torch.Tensor | int]:
+    return {
+        G05_INPUT_IDS: torch.zeros(batch_size, 3, dtype=torch.long),
+        G05_LABELS: torch.full((batch_size, 3), -100, dtype=torch.long),
+        G05_TOKEN_TYPES: torch.zeros(batch_size, 3),
+        G05_SPLIT_INDEX: 3,
+    }
+
+
+def _prepared_policy_batch(
+    policy: G05Policy,
+    batch: dict | None = None,
+    *,
+    task: str | None = None,
+    predict_cot: bool = False,
+) -> dict:
+    prepared = policy._prepare_author_batch(
+        _policy_batch() if batch is None else batch,
+        task=task,
+        predict_cot=predict_cot,
+    )
+    prepared.update(_sequence_fields(len(prepared["samples"])))
+    prepared[G05_RUNTIME_PREDICT_COT] = predict_cot
+    return prepared
+
+
+class _StubG05Tokenizer:
+    action_token_begin = 100
+
+    @staticmethod
+    def _sequence(samples, device):
+        fields = _sequence_fields(len(samples))
+        return SimpleNamespace(
+            input_ids=fields[G05_INPUT_IDS].to(device),
+            labels=fields[G05_LABELS].to(device),
+            token_types=fields[G05_TOKEN_TYPES].to(device),
+            split_index=fields[G05_SPLIT_INDEX],
+        )
+
+    def encode_inference(self, samples, device):
+        return self._sequence(samples, device)
+
+    def encode_train(self, samples, device, action_codec):
+        del action_codec
+        return self._sequence(samples, device)
+
+
+def _stub_tokenizer(preprocessor: PolicyProcessorPipeline) -> None:
+    step = next(step for step in preprocessor.steps if isinstance(step, G05TokenizerStep))
+    step._tokenizer = _StubG05Tokenizer()
+    step._action_codec = object()
 
 
 def test_factory_wiring_is_lazy():
@@ -234,7 +295,7 @@ def test_factory_wiring_is_lazy():
 def test_text_generation_uses_base_policy_contract():
     backend = TinyG05Backend()
     policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
-    batch = _policy_batch("operator task")
+    batch = _prepared_policy_batch(policy, task="what do you see?", predict_cot=True)
     batch["messages"] = [[{"role": "user", "content": "what do you see?"}]]
 
     assert G05Policy.generate_text is not PreTrainedPolicy.generate_text
@@ -369,6 +430,7 @@ def test_so101_runtime_pads_optional_left_wrist():
         device="cpu",
     )
     preprocessor, _ = make_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
 
     processed = preprocessor(
         {
@@ -428,6 +490,7 @@ def test_select_action_discards_tail_beyond_execution_window():
 def test_libero_projection_mask_and_inverse_roundtrip():
     config = _config()
     preprocessor, postprocessor = make_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
     raw_action = torch.arange(7, dtype=torch.float32).repeat(4, 1)
     batch = {
         OBS_STATE: torch.arange(7, dtype=torch.float32),
@@ -457,6 +520,7 @@ def test_libero_projection_mask_and_inverse_roundtrip():
 def test_inference_without_ground_truth_action_still_emits_action_dimension_mask():
     config = _config()
     preprocessor, _ = make_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
 
     processed = preprocessor(
         {
@@ -474,6 +538,7 @@ def test_inference_without_ground_truth_action_still_emits_action_dimension_mask
 def test_lerobot_libero_two_finger_state_matches_author_first_qpos_contract():
     config = _config()
     preprocessor, _ = make_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
     env_state = torch.arange(8, dtype=torch.float32)
 
     processed = preprocessor(
@@ -506,6 +571,7 @@ def test_checkpoint_normalization_clips_to_author_finite_range():
         ACTION: {"q01": torch.zeros(4, 7), "q99": torch.ones(4, 7)},
     }
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=stats)
+    _stub_tokenizer(preprocessor)
 
     processed = preprocessor(
         {
@@ -535,6 +601,7 @@ def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_p
         ACTION: {"q01": q01_action, "q99": q99_action},
     }
     preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=stats)
+    _stub_tokenizer(preprocessor)
     processed = preprocessor(
         {
             OBS_STATE: torch.zeros(7),
@@ -574,7 +641,8 @@ def test_exact_raw_task_reaches_author_command_and_head_selection():
     policy = G05Policy(_config(), backend=backend)
     raw_task = "  把 red cup 放到左边\nexactly as written  "
 
-    action, metadata = policy.predict_action_chunk_with_runtime(_policy_batch(), task=raw_task)
+    batch = _prepared_policy_batch(policy, task=raw_task, predict_cot=False)
+    action, metadata = policy._run_inference(batch, system_mode="system1")
 
     assert backend.last_samples[0]["command"] == raw_task
     assert backend.last_runtime_predict_cot is False
@@ -586,22 +654,16 @@ def test_same_predict_cot_checkpoint_switches_prompt_and_backend_runtime_path():
     backend = TinyG05Backend()
     policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
 
-    _, system1_metadata = policy.predict_action_chunk_with_runtime(
-        _policy_batch(),
-        task="pick",
-        system_mode="system1",
-    )
+    system1_batch = _prepared_policy_batch(policy, task="pick", predict_cot=False)
+    _, system1_metadata = policy._run_inference(system1_batch, system_mode="system1")
     system1_sample = backend.last_samples[0]
     assert backend.last_runtime_predict_cot is False
     assert "prompt" not in system1_sample
     assert "<atomic_task_text>" not in system1_sample["template"]
     assert "cot_text" not in system1_metadata
 
-    _, system2_metadata = policy.predict_action_chunk_with_runtime(
-        _policy_batch(),
-        task="pick",
-        system_mode="system2",
-    )
+    system2_batch = _prepared_policy_batch(policy, task="pick", predict_cot=True)
+    _, system2_metadata = policy._run_inference(system2_batch, system_mode="system2")
     system2_sample = backend.last_samples[0]
     assert backend.last_runtime_predict_cot is True
     assert system2_sample["prompt"] == "predict subtask"
@@ -613,7 +675,8 @@ def test_system1_config_disables_cot_on_predict_cot_checkpoint_without_override(
     backend = TinyG05Backend()
     policy = G05Policy(_config(predict_cot=True, runtime_system="system1"), backend=backend)
 
-    _, metadata = policy.predict_action_chunk_with_runtime(_policy_batch(), task="pick")
+    batch = _prepared_policy_batch(policy, task="pick", predict_cot=False)
+    _, metadata = policy._run_inference(batch)
 
     assert backend.last_runtime_predict_cot is False
     assert "<atomic_task_text>" not in backend.last_samples[0]["template"]
@@ -666,6 +729,7 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
     batch = {
         "samples": [{"proprio": torch.zeros(1, 20)}],
         "pixel_values": {"camera": torch.zeros(1, 1, 3, 8, 8)},
+        **_sequence_fields(),
     }
 
     system1 = backend.predict_action({**batch, G05_RUNTIME_PREDICT_COT: False})
@@ -835,7 +899,9 @@ def test_native_training_applies_ar_loss_config_and_reaches_language_head():
     batch = {
         "samples": [{}],
         "pixel_values": {"camera": torch.zeros(1, 1, 3, 2, 2)},
+        **_sequence_fields(),
     }
+    batch[G05_LABELS] = torch.tensor([[-100, 0, 2]])
 
     loss, metrics = backend(batch)
 
@@ -955,6 +1021,7 @@ def test_recipe_preprocessor_resolves_lerobot_subtask_and_bbox_annotations():
         use_language_recipe=True,
     )
     preprocessor, _ = make_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
     policy = G05Policy(config, backend=TinyG05Backend())
     raw = {
         OBS_STATE: torch.zeros(7),
@@ -1077,7 +1144,8 @@ def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     batch["proprio_dim_is_pad"] = torch.zeros(2, 20, dtype=torch.bool)
     batch["task"] = [" first\n", "第二个 task"]
 
-    action = policy.predict_action_chunk(batch)
+    prepared = _prepared_policy_batch(policy, batch)
+    action = policy.predict_action_chunk(prepared)
 
     assert action.shape == (2, 4, 20)
     assert [sample["command"] for sample in backend.last_samples] == batch["task"]
@@ -1102,8 +1170,8 @@ def test_forward_backward_update_and_save_reload(tmp_path: Path):
     reloaded = G05Policy.from_pretrained(
         tmp_path, backend=TinyG05Backend(), local_files_only=True, strict=True
     )
-    expected = policy.predict_action_chunk(_policy_batch("save"))
-    actual = reloaded.predict_action_chunk(_policy_batch("save"))
+    expected = policy.predict_action_chunk(_prepared_policy_batch(policy, task="save"))
+    actual = reloaded.predict_action_chunk(_prepared_policy_batch(reloaded, task="save"))
     torch.testing.assert_close(actual, expected)
 
 

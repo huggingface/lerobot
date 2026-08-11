@@ -50,7 +50,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
-from lerobot.policies.language import last_semantic_message_text, require_single_semantic_conversation
 from lerobot.policies.pi_gemma import PiGemmaRMSNorm
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -62,7 +61,17 @@ from .configuration_g05 import (
     make_g05_cot_prompt_template,
     make_g05_prompt_template,
 )
-from .processor_g05 import IGNORE_INDEX, G05SequenceBatch, G05Tokenizer, G05TokenType
+from .processor_g05 import (
+    G05_INPUT_IDS,
+    G05_LABELS,
+    G05_RUNTIME_PREDICT_COT,
+    G05_SPLIT_INDEX,
+    G05_TOKEN_TYPES,
+    IGNORE_INDEX,
+    G05SequenceBatch,
+    G05Tokenizer,
+    G05TokenType,
+)
 
 
 class G05GatedDeltaNet(Qwen3_5GatedDeltaNet):
@@ -1300,9 +1309,6 @@ class G05NativeActionCodec:
                 batch[..., offset : offset + dimension] = decoded[key][..., :dimension]
             offset += dimension
         return batch[0], absent
-
-
-G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
 
 
 @dataclass
@@ -2567,7 +2573,12 @@ class G05NativeBackend(nn.Module):
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
         first_image = next(iter(pixel_values.values()))
-        sequence = self.processor.encode_inference(samples, device=first_image.device)
+        sequence = G05SequenceBatch(
+            input_ids=batch[G05_INPUT_IDS],
+            labels=batch[G05_LABELS],
+            token_types=batch[G05_TOKEN_TYPES],
+            split_index=batch.get(G05_SPLIT_INDEX),
+        )
         proprio = self._proprio(samples, first_image.device)
         hidden_states, cache, positions = self._prefill(sequence, pixel_values, proprio)
         result: dict[str, Any] = {}
@@ -2662,10 +2673,11 @@ class G05NativeBackend(nn.Module):
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
         first_image = next(iter(pixel_values.values()))
-        sequence = self.processor.encode_train(
-            samples,
-            device=first_image.device,
-            action_codec=self.action_tokenizer,
+        sequence = G05SequenceBatch(
+            input_ids=batch[G05_INPUT_IDS],
+            labels=batch[G05_LABELS],
+            token_types=batch[G05_TOKEN_TYPES],
+            split_index=batch.get(G05_SPLIT_INDEX),
         )
         proprio = self._proprio(samples, first_image.device)
         hidden_states, cache, positions = self._prefill(sequence, pixel_values, proprio)
@@ -2767,11 +2779,6 @@ class G05Policy(PreTrainedPolicy):
             raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
 
-    @staticmethod
-    def _generation_request_text(batch: Mapping[str, Any]) -> str:
-        conversation = require_single_semantic_conversation(batch.get("messages"), policy_name="G0.5")
-        return last_semantic_message_text(conversation, role="user")
-
     def supports_text_generation(self) -> bool:
         return True
 
@@ -2780,8 +2787,7 @@ class G05Policy(PreTrainedPolicy):
         """Generate G0.5's native System-2 text from model-ready observations."""
         if not self.config.predict_cot:
             raise ValueError("G0.5 text generation requires a checkpoint with predict_cot=True.")
-        request = self._generation_request_text(batch)
-        _, metadata = self._run_inference(batch, task=request, system_mode="system2")
+        _, metadata = self._run_inference(batch, system_mode="system2")
         text = _first_cot_text(metadata)
         if text is None:
             raise ValueError("G0.5 text generation returned no text.")
@@ -3299,11 +3305,14 @@ class G05Policy(PreTrainedPolicy):
             raise ValueError("G0.5 system_mode must be 'system1' or 'system2'.")
         if system_mode == "system2" and not self.config.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
-        prepared = self._prepare_author_batch(
-            batch,
-            task=task,
-            predict_cot=system_mode == "system2",
-        )
+        if task is not None:
+            raise ValueError("G0.5 task overrides must run through the policy input processor.")
+        prepared = dict(batch)
+        preprocessed_predict_cot = bool(prepared.get(G05_RUNTIME_PREDICT_COT, False))
+        if preprocessed_predict_cot != (system_mode == "system2"):
+            raise ValueError(
+                "G0.5 system mode does not match the token sequence emitted by its input processor."
+            )
         predict = getattr(self.backend, "predict_action", None)
         device = next(self.backend.parameters()).device
         with torch.autocast(
@@ -3370,7 +3379,7 @@ class G05Policy(PreTrainedPolicy):
         return self._action_queue.popleft().unsqueeze(0)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
-        prepared = self._prepare_author_batch(batch)
+        prepared = batch
         device = next(self.backend.parameters()).device
         with torch.autocast(
             device_type=device.type,
@@ -3392,3 +3401,19 @@ class G05Policy(PreTrainedPolicy):
             for key, value in (loss_dict or {}).items()
         }
         return loss, logging_values
+
+
+def prepare_g05_policy_batch(
+    config: Any,
+    batch: Mapping[str, Any],
+    *,
+    task: str | None = None,
+    predict_cot: bool | None = None,
+) -> dict[str, Any]:
+    """Run G0.5's deterministic sample builder without constructing policy weights."""
+
+    proxy = object.__new__(G05Policy)
+    nn.Module.__init__(proxy)
+    proxy.config = config
+    proxy.backend = None
+    return G05Policy._prepare_author_batch(proxy, batch, task=task, predict_cot=predict_cot)

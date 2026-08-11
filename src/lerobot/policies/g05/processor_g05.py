@@ -21,16 +21,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
+from huggingface_hub import snapshot_download
 from torch import Tensor
 from transformers import AutoTokenizer
 
 from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.policies.language import last_semantic_message_text, require_single_semantic_conversation
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -59,7 +62,17 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
-from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05_POLICY_PARTS, G05Config
+from .configuration_g05 import (
+    G05_EMBODIMENT_MAPPINGS,
+    G05_POLICY_PARTS,
+    G05Config,
+)
+
+G05_RUNTIME_PREDICT_COT = "g05_runtime_predict_cot"
+G05_INPUT_IDS = "g05.input_ids"
+G05_LABELS = "g05.labels"
+G05_TOKEN_TYPES = "g05.token_types"  # nosec B105
+G05_SPLIT_INDEX = "g05.split_index"
 
 
 def _copy_feature_tree(
@@ -821,6 +834,33 @@ def make_g05_pre_post_processors(
             )
         )
     steps.append(DeviceProcessorStep(device=config.device))
+    checkpoint_path = str(config.pretrained_path) if config.pretrained_path is not None else ""
+    if not checkpoint_path:
+        processor_path = Path(str(config.author_model_config.get("hf_processor_path", "")))
+        if processor_path.name == "hf_processor":
+            checkpoint_path = str(processor_path.parent)
+    steps.append(
+        G05TokenizerStep(
+            checkpoint_path=checkpoint_path,
+            revision=config.pretrained_revision,
+            policy_config={
+                "author_model_config": config.author_model_config,
+                "embodiment": config.embodiment,
+                "predict_cot": config.predict_cot,
+                "runtime_system": config.runtime_system,
+                "prompt_template": config.prompt_template,
+                "num_prompt_images": config.num_prompt_images,
+                "num_input_images": config.num_input_images,
+                "camera_order": config.camera_order,
+                "camera_sizes": config.camera_sizes,
+                "policy_state_dim": config.policy_state_dim,
+                "policy_action_dim": config.policy_action_dim,
+                "chunk_size": config.chunk_size,
+                "processor_metadata": config.processor_metadata,
+                "cot_bbox_camera": config.cot_bbox_camera,
+            },
+        )
+    )
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=steps,
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,
@@ -1084,7 +1124,7 @@ class G05Tokenizer:
             token_type = G05TokenType.TEXT if segment.masked else G05TokenType.PRED_TEXT
             labels = [IGNORE_INDEX] * len(ids) if segment.masked else ids.copy()
         elif segment.processor == "image":
-            if not isinstance(value, (tuple, list)) or len(value) != 2:
+            if not isinstance(value, tuple | list) or len(value) != 2:
                 raise ValueError("G0.5 image placeholders require an (height, width) pair.")
             height, width = (int(item) for item in value)
             vision = self.model_config["vision"]
@@ -1192,3 +1232,137 @@ class G05Tokenizer:
             token_types=torch.cat((prefix.token_types, suffix.token_types), dim=1),
             split_index=prefix.input_ids.shape[1],
         )
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_tokenizer")
+class G05TokenizerStep(ProcessorStep):
+    """Build the checkpoint-native G0.5 token sequence in the input pipeline."""
+
+    checkpoint_path: str
+    policy_config: dict[str, Any]
+    revision: str | None = None
+    _tokenizer: G05Tokenizer | None = field(default=None, init=False, repr=False)
+    _action_codec: Any = field(default=None, init=False, repr=False)
+    _model_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "checkpoint_path": self.checkpoint_path,
+            "policy_config": self.policy_config,
+            "revision": self.revision,
+        }
+
+    def _resolve_checkpoint(self) -> Path:
+        if not self.checkpoint_path:
+            raise ValueError(
+                "G0.5 tokenization requires a checkpoint path so the serialized tokenizer and "
+                "ActionCodec can be loaded."
+            )
+        path = Path(self.checkpoint_path)
+        if path.is_dir():
+            return path
+        return Path(
+            snapshot_download(
+                repo_id=self.checkpoint_path,
+                revision=self.revision,
+                allow_patterns=["hf_processor/*", "action_tokenizer.pt"],
+            )
+        )
+
+    def _get_tokenizer(self) -> G05Tokenizer:
+        if self._tokenizer is not None:
+            return self._tokenizer
+        root = self._resolve_checkpoint()
+        processor_path = root if root.name == "hf_processor" else root / "hf_processor"
+        model_config = dict(self.policy_config["author_model_config"])
+        model_config.update(
+            {
+                "embodiment": self.policy_config["embodiment"],
+                "predict_cot": self.policy_config["predict_cot"],
+            }
+        )
+        model_config["hf_processor_path"] = str(processor_path)
+        action_config = dict(model_config.get("AT_CONFIG") or {})
+        action_config["ckpt_dir"] = str(root / "action_tokenizer.pt")
+        model_config["AT_CONFIG"] = action_config
+        self._model_config = model_config
+        self._tokenizer = G05Tokenizer(processor_path, model_config)
+        return self._tokenizer
+
+    def _get_action_codec(self, device: torch.device):
+        if self._action_codec is None:
+            tokenizer = self._get_tokenizer()
+            if self._model_config is None:
+                raise RuntimeError("G0.5 tokenizer model config was not initialized.")
+            action_config = self._model_config.get("AT_CONFIG")
+            checkpoint = Path(str((action_config or {}).get("ckpt_dir", "")))
+            if not checkpoint.is_file():
+                return None
+            from .modeling_g05 import G05NativeActionCodec
+
+            self._action_codec = G05NativeActionCodec.load(
+                action_config,
+                action_token_begin=tokenizer.action_token_begin,
+            )
+        move = getattr(self._action_codec, "to", None)
+        if callable(move):
+            self._action_codec = move(device)
+        return self._action_codec
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        tokenizer = self._get_tokenizer()
+        transition = transition.copy()
+        observation = dict(transition.get(TransitionKey.OBSERVATION) or {})
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        batch: dict[str, Any] = {**observation, **complementary}
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None:
+            batch[ACTION] = action
+        state = batch.get(OBS_STATE)
+        if not isinstance(state, Tensor):
+            raise ValueError("G0.5 requires tensor observation.state before tokenization.")
+
+        messages = complementary.get("messages")
+        task_override = None
+        if messages is not None and action is None:
+            conversation = require_single_semantic_conversation(messages, policy_name="G0.5")
+            task_override = last_semantic_message_text(conversation, role="user")
+        run_predict_cot = bool(messages is not None) or (
+            self.policy_config["predict_cot"] and self.policy_config["runtime_system"] == "system2"
+        )
+        from .modeling_g05 import prepare_g05_policy_batch
+
+        config = SimpleNamespace(**self.policy_config)
+        prepared = prepare_g05_policy_batch(
+            config,
+            batch,
+            task=task_override,
+            predict_cot=run_predict_cot,
+        )
+        if action is None:
+            sequence = tokenizer.encode_inference(prepared["samples"], device=state.device)
+        else:
+            sequence = tokenizer.encode_train(
+                prepared["samples"],
+                device=state.device,
+                action_codec=self._get_action_codec(state.device),
+            )
+        complementary.update(
+            {
+                "samples": prepared["samples"],
+                "pixel_values": prepared["pixel_values"],
+                G05_RUNTIME_PREDICT_COT: run_predict_cot,
+                G05_INPUT_IDS: sequence.input_ids,
+                G05_LABELS: sequence.labels,
+                G05_TOKEN_TYPES: sequence.token_types,
+                G05_SPLIT_INDEX: sequence.split_index,
+            }
+        )
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
