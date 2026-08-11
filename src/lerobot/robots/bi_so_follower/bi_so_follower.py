@@ -17,7 +17,7 @@
 import logging
 from functools import cached_property
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
@@ -62,6 +62,7 @@ class BiSOFollower(BimanualMixin, Robot):
             position_i_coefficient=config.left_arm_config.position_i_coefficient,
             position_d_coefficient=config.left_arm_config.position_d_coefficient,
             use_degrees=config.left_arm_config.use_degrees,
+            num_read_retries=config.left_arm_config.num_read_retries,
             cameras=left_arm_cameras,
         )
 
@@ -75,6 +76,7 @@ class BiSOFollower(BimanualMixin, Robot):
             position_i_coefficient=config.right_arm_config.position_i_coefficient,
             position_d_coefficient=config.right_arm_config.position_d_coefficient,
             use_degrees=config.right_arm_config.use_degrees,
+            num_read_retries=config.right_arm_config.num_read_retries,
             cameras=config.right_arm_config.cameras,
         )
 

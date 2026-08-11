@@ -25,6 +25,7 @@ from PIL import Image
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -39,7 +40,6 @@ from lerobot.rewards.robometer.configuration_robometer import (
     RobometerConfig,
 )
 from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_IMAGES,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,

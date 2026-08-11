@@ -36,6 +36,12 @@ This diverse training mixture creates a "curriculum" that enables generalization
    pip install -e ".[pi]"
    ```
 
+   If you installed LeRobot from PyPI:
+
+   ```bash
+   pip install 'lerobot[pi]'
+   ```
+
 ## Usage
 
 To use π₀.₅ in your LeRobot configuration, specify the policy type as:
@@ -46,27 +52,117 @@ policy.type=pi05
 
 ## Training
 
-### Training Command Example
+### Quickstart on LIBERO
 
-Here's a complete training command for finetuning the base π₀.₅ model on your own dataset:
+Finetune the LIBERO base model on [lerobot/libero](https://huggingface.co/datasets/lerobot/libero), a ~1.9 GB video-encoded copy of the demonstrations behind the [results below](#libero-benchmark-results).
+
+It carries the keys π₀.₅ reads, which are also the ones the LIBERO environment produces at evaluation time:
+
+| Feature                     | Shape in the dataset | How π₀.₅ consumes it                                    |
+| --------------------------- | -------------------- | ------------------------------------------------------- |
+| `observation.images.image`  | 256×256×3, agentview | resized to 224×224                                      |
+| `observation.images.image2` | 256×256×3, wrist     | resized to 224×224                                      |
+| `observation.state`         | 8                    | discretized into 256 bins and written into the prompt   |
+| `action`                    | 7                    | padded to 32 internally; the loss uses the first 7 dims |
+
+**No `--rename_map` is needed here** — the keys already match; see [Rename Map and Empty Cameras](./rename_map) if yours differ.
+
+<Tip>
+  π₀.₅ uses the gated
+  [google/paligemma-3b-pt-224](https://huggingface.co/google/paligemma-3b-pt-224)
+  tokenizer — accept its license on the Hub and log in with `hf auth login`
+  before training.
+</Tip>
+
+Sized for a single 80 GB GPU:
 
 ```bash
 lerobot-train \
-    --dataset.repo_id=your_dataset \
+    --dataset.repo_id=lerobot/libero \
     --policy.type=pi05 \
-    --output_dir=./outputs/pi05_training \
-    --job_name=pi05_training \
-    --policy.repo_id=your_repo_id \
-    --policy.pretrained_path=lerobot/pi05_base \
-    --policy.compile_model=true \
-    --policy.gradient_checkpointing=true \
-    --wandb.enable=true \
-    --policy.dtype=bfloat16 \
+    --policy.pretrained_path=lerobot/pi05_libero_base \
+    --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
+    --policy.n_action_steps=10 \
+    --policy.empty_cameras=1 \
     --policy.freeze_vision_encoder=false \
     --policy.train_expert_only=false \
-    --steps=3000 \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
     --policy.device=cuda \
-    --batch_size=32
+    --policy.push_to_hub=false \
+    --output_dir=./outputs/pi05_libero \
+    --job_name=pi05_libero \
+    --batch_size=64 \
+    --num_workers=8 \
+    --steps=30000 \
+    --save_freq=5000 \
+    --seed=1000
+```
+
+**Mean/std normalization, not π₀.₅'s [quantile default](#quantile-statistics)** — matching [pi05_libero_finetuned_v044](https://huggingface.co/lerobot/pi05_libero_finetuned_v044), the checkpoint the results below were measured on.
+
+**`--policy.n_action_steps=10` and `--policy.empty_cameras=1` are explicit** because `--policy.pretrained_path` loads weights only — `lerobot/pi05_libero_base` stores both, and they would otherwise fall back to `50` and `0` (see [Loading a checkpoint](#loading-a-checkpoint)).
+
+Then evaluate a checkpoint with `lerobot-eval` and compare against the reference success rates — see [LIBERO](./libero).
+
+### Quantile statistics
+
+π₀.₅ normalizes `STATE` and `ACTION` with quantiles, so your dataset's `meta/stats.json` needs `q01` and `q99`. Older datasets carry only `min`/`max`/`mean`/`std` and fail on the first batch:
+
+```
+ValueError: QUANTILES normalization mode requires q01 and q99 stats
+```
+
+Recompute them:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --new_repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.overwrite true
+```
+
+**The result lands in `$HF_LEROBOT_HOME/your_dataset`**, not the cache `--dataset.repo_id` reads — so train with `--dataset.root=$HF_LEROBOT_HOME/your_dataset`, or add `--push_to_hub true` above.
+
+Or keep the dataset as-is and pass `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`.
+
+Recording, resuming, and merging aggregate quantiles from per-episode summaries, so `meta/stats.json` ends up holding a conservative envelope (`min` for `q <= 50`, `max` for `q > 50`) rather than whole-dataset quantiles. To estimate the latter, scan every episode with a running histogram:
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+    --overwrite \
+    --skip-images
+```
+
+`--skip-images` keeps the existing image statistics and avoids video decoding when only `STATE`/`ACTION` need recomputing, and `--root` reads a local dataset instead of the Hub. These values are histogram estimates, subject to discretization and rebinning error, so they can differ from the conservative ones — which changes π₀.₅'s normalized targets and therefore its loss scale. Statistics already saved inside an existing checkpoint are not affected.
+
+### Training Command Example
+
+The same finetune with the VLM frozen: less memory, at some cost in success rate. Swap `--dataset.repo_id` for your own dataset.
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/libero \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_libero_base \
+    --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
+    --policy.n_action_steps=10 \
+    --policy.empty_cameras=1 \
+    --policy.freeze_vision_encoder=true \
+    --policy.train_expert_only=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.push_to_hub=false \
+    --output_dir=./outputs/pi05_libero_expert \
+    --job_name=pi05_libero_expert \
+    --batch_size=64 \
+    --num_workers=8 \
+    --steps=30000 \
+    --save_freq=5000 \
+    --seed=1000
 ```
 
 ### Key Training Parameters
@@ -74,10 +170,24 @@ lerobot-train \
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
 - **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
-- **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
+- **`--batch_size=64`**: Batch size for training, adapt this based on your GPU memory
 - **`--policy.pretrained_path=lerobot/pi05_base`**: The base π₀.₅ model you want to finetune, options are:
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
-  - [lerobot/pi05_libero](https://huggingface.co/lerobot/pi05_libero) (specifically trained on the Libero dataset)
+  - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base) (specifically trained on the Libero dataset)
+
+### Loading a checkpoint
+
+The two forms are not interchangeable:
+
+|                                        | `--policy.path`                                | `--policy.pretrained_path`           |
+| -------------------------------------- | ---------------------------------------------- | ------------------------------------ |
+| Loads                                  | weights **and** the checkpoint's `config.json` | weights only                         |
+| Feature names                          | from the checkpoint                            | from your dataset                    |
+| Stored settings, e.g. `n_action_steps` | inherited                                      | reset to the defaults                |
+| `--policy.type`                        | must be omitted                                | required                             |
+| `--rename_map`                         | needed when your camera keys differ            | never — the keys come from your data |
+
+Passing a `--rename_map` alongside `--policy.pretrained_path` renames the batch away from those names, and the first batch fails with `All image features are missing from the batch`.
 
 ### Training Parameters Explained
 
@@ -87,15 +197,6 @@ lerobot-train \
 | `train_expert_only`     | `false` | Do not freeze the VLM, train all parameters |
 
 **💡 Tip**: Setting `train_expert_only=true` freezes the VLM and trains only the action expert and projections, allowing finetuning with reduced memory usage.
-
-If your dataset is not converted with `quantiles`, you can convert it with the following command:
-
-```bash
-python src/lerobot/scripts/augment_dataset_quantile_stats.py \
-    --repo-id=your_dataset \
-```
-
-Or train pi05 with this normalization mapping: `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`
 
 ## Relative Actions
 

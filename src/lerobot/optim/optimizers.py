@@ -27,7 +27,7 @@ from lerobot.utils.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
 )
-from lerobot.utils.io_utils import deserialize_json_into_object, load_json, write_json
+from lerobot.utils.io_utils import deserialize_json_into_object, write_json
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
 # Type alias for parameters accepted by optimizer build() methods.
@@ -51,6 +51,11 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        """True when build() returns a dict of optimizers (unsupported under sharded training)."""
+        return False
 
     @classmethod
     def default_choice_name(cls) -> str | None:
@@ -245,6 +250,10 @@ class MultiAdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        return True
+
     def build(self, params: OptimizerParams) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
 
@@ -283,35 +292,27 @@ class MultiAdamConfig(OptimizerConfig):
 def save_optimizer_state(
     optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer],
     save_dir: Path,
-    optim_state_dict: dict | None = None,
 ) -> None:
-    """Save optimizer state to disk.
+    """Save optimizer state to disk (non-sharded runs; sharded runs use the DCP channel).
 
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.
         save_dir: Directory to save the optimizer state.
-        optim_state_dict: Pre-gathered optimizer state dict (for FSDP, where the sharded state must
-            be gathered across ranks first). If provided, it is saved directly instead of calling
-            ``optimizer.state_dict()``. Only supported for a single optimizer. Defaults to None.
     """
     if isinstance(optimizer, dict):
         # Handle dictionary of optimizers
-        if optim_state_dict is not None:
-            raise ValueError("optim_state_dict is not supported for a dict of optimizers")
         for name, opt in optimizer.items():
             optimizer_dir = save_dir / name
             optimizer_dir.mkdir(exist_ok=True, parents=True)
             _save_single_optimizer_state(opt, optimizer_dir)
     else:
         # Handle single optimizer
-        _save_single_optimizer_state(optimizer, save_dir, optim_state_dict=optim_state_dict)
+        _save_single_optimizer_state(optimizer, save_dir)
 
 
-def _save_single_optimizer_state(
-    optimizer: torch.optim.Optimizer, save_dir: Path, optim_state_dict: dict | None = None
-) -> None:
+def _save_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> None:
     """Save a single optimizer's state to disk."""
-    state = dict(optim_state_dict) if optim_state_dict is not None else optimizer.state_dict()
+    state = optimizer.state_dict()
     param_groups = state.pop("param_groups")
     flat_state = flatten_dict(state)
     save_file(flat_state, save_dir / OPTIMIZER_STATE)
@@ -365,19 +366,3 @@ def _load_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Pat
 
     optimizer.load_state_dict(loaded_state_dict)
     return optimizer
-
-
-def load_optimizer_state_dict(save_dir: Path) -> dict:
-    """Read a saved optimizer state dict (safetensors + json) back into a plain dict.
-
-    Unlike `load_optimizer_state`, this does not load into an optimizer and preserves the original
-    ``state`` keys verbatim (e.g. FSDP parameter FQNs, which are not integer-castable). It is used by
-    the FSDP resume path, where the full state must be resharded via `FSDP.optim_state_dict_to_load`
-    before being loaded into the (sharded) optimizer.
-    """
-    flat_state = load_file(save_dir / OPTIMIZER_STATE)
-    state = unflatten_dict(flat_state)
-    return {
-        "state": state.get("state", {}),
-        "param_groups": load_json(save_dir / OPTIMIZER_PARAM_GROUPS),
-    }

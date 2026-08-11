@@ -1,0 +1,16 @@
+# Predicts subtasks from tasks and trains subtask-conditioned action flow without memory or plans.
+# Requires `subtask` annotations; samples with missing `if_present` bindings do not render.
+
+blend:
+
+  high_level_subtask:
+    weight: 0.30
+    messages:
+      - {role: user, content: "${task}", stream: high_level}
+      - {role: assistant, content: "${subtask}", stream: high_level, target: true, if_present: subtask}
+
+  low_level_execution:
+    weight: 0.70
+    messages:
+      # The low-level stream trains action flow on the generated or annotated subtask.
+      - {role: user, content: "${subtask}", stream: low_level, if_present: subtask}
