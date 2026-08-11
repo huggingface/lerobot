@@ -44,6 +44,7 @@ from lerobot.processor import (  # noqa: E402
     batch_to_transition,
     transition_to_batch,
 )
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -253,8 +254,8 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
                     "observation.state": torch.zeros(7),
                     "observation.images.face_view": torch.zeros(3, 8, 8),
                     "task": "current subtask",
-                    "query_kind": "next_subtask",
-                    "text": "clear the table",
+                    QUERY_KIND: "next_subtask",
+                    QUERY_TEXT: "clear the table",
                 }
             )
         )
@@ -265,8 +266,8 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     assert batch["messages"] == [
         {"role": "user", "content": "clear the table\nPredict the next action in language.\n"}
     ]
-    assert "query_kind" not in batch
-    assert "text" not in batch
+    assert QUERY_KIND not in batch
+    assert QUERY_TEXT not in batch
 
 
 def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
