@@ -37,6 +37,7 @@ from lerobot.rollout import (  # noqa: E402
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
+    PolicyQuery,
     QueryKind,
     RolloutController,
     RolloutEvent,
@@ -165,6 +166,11 @@ class _FakeEngine(InferenceEngine):
 
     failed = False
     failure_traceback = None
+    # Plain attributes shadowing the base properties, so tests can flip them.
+    supports_text_queries = True
+    # Answer inline on the caller's thread like the sync backend, so tests
+    # drive the base pump_query's real poll/service/deliver path.
+    control_thread_owns_policy = True
 
     # Declared here to satisfy the ABC; the instances below shadow them.
     def start(self) -> None: ...
@@ -181,28 +187,21 @@ class _FakeEngine(InferenceEngine):
         self.resume = MagicMock()
         self.notify_observation = MagicMock()
         self.get_action = MagicMock(return_value=None)
-        # Text queries: answer inline on the caller's thread like the sync
-        # backend, so tests drive the real service/deliver plumbing.
         self.text_error: Exception | None = None
         self.seen_query_obs: list = []
         self.seen_queries: list = []
         self.subtasks_planned = 0
 
-    def pump_query(self, obs_processed=None) -> None:
-        self._poll_autosteer(obs_processed)
-        self._service_query(obs_processed)
-        self._deliver_answer()
-
-    def _generate_text(self, obs_processed: dict, text: str, kind) -> str:
-        self.seen_queries.append((kind, text))
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
+        self.seen_queries.append((query.kind, query.text))
         self.seen_query_obs.append(obs_processed)
         if self.text_error is not None:
             raise self.text_error
-        if kind is QueryKind.NEXT_SUBTASK:
+        if query.kind is QueryKind.NEXT_SUBTASK:
             # A stand-in decomposer: one subtask per query, advancing.
             self.subtasks_planned += 1
-            return f"subtask {self.subtasks_planned} of {text}"
-        return f"answer: {text}"
+            return f"subtask {self.subtasks_planned} of {query.text}"
+        return f"answer: {query.text}"
 
 
 def _make_ctx(run_behavior=None):
@@ -681,7 +680,7 @@ def test_session_commands_via_stream():
         assert strategy.run.call_count == 1
 
 
-def test_session_mutes_logs_below_error_and_restores_on_exit():
+def test_session_mutes_logs_below_warning_and_restores_on_exit():
     import warnings
 
     # Libraries like transformers attach their own console handler with
@@ -698,10 +697,10 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
 
             lib_logger.info("muted-info")
-            lib_logger.warning("muted-warning")
+            lib_logger.warning("visible-warning")  # e.g. control loop missing its FPS target
             lib_logger.error("visible-error")  # errors must surface mid-session
 
             session._handle_line("/stop")
@@ -709,7 +708,7 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
 
         output = lib_stream.getvalue()
         assert "muted-info" not in output
-        assert "muted-warning" not in output
+        assert "visible-warning" in output
         assert "visible-error" in output
 
         # Everything is restored once the session ends.
@@ -728,7 +727,7 @@ def test_session_restores_preexisting_disable_level():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
             session._handle_line("/stop")
             thread.join(timeout=2.0)
         assert logging.root.manager.disable == logging.DEBUG
@@ -994,8 +993,9 @@ def test_drop_queued_actions_clears_both_queue_conventions():
     from lerobot.policies.pretrained import PreTrainedPolicy
     from lerobot.utils.constants import ACTION
 
-    # PreTrainedPolicy's metaclass demands a config_class, so exercise the
-    # method against stand-ins carrying each queue idiom.
+    # Subclassing PreTrainedPolicy demands a config_class (enforced in its
+    # __init_subclass__), so exercise the method against stand-ins carrying
+    # each queue idiom.
     flush = PreTrainedPolicy.drop_queued_actions
 
     queues_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
@@ -1231,37 +1231,44 @@ def test_engine_query_failure_becomes_an_error_answer():
     assert "RuntimeError: no text head" in delivered[0].error
 
 
-def test_engine_reports_policy_without_text_head():
-    class _PolicyWithoutTextHead:
+def test_policy_text_generation_contract_defaults_off():
+    """The base policy declares the text-head contract as opt-in.
+
+    ``supports_text_generation`` is what the rollout stack consults before
+    accepting /vqa or /autosteer, and the default ``generate_text`` must
+    fail loudly (a policy that flips the flag without implementing the
+    method is a bug, not a silent no-op).
+    """
+    from lerobot.policies.pretrained import PreTrainedPolicy
+
+    class _NoTextHead:  # a stand-in ``self``; the base methods touch nothing else
         pass
 
-    with pytest.raises(NotImplementedError, match="has no generate_text"):
-        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {})
+    assert PreTrainedPolicy.supports_text_generation(_NoTextHead()) is False
+    with pytest.raises(NotImplementedError, match="has no text head"):
+        PreTrainedPolicy.generate_text(_NoTextHead(), {})
 
 
 @pytest.mark.parametrize("kind", [QueryKind.VQA, QueryKind.NEXT_SUBTASK])
-def test_query_kind_reaches_the_preprocessor_as_complementary_data(kind):
-    """The kind travels in the batch, not as a generate_text argument.
+def test_query_reaches_the_preprocessor_as_complementary_data(kind):
+    """The query travels in the batch, not as generate_text arguments.
 
     ``batch_to_transition`` forwards only an allowlisted set of keys to
-    complementary data, so an unregistered flag would be silently dropped and
+    complementary data, so an unregistered key would be silently dropped and
     the policy's preprocessor step would never see it.
     """
     from lerobot.lerobot_types import TransitionKey
     from lerobot.processor.converters import batch_to_transition
-    from lerobot.utils.constants import QUERY_KIND
+    from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
-    batch = InferenceEngine._mark_query_kind(
-        {"observation.state": np.zeros(2), "task": "tidy"},
-        kind,
-        "what should happen next?",
-    )
+    query = PolicyQuery(kind=kind, text="is the cube in the box?")
+    batch = InferenceEngine._mark_query({"observation.state": np.zeros(2), "task": "tidy"}, query)
     complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA.value]
 
     assert complementary[QUERY_KIND] == kind.value
-    assert complementary["text"] == "what should happen next?"
-    # It lands beside the task, so a single ComplementaryDataProcessorStep can
-    # read the kind and rewrite the prompt.
+    assert complementary[QUERY_TEXT] == "is the cube in the box?"
+    # They land beside the task so the shared message renderer can consume
+    # both fields before policy-native formatting and tokenization.
     assert complementary["task"] == "tidy"
 
 
@@ -1272,6 +1279,27 @@ def test_controller_ask_rejected_while_idle():
 
     assert controller.ask("what do you see?") is AskResult.NOT_RUNNING
     assert not engine.has_pending_query
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_refuses_queries_for_a_policy_without_text_head():
+    """UNSUPPORTED is decided up front, even mid-run — not one tick later."""
+    started = Event()
+    controller, _events, _strategy, engine, _parent, _run_started = _make_controller(
+        run_behavior=_pumping_run(started)
+    )
+    engine.supports_text_queries = False
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(started.is_set)
+
+    assert controller.ask("what do you see?") is AskResult.UNSUPPORTED
+    assert not engine.has_pending_query
+    assert controller.autosteer("tidy the table") is AskResult.UNSUPPORTED
+    assert engine.autosteer_goal is None
 
     controller.stop()
     thread.join(timeout=2.0)
@@ -1476,9 +1504,9 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands():
 
     original = engine._generate_text
 
-    def slow(obs_processed, text, kind):
+    def slow(obs_processed, query):
         time.sleep(slow_generate)
-        return original(obs_processed, text, kind)
+        return original(obs_processed, query)
 
     engine._generate_text = slow
     engine.start_autosteer("tidy the table", interval_s=0.1)
@@ -1503,8 +1531,8 @@ def test_engine_autosteer_does_not_count_idle_pumps():
     assert engine.task == "pick up the cube"
 
 
-def test_engine_autosteer_success_is_not_published_as_an_answer():
-    """Subtasks surface as the task itself, not as operator-facing chatter."""
+def test_engine_autosteer_success_is_published_after_being_applied():
+    """A picked subtask is applied to the task first, then announced."""
     engine = _FakeEngine()
     delivered = []
     engine.set_answer_observer(delivered.append)
@@ -1513,7 +1541,11 @@ def test_engine_autosteer_success_is_not_published_as_an_answer():
     engine.pump_query({"joint.pos": 0.0})
 
     assert engine.task == "subtask 1 of tidy the table"
-    assert delivered == []
+    assert len(delivered) == 1
+    assert delivered[0].kind is QueryKind.NEXT_SUBTASK
+    assert delivered[0].ok
+    assert delivered[0].answer == "subtask 1 of tidy the table"
+    assert delivered[0].question == "tidy the table"
 
 
 def test_engine_autosteer_stops_and_reports_on_failure():
@@ -1613,7 +1645,17 @@ def test_session_autosteer_reports_status_and_hands_control_back(capsys):
 
         session._handle_line("/autosteer tidy the table")
         assert _wait_for(lambda: session.controller.task.startswith("subtask "))
-        assert "Autosteer on — goal 'tidy the table'" in capsys.readouterr().out
+        chat = capsys.readouterr().out
+        assert "Autosteer on — goal 'tidy the table'" in chat
+
+        # Each picked subtask is announced in the chat (the announcement is
+        # delivered by the pump that applied it, so poll a few more ticks).
+        def _subtask_announced():
+            nonlocal chat
+            chat += capsys.readouterr().out
+            return "Autosteer subtask: 'subtask " in chat
+
+        assert _wait_for(_subtask_announced)
 
         session._handle_line("/autosteer")
         assert "Autosteer on — goal 'tidy the table'." in capsys.readouterr().out

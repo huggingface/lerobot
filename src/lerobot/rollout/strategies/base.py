@@ -22,7 +22,7 @@ import time
 from lerobot.utils.robot_utils import precise_sleep
 
 from ..context import RolloutContext
-from .core import RolloutStrategy, send_next_action
+from .core import RolloutStrategy, send_next_action, warn_loop_overrun
 
 logger = logging.getLogger(__name__)
 
@@ -68,20 +68,19 @@ class BaseStrategy(RolloutStrategy):
             action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
 
-            # Service the /vqa channel at the end of the tick: a sync backend
-            # answers here (text generation is far slower than a control tick,
-            # so it must not sit inside the action path), and every backend
-            # hands ready answers over here so observers fire on this thread.
-            # No-op when nothing is queued.
+            # Service the text-query channel at the end of the tick: /vqa
+            # answers and the /autosteer sequencer both advance here.  A sync
+            # backend generates here (text generation is far slower than a
+            # control tick, so it must not sit inside the action path), and
+            # every backend hands ready answers over here so observers fire on
+            # this thread.  No-op when nothing is queued.
             engine.pump_query(obs_processed)
 
             dt = time.perf_counter() - loop_start
             if (sleep_t := control_interval - dt) > 0:
                 precise_sleep(sleep_t)
             else:
-                logger.warning(
-                    f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                )
+                warn_loop_overrun(dt, cfg.fps, records_data=False)
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""
