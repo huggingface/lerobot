@@ -20,6 +20,7 @@ import torch
 
 from lerobot.policies.hy_vla.configuration_hy_vla import HyVLAConfig
 from lerobot.policies.hy_vla.processor_hy_vla import (
+    HyVLATokenizerStep,
     make_hy_vla_pre_post_processors,
     reconnect_hy_vla_processors,
 )
@@ -31,6 +32,20 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
+
+
+class _FakeTokenizer:
+    def __call__(self, prompts, **kwargs):
+        length = kwargs["max_length"]
+        return {
+            "input_ids": torch.zeros(len(prompts), length, dtype=torch.long),
+            "attention_mask": torch.ones(len(prompts), length, dtype=torch.long),
+        }
+
+
+def _stub_tokenizer(preprocessor: PolicyProcessorPipeline) -> None:
+    step = next(step for step in preprocessor.steps if isinstance(step, HyVLATokenizerStep))
+    step._tokenizer = _FakeTokenizer()
 
 
 def _native_state() -> torch.Tensor:
@@ -80,6 +95,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
     stats = _stats(50)
     stats["action_std"] = stats["action_std"].double()
     preprocessor, postprocessor = make_hy_vla_pre_post_processors(config, norm_stats=stats)
+    _stub_tokenizer(preprocessor)
     assert isinstance(preprocessor.steps[0], RenderMessagesStep)
     assert preprocessor.steps[0].render_training is False
     state = _native_state()
@@ -106,6 +122,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
+    _stub_tokenizer(loaded_pre)
     reconnect_hy_vla_processors(loaded_pre, loaded_post)
     loaded_encoder = loaded_pre.steps[3]
     loaded_decoder = loaded_post.steps[0]
@@ -133,6 +150,7 @@ def test_relative_absolute_tokens_are_paired_and_blended():
     preprocessor, postprocessor = make_hy_vla_pre_post_processors(
         config, norm_stats=_stats(20, absolute=True)
     )
+    _stub_tokenizer(preprocessor)
     state = _native_state()
     preprocessor(_batch(state))
     absolute = torch.tensor(

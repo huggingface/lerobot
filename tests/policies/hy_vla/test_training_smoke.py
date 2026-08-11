@@ -26,7 +26,13 @@ pytest.importorskip("transformers", reason="Hy-VLA requires the `hy_vla` extra (
 
 from lerobot.policies.hy_vla.configuration_hy_vla import HyVLAConfig
 from lerobot.policies.hy_vla.modeling_hy_vla import HyVLAPolicy
+from lerobot.policies.hy_vla.processor_hy_vla import (
+    HY_VLA_ATTENTION_MASK,
+    HY_VLA_INPUT_IDS,
+    HyVLATokenizerStep,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import batch_to_transition, transition_to_batch
 
 
 class _CapturingTokenizer:
@@ -83,13 +89,23 @@ def _lightweight_policy() -> HyVLAPolicy:
     return policy
 
 
+def _token_fields(batch_size: int) -> dict[str, torch.Tensor]:
+    return {
+        HY_VLA_INPUT_IDS: torch.zeros(batch_size, 64, dtype=torch.long),
+        HY_VLA_ATTENTION_MASK: torch.ones(batch_size, 64, dtype=torch.bool),
+    }
+
+
 def test_exact_raw_task_reaches_tokenizer_before_chat_suffix():
-    policy = _lightweight_policy()
     raw = "  keep_under_score\nand whitespace  "
-    batch = {"observation.images.top_head": torch.zeros(1, 3, 8, 8), "task": [raw]}
-    policy.prepare_language(batch)
-    assert policy._last_raw_tasks == (raw,)
-    assert policy.language_tokenizer.received == [raw + policy.config.task_suffix]
+    tokenizer = _CapturingTokenizer()
+    step = HyVLATokenizerStep(tokenizer_name="unused")
+    step._tokenizer = tokenizer
+    batch = transition_to_batch(step(batch_to_transition({"task": [raw]})))
+
+    assert tokenizer.received == [raw + step.task_suffix]
+    assert HY_VLA_INPUT_IDS in batch
+    assert HY_VLA_ATTENTION_MASK in batch
 
 
 def test_missing_camera_keeps_its_configured_visual_slot():
@@ -134,6 +150,7 @@ def test_finite_forward_backward_update_and_tiny_overfit():
         "observation.state": torch.zeros(2, 32),
         "action": torch.zeros(2, 50, 32),
         "task": ["a", "b"],
+        **_token_fields(2),
     }
     initial, _ = policy(batch)
     for _ in range(8):
@@ -159,6 +176,7 @@ def test_training_loss_uses_action_slot_mask():
         "action": torch.zeros(batch_size, horizon, 32),
         "action.mask": torch.zeros(batch_size, horizon, 32, dtype=torch.bool),
         "task": ["a", "b"],
+        **_token_fields(batch_size),
     }
     slots = (0, 2, 4, 7, 10, 15, 19)
     batch["action.mask"][..., list(slots)] = True
@@ -228,6 +246,7 @@ def _text_batch(batch_size: int = 1, *, labels: torch.Tensor | None = None) -> d
         "observation.state": torch.zeros(batch_size, 32),
         "action": torch.zeros(batch_size, horizon, 32),
         "task": ["pick the cup"] * batch_size,
+        **_token_fields(batch_size),
     }
     if labels is not None:
         batch["text_labels"] = labels
@@ -309,11 +328,6 @@ def test_generate_text_uses_base_contract_and_reuses_the_hy_prefix():
     subtask = policy.generate_text(batch)
     assert subtask == "decoded"
     assert captured["max_new_tokens"] == policy.config.text_max_new_tokens
-    # The task went through Hy's own tokenizer path, so the chat suffix is applied.
-    assert policy.language_tokenizer.received == ["pick the cup" + policy.config.task_suffix]
-
-    policy.generate_text({**batch, "messages": [[{"role": "user", "content": "which cup is closest?"}]]})
-    assert policy.language_tokenizer.received == ["which cup is closest?" + policy.config.task_suffix]
-
-    with pytest.raises(ValueError, match="preprocessed `messages`"):
-        policy.generate_text(_text_batch())
+    assert torch.equal(captured["tokens"], batch[HY_VLA_INPUT_IDS])
+    # Input tokenization is exclusively a processor responsibility.
+    assert policy.language_tokenizer.received is None

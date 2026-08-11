@@ -37,16 +37,13 @@ from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 from transformers.cache_utils import Cache
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.language import (
-    join_semantic_message_text,
-    require_single_semantic_conversation,
-)
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_hy_vla import HyVLAConfig
 from .modeling.hunyuan_vl_mot import HunYuanVLMoTConfig, HunYuanVLMoTForConditionalGeneration
 from .modeling.hunyuan_vl_mot.modeling_hunyuan_vl_mot import _HunYuanVLMoTTextForCausalLM
+from .processor_hy_vla import HY_VLA_ATTENTION_MASK, HY_VLA_INPUT_IDS
 
 # -----------------------------------------------------------------------------
 # Space-time video attention
@@ -1973,40 +1970,6 @@ class HyVLAPolicy(PreTrainedPolicy):
             masks.append(mask)
         return images, masks
 
-    def _format_tasks(self, tasks: list[str]) -> list[str]:
-        """Apply only model chat formatting; preserve every raw task byte."""
-
-        self._last_raw_tasks = tuple(tasks)
-        return [
-            task if task.endswith(self.config.task_suffix) else task + self.config.task_suffix
-            for task in tasks
-        ]
-
-    def prepare_language(self, batch: dict[str, Any]) -> tuple[Tensor, Tensor]:
-        device = next(
-            value.device
-            for key, value in batch.items()
-            if key.startswith(OBS_IMAGES) and isinstance(value, Tensor)
-        )
-        raw_tasks = batch.get("task")
-        if isinstance(raw_tasks, str):
-            raw_tasks = [raw_tasks]
-        if not isinstance(raw_tasks, list | tuple) or not all(isinstance(task, str) for task in raw_tasks):
-            raise ValueError("Hy-VLA requires an already-selected raw LeRobot task string per sample.")
-        tasks = self._format_tasks(list(raw_tasks))
-        tokenized = self.language_tokenizer(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            truncation=True,
-            max_length=self.config.tokenizer_max_length,
-            return_tensors="pt",
-            add_special_tokens=False,
-        )
-        tokens = tokenized["input_ids"].to(device)
-        masks = tokenized["attention_mask"].to(device=device, dtype=torch.bool)
-        return tokens, masks
-
     def prepare_state(self, batch: dict[str, Any]) -> Tensor:
         model_device, model_dtype = self._model_device_dtype()
         return _pad_last(batch[OBS_STATE], self.config.max_state_dim).to(
@@ -2019,7 +1982,8 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     def _prepare_model_inputs(self, batch: dict[str, Any]):
         images, image_masks = self.prepare_images(batch)
-        tokens, language_masks = self.prepare_language(batch)
+        tokens = batch[HY_VLA_INPUT_IDS]
+        language_masks = batch[HY_VLA_ATTENTION_MASK]
         return images, image_masks, tokens, language_masks
 
     def forward(
@@ -2087,14 +2051,6 @@ class HyVLAPolicy(PreTrainedPolicy):
             raise RuntimeError(f"Expected {2 * horizon} rel/abs tokens, got {actions.shape[-2]}.")
         return torch.cat((actions[:, :horizon], actions[:, horizon:]), dim=-1)
 
-    @staticmethod
-    def _generation_prompt(batch: dict[str, Any]) -> str:
-        conversation = require_single_semantic_conversation(batch.get("messages"), policy_name="Hy-VLA")
-        prompt = join_semantic_message_text(conversation)
-        if not prompt:
-            raise ValueError("Hy-VLA text generation requires text content in `messages`.")
-        return prompt
-
     def supports_text_generation(self) -> bool:
         return True
 
@@ -2110,11 +2066,10 @@ class HyVLAPolicy(PreTrainedPolicy):
         `predict_action_chunk` deliberately ignores `with_text` and returns a bare chunk.
         """
         self.eval()
-        prompt = self._generation_prompt(batch)
-
         model_batch = self._with_inference_history(batch) if self.config.use_video_encoder else batch
         images, image_masks = self.prepare_images(model_batch)
-        tokens, language_masks = self.prepare_language({**model_batch, "task": [prompt]})
+        tokens = model_batch[HY_VLA_INPUT_IDS]
+        language_masks = model_batch[HY_VLA_ATTENTION_MASK]
 
         eos_token_ids = {
             token_id

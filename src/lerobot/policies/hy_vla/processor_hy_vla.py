@@ -19,13 +19,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.policies.language import join_semantic_message_text, normalize_semantic_messages
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -36,8 +37,14 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_hy_vla import HyVLAConfig
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+else:
+    AutoTokenizer = None
 
 DUAL_NATIVE_DIM = 16
 DUAL_HY_DIM = 20
@@ -45,6 +52,78 @@ LEFT_NATIVE = slice(0, 8)
 RIGHT_NATIVE = slice(8, 16)
 LEFT_HY = slice(0, 10)
 RIGHT_HY = slice(10, 20)
+HY_VLA_INPUT_IDS = "hy_vla.input_ids"
+HY_VLA_ATTENTION_MASK = "hy_vla.attention_mask"
+
+
+@ProcessorStepRegistry.register(name="hy_vla_tokenizer")
+@dataclass
+class HyVLATokenizerStep(ProcessorStep):
+    """Turn selected tasks or runtime semantic messages into Hy-VLA token tensors."""
+
+    tokenizer_name: str
+    tokenizer_max_length: int = 64
+    task_suffix: str = "<｜hy_Assistant｜>"
+    tokenizer_revision: str | None = None
+    _tokenizer: Any = field(default=None, init=False, repr=False)
+
+    def _get_tokenizer(self):
+        if self._tokenizer is not None:
+            return self._tokenizer
+        require_package("transformers", extra="hy_vla")
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.tokenizer_name,
+            revision=self.tokenizer_revision,
+            trust_remote_code=False,
+        )
+        return self._tokenizer
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "tokenizer_name": self.tokenizer_name,
+            "tokenizer_max_length": self.tokenizer_max_length,
+            "task_suffix": self.task_suffix,
+            "tokenizer_revision": self.tokenizer_revision,
+        }
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        tokenizer = self._get_tokenizer()
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        messages = complementary.get("messages")
+        if messages is not None:
+            conversations = normalize_semantic_messages(messages, policy_name="Hy-VLA")
+            prompts = [join_semantic_message_text(conversation) for conversation in conversations]
+        else:
+            tasks = complementary.get("task")
+            if isinstance(tasks, str):
+                prompts = [tasks]
+            elif isinstance(tasks, list) and all(isinstance(task, str) for task in tasks):
+                prompts = tasks
+            else:
+                raise ValueError("Hy-VLA requires one task string per sample before tokenization.")
+
+        formatted = [
+            prompt if prompt.endswith(self.task_suffix) else prompt + self.task_suffix for prompt in prompts
+        ]
+        tokenized = tokenizer(
+            formatted,
+            padding="max_length",
+            padding_side="right",
+            truncation=True,
+            max_length=self.tokenizer_max_length,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        complementary[HY_VLA_INPUT_IDS] = tokenized["input_ids"]
+        complementary[HY_VLA_ATTENTION_MASK] = tokenized["attention_mask"].to(dtype=torch.bool)
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
 
 
 def _safe_norm(value: Tensor, eps: float = 1e-8) -> Tensor:
@@ -803,6 +882,12 @@ def make_hy_vla_pre_post_processors(
             steps.rename_observations,
             steps.add_batch_dim,
             encoder,
+            HyVLATokenizerStep(
+                tokenizer_name=str(config.pretrained_path or config.vlm_model_path),
+                tokenizer_max_length=config.tokenizer_max_length,
+                task_suffix=config.task_suffix,
+                tokenizer_revision=config.pretrained_revision if config.pretrained_path else None,
+            ),
             steps.to_device,
         ],
         output_steps=[decoder, steps.to_cpu],
