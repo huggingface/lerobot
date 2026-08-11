@@ -22,29 +22,33 @@ from typing import Any
 import numpy as np
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.configs.recipe import TrainingRecipe
-from lerobot.datasets.language import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
-from lerobot.datasets.language_render import render_sample
+from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.utils.constants import QUERY_KIND
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
+
+LANGUAGE_EVENTS = "language_events"
+LANGUAGE_PERSISTENT = "language_persistent"
+TEXT = "text"
 
 
 @dataclass
 @ProcessorStepRegistry.register(name="render_messages_processor")
 class RenderMessagesStep(ProcessorStep):
-    """Turn raw language columns into recipe-defined messages and supervision.
+    """Render the semantic messages consumed by text-capable policies.
 
-    Reads ``language_persistent`` and ``language_events`` from complementary
-    data, renders them at each sample timestamp, and replaces the raw columns
-    with ``messages``, ``message_streams``, and ``target_message_indices``.
-    Batched inputs are filtered to samples with applicable supervision; samples
-    without language annotations use their task string as low-level supervision
-    when one is available.
+    Runtime requests arrive as ``query_kind`` plus ``text`` and become either a
+    VQA user turn or the checkpoint recipe prefix before its subtask target.
+    During recipe training, raw ``language_persistent`` and ``language_events``
+    columns become messages plus supervision sidecars. Already-rendered messages
+    pass through unchanged. Dataset-only modules are imported lazily so the same
+    serialized step remains usable in a base inference installation.
     """
 
-    recipe: TrainingRecipe
+    recipe: TrainingRecipe | None = None
+    render_training: bool = True
     dataset_ctx: Any | None = None
 
     def __post_init__(self) -> None:
@@ -52,17 +56,34 @@ class RenderMessagesStep(ProcessorStep):
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
     def get_config(self) -> dict[str, Any]:
-        return {"recipe": asdict(self.recipe)}
+        return {
+            "recipe": asdict(self.recipe) if self.recipe is not None else None,
+            "render_training": self.render_training,
+        }
 
     def __call__(self, transition: EnvTransition) -> EnvTransition | None:
-        """Render messages, preserving unannotated samples and dropping unmatched annotated ones."""
+        """Render one runtime request or one batch of training annotations."""
         complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        kind = complementary_data.get(QUERY_KIND)
+        has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
+
+        if kind is not None:
+            if has_raw_language:
+                raise ValueError(
+                    "Runtime query metadata cannot be combined with raw training language columns."
+                )
+            return self._render_generation_request(transition, complementary_data, kind)
+
         # Preserve an already-rendered prompt only when there are no raw recipe
         # columns to consume. If raw language is present, it remains authoritative
         # for training and must still produce targets and stream metadata.
-        has_raw_language = LANGUAGE_PERSISTENT in complementary_data or LANGUAGE_EVENTS in complementary_data
         if "messages" in complementary_data and not has_raw_language:
             return transition
+
+        if not self.render_training:
+            return transition
+        if self.recipe is None:
+            raise ValueError("Recipe-backed training requires a recipe in RenderMessagesStep.")
 
         persistent = complementary_data.get(LANGUAGE_PERSISTENT) or []
         events = complementary_data.get(LANGUAGE_EVENTS) or []
@@ -87,7 +108,7 @@ class RenderMessagesStep(ProcessorStep):
             raise KeyError("RenderMessagesStep requires sample timestamp in complementary data.")
 
         sample_idx = complementary_data.get("index", 0)
-        rendered = render_sample(
+        rendered = _render_sample(
             recipe=self.recipe,
             persistent=persistent,
             events=events,
@@ -108,6 +129,38 @@ class RenderMessagesStep(ProcessorStep):
         new_complementary_data.pop(LANGUAGE_PERSISTENT, None)
         new_complementary_data.pop(LANGUAGE_EVENTS, None)
         new_complementary_data.update(rendered)
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
+        return new_transition
+
+    def _render_generation_request(
+        self,
+        transition: EnvTransition,
+        complementary_data: dict[str, Any],
+        kind: str,
+    ) -> EnvTransition:
+        text = complementary_data.get(TEXT)
+        if not isinstance(text, str):
+            raise TypeError(f"Text generation requires complementary data {TEXT!r} to be a string.")
+
+        if kind == "vqa":
+            messages = [{"role": "user", "content": text}]
+        elif kind == "next_subtask":
+            if self.recipe is None:
+                raise ValueError(
+                    "Subtask generation requires a checkpoint recipe with an assistant target "
+                    "that supervises `${subtask}`."
+                )
+            bindings = dict(complementary_data)
+            bindings["task"] = text
+            messages = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)["messages"]
+        else:
+            raise ValueError(f"Unsupported query kind: {kind!r}. Expected one of: 'vqa', 'next_subtask'.")
+
+        new_transition = transition.copy()
+        new_complementary_data = dict(complementary_data)
+        new_complementary_data.pop(QUERY_KIND)
+        new_complementary_data.pop(TEXT)
+        new_complementary_data["messages"] = messages
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
         return new_transition
 
@@ -140,7 +193,7 @@ class RenderMessagesStep(ProcessorStep):
         keep_indices: list[int] = []
 
         for i in range(batch_size):
-            rendered = render_sample(
+            rendered = _render_sample(
                 recipe=self.recipe,
                 persistent=persistent_batch[i] if i < len(persistent_batch) else [],
                 events=events_batch[i] if i < len(events_batch) else [],
@@ -184,6 +237,13 @@ class RenderMessagesStep(ProcessorStep):
 
 def _is_batched_language(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and isinstance(value[0], list)
+
+
+def _render_sample(**kwargs) -> dict[str, Any] | None:
+    """Import dataset rendering only when recipe training actually uses it."""
+    from lerobot.datasets.language_render import render_sample
+
+    return render_sample(**kwargs)
 
 
 def _batch_value(value: Any, index: int) -> Any:
