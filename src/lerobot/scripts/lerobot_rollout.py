@@ -45,10 +45,12 @@ Usage examples
         --task="pick up cube" --duration=30
 
     # Interactive session (base or sentry strategy): the robot stays idle
-    # until /start is typed; /subtask <text> re-instructs the policy mid-run;
+    # until /start is typed; /subtask <text> re-instructs the policy mid-run
+    # (/vqa and /autosteer additionally query policies with a text head);
     # /reset returns it to the initial position (hardware and policy stay
     # warm); /stop shuts down gracefully.  With --strategy.type=sentry the
-    # session also records continuously, labeling frames with the live task.
+    # session also records continuously, labeling each frame with the task
+    # that generated its action.
     lerobot-rollout \\
         --strategy.type=base \\
         --policy.path=lerobot/act_koch_real \\

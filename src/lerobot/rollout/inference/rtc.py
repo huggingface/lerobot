@@ -44,7 +44,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine, QueryKind
+from .base import InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -198,8 +198,11 @@ class RTCInferenceEngine(InferenceEngine):
     def failure_traceback(self) -> str | None:
         """Traceback captured when the RTC thread died (see ``failed``).
 
-        Kept on the engine so consumers that mute console logging (the
-        interactive session) can still surface the fatal error.
+        Kept on the engine as data, not just logged: the failure happens on a
+        background thread at an arbitrary time, so consumers re-surface it
+        when someone is looking — ``RolloutController.failure_traceback``
+        exposes it to API callers, and the interactive session prints it in
+        the chat flow when it reports the failure.
         """
         return self._failure_traceback
 
@@ -250,14 +253,15 @@ class RTCInferenceEngine(InferenceEngine):
     def reset(self) -> None:
         """Reset the policy, processors, and action queue.
 
-        Call while the engine is paused (both DAgger transitions and the
-        interactive session do): the RTC thread may still be finishing an
-        inference started before the pause, so ``reset`` also drops the last
-        published observation — it can be arbitrarily stale by the time the
-        engine resumes (e.g. the robot was returned to its initial position
-        in the meantime), and a chunk computed from it would jerk the robot
-        toward the old pose — and bumps the reset epoch so any in-flight
-        chunk is discarded instead of merged into the cleared queue.
+        Safe to call while the RTC thread is paused (DAgger transitions, the
+        interactive session) or still running (episode-start resets, the
+        post-warmup flush): either way an inference may be in flight, so
+        ``reset`` also drops the last published observation — it can be
+        arbitrarily stale by the time actions are next consumed (e.g. the
+        robot was returned to its initial position in the meantime), and a
+        chunk computed from it would jerk the robot toward the old pose —
+        and bumps the reset epoch so an in-flight chunk is discarded instead
+        of merged into the cleared queue.
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
@@ -288,6 +292,11 @@ class RTCInferenceEngine(InferenceEngine):
         # labels between chunks); expose it for frame labeling.
         action, task = queued
         if task is None:
+            # Every merge in this engine labels its chunk (see _rtc_loop), so a
+            # missing label means a foreign writer touched the queue.  Fail
+            # loudly: an unlabeled action would silently corrupt
+            # ``dispatched_task`` and the frame labels recording strategies
+            # derive from it.
             raise RuntimeError("RTC action queue returned an action without task provenance")
         self._set_dispatched_task(task)
         return action
@@ -297,7 +306,21 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = obs
 
-    def _generate_text(self, obs_processed: dict, text: str, kind: QueryKind) -> str:
+    # ------------------------------------------------------------------
+    # Text queries
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when the policy has a text head."""
+        return self._policy.supports_text_generation()
+
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """The RTC background thread owns the policy; it services queries in ``_rtc_loop``."""
+        return False
+
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
         obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
         # The live task, read without consuming the task-changed edge — that
@@ -306,11 +329,10 @@ class RTCInferenceEngine(InferenceEngine):
         obs_batch = prepare_observation_for_inference(
             obs_batch, torch.device(self._device), task, self._robot.robot_type
         )
-        obs_batch["task"] = [task]
-        obs_batch = self._mark_query_kind(obs_batch, kind, text)
+        obs_batch = self._mark_query(obs_batch, query)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            return self._policy_generate_text(self._policy, preprocessed)
+            return str(self._policy.generate_text(preprocessed))
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
@@ -340,14 +362,17 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
 
-                # Answer a queued /vqa question here: this is the thread that
-                # owns the policy.  Above the refill branch on purpose — a
-                # question asked while the queue is full would otherwise wait
-                # for it to drain.  ``_service_query`` swallows its own errors,
-                # so a bad question never trips the consecutive-error counter
-                # below.  The chunk path re-runs the preprocessor on its own
-                # observation, so the stateful steps (relative-action
-                # anchoring) are not left holding this one.
+                # Serve a queued text query here — an operator's /vqa question
+                # or the autosteer sequencer's next-subtask request (which
+                # ``_service_query`` applies via ``set_task``, so the chunk
+                # path below picks it up on this very iteration): this is the
+                # thread that owns the policy.  Above the refill branch on
+                # purpose — a query issued while the queue is full would
+                # otherwise wait for it to drain.  ``_service_query`` swallows
+                # its own errors, so a bad question never trips the
+                # consecutive-error counter below.  The chunk path re-runs the
+                # preprocessor on its own observation, so the stateful steps
+                # (relative-action anchoring) are not left holding this one.
                 self._service_query(obs)
 
                 if queue.qsize() <= self._rtc_queue_threshold:

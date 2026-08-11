@@ -194,6 +194,13 @@ class TrainingRecipe:
             if recipe.weight <= 0:
                 raise ValueError(f"Blend component {name!r} must have a positive weight.")
 
+    def referenced_binding_names(self) -> set[str]:
+        """Names of every binding referenced by this recipe's message turns."""
+        names: set[str] = set()
+        for turn in self.messages or []:
+            names |= self._referenced_bindings(turn)
+        return names
+
     def prompt_turns(self, kind: str) -> list[MessageTurn]:
         """The turns preceding the target turn that supervises the ``kind`` binding.
 

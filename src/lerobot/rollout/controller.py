@@ -117,6 +117,11 @@ class AskResult(Enum):
     """Rejected: another query holds the channel: a previous question, or
     an autosteer subtask query queued but not yet served."""
 
+    UNSUPPORTED = "unsupported"
+    """Rejected: the policy has no text head, so it can neither answer
+    questions nor plan subtasks.  Unlike the other rejections this one is
+    permanent for the session."""
+
 
 class RolloutEvent(Enum):
     """Lifecycle notifications emitted by :class:`RolloutController`.
@@ -143,10 +148,13 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     QUERY_ANSWERED = "query_answered"
-    """A question queued with :meth:`RolloutController.ask` was resolved.  The
-    event payload is a :class:`~lerobot.rollout.inference.QueryAnswer`; check
-    its ``ok`` before reading ``answer``, since it also reports questions the
-    policy could not handle and ones dropped when the run ended first."""
+    """A text query was resolved: a question queued with
+    :meth:`RolloutController.ask`, or one of the autosteer sequencer's turns
+    (kind ``NEXT_SUBTASK`` — a success carries the subtask just applied to the
+    task, a failure the reason the sequencer stopped).  The event payload is a
+    :class:`~lerobot.rollout.inference.QueryAnswer`; check its ``ok`` before
+    reading ``answer``, since it also reports questions the policy could not
+    handle and ones dropped when the run ended first."""
 
     ENGINE_FAILED = "engine_failed"
     """The inference engine hit an unrecoverable error; ``serve()`` is about
@@ -177,7 +185,8 @@ class RolloutController:
     ``build_rollout_context(cfg, LinkedEvent(shutdown_event))``.
 
     Thread safety: the control methods (:meth:`start`, :meth:`reset`,
-    :meth:`stop`, :meth:`set_task`) may be called from any thread and are
+    :meth:`stop`, :meth:`set_task`, :meth:`ask`, :meth:`autosteer`,
+    :meth:`stop_autosteer`) may be called from any thread and are
     serialized by an internal lock, so calls issued in order from one thread
     keep that order — e.g. a ``set_task`` right after a ``reset`` is not
     clobbered by the reset's task restore.  Commands are last-write-wins:
@@ -335,12 +344,21 @@ class RolloutController:
         robot keeps executing already-queued actions and then holds while the
         text head runs.
 
+        Refused outright (:attr:`AskResult.UNSUPPORTED`) when the policy has
+        no text head — checked here, before queueing, so the operator learns
+        immediately rather than from an error answer a tick later.
+
         Only accepted while a segment is running (:attr:`running`).  Engines
         are fed observations by the control loop and by nothing else, so an
         idle engine has no current view to answer from — and an async
         backend's inference thread is parked and would never pick the
         question up at all.
         """
+        # A static capability, so checked outside the control lock — and
+        # first, so the operator is not told to /start a policy that could
+        # never answer.
+        if not self._ctx.policy.inference.supports_text_queries:
+            return AskResult.UNSUPPORTED
         with self._control_lock:
             # Checked under the same lock that _run_segment clears _running
             # and drops the pending question under, so a question can never
@@ -360,16 +378,21 @@ class RolloutController:
         """Let the policy decompose ``goal`` and drive its own subtasks.
 
         Every ``autosteer_interval_s`` seconds the engine asks the policy
-        for the next subtask and applies it through :meth:`set_task`,
-        so the switch takes the usual instruction-change path.  Progress
+        for the next subtask and applies it through the *engine's*
+        ``set_task`` (not this controller's, which would stop the
+        sequencer), so the switch takes the usual instruction-change path.  Progress
         through the plan lives in the policy — each query re-sends the same
         goal — which is why the sequencer does not survive a segment:
         restarting a segment resets the policy, and with it the plan.
 
-        Subject to the same running-only guard as :meth:`ask`, and stopped by
-        :meth:`reset`, :meth:`set_task`, and the end of a segment.  Returns
-        :attr:`AskResult.NOT_RUNNING` when no segment is running.
+        Subject to the same capability and running-only guards as :meth:`ask`,
+        and stopped by :meth:`reset`, :meth:`set_task`, and the end of a
+        segment.  Returns :attr:`AskResult.NOT_RUNNING` when no segment is
+        running and :attr:`AskResult.UNSUPPORTED` when the policy has no text
+        head to plan with.
         """
+        if not self._ctx.policy.inference.supports_text_queries:
+            return AskResult.UNSUPPORTED
         with self._control_lock:
             if not self._running.is_set():
                 return AskResult.NOT_RUNNING
