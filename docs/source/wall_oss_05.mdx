@@ -1,0 +1,260 @@
+# Wall-OSS-0.5
+
+Wall-OSS-0.5 is a 4B vision-language-action model from
+[XSquare Robot](https://x2robot.com/en/research/68bc2cde8497d7f238dde690).
+It combines a Qwen2.5-VL vision-language backbone with a continuous
+flow-matching action expert.
+
+LeRobot provides Wall-OSS-0.5 through the `wall_oss_05` policy type and the
+[`lerobot/wall-oss-0.5`](https://huggingface.co/lerobot/wall-oss-0.5)
+checkpoint.
+
+<Tip>
+
+`wall_oss_05` and the existing `wall_x` policy target different WALL releases.
+Use `wall_oss_05` with the Wall-OSS-0.5 checkpoint.
+
+</Tip>
+
+## Model Overview
+
+Wall-OSS-0.5 conditions action generation on camera observations, robot state,
+and a natural-language task. The policy predicts a chunk of continuous actions
+with flow matching. Its vision-language expert can also generate text for
+captioning, visual question answering, grounding, and language subtasks.
+
+The released model uses:
+
+- a 26-dimensional canonical state and action representation;
+- 32-step action chunks;
+- q01/q99 range normalization;
+- a 10-step flow sampler;
+- Qwen2.5-VL for visual and language inputs.
+
+The base checkpoint is intended for fine-tuning on a target robot and task
+dataset before deployment.
+
+### What the LeRobot Integration Covers
+
+- Standard `policy.type=wall_oss_05` configuration and Hub checkpoint loading.
+- Native Qwen2.5-VL vision-language processing and Wall action experts.
+- Continuous x-prediction flow training and 10-step Euler sampling.
+- Recipe-driven text cross-entropy and joint text/action fine-tuning.
+- Native text generation for VQA, grounding, captions, and language subtasks.
+- An adapter for LeRobot's interactive language runtime.
+- Canonical 26D state and action inputs using LeRobot q01/q99 processors.
+- Fine-tuning with `lerobot-train` and inference through standard policy APIs.
+
+## Installation Requirements
+
+Wall-OSS-0.5 requires an NVIDIA GPU with CUDA. Install LeRobot with the policy
+dependencies:
+
+```bash
+pip install "lerobot[wall_oss_05]"
+```
+
+For a LeRobot source checkout:
+
+```bash
+uv sync --extra wall_oss_05
+```
+
+The policy is implemented natively in LeRobot. Its only policy-specific
+dependency is Transformers; no separate Wall-X checkout is required.
+
+## Checkpoints
+
+| Variant | LeRobot checkpoint                                                    | Intended use                             |
+| ------- | --------------------------------------------------------------------- | ---------------------------------------- |
+| Base 4B | [`lerobot/wall-oss-0.5`](https://huggingface.co/lerobot/wall-oss-0.5) | Canonical 26D fine-tuning and deployment |
+
+The checkpoint includes the policy configuration, Qwen processor and tokenizer,
+model weights, saved LeRobot pre/postprocessors, normalization statistics, and
+conversion metadata. It is a base checkpoint: fine-tune it on the target robot
+and task before reporting task-level results.
+
+## Usage
+
+Select the policy with:
+
+```bash
+--policy.type=wall_oss_05
+```
+
+Initialize from the LeRobot checkpoint with:
+
+```bash
+--policy.pretrained_name_or_path=lerobot/wall-oss-0.5
+```
+
+Use `--policy.path=your-org/your-finetuned-checkpoint` when evaluating or
+deploying a saved LeRobot checkpoint.
+
+### Text and VQA
+
+Wall-OSS-0.5 uses the shared policy text contract. Runtime supplies
+`query_kind` and `text`, then runs the normal policy input processor:
+
+```python
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the right gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
+```
+
+`vqa` preserves the caller question. `next_subtask` applies the recipe owned by
+`WallOSS05Config`. The policy inherits `generate_text(processed_batch)` and
+overrides `supports_text_generation` and `generate_text`. Generation uses the checkpoint's
+tied Qwen vocabulary head and vision-language expert; it does not call a
+separate VLM.
+
+The language runtime can generate a subtask and then condition Wall's action
+prediction on it:
+
+```bash
+lerobot-rollout \
+  --policy.path=your-org/your-finetuned-wall-oss-0.5 \
+  --policy.device=cuda \
+  --task="clear the table" \
+  --interactive=true
+```
+
+After `/start`, use `/vqa <question>`, `/autosteer <goal>`, or
+`/subtask <text>`.
+
+Wall retains useful embodied VQA and grounding capabilities, but it is
+specialized for robot observations and is not intended to replace a
+general-purpose VLM.
+
+## Data Requirements
+
+Wall-OSS-0.5 operates on a canonical 26D state and action layout. A dataset
+must already follow this layout to be used by the current integration.
+Non-canonical robot state and controller representations are not converted by
+the policy.
+
+Configure image inputs with `camera_key_mapping`. The mapping associates each
+LeRobot image feature with a Wall camera slot. The default checkpoint uses
+`face_view` and `right_wrist_view`.
+
+The dataset task string is passed to the policy as its language instruction.
+Use consistent task descriptions when recording, training, and evaluating.
+
+State and action q01/q99 normalization is handled by the saved LeRobot
+preprocessor and postprocessor. Inference restores the statistics saved with
+the checkpoint. When fine-tuning with `lerobot-train`, the training dataset
+statistics replace the pretrained processor statistics and are saved with the
+new checkpoint.
+
+## Training
+
+Fine-tune the base checkpoint with the standard LeRobot training command:
+
+### Training Command Example
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-dataset \
+  --policy.type=wall_oss_05 \
+  --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
+  --policy.repo_id=your-org/wall-oss-0.5-your-task \
+  --output_dir=outputs/train/wall_oss_05 \
+  --job_name=wall_oss_05_finetune \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+Start with a small batch size because Wall-OSS-0.5 is a 4B-parameter model.
+Increase it according to available GPU memory, or use gradient accumulation
+through your distributed training configuration.
+
+### Train with language annotations
+
+Enable the recipe owned by `WallOSS05Config` to train from LeRobot's optional
+language columns. Its joint subtask recipe supervises the assistant response
+and continuous action chunk in one causal sequence:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-language-annotated-dataset \
+  --policy.type=wall_oss_05 \
+  --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
+  --policy.use_language_recipe=true \
+  --policy.text_loss_weight=0.1 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+Recipe streams determine which objectives run for each sample:
+
+- a targeted assistant turn receives next-token text cross-entropy;
+- a `low_level` turn receives continuous flow-action supervision; and
+- a `low_level` recipe with a targeted assistant turn receives both losses,
+  with the action tokens attending to the supervised text.
+
+Only the targeted assistant payload and its `<|im_end|>` token are used as
+language labels. User prompts, padding, images, proprioception, and continuous
+action-query tokens are masked from text cross-entropy. If `use_language_recipe` is
+unset, training follows the original action-only path.
+
+See [Language columns and recipes](./language_and_recipes) for the annotation
+schema and recipe structure. `recipe_path` may point to an explicit external
+YAML override; LeRobot does not provide shared default recipe files.
+
+## Key Configuration Parameters
+
+| Parameter                 | Default                    | Description                                                |
+| ------------------------- | -------------------------- | ---------------------------------------------------------- |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                              |
+| `chunk_size`              | `32`                       | Number of actions predicted per chunk                      |
+| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning     |
+| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots      |
+| `use_language_recipe`     | `false`                    | Enables the recipe stored in the policy config             |
+| `recipe_path`             | `None`                     | Optional explicit external recipe override                 |
+| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy        |
+| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                     |
+| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length |
+| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                |
+
+## Evaluation and Inference
+
+Use a fine-tuned checkpoint with the standard LeRobot evaluation or robot
+rollout workflows by passing its Hub repository or local directory as the
+policy path.
+
+Wall-OSS-0.5 generates continuous action chunks with its flow sampler. The
+current policy supports the continuous flow branch; the autoregressive action
+branch is not exposed.
+
+For a supported simulator, provide the fine-tuned checkpoint and the
+environment-specific options through `lerobot-eval`:
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-finetuned-wall-oss-0.5 \
+  --policy.device=cuda \
+  --env.type=<environment> \
+  --env.task=<task> \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+Do not evaluate the base checkpoint as though it were a task-specific policy.
+The canonical representation, normalization statistics, and task distribution
+must match the fine-tuned checkpoint.
+
+## References
+
+- [Wall-OSS-0.5 project page](https://x2robot.com/en/research/68bc2cde8497d7f238dde690)
+- [Wall-OSS-0.5 LeRobot checkpoint](https://huggingface.co/lerobot/wall-oss-0.5)
+
+## License
+
+Wall-OSS-0.5 and Wall-X are released under the Apache 2.0 License.

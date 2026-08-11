@@ -51,6 +51,7 @@ from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
+from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftConfig, PeftModel
@@ -242,6 +243,14 @@ def make_pre_post_processors(
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
             preprocessor, postprocessor = reconcile_evo1_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
+        if isinstance(policy_cfg, WallOSS05Config):
+            from .wall_oss_05.processor_wall_oss_05 import reconcile_wall_oss_05_processors
+
+            preprocessor, postprocessor = reconcile_wall_oss_05_processors(
                 policy_cfg,
                 preprocessor,
                 postprocessor,
