@@ -182,8 +182,15 @@ def _get_pi_gemma_decoder_layer_base():
             hidden_states = _gated_residual(residual, hidden_states, gate)
 
             residual = hidden_states
-            hidden_states, gate = self.post_attention_layernorm(hidden_states, cond=adarms_cond)
-            hidden_states = self.mlp(hidden_states)
+            if getattr(self.mlp, "absorbs_post_attention_layernorm", False):
+                # FP8 fused path (VLM only): te.LayerNormMLP has absorbed post_attention_layernorm,
+                # so skip the external norm and feed the residual directly into the fused MLP.
+                # adarms_cond is None for the VLM branch, so the norm gate is None (plain add).
+                hidden_states = self.mlp(hidden_states)
+                gate = None
+            else:
+                hidden_states, gate = self.post_attention_layernorm(hidden_states, cond=adarms_cond)
+                hidden_states = self.mlp(hidden_states)
             hidden_states = _gated_residual(residual, hidden_states, gate)
             return hidden_states
 
