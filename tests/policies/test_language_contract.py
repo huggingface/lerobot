@@ -21,9 +21,9 @@ from lerobot.policies.language import (
     semantic_message_content_text,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RenderMessagesStep
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline, ProcessorStep
-from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
 
 @PreTrainedConfig.register_subclass("language_contract_test")
@@ -137,7 +137,7 @@ def _subtask_recipe() -> TrainingRecipe:
 
 
 def _generation_preprocessor(config: ContractConfig, formatter: ProcessorStep):
-    return PolicyProcessorPipeline([RenderGenerationPromptStep(config.recipe), formatter])
+    return PolicyProcessorPipeline([RenderMessagesStep(config.recipe, render_training=False), formatter])
 
 
 def test_runtime_query_metadata_is_formatted_by_the_input_pipeline():
@@ -183,12 +183,12 @@ def test_two_policy_processor_formatters_need_no_client_api_changes():
 def test_policy_pipeline_serializes_explicit_renderer_before_batching():
     config = ContractConfig(recipe=_subtask_recipe())
     preprocessor = PolicyProcessorPipeline(
-        [RenderGenerationPromptStep(config.recipe), AddBatchDimensionProcessorStep()]
+        [RenderMessagesStep(config.recipe, render_training=False), AddBatchDimensionProcessorStep()]
     )
 
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
-    assert preprocessor.get_config()["steps"][0]["registry_name"] == "render_generation_prompt_processor"
+    assert preprocessor.get_config()["steps"][0]["registry_name"] == "render_messages_processor"
     assert preprocessor({"task": "ordinary action input"})["task"] == ["ordinary action input"]
     assert preprocessor({"query_kind": "vqa", "text": "Question?"})["messages"] == [
         [{"role": "user", "content": "Question?"}]

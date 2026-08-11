@@ -252,7 +252,7 @@ batch = preprocessor({**observation, "task": runtime_state.task})
 action_chunk = policy.predict_action_chunk(batch)
 ```
 
-The prompt-rendering step consumes `query_kind` and `text`; they do not leak into model
+The message-rendering step consumes `query_kind` and `text`; they do not leak into model
 inputs. Inputs without `query_kind` pass through unchanged, so the same preprocessor
 continues to serve ordinary action prediction. `generate_text` only decodes its prepared
 batch—it does not mutate runtime state, replace the active task, enqueue actions, or run
@@ -261,17 +261,24 @@ error instead of silently treating it as a query.
 
 ### Policy implementation
 
-Text-capable policies explicitly place `RenderGenerationPromptStep(config.recipe)` in
-their normal input pipeline before batching or policy-native message formatting. This
-keeps its ordering and serialization policy-owned; the generic policy factory does not
-mutate processor pipelines. Subsequent policy-specific steps apply the model-native chat
+Text-capable policies explicitly place one `RenderMessagesStep` in their normal input
+pipeline before batching or policy-native message formatting. The step owns both runtime
+queries and recipe-training annotations: `render_training` enables raw dataset rendering,
+while runtime `query_kind` plus `text` works in either mode. Existing semantic `messages`
+pass through unchanged. Subsequent policy-specific steps apply the model-native chat
 template, image markers, delimiters, and tokenization. The policy class implements only
 text decoding from the already-prepared batch:
 
 ```python
 # processor_my_policy.py
 input_steps = [
-    RenderGenerationPromptStep(config.recipe),
+    RenderMessagesStep(
+        config.recipe,
+        render_training=language_recipe_enabled(
+            use_language_recipe=config.use_language_recipe,
+            recipe_path=config.recipe_path,
+        ),
+    ),
     steps.rename_observations,
     steps.add_batch_dim,
     MyPolicyMessageFormatter(),
@@ -280,9 +287,10 @@ input_steps = [
 ]
 ```
 
-The generation step must also be present in the processor configuration shipped with a
-text-capable checkpoint. Policies supporting older processor configurations should add
-a policy-local migration when loading them rather than changing all policy pipelines.
+The unified message step must also be present in the processor configuration shipped
+with a text-capable checkpoint. Policies supporting older processor configurations
+should add a policy-local migration when loading them rather than changing all policy
+pipelines.
 
 ```python
 # modeling_my_policy.py
@@ -300,7 +308,7 @@ Text generation therefore follows one processor chain:
 ```text
 runtime adds query_kind + text
               ↓
-RenderGenerationPromptStep
+RenderMessagesStep
               ↓
 policy-native roles, images, and chat template
               ↓
@@ -309,10 +317,10 @@ batching, tokenization, normalization, device placement
 policy.generate_text(processed_batch)
 ```
 
-Training renders complete recipe messages, including assistant targets. Subtask
-inference uses the same turn-rendering and substitution primitive but stops immediately
-before the assistant turn supervising `${subtask}`. Runtime never reads `config.recipe`,
-selects blend components or bindings, or constructs model prompts.
+The same step renders complete training recipe messages, including assistant targets.
+Subtask inference uses the same turn-rendering and substitution primitive but stops
+immediately before the assistant turn supervising `${subtask}`. Runtime never reads
+`config.recipe`, selects blend components or bindings, or constructs model prompts.
 
 Training recipes still ship with checkpoints through `config.recipe`:
 
