@@ -43,7 +43,9 @@ from lerobot.policies.g05.modeling_g05 import (
     G05TextGeneration,
 )
 from lerobot.policies.g05.processor_g05 import G05TokenType
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
@@ -228,6 +230,24 @@ def _policy_batch(task: str = "  Pick café cup\nverbatim  "):
 def test_factory_wiring_is_lazy():
     assert make_policy_config("g05", checkpoint_profile="custom").type == "g05"
     assert get_policy_class("g05") is G05Policy
+
+
+def test_text_generation_uses_base_policy_contract():
+    backend = TinyG05Backend()
+    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
+    batch = _policy_batch("operator task")
+    batch["messages"] = [[{"role": "user", "content": "what do you see?"}]]
+
+    assert G05Policy.generate_text is PreTrainedPolicy.generate_text
+    assert policy.supports_text_generation()
+    assert policy.generate_text(batch) == "Subtask: move carefully"
+    assert backend.last_samples[0]["command"] == "what do you see?"
+
+
+def test_default_processor_starts_with_generation_prompt_step():
+    preprocessor, _ = make_pre_post_processors(_config())
+
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
 
 
 def test_single_frame_vision_uses_native_transformers_path():
@@ -931,7 +951,7 @@ def test_recipe_preprocessor_resolves_lerobot_subtask_and_bbox_annotations():
     config = _config(
         predict_cot=True,
         runtime_system="system2",
-        recipe_path="recipes/g05_bbox_subtask.yaml",
+        use_language_recipe=True,
     )
     preprocessor, _ = make_pre_post_processors(config)
     policy = G05Policy(config, backend=TinyG05Backend())

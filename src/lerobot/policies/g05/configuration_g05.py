@@ -17,9 +17,11 @@
 """Configuration for the OpenGalaxea G0.5 policy adapter."""
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
@@ -27,6 +29,36 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 G05_SOURCE_REVISION = "b34966f387dd2ae0f003143b81494afd9213e613"
 G05_HUB_REVISION = "e312be81e90c56a55bcb26b57429bd39a335b449"
+
+
+def _g05_default_recipe() -> TrainingRecipe:
+    """G0.5's native BBox/Subtask chain-of-thought supervision."""
+    return TrainingRecipe(
+        bindings={"bbox": ("emitted_at(t, style=vqa, role=assistant, camera=observation.images.exterior)")},
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="low_level"),
+            MessageTurn(
+                role="assistant",
+                content="BBoxJSON: ${bbox}",
+                stream="low_level",
+                target=True,
+                if_present="bbox",
+            ),
+            MessageTurn(
+                role="assistant",
+                content="Subtask: ${subtask}",
+                stream="low_level",
+                target=True,
+                if_present="subtask",
+            ),
+        ],
+    )
+
+
+def _load_recipe(path_str: str) -> TrainingRecipe:
+    """Load an explicit external recipe override."""
+    return TrainingRecipe.from_yaml(Path(path_str))
+
 
 G05_CAMERA_PROFILES: dict[str, tuple[str, ...]] = {
     "libero": (
@@ -220,7 +252,9 @@ class G05Config(PreTrainedConfig):
     processor_metadata: dict[str, Any] = field(default_factory=dict)
     action_codec_metadata: dict[str, Any] = field(default_factory=dict)
     prompt_template: str = ""
+    use_language_recipe: bool = False
     recipe_path: str | None = None
+    recipe: TrainingRecipe | dict[str, Any] | None = field(default_factory=_g05_default_recipe)
     cot_bbox_camera: str | None = None
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -241,6 +275,13 @@ class G05Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.recipe_path is not None:
+            try:
+                self.recipe = _load_recipe(self.recipe_path)
+            except FileNotFoundError:
+                if self.recipe is None:
+                    raise
+                # Reloaded checkpoints already carry the selected recipe inline.
         self.camera_order = tuple(self.camera_order)
         self.camera_sizes = {key: tuple(size) for key, size in (self.camera_sizes or {}).items()}
         self.optional_camera_keys = tuple(self.optional_camera_keys)
@@ -281,7 +322,7 @@ class G05Config(PreTrainedConfig):
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
-        if self.recipe_path is not None and not self.predict_cot:
+        if (self.use_language_recipe or self.recipe_path is not None) and not self.predict_cot:
             raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
         if not 1 <= self.n_action_steps <= self.chunk_size:
             raise ValueError("n_action_steps must be between 1 and chunk_size.")
@@ -392,7 +433,7 @@ class G05Config(PreTrainedConfig):
     @property
     def rebuild_pretrained_processors(self) -> bool:
         # Recipe steps and projected dataset stats only exist on freshly built pipelines.
-        return self.recipe_path is not None
+        return self.use_language_recipe or self.recipe_path is not None
 
     @property
     def observation_delta_indices(self) -> list[int]:

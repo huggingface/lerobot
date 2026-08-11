@@ -2766,6 +2766,40 @@ class G05Policy(PreTrainedPolicy):
             raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
 
+    @staticmethod
+    def _generation_request_text(batch: Mapping[str, Any]) -> str:
+        messages = batch.get("messages")
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("G0.5 text generation requires preprocessed `messages`.")
+        conversation = messages[0] if isinstance(messages[0], list) else messages
+        for message in reversed(conversation):
+            if not isinstance(message, Mapping) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                texts = [
+                    str(block["text"])
+                    for block in content
+                    if isinstance(block, Mapping) and block.get("type") == "text" and "text" in block
+                ]
+                if texts:
+                    return "\n".join(texts)
+        raise ValueError("G0.5 text generation requires a user text turn in `messages`.")
+
+    @torch.no_grad()
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+        """Generate G0.5's native System-2 text from model-ready observations."""
+        if not self.config.predict_cot:
+            raise ValueError("G0.5 text generation requires a checkpoint with predict_cot=True.")
+        request = self._generation_request_text(batch)
+        _, metadata = self._run_inference(batch, task=request, system_mode="system2")
+        text = _first_cot_text(metadata)
+        if text is None:
+            raise ValueError("G0.5 text generation returned no text.")
+        return text
+
     @classmethod
     def _load_as_safetensor(
         cls,
@@ -2840,8 +2874,8 @@ class G05Policy(PreTrainedPolicy):
                 ).to(next(policy.backend.parameters()).device)
         return policy
 
-    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
-        super()._save_pretrained(save_directory, state_dict=state_dict)
+    def _save_pretrained(self, save_directory: Path) -> None:
+        super()._save_pretrained(save_directory)
         author_config = dict(self.config.author_model_config)
         processor_value = author_config.get("hf_processor_path")
         processor_path = Path(str(processor_value)) if processor_value else None

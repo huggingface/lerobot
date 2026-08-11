@@ -180,7 +180,7 @@ lerobot-train \
   --dataset.repo_id=${HF_USER}/my_so101_dataset_annotated \
   --policy.path=lerobot/g05_so101 \
   --policy.device=cuda \
-  --policy.recipe_path=recipes/g05_bbox_subtask.yaml \
+  --policy.use_language_recipe=true \
   --policy.cot_bbox_camera=observation.images.exterior \
   --policy.repo_id=${HF_USER}/g05_so101_finetuned \
   --policy.private=true \
@@ -191,7 +191,7 @@ lerobot-train \
   --save_freq=1000
 ```
 
-The bundled `g05_bbox_subtask.yaml` recipe resolves the active
+The built-in recipe in `G05Config` resolves the active
 `language_persistent` `subtask` and camera-scoped grounded `vqa` event at each
 sample timestamp. It emits each optional BBox or Subtask target when that
 annotation is present; unavailable annotations are skipped through the recipe's
@@ -207,8 +207,10 @@ assistant sequence.
 Generate the required `subtask` and grounded `vqa` language columns with
 `lerobot-annotate` as described in the
 [annotation pipeline](./annotation_pipeline). The bundled recipe targets
-`observation.images.exterior`; copy the YAML and change its camera-filtered
-bindings when training an embodiment with a different grounded camera.
+`observation.images.exterior`. Pass an explicit external YAML through
+`--policy.recipe_path=/path/to/recipe.yaml` when training an embodiment with a
+different grounded camera; that selected recipe is serialized into the saved
+policy config.
 
 The SO-101 recipe uses AdamW at `8e-5` with 1,000 warmup steps. The packaged
 LIBERO and RoboTwin configurations use their released `1e-5` recipe, with
@@ -239,7 +241,8 @@ lerobot-train \
 | `policy.runtime_system`                   | Selects direct System 1 or unified System 2 reasoning and action |
 | `policy.chunk_size`                       | Number of actions predicted in each chunk                        |
 | `policy.n_action_steps`                   | Number of actions executed before replanning                     |
-| `policy.recipe_path`                      | Optional language-supervision recipe used during fine-tuning     |
+| `policy.use_language_recipe`              | Enable G0.5's built-in language-supervision recipe               |
+| `policy.recipe_path`                      | Explicit external recipe override used during fine-tuning        |
 | `policy.optimizer_backbone_lr_multiplier` | Learning-rate multiplier for the language backbone               |
 | `policy.optimizer_vision_lr_multiplier`   | Learning-rate multiplier for the vision tower                    |
 

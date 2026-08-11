@@ -28,8 +28,6 @@ import torchvision.transforms.functional as vision_functional
 from torch import Tensor
 from transformers import AutoTokenizer
 
-from lerobot.configs import recipe as recipe_module
-from lerobot.configs.recipe import TrainingRecipe
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
@@ -53,6 +51,7 @@ from lerobot.processor.converters import (
 )
 from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.processor.render_messages_processor import RenderMessagesStep
+from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 from lerobot.utils.constants import (
     ACTION,
     OBS_STATE,
@@ -61,17 +60,6 @@ from lerobot.utils.constants import (
 )
 
 from .configuration_g05 import G05_EMBODIMENT_MAPPINGS, G05_POLICY_PARTS, G05Config
-
-
-def _load_recipe(path_str: str) -> Any:
-    """Load an absolute recipe path or one relative to ``lerobot/configs``."""
-
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
 
 
 def _copy_feature_tree(
@@ -767,12 +755,11 @@ def make_g05_pre_post_processors(
         action_names=list(config.action_feature_names) or None,
         num_obs_steps=config.n_obs_steps,
     )
-    steps: list[ProcessorStep] = [RenameObservationsProcessorStep(rename_map={})]
-    if config.recipe_path:
-        # Cache the loaded recipe on the config: it serializes into config.json, so a
-        # fine-tuned checkpoint carries the exact CoT recipe it was rendered with
-        # (`PreTrainedPolicy.language_recipe` reads it back at inference).
-        config.recipe = _load_recipe(config.recipe_path)
+    steps: list[ProcessorStep] = [
+        RenderGenerationPromptStep(config.recipe),
+        RenameObservationsProcessorStep(rename_map={}),
+    ]
+    if config.use_language_recipe or config.recipe_path:
         steps.extend(
             [
                 G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),
