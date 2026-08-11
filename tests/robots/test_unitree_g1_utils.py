@@ -124,7 +124,7 @@ class TestRemoteInput:
         assert all(v == 0.0 for v in d.values())
         assert set(d.keys()) == set(REMOTE_KEYS)
 
-    def test_default_remote_input_is_a_fresh_dict(self):
+    def test_remote_input_is_fresh_dict(self):
         """Callers mutate this per tick; instances must not share state."""
         first = default_remote_input()
         first["remote.lx"] = 1.0
@@ -173,7 +173,7 @@ class TestMakeRobotController:
     def test_none_disables_controller(self):
         assert make_robot_controller(None) is None
 
-    def test_unknown_name_raises_with_available_options(self):
+    def test_unknown_name_raises(self):
         with pytest.raises(ValueError, match="Unknown controller") as excinfo:
             make_robot_controller("NotAController")
         # The error should tell the user what they can pick instead.

@@ -210,13 +210,13 @@ def arm_for_publish(robot, mocks, kp_value: float = 50.0, kd_value: float = 1.0)
 
 
 class TestInitialState:
-    def test_starts_disconnected_without_controller(self, make_robot):
+    def test_starts_disconnected(self, make_robot):
         factory, _ = make_robot
         robot = factory()
         assert not robot.is_connected
         assert robot.controller is None
 
-    def test_get_observation_before_connect_is_empty(self, make_robot):
+    def test_observation_empty_before_connect(self, make_robot):
         factory, _ = make_robot
         assert factory().get_observation() == {}
 
@@ -230,7 +230,7 @@ class TestInitialState:
         assert robot.name == "unitree_g1"
         assert robot.config_class is UnitreeG1Config
 
-    def test_controller_stubs_satisfy_the_protocol(self):
+    def test_stubs_satisfy_protocol(self):
         """Controllers are duck-typed against a runtime-checkable Protocol."""
         from lerobot.robots.unitree_g1.g1_utils import RobotController
 
@@ -244,13 +244,13 @@ class TestInitialState:
 
 
 class TestObservationFeatures:
-    def test_no_controller_exposes_joint_positions(self, make_robot):
+    def test_no_controller_joint_positions(self, make_robot):
         factory, _ = make_robot
         features = factory().observation_features
         assert len(features) == NUM_MOTORS
         assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
 
-    def test_whole_body_controller_replaces_joint_state(self, make_robot):
+    def test_whole_body_replaces_state(self, make_robot):
         """Regression: merging the 29 joint keys with the 64-D token gave a 93-D state and
         broke inference against a checkpoint trained on the token echo alone."""
         factory, _ = make_robot
@@ -261,7 +261,7 @@ class TestObservationFeatures:
         assert set(features) == set(controller.observation_ft)
         assert not [key for key in features if key.endswith(".q")]
 
-    def test_locomotion_controller_keeps_joint_state(self, make_robot):
+    def test_locomotion_keeps_joint_state(self, make_robot):
         """Controllers that declare no proprio features must not lose the joint keys."""
         factory, _ = make_robot
         features = factory(controller=LocomotionOnlyController()).observation_features
@@ -290,7 +290,7 @@ class TestActionFeatures:
         features = factory().action_features
         assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
 
-    def test_whole_body_controller_owns_the_action_space(self, make_robot):
+    def test_whole_body_owns_action_space(self, make_robot):
         factory, _ = make_robot
         controller = TokenController()
         features = factory(controller=controller).action_features
@@ -298,7 +298,7 @@ class TestActionFeatures:
         assert len(features) == TOKEN_DIM
         assert set(features) == set(controller.action_ft)
 
-    def test_locomotion_controller_gets_arms_plus_joystick(self, make_robot):
+    def test_locomotion_gets_arms_joystick(self, make_robot):
         factory, _ = make_robot
         features = factory(controller=LocomotionOnlyController()).action_features
 
@@ -306,7 +306,7 @@ class TestActionFeatures:
         assert set(features) == expected
         assert len(features) == len(G1_29_JointArmIndex) + len(REMOTE_AXES)
 
-    def test_action_and_observation_spaces_match_the_token_controller(self, make_robot):
+    def test_token_spaces_match(self, make_robot):
         """A token policy consumes its own previous action as state; both must be 64-D."""
         factory, _ = make_robot
         robot = factory(controller=TokenController())
@@ -319,7 +319,7 @@ class TestActionFeatures:
 
 
 class TestPublishLowcmd:
-    def test_writes_only_the_joints_present_in_the_action(self, make_robot):
+    def test_writes_only_present_joints(self, make_robot):
         factory, mocks = make_robot
         robot = arm_for_publish(factory(), mocks)
 
@@ -351,7 +351,7 @@ class TestPublishLowcmd:
         assert cmd.kp == pytest.approx(10.0)
         assert cmd.kd == pytest.approx(0.5)
 
-    def test_zero_gain_command_makes_joints_passive(self, make_robot):
+    def test_zero_gains_make_joints_passive(self, make_robot):
         """Shutdown path: zero kp/kd/tau must reach the message."""
         factory, mocks = make_robot
         robot = arm_for_publish(factory(), mocks)
@@ -425,7 +425,7 @@ class TestControllerInput:
 
         assert robot.controller_input["remote.lx"] == 0.5
 
-    def test_previous_keys_survive_a_partial_update(self, make_robot):
+    def test_partial_update_keeps_keys(self, make_robot):
         """The controller thread reads a snapshot; stale axes must not be dropped."""
         factory, _ = make_robot
         robot = factory(controller=TokenController())

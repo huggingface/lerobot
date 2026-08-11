@@ -127,7 +127,7 @@ def token_action(token: np.ndarray) -> dict[str, float]:
 
 
 class TestConstants:
-    def test_decoder_input_dim_matches_block_layout(self):
+    def test_input_dim_matches_layout(self):
         """994 = token + 10 frames of (ang, q, dq, last action) + 10 gravity vectors."""
         expected = swb.TOKEN_DIM + HISTORY_LEN * (3 + 3 * NUM_MOTORS) + HISTORY_LEN * 3
         assert expected == swb.DECODER_INPUT_DIM == 994
@@ -162,7 +162,7 @@ class TestFeatureSchemas:
             f"{swb.TOKEN_STATE_PREFIX}.{i}.pos" for i in range(swb.TOKEN_DIM)
         }
 
-    def test_action_and_observation_keys_are_disjoint(self, make_controller):
+    def test_action_obs_keys_disjoint(self, make_controller):
         """A shared prefix would make the action token and its echo collide in a dataset frame."""
         controller, _ = make_controller()
         assert not set(controller.action_ft) & set(controller.observation_ft)
@@ -211,19 +211,19 @@ class TestReset:
 
 
 class TestTokenHandling:
-    def test_first_tick_seeds_the_neutral_token(self, make_controller):
+    def test_first_tick_seeds_neutral(self, make_controller):
         """With no token in the action, the decoder must still see a valid idle latent."""
         controller, decoder = make_controller()
         controller.run_step({}, make_lowstate())
         np.testing.assert_allclose(decoder.last_input[TOKEN_SLICE], NEUTRAL_TOKEN)
 
-    def test_token_from_action_reaches_the_decoder(self, make_controller):
+    def test_token_reaches_decoder(self, make_controller):
         controller, decoder = make_controller()
         token = np.linspace(-1.0, 1.0, swb.TOKEN_DIM, dtype=np.float32)
         controller.run_step(token_action(token), make_lowstate())
         np.testing.assert_allclose(decoder.last_input[TOKEN_SLICE], token, atol=1e-6)
 
-    def test_partial_token_is_ignored_and_previous_held(self, make_controller):
+    def test_partial_token_is_ignored(self, make_controller):
         """All 64 keys are required; a partial chunk must not be spliced into the latent."""
         controller, decoder = make_controller()
         token = np.linspace(-1.0, 1.0, swb.TOKEN_DIM, dtype=np.float32)
@@ -235,7 +235,7 @@ class TestTokenHandling:
 
         np.testing.assert_allclose(decoder.last_input[TOKEN_SLICE], token, atol=1e-6)
 
-    def test_unrelated_action_keys_hold_the_token(self, make_controller):
+    def test_unrelated_keys_hold_token(self, make_controller):
         """Joystick-only actions (the pre-policy case) must not disturb the latent."""
         controller, decoder = make_controller()
         token = np.full(swb.TOKEN_DIM, 0.25, np.float32)
@@ -256,7 +256,7 @@ class TestTokenHandling:
         )
         np.testing.assert_allclose(echoed, token, atol=1e-6)
 
-    def test_observation_state_is_zeros_before_first_tick(self, make_controller):
+    def test_state_zeros_before_first_tick(self, make_controller):
         controller, _ = make_controller()
         state = controller.observation_state()
         assert len(state) == swb.TOKEN_DIM
@@ -264,7 +264,7 @@ class TestTokenHandling:
 
 
 class TestDecoderInputAssembly:
-    def test_proprioception_lands_in_the_newest_slots(self, make_controller):
+    def test_proprio_lands_in_newest_slot(self, make_controller):
         controller, decoder = make_controller()
         q = np.linspace(0.1, 2.9, NUM_MOTORS, dtype=np.float32)
         dq = np.linspace(-1.0, 1.0, NUM_MOTORS, dtype=np.float32)
@@ -278,7 +278,7 @@ class TestDecoderInputAssembly:
         )
         np.testing.assert_allclose(obs[NEWEST_DQ], dq[MUJOCO_TO_ISAACLAB], atol=1e-6)
 
-    def test_older_frames_remain_empty_on_first_tick(self, make_controller):
+    def test_older_frames_start_empty(self, make_controller):
         """Only the newest slot of each block is filled one tick after a reset."""
         controller, decoder = make_controller()
         q = np.full(NUM_MOTORS, 1.0, np.float32)
@@ -289,7 +289,7 @@ class TestDecoderInputAssembly:
         np.testing.assert_allclose(obs[Q_START : DQ_START - NUM_MOTORS], 0.0)
         np.testing.assert_allclose(obs[DQ_START : ACT_START - NUM_MOTORS], 0.0)
 
-    def test_gravity_block_uses_the_imu_quaternion(self, make_controller):
+    def test_gravity_uses_imu_quaternion(self, make_controller):
         controller, decoder = make_controller()
         quat = (np.sqrt(0.5), np.sqrt(0.5), 0.0, 0.0)  # 90 deg about x
         controller.run_step({}, make_lowstate(quat=quat))
@@ -326,7 +326,7 @@ class TestDecoderInputAssembly:
         controller.run_step(token_action(np.ones(swb.TOKEN_DIM, np.float32)), make_lowstate())
         assert np.all(np.isfinite(decoder.last_input))
 
-    def test_zero_quaternion_does_not_divide_by_zero(self, make_controller):
+    def test_zero_quaternion_is_safe(self, make_controller):
         """The 1e-8 epsilon in the normalisation guards a dropped IMU frame."""
         controller, decoder = make_controller()
         controller.run_step({}, make_lowstate(quat=(0.0, 0.0, 0.0, 0.0)))
@@ -334,7 +334,7 @@ class TestDecoderInputAssembly:
 
 
 class TestJointTargets:
-    def test_targets_are_default_angles_plus_scaled_residual(self, make_controller):
+    def test_targets_add_scaled_residual(self, make_controller):
         action = np.arange(NUM_MOTORS, dtype=np.float32)
         controller, _ = make_controller(action=action)
 
@@ -362,7 +362,7 @@ class TestJointTargets:
         for joint in G1_29_JointIndex:
             assert targets[f"{joint.name}.q"] == pytest.approx(DEFAULT_ANGLES[joint.value], abs=1e-6)
 
-    def test_residual_is_reordered_not_passed_through(self, make_controller):
+    def test_residual_is_reordered(self, make_controller):
         """A non-identity permutation must actually be applied to the decoder output."""
         action = np.arange(NUM_MOTORS, dtype=np.float32)
         controller, _ = make_controller(action=action)
