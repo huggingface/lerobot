@@ -30,7 +30,7 @@ from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
 from .compute_stats import aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .feature_utils import features_equal_for_merge, get_hf_features_from_features
+from .feature_utils import canonicalize_depth_marker, features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
@@ -114,6 +114,8 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
         merged_info[vk]["info"] = {**base_video_info, **merged_encoder_info}
         # TODO(CarolinePascal): make this variable once we have support for other video backends.
         merged_info[vk]["info"]["video.video_backend"] = "pyav"
+        # Persist the canonical depth marker even when a source used a legacy key.
+        canonicalize_depth_marker(merged_info[vk])
 
     return merged_info
 

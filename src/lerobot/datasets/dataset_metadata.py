@@ -35,7 +35,7 @@ from lerobot.utils.utils import flatten_dict
 
 from .compute_stats import aggregate_stats
 from .depth_utils import MM_PER_METRE
-from .feature_utils import create_empty_dataset_info
+from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
 from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
@@ -712,19 +712,22 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         preserve_set = set(preserve_keys or ())
         for key in video_keys:
-            existing = self.features[key].get("info") or {}
+            feature = self.info.features[key]
+            existing = feature.get("info") or {}
             video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
             new_info = get_video_info(video_path, video_encoder=video_encoder)
             # Drop preserved keys so the existing values win on merge.
             new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
-            merged = {**existing, **new_info}
-            # Migrate the legacy depth marker to the canonical key.
-            if "video.is_depth_map" in merged:
-                logging.warning(
-                    f"Migrating legacy 'video.is_depth_map' to 'is_depth_map' for feature {key!r}."
-                )
-                merged.setdefault("is_depth_map", merged.pop("video.is_depth_map"))
-            self.info.features[key]["info"] = merged
+            feature["info"] = {**existing, **new_info}
+            # Migrate any legacy depth marker (in ``info`` or a separate ``video_info`` dict)
+            # to the canonical ``is_depth_map`` key.
+            video_info = feature.get("video_info")
+            had_legacy = "video.is_depth_map" in feature["info"] or (
+                isinstance(video_info, dict) and "video.is_depth_map" in video_info
+            )
+            canonicalize_depth_marker(feature)
+            if had_legacy:
+                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,
