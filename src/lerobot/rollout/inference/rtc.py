@@ -267,9 +267,14 @@ class RTCInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
-        if self._action_queue is not None:
-            self._action_queue.clear()
         with self._obs_lock:
+            # Queue clear and epoch bump in one critical section, mirroring
+            # the epoch-check-and-merge in _rtc_loop: a reset can then never
+            # interleave between that check and the merge and leak a
+            # pre-reset chunk into the freshly cleared queue.  Lock order is
+            # _obs_lock -> queue.lock on both sides.
+            if self._action_queue is not None:
+                self._action_queue.clear()
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
         # The queue was just cleared, so a pending task change has nothing
@@ -376,7 +381,18 @@ class RTCInferenceEngine(InferenceEngine):
                 # consecutive-error counter below.  The chunk path re-runs the
                 # preprocessor on its own observation, so the stateful steps
                 # (relative-action anchoring) are not left holding this one.
-                self._service_query(obs)
+                if self._service_query(obs):
+                    # The query blocked this thread for a full text
+                    # generation, so the snapshot above is now seconds old: a
+                    # chunk conditioned on it would steer the robot from a
+                    # pose it has long left.  Re-read the freshest
+                    # observation — and the epoch, so the discard guard below
+                    # also covers a reset that landed during the query.
+                    with self._obs_lock:
+                        obs = self._obs_holder.get("obs")
+                        epoch_before = self._reset_epoch
+                    if obs is None:  # a reset mid-query dropped the observation
+                        continue
 
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:
@@ -397,8 +413,11 @@ class RTCInferenceEngine(InferenceEngine):
                             # chunk's leftover prefix, so the switch lands within
                             # one inference and the transition stays continuous.
                             # With blending disabled the queue drains first, so
-                            # it lands up to one chunk later.
-                            logger.info("Task changed to '%s' — applied from this chunk on", task)
+                            # it lands up to one chunk later.  Worded "next
+                            # merged chunk" because the epoch guard below may
+                            # still discard this particular chunk; the task
+                            # holder keeps the new value either way.
+                            logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
                         obs_batch = prepare_observation_for_inference(
@@ -446,10 +465,16 @@ class RTCInferenceEngine(InferenceEngine):
                             latency_tracker.add(new_latency)
 
                         with self._obs_lock:
+                            # Check and merge in one critical section,
+                            # mirroring reset()'s clear-and-bump: a reset can
+                            # no longer land between the epoch check and the
+                            # merge and leak a pre-reset chunk into the fresh
+                            # queue.  Lock order is _obs_lock -> queue.lock on
+                            # both sides, so no inversion.
                             epoch_unchanged = epoch_before == self._reset_epoch
-                        if epoch_unchanged:
-                            queue.merge(original, processed, new_delay, idx_before, task=task)
-                        else:
+                            if epoch_unchanged:
+                                queue.merge(original, processed, new_delay, idx_before, task=task)
+                        if not epoch_unchanged:
                             logger.info("Discarding action chunk computed before an engine reset")
 
                         if (

@@ -139,6 +139,22 @@ def test_get_with_task_tracks_replacement_chunk_provenance(action_queue_rtc_enab
     assert action_queue_rtc_enabled.get_with_task()[1] == "task B"
 
 
+def test_get_with_task_fails_loudly_when_task_labels_desync(action_queue_rtc_enabled, sample_actions):
+    """A broken action/task lockstep must raise a self-describing error, not IndexError.
+
+    The invariant holds at every mutation site today; this guards future
+    edits — an unlabeled action would silently corrupt dispatched_task and
+    the frame labels recording strategies derive from it.
+    """
+    queue = action_queue_rtc_enabled
+    queue.merge(sample_actions["processed"][:4], sample_actions["processed"][:4], real_delay=0, task="t")
+    with queue.lock:
+        queue._task_queue = queue._task_queue[:-1]  # simulate a desyncing mutation
+
+    with pytest.raises(RuntimeError, match="task labels out of sync"):
+        queue.get_with_task()
+
+
 def test_get_returns_none_after_exhaustion(action_queue_rtc_enabled, sample_actions):
     """Test get() returns None after all actions are consumed."""
     # Use short action sequence

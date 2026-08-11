@@ -86,6 +86,16 @@ class ActionQueue:
             if self.queue is None or self.last_index >= len(self.queue):
                 return None
 
+            if self._task_queue is not None and len(self._task_queue) != len(self.queue):
+                # Every mutation keeps the two queues in lockstep under this
+                # lock; a mismatch means a future edit broke that invariant.
+                # Fail with a self-describing error instead of an opaque
+                # IndexError on the control thread's hot path.
+                raise RuntimeError(
+                    f"ActionQueue task labels out of sync with actions "
+                    f"({len(self._task_queue)} labels for {len(self.queue)} actions) — "
+                    "a queue mutation broke the action/task lockstep invariant"
+                )
             action = self.queue[self.last_index]
             task = None if self._task_queue is None else self._task_queue[self.last_index]
             self.last_index += 1
