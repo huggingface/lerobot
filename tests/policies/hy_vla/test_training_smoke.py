@@ -303,7 +303,8 @@ def test_generate_text_uses_base_contract_and_reuses_the_hy_prefix():
     policy.model.generate_text_tokens = fake_generate_text_tokens
     batch = {**_text_batch(), "messages": [[{"role": "user", "content": "pick the cup"}]]}
 
-    assert HyVLAPolicy.generate_text is PreTrainedPolicy.generate_text
+    assert HyVLAPolicy.generate_text is not PreTrainedPolicy.generate_text
+    assert HyVLAPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert policy.supports_text_generation()
     subtask = policy.generate_text(batch)
     assert subtask == "decoded"

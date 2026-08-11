@@ -37,6 +37,10 @@ from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 from transformers.cache_utils import Cache
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.language import (
+    join_semantic_message_text,
+    require_single_semantic_conversation,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -2085,29 +2089,17 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     @staticmethod
     def _generation_prompt(batch: dict[str, Any]) -> str:
-        messages = batch.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("Hy-VLA text generation requires preprocessed `messages`.")
-        conversation = messages[0] if isinstance(messages[0], list) else messages
-        parts = []
-        for message in conversation:
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                parts.extend(
-                    str(block["text"])
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text" and "text" in block
-                )
-        if not parts:
+        conversation = require_single_semantic_conversation(batch.get("messages"), policy_name="Hy-VLA")
+        prompt = join_semantic_message_text(conversation)
+        if not prompt:
             raise ValueError("Hy-VLA text generation requires text content in `messages`.")
-        return "\n".join(parts)
+        return prompt
+
+    def supports_text_generation(self) -> bool:
+        return True
 
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode from the VLM tower's tied vocabulary head.
 
         Hy's action expert never produces vocabulary logits, so its head is dropped at

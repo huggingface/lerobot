@@ -85,7 +85,7 @@ vqa_request = preprocessor(
 answer = policy.generate_text(vqa_request)
 ```
 
-Hy-VLA implements `_generate_preprocessed_text`, not the public method.
+Hy-VLA overrides `supports_text_generation` and `generate_text` directly.
 Decoding runs through Hy's own `embed_prefix`, so the images, modality masks and
 visual-segment attention match training.
 
