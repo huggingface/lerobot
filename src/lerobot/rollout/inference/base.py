@@ -443,10 +443,8 @@ class InferenceEngine(abc.ABC):
                 )
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
-            if query.kind is QueryKind.NEXT_SUBTASK:
-                # A sequencer that cannot get its next subtask is broken; stop
-                # it rather than failing again every interval.
-                self.stop_autosteer()
+            if query.kind is QueryKind.NEXT_SUBTASK and not self._fail_subtask(query):
+                return True  # the sequencer this turn belonged to is gone; discard
             self._publish_answer(
                 QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
             )
@@ -457,6 +455,35 @@ class InferenceEngine(abc.ABC):
         # never gets ahead of the task it describes.
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
         return True
+
+    def _fail_subtask(self, query: PolicyQuery) -> bool:
+        """Stop the sequencer after a failed turn — unless it stopped or retargeted meanwhile.
+
+        The liveness counterpart of :meth:`_apply_subtask` for the failure
+        path: a sequencer that cannot get its next subtask is broken and must
+        stop rather than fail again every interval — but only if it is still
+        the sequencer that requested this turn.  A stale turn's failure must
+        neither kill a goal the operator has since set nor produce an
+        "Autosteer stopped" announcement for a sequencer that is already off
+        (e.g. after a segment end whose cleanup ran before this generation
+        failed).  Returns ``True`` when the failure answer should be
+        published.
+        """
+        with self._query_lock:
+            live = self._autosteer_goal == query.text
+            if live:
+                self._autosteer_goal = None
+            else:
+                self._query_in_flight = False  # no answer will be published
+        if live:
+            logger.info("Autosteer stopped (goal was '%s') — planning failed", query.text)
+        else:
+            logger.info(
+                "Discarding failed autosteer turn for %r — the sequencer stopped or was "
+                "retargeted while it was being generated",
+                query.text,
+            )
+        return live
 
     def _apply_subtask(self, query: PolicyQuery, subtask: str) -> bool:
         """Apply a generated subtask, unless the sequencer stopped meanwhile.

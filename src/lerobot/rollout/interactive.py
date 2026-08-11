@@ -288,8 +288,14 @@ class InteractiveSession:
         self.controller.stop()
 
     def _cmd_start(self, cmd: InteractiveCommand) -> None:
-        if not self.controller.start():
+        if self.controller.start():
+            return
+        # start() also refuses once the controller is stopping or has failed;
+        # claiming "already running" there would mislabel an idle robot.
+        if self.controller.running:
             self._print("Already running — /reset to pause first, or /stop to shut down.")
+        else:
+            self._print("Can't start — the session is stopping or has failed.")
 
     def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
         # Quotes are stripped before the emptiness check (as in
@@ -308,8 +314,12 @@ class InteractiveSession:
                 f"Task: {_format_task(previous)} → {_format_task(task)} "
                 "(applies from the next policy inference)"
             )
-        else:
+        elif task == self.controller.task:
             self._print(f"Task unchanged: {_format_task(task)}")
+        else:
+            # set_task also refuses (without touching the engine) once the
+            # controller is stopping; "unchanged" would imply it was applied.
+            self._print("Can't change the task — the session is stopping.")
 
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
         # Quotes stripped before the emptiness check, so /vqa "" prints the
@@ -366,6 +376,8 @@ class InteractiveSession:
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         if self.controller.reset():
             self._print(f"Task restored to {_format_task(self.controller.initial_task)}")
+        elif self.controller.stopped:
+            self._print("Can't reset — the session has stopped.")
 
     def _cmd_stop(self, cmd: InteractiveCommand) -> None:
         self.controller.stop()

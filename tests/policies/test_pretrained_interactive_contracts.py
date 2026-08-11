@@ -161,6 +161,45 @@ def test_generate_text_override_with_flag_is_accepted():
     assert cls is not None
 
 
+def test_subclass_of_conforming_text_head_parent_is_accepted():
+    """Refining generate_text under a parent's inherited flag is conforming.
+
+    The guard resolves through the MRO, so it must not fire on a subclass
+    whose supports_text_generation override comes from the parent.
+    """
+    parent = type(
+        "ConformingParent",
+        (PreTrainedPolicy,),
+        {
+            **_policy_class_body(),
+            "name": "conforming_parent",
+            "supports_text_generation": lambda self: True,
+            "generate_text": lambda self, batch: "parent answer",
+        },
+    )
+    child = type(
+        "RefinedTextHead",
+        (parent,),
+        {"name": "refined_text_head", "generate_text": lambda self, batch: "refined answer"},
+    )
+    assert child is not None
+
+
+def test_mixin_supplied_generate_text_without_flag_fails():
+    """A text head arriving through a mixin must not dodge the guard."""
+
+    class _TextHeadMixin:
+        def generate_text(self, batch):
+            return "mixin answer"
+
+    with pytest.raises(TypeError, match="supports_text_generation"):
+        type(
+            "MixinTextHeadWithoutFlag",
+            (_TextHeadMixin, PreTrainedPolicy),
+            {**_policy_class_body(), "name": "mixin_text_head_without_flag"},
+        )
+
+
 def test_flag_only_override_is_allowed_but_generate_text_fails_loudly():
     """Checkpoint-conditional support may flip the flag without a text head;
     the base generate_text then fails loudly instead of silently no-oping."""

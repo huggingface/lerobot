@@ -164,13 +164,7 @@ class SentryStrategy(RolloutStrategy):
                 # keeping push_to_hub efficient (uploads complete files).
                 elapsed = time.perf_counter() - episode_start
                 if elapsed >= episode_duration_s:
-                    # ``save_episode`` finalises the in-progress episode and
-                    # flushes it to disk; ``_episode_lock`` serialises this with
-                    # ``push_to_hub`` (run in the background executor) so the
-                    # pusher never reads a half-written episode.
-                    self._warn_if_push_in_flight()
-                    with self._episode_lock:
-                        dataset.save_episode()
+                    self._checked_save_episode(dataset)
                     logger.info(
                         "Episode saved (total: %d, elapsed: %.1fs)",
                         dataset.num_episodes,
@@ -200,40 +194,51 @@ class SentryStrategy(RolloutStrategy):
             logger.info("Sentry control loop ended")
             self._save_tail_episode(dataset, cfg)
 
-    def _save_tail_episode(self, dataset, cfg) -> None:
-        """Commit the segment's partial tail episode; fail loudly on real errors.
+    def _checked_save_episode(self, dataset) -> None:
+        """``save_episode`` under the push lock; a failure poisons the dataset and re-raises.
 
-        A segment that recorded nothing (``/start`` followed immediately by
-        ``/reset``, or a segment ending right after a rotation) has no tail —
-        guarded up front so the failure path below is reserved for genuinely
-        broken saves.
-
-        A failed ``save_episode`` is *not* recoverable by discarding the
-        buffer: ``DatasetWriter.save_episode`` writes the episode's parquet
-        rows and advances its counters *before* the failure-prone steps
-        (video encode, metadata commit), so a mid-save failure can leave
-        committed rows unreachable from metadata, and the next segment would
-        reuse the same episode index with overlapping row indices.  The
-        dataset is latched as poisoned — refusing further segments and Hub
-        pushes — and the error is re-raised so it reaches the controller's
-        failure surface instead of silently growing corrupt data.
+        Shared by the rotation and tail save sites so *any* mid-write failure
+        takes the same path.  A failed ``save_episode`` is *not* recoverable
+        by discarding the buffer: ``DatasetWriter.save_episode`` writes the
+        episode's parquet rows and advances its counters *before* the
+        failure-prone steps (video encode, metadata commit), so a mid-save
+        failure can leave committed rows unreachable from metadata, and the
+        next segment would reuse the same episode index with overlapping row
+        indices.  The dataset is latched as poisoned — refusing further
+        segments and Hub pushes — the in-flight streaming encode and the
+        half-mutated buffer are dropped through the public API, and the
+        error is re-raised so it reaches the controller's failure surface
+        instead of silently growing corrupt data.
         """
-        if not dataset.has_pending_frames():
-            logger.info("No frames pending at segment end — nothing to save")
-            return
-        logger.info("Saving the segment's final (partial) episode")
         self._warn_if_push_in_flight()
         try:
             with self._episode_lock:
                 dataset.save_episode()
         except Exception:
             self._dataset_poisoned = True
-            # Drop the in-flight streaming encode (so a later finalize cannot
-            # flush a half-written video) and the half-mutated episode buffer,
-            # through the dataset's public API.
             with contextlib.suppress(Exception):
                 dataset.clear_episode_buffer(delete_images=False)
             raise
+
+    def _save_tail_episode(self, dataset, cfg) -> None:
+        """Commit the segment's partial tail episode; fail loudly on real errors.
+
+        Runs in ``run()``'s ``finally``.  When a rotation save already failed
+        in this segment, the poison is latched and the buffer cleaned — return
+        immediately so the original error propagates instead of this method
+        failing again on its debris.  A segment that recorded nothing
+        (``/start`` followed immediately by ``/reset``, or a segment ending
+        right after a rotation) has no tail either — guarded up front so
+        :meth:`_checked_save_episode`'s failure path is reserved for genuinely
+        broken saves.
+        """
+        if self._dataset_poisoned:
+            return
+        if not dataset.has_pending_frames():
+            logger.info("No frames pending at segment end — nothing to save")
+            return
+        logger.info("Saving the segment's final (partial) episode")
+        self._checked_save_episode(dataset)
         self._register_saved_episode(dataset, cfg)
 
     def _register_saved_episode(self, dataset, cfg) -> None:
@@ -325,6 +330,14 @@ class SentryStrategy(RolloutStrategy):
         def _push():
             try:
                 with self._episode_lock:
+                    if self._dataset_poisoned:
+                        # Poisoned while this push waited in the executor
+                        # queue (submit-time check passed); never upload it.
+                        logger.error(
+                            "Skipping queued Hub push: a failed save_episode left the dataset "
+                            "possibly corrupt"
+                        )
+                        return
                     if safe_push_to_hub(
                         dataset,
                         tags=cfg.dataset.tags if cfg.dataset else None,

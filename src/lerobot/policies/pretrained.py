@@ -111,11 +111,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         # queries (/vqa, /autosteer), so a text head without the flag is
         # unreachable — and the operator is told the policy has none.  Caught
         # here so the mismatch fails at class-definition time instead of
-        # silently in the field.  Checkpoint-conditional support stays
-        # possible: the override just has to exist.
-        if "generate_text" in cls.__dict__ and "supports_text_generation" not in cls.__dict__:
+        # silently in the field.  Compared through the MRO (not cls.__dict__)
+        # so an override inherited from a conforming parent counts, and one
+        # supplied by a mixin is still caught.  Checkpoint-conditional support
+        # stays possible: the override just has to exist somewhere in the MRO.
+        if (
+            cls.generate_text is not PreTrainedPolicy.generate_text
+            and cls.supports_text_generation is PreTrainedPolicy.supports_text_generation
+        ):
             raise TypeError(
-                f"{cls.__name__} overrides generate_text() but not supports_text_generation(). "
+                f"{cls.__name__} provides generate_text() but not supports_text_generation(). "
                 "Override supports_text_generation() too (returning True, or a "
                 "checkpoint-conditional value), otherwise the text head is never used."
             )

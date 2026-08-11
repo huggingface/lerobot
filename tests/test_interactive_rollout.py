@@ -1380,6 +1380,49 @@ def test_sentry_tail_save_failure_poisons_dataset_and_reraises(monkeypatch):
     dataset.push_to_hub.assert_not_called()
 
 
+def test_sentry_rotation_save_failure_poisons_dataset_and_reraises(monkeypatch):
+    """A mid-write failure at the ROTATION save site must take the same poison path.
+
+    Guarding only the tail save would let a rotation failure unwind into
+    run()'s finally with the poison unset — and teardown would upload the
+    partially-committed dataset.
+    """
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+    strategy._episode_duration_s = 0.0  # rotate on the very first tick
+    dataset.save_episode.side_effect = ValueError("disk full mid-write")
+
+    with pytest.raises(ValueError, match="disk full mid-write"):
+        strategy.run(ctx)
+
+    assert strategy._dataset_poisoned
+    dataset.clear_episode_buffer.assert_called_once_with(delete_images=False)
+    # The tail save in run()'s finally must not fail again on the debris.
+    assert dataset.save_episode.call_count == 1
+
+    with pytest.raises(RuntimeError, match="partially committed"):
+        strategy.run(ctx)
+
+    ctx.runtime.cfg.dataset.push_to_hub = True
+    strategy._needs_push.set()
+    strategy.teardown(ctx)
+    dataset.push_to_hub.assert_not_called()
+
+
+def test_sentry_queued_push_rechecks_poison_before_uploading(monkeypatch):
+    """A push queued behind an in-flight one must not upload a dataset that
+    was poisoned while it waited in the executor queue."""
+    strategy, ctx, dataset, _engine, _stop_event = _make_sentry(monkeypatch)
+
+    # Holding the episode lock parks the submitted push at its lock
+    # acquisition, exactly like a still-running previous push would.
+    with strategy._episode_lock:
+        strategy._background_push(dataset, ctx.runtime.cfg)  # submit-time check passes
+        strategy._dataset_poisoned = True  # a save fails while the push waits
+    strategy._push_executor.shutdown(wait=True)
+
+    dataset.push_to_hub.assert_not_called()
+
+
 def test_sentry_empty_tail_segment_skips_the_save(monkeypatch):
     """A segment that recorded nothing must not raise (or log) through the tail save."""
     strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
@@ -2025,6 +2068,34 @@ def test_engine_discards_subtask_generated_after_sequencer_stopped(stop_mid_gene
     assert delivered == []
     # The channel is free again (no stuck in-flight flag).
     assert engine.ask("what do you see?") is True
+
+
+def test_engine_failed_stale_subtask_turn_does_not_kill_the_new_goal():
+    """The failure path honours the same liveness rule as the success path.
+
+    A turn for goal A failing after the operator switched to goal B must
+    neither stop B's sequencer nor announce 'could not plan for A'.
+    """
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    original = engine._generate_text
+
+    def fail_after_retarget(obs_processed, query):
+        engine.start_autosteer("goal B", interval_s=0.0)  # operator retargets mid-generation
+        raise RuntimeError("planner exploded")
+
+    engine._generate_text = fail_after_retarget
+    engine.start_autosteer("goal A", interval_s=0.0)
+    engine.pump_query({"joint.pos": 0.0})
+
+    assert engine.autosteer_goal == "goal B"  # the fresh sequencer survives
+    assert delivered == []  # no stale failure announcement
+
+    # The new goal's turn proceeds normally on the next pump.
+    engine._generate_text = original
+    engine.pump_query({"joint.pos": 0.0})
+    assert engine.task == "subtask 1 of goal B"
 
 
 def test_controller_segment_end_drops_stale_autosteer_answer_but_delivers_vqa():
