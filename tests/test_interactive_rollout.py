@@ -1267,8 +1267,9 @@ def test_query_reaches_the_preprocessor_as_complementary_data(kind):
 
     assert complementary[QUERY_KIND] == kind.value
     assert complementary[QUERY_TEXT] == "is the cube in the box?"
-    # They land beside the task so the shared message renderer can consume
-    # both fields before policy-native formatting and tokenization.
+    # They land beside the task, so a single ComplementaryDataProcessorStep
+    # can read the kind and rewrite the query text into this policy's prompt
+    # format before generate_text consumes it.
     assert complementary["task"] == "tidy"
 
 
