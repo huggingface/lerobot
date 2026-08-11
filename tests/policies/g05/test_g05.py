@@ -44,8 +44,7 @@ from lerobot.policies.g05.modeling_g05 import (
 )
 from lerobot.policies.g05.processor_g05 import G05TokenType
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
+from lerobot.processor import PolicyProcessorPipeline, RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 
@@ -248,7 +247,8 @@ def test_text_generation_uses_base_policy_contract():
 def test_default_processor_starts_with_generation_prompt_step():
     preprocessor, _ = make_pre_post_processors(_config())
 
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
 
 
 def test_single_frame_vision_uses_native_transformers_path():

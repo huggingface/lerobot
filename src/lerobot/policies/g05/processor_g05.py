@@ -42,6 +42,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
+    RenderMessagesStep,
     UnnormalizerProcessorStep,
 )
 from lerobot.processor.converters import (
@@ -51,8 +52,6 @@ from lerobot.processor.converters import (
     transition_to_policy_action,
 )
 from lerobot.processor.relative_action_processor import to_relative_actions
-from lerobot.processor.render_messages_processor import RenderMessagesStep
-from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 from lerobot.utils.constants import (
     ACTION,
     OBS_STATE,
@@ -756,20 +755,18 @@ def make_g05_pre_post_processors(
         action_names=list(config.action_feature_names) or None,
         num_obs_steps=config.n_obs_steps,
     )
-    steps: list[ProcessorStep] = [
-        RenderGenerationPromptStep(config.recipe),
-        RenameObservationsProcessorStep(rename_map={}),
-    ]
-    if language_recipe_enabled(
+    render_training = language_recipe_enabled(
         use_language_recipe=config.use_language_recipe,
         recipe_path=config.recipe_path,
-    ):
-        steps.extend(
-            [
-                G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]),
-                RenderMessagesStep(recipe=config.recipe),
-            ]
-        )
+    )
+    if render_training and config.recipe is None:
+        raise ValueError("G0.5 language training requires a recipe in policy config.")
+    steps: list[ProcessorStep] = [
+        RenderMessagesStep(config.recipe, render_training=render_training),
+        RenameObservationsProcessorStep(rename_map={}),
+    ]
+    if render_training:
+        steps.append(G05BBoxImageSizeStep(camera_key=config.cot_bbox_camera or config.camera_order[0]))
     steps.append(AddBatchDimensionProcessorStep())
     steps.append(
         G05ImageTransformStep(
