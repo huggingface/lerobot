@@ -48,7 +48,6 @@ from lerobot.processor import (
 from lerobot.processor.relative_action_processor import RelativeActionsProcessorStep
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
-from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -159,24 +158,29 @@ def _resolve_action_key_order(
     return policy_action_names
 
 
-def _align_relative_state_feature_order(
-    hw_features: dict[str, dict], policy_action_names: list[str] | None
-) -> dict[str, dict]:
-    """Align policy-facing state with named relative-action dimensions."""
-    if not policy_action_names or OBS_STATE not in hw_features:
-        return hw_features
+def _align_state_feature_order(
+    observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
+) -> dict[str, type | tuple]:
+    """Order scalar state features to match the checkpoint's joint order."""
+    if not policy_action_names:
+        return observation_features_hw
 
-    state_feature = hw_features[OBS_STATE]
-    state_names = state_feature.get("names")
-    if not state_names or len(state_names) != len(policy_action_names):
-        return hw_features
-    if set(state_names) != set(policy_action_names) or state_names == policy_action_names:
-        return hw_features
+    scalar_names = [
+        name for name, feature in observation_features_hw.items() if not isinstance(feature, tuple)
+    ]
+    if set(scalar_names) != set(policy_action_names) or scalar_names == policy_action_names:
+        return observation_features_hw
 
-    aligned = dict(hw_features)
-    aligned[OBS_STATE] = {**state_feature, "names": list(policy_action_names)}
-    logger.info("Aligned relative-action state order with checkpoint action names")
-    return aligned
+    reordered = {name: observation_features_hw[name] for name in policy_action_names}
+    reordered.update(
+        {name: feature for name, feature in observation_features_hw.items() if name not in reordered}
+    )
+    logger.warning(
+        "Robot state order %s differs from checkpoint joint order %s; reordering state",
+        scalar_names,
+        policy_action_names,
+    )
+    return reordered
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +417,11 @@ def build_rollout_context(
         for k, v in all_obs_features.items()
         if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
+    policy_action_names = getattr(policy_config, "action_feature_names", None)
+    observation_features_hw = _align_state_feature_order(
+        observation_features_hw,
+        list(policy_action_names) if policy_action_names else None,
+    )
     # Keep both joint-position (.pos) and base-velocity (.vel) action features so
     # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
     # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
@@ -436,7 +445,6 @@ def build_rollout_context(
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
     raw_action_keys = list(action_features_hw.keys())
-    policy_action_names = getattr(policy_config, "action_feature_names", None)
     ordered_action_keys = _resolve_action_key_order(
         list(policy_action_names) if policy_action_names else None,
         raw_action_keys,
@@ -545,13 +553,6 @@ def build_rollout_context(
         ),
         None,
     )
-    if relative_action_step is not None:
-        relative_action_names = relative_action_step.action_names or policy_action_names
-        hw_features = _align_relative_state_feature_order(
-            hw_features,
-            list(relative_action_names) if relative_action_names else None,
-        )
-
     if isinstance(cfg.inference, SyncInferenceConfig) and relative_action_step is not None:
         raise NotImplementedError(
             "SyncInferenceEngine does not support policies with relative actions for now."

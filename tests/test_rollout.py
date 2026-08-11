@@ -204,42 +204,6 @@ def test_trained_rtc_rollout_accepts_valid_capacity():
     _validate_trained_rtc_rollout_config(policy_config, inference_config)
 
 
-def test_relative_state_order_follows_checkpoint_action_names():
-    from lerobot.rollout.context import _align_relative_state_feature_order
-    from lerobot.utils.constants import OBS_STATE
-    from lerobot.utils.feature_utils import build_dataset_frame
-
-    hw_features = {
-        OBS_STATE: {
-            "dtype": "float32",
-            "shape": (4,),
-            "names": ["left_joint.pos", "left_gripper.pos", "right_joint.pos", "right_gripper.pos"],
-        }
-    }
-    checkpoint_order = [
-        "right_joint.pos",
-        "right_gripper.pos",
-        "left_joint.pos",
-        "left_gripper.pos",
-    ]
-
-    aligned = _align_relative_state_feature_order(hw_features, checkpoint_order)
-    frame = build_dataset_frame(
-        aligned,
-        {
-            "left_joint.pos": 1.0,
-            "left_gripper.pos": 2.0,
-            "right_joint.pos": 3.0,
-            "right_gripper.pos": 4.0,
-        },
-        prefix="observation",
-    )
-
-    assert aligned[OBS_STATE]["names"] == checkpoint_order
-    assert frame[OBS_STATE].tolist() == [3.0, 4.0, 1.0, 2.0]
-    assert hw_features[OBS_STATE]["names"][0] == "left_joint.pos"
-
-
 def test_sentry_config_defaults():
     from lerobot.rollout import SentryStrategyConfig
 
@@ -506,6 +470,55 @@ def test_create_inference_engine_sync():
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
+
+
+def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(caplog):
+    from lerobot.rollout.context import _align_state_feature_order
+    from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
+
+    features = {
+        "wrist_camera": (480, 640, 3),
+        "joint_b.pos": float,
+        "joint_a.pos": float,
+    }
+
+    aligned = _align_state_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+
+    assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
+    assert aligned["wrist_camera"] == (480, 640, 3)
+    assert "reordering state" in caplog.text
+
+    dataset_features = hw_to_dataset_features(aligned, "observation")
+    frame = build_dataset_frame(
+        dataset_features,
+        {"joint_a.pos": 1.0, "joint_b.pos": 2.0, "wrist_camera": object()},
+        "observation",
+    )
+    assert frame["observation.state"].tolist() == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("policy_action_names", "feature_names"),
+    [
+        (None, ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_b.pos", "joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        (["joint_a.pos", "gripper.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+    ],
+)
+def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_action_names, feature_names):
+    from lerobot.rollout.context import _align_state_feature_order
+
+    features = {
+        "joint_b.pos": float,
+        "joint_a.pos": float,
+        "wrist_camera": (480, 640, 3),
+    }
+
+    aligned = _align_state_feature_order(features, policy_action_names)
+
+    assert aligned is features
+    assert list(aligned) == feature_names
 
 
 def test_estimate_max_episode_seconds_no_video():
