@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import draccus
 
@@ -45,6 +46,14 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     Use ``--strategy.type=<name>`` on the CLI to select a strategy.
     """
 
+    # Whether the strategy honours the restartable-run() contract that
+    # ``--interactive=true`` requires (see ``RolloutStrategy`` in
+    # strategies/core.py).  Flip to True only after making the strategy's
+    # run() restartable: no dataset finalization in run(), segment-surviving
+    # state on the instance, and no keyboard/terminal bindings that fight
+    # the interactive command prompt for stdin.
+    supports_interactive: ClassVar[bool] = False
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
@@ -55,7 +64,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
 class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
-    pass
+    supports_interactive: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -70,6 +79,8 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     ``push_to_hub`` call uploads complete video files rather than
     re-uploading a growing file that hasn't crossed the chunk boundary.
     """
+
+    supports_interactive: ClassVar[bool] = True
 
     upload_every_n_episodes: int = 5
     # Target video file size in MB for episode rotation.  Episodes are
@@ -227,7 +238,7 @@ class RolloutConfig:
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
 
-    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger)
+    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
@@ -240,12 +251,12 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     # Interactive session: control the rollout from stdin with chat-style
-    # commands (/start, /subtask <text>, /reset, /stop) while hardware and
-    # policy stay warm.  The robot does not move until /start is received,
-    # `/subtask` re-instructs the policy mid-run, and logs below ERROR are
-    # muted while the session runs so they don't interleave with the prompt.
-    # Supported with --strategy.type=base (no recording) and sentry
-    # (continuous recording; frames carry dispatched-action task provenance).
+    # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
+    # /reset, /stop) while hardware and policy stay warm.  The robot does not
+    # move until /start is received, and logs below WARNING are muted while
+    # the session runs so they don't interleave with the prompt.  Supported
+    # with --strategy.type=base (no recording) and sentry (continuous
+    # recording; frames carry dispatched-action task provenance).
     interactive: bool = False
     # /autosteer: seconds of robot motion between two "what is the next
     # subtask?" queries to the policy.  Measured from the moment a subtask is
@@ -253,7 +264,7 @@ class RolloutConfig:
     # queries.  Each query is a full generation pass, so this is a
     # cost/responsiveness knob: lower values re-plan sooner but spend a larger
     # share of the loop generating text instead of acting.
-    autosteer_interval_s: float = 3.0
+    autosteer_interval_s: float = 10.0
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -310,14 +321,22 @@ class RolloutConfig:
             )
 
         # Interactive mode drives strategy.run() in restartable segments and reads
-        # commands from stdin.  Base and sentry qualify: their run() loops keep no
-        # per-run terminal or dataset-finalization state.  The other recording
-        # strategies are excluded for now: they bind their own keyboard controls
-        # (which fight the command prompt for the terminal) and their run() loops
-        # finalize the dataset on exit, so they cannot be restarted.
-        if self.interactive and not isinstance(self.strategy, (BaseStrategyConfig, SentryStrategyConfig)):
+        # commands from stdin.  Only strategies whose config declares
+        # ``supports_interactive`` honour that contract (see ``RolloutStrategy``
+        # in strategies/core.py).  The other recording strategies are excluded
+        # for now: they bind their own keyboard controls (which fight the
+        # command prompt for the terminal) and their run() loops finalize the
+        # dataset on exit, so they cannot be restarted.
+        if self.interactive and not self.strategy.supports_interactive:
+            supported = " or ".join(
+                sorted(
+                    name
+                    for name, choice_cls in RolloutStrategyConfig.get_known_choices().items()
+                    if choice_cls.supports_interactive
+                )
+            )
             raise ValueError(
-                f"--interactive=true supports --strategy.type=base or sentry (got '{self.strategy.type}')."
+                f"--interactive=true supports --strategy.type={supported} (got '{self.strategy.type}')."
             )
 
         if self.autosteer_interval_s < 0:
