@@ -14,10 +14,10 @@ The design splits cleanly into three layers:
    `data/chunk-*/file-*.parquet` as two optional columns (`language_persistent`
    and `language_events`). Datasets without these columns keep their existing
    behavior.
-2. **Recipe** — a YAML file that declares which annotation rows to bind and
-   how to lay them out as chat turns (`role`, `content`, optional images,
-   optional tool calls). Recipes are pure config; no Python required to add a
-   new one.
+2. **Recipe** — a `TrainingRecipe` stored in the policy config that declares
+   which annotation rows to bind and how to lay them out as chat turns
+   (`role`, `content`, optional images, optional tool calls). The checkpoint
+   therefore carries the exact recipe used by that policy.
 3. **Training format** — at sample time, `RenderMessagesStep` resolves the
    recipe against the per-frame annotations and emits HF-style `messages` plus
    LeRobot-specific sidecars (`message_streams`, `target_message_indices`)
@@ -66,15 +66,30 @@ The language stack itself has three internal modules backing layer 1:
 
 ## Layer 2 — recipe anatomy
 
-Recipes are YAML files backed by `TrainingRecipe` and `MessageTurn`. They
-declare which annotation rows to pull (via `bindings`) and how to compose them
-into chat turns (`messages`).
+Recipes are `TrainingRecipe` and `MessageTurn` values owned by policy configs.
+They declare which annotation rows to pull (via `bindings`) and how to compose
+them into chat turns (`messages`). A policy should construct its built-in
+recipe in `configuration_<policy>.py`, so training and inference share it and
+the resolved value is serialized in `config.json`.
 
-```yaml
-messages:
-  - { role: user, content: "${task}", stream: high_level }
-  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
+```python
+recipe = TrainingRecipe(
+    messages=[
+        MessageTurn(role="user", content="${task}", stream="high_level"),
+        MessageTurn(
+            role="assistant",
+            content="${subtask}",
+            stream="low_level",
+            target=True,
+        ),
+    ]
+)
 ```
+
+`TrainingRecipe.from_yaml(path)` remains available for an explicit external
+fine-tuning override. LeRobot does not ship a global recipe catalog: prompt
+wording and supervision layout are policy contracts, not cross-policy
+defaults.
 
 A recipe can also branch into a weighted **blend** of sub-recipes. At sample
 time, exactly one branch is selected deterministically from the sample index,
@@ -146,14 +161,13 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 
 ## Blends
 
-Blend recipes select one weighted sub-recipe deterministically from the sample index.
-`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
-
-`recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
-weighted blend. For the same sample, its assistant subtask is supervised with
-text cross-entropy on the `low_level` stream while action prediction remains
-active, matching the joint setup from the π0.5 paper. Enable
-`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+Blend recipes select one weighted sub-recipe deterministically from the sample
+index. A policy config can combine high-level subtask prediction, low-level
+execution, memory, VQA, and speech branches with weights appropriate for that
+checkpoint. A joint message recipe can instead supervise an assistant subtask
+with text cross-entropy on the `low_level` stream while action prediction
+remains active on the same sample. Consult the selected policy config for its
+exact built-in recipe and prompt wording.
 
 ## Graceful absence
 

@@ -49,6 +49,57 @@ def test_render_messages_step_noops_without_language_columns_or_task():
     assert RenderMessagesStep(recipe)(transition) == transition
 
 
+def test_render_messages_step_preserves_runtime_rendered_messages():
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    messages = [[{"role": "user", "content": "What is visible?"}]]
+    transition = create_transition(
+        complementary_data={
+            "task": ["pick the cube"],
+            "messages": messages,
+        }
+    )
+
+    assert RenderMessagesStep(recipe)(transition) is transition
+    assert transition[TransitionKey.COMPLEMENTARY_DATA]["messages"] is messages
+
+
+def test_render_messages_step_does_not_skip_raw_training_language_when_messages_exist():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="low_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ]
+    )
+    transition = create_transition(
+        complementary_data={
+            "task": "pick the cube",
+            "timestamp": 0.0,
+            "messages": [{"role": "user", "content": "stale"}],
+            "language_persistent": [
+                {
+                    "role": "assistant",
+                    "content": "reach carefully",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                }
+            ],
+            "language_events": [],
+        }
+    )
+
+    output = RenderMessagesStep(recipe)(transition)
+    data = output[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert data["messages"] == [
+        {"role": "user", "content": "pick the cube"},
+        {"role": "assistant", "content": "reach carefully"},
+    ]
+    assert data["message_streams"] == ["low_level", "high_level"]
+    assert data["target_message_indices"] == [1]
+    assert "language_persistent" not in data
+    assert "language_events" not in data
+
+
 def test_render_messages_step_renders_and_drops_raw_language():
     recipe = TrainingRecipe(
         messages=[

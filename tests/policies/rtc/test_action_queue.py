@@ -110,6 +110,35 @@ def test_get_returns_actions_sequentially(action_queue_rtc_enabled, sample_actio
     assert torch.equal(action2, sample_actions["processed"][1])
 
 
+def test_get_with_task_preserves_provenance_when_non_rtc_queue_drains(
+    action_queue_rtc_disabled, sample_actions
+):
+    """New task chunks append behind old actions without relabeling the old tail."""
+    actions_a = sample_actions["processed"][:2]
+    actions_b = sample_actions["processed"][2:4]
+    action_queue_rtc_disabled.merge(actions_a, actions_a, real_delay=0, task="task A")
+
+    first = action_queue_rtc_disabled.get_with_task()
+    assert first is not None
+    assert first[1] == "task A"
+
+    action_queue_rtc_disabled.merge(actions_b, actions_b, real_delay=0, task="task B")
+    remaining = [action_queue_rtc_disabled.get_with_task() for _ in range(3)]
+
+    assert [item[1] for item in remaining if item is not None] == ["task A", "task B", "task B"]
+
+
+def test_get_with_task_tracks_replacement_chunk_provenance(action_queue_rtc_enabled, sample_actions):
+    """RTC replacement changes provenance only when the new chunk enters the queue."""
+    actions_a = sample_actions["processed"][:2]
+    actions_b = sample_actions["processed"][2:4]
+    action_queue_rtc_enabled.merge(actions_a, actions_a, real_delay=0, task="task A")
+    assert action_queue_rtc_enabled.get_with_task()[1] == "task A"
+
+    action_queue_rtc_enabled.merge(actions_b, actions_b, real_delay=0, task="task B")
+    assert action_queue_rtc_enabled.get_with_task()[1] == "task B"
+
+
 def test_get_returns_none_after_exhaustion(action_queue_rtc_enabled, sample_actions):
     """Test get() returns None after all actions are consumed."""
     # Use short action sequence

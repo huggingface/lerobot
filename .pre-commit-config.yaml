@@ -67,7 +67,11 @@ repos:
         args: [--prose-wrap=preserve]
         # Jinja2 model-card templates use a .md extension but contain {% ... %} /
         # {{ ... }} tags that prettier's Markdown formatter mangles (e.g. table loops).
-        exclude: ^src/lerobot/templates/.*\.md$
+        #
+        # docs/source/api/ holds the generated API reference. Its `[[autodoc]]` blocks restrict output
+        # to an indented `- member` list, which prettier reads as a lazy paragraph continuation and
+        # joins onto one line — silently turning a member list into part of the directive.
+        exclude: ^(src/lerobot/templates/.*\.md|docs/source/api/.*\.mdx)$
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
@@ -104,8 +108,13 @@ repos:
   #       args: ["--docstring-style", "google", "-v", "2"]
   #       exclude: ^tests/.*$
 
+  # interrogate runs in CI (quality.yml, doc-checks job) rather than here. Its 1.7.0 release still imports
+  # the deprecated `py` package, which resolves against whatever `py` happens to be importable in
+  # pre-commit's isolated env — on a machine with miniconda on the path that is a stray `py.py` and the
+  # hook dies before it reads any config. The gate is the same either way; the CI step is just reliable.
   # - repo: https://github.com/econchick/interrogate
   #   rev: 1.7.0
   #   hooks:
   #     - id: interrogate
-  #       args: ["-vv", "--config=pyproject.toml"]
+  #       args: ["--config=pyproject.toml"]
+  #       pass_filenames: false
