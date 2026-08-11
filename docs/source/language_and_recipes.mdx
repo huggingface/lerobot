@@ -18,10 +18,10 @@ The design splits cleanly into three layers:
    which annotation rows to bind and how to lay them out as chat turns
    (`role`, `content`, optional images, optional tool calls). The checkpoint
    therefore carries the exact recipe used by that policy.
-3. **Training format** — at sample time, `RenderMessagesStep` resolves the
-   recipe against the per-frame annotations and emits HF-style `messages` plus
-   LeRobot-specific sidecars (`message_streams`, `target_message_indices`)
-   that policy processors consume.
+3. **Semantic-message format** — one dependency-light `RenderMessagesStep`
+   handles runtime `query_kind`/`text`, existing semantic messages, and recipe
+   training annotations. Training emits HF-style `messages` plus LeRobot-specific
+   sidecars (`message_streams`, `target_message_indices`) for policy processors.
 
 This page describes each layer in turn.
 
