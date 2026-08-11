@@ -21,6 +21,7 @@ or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.p
 """
 
 import threading
+import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -202,6 +203,16 @@ def arm_for_publish(robot, mocks, kp_value: float = 50.0, kd_value: float = 1.0)
     robot.kd = np.full(NUM_MOTORS, kd_value, np.float32)
     for cmd in robot.msg.motor_cmd:
         cmd.q = -1.0  # sentinel: untouched joints keep this value
+    return robot
+
+
+def hardware_mode(robot):
+    """Switch to the real-robot branch after construction.
+
+    Building with ``is_simulation=False`` would make ``__init__`` import the ZMQ bridge, and
+    pyzmq is not installed in the test environment, so the flag is flipped once the robot exists.
+    """
+    robot.config.is_simulation = False
     return robot
 
 
@@ -446,6 +457,58 @@ class TestPublishLowcmd:
 
         for joint in G1_29_JointIndex:
             assert robot.msg.motor_cmd[joint.value].q == pytest.approx(-1.0)
+
+
+# ---------------------------------------------------------------------------
+# Shutdown
+# ---------------------------------------------------------------------------
+
+
+class TestDisconnect:
+    def test_zero_torque_is_the_last_word(self, make_robot):
+        """Going passive is only meaningful as the final command on the wire.
+
+        The controller thread publishes at its own rate, so it has to be stopped and joined
+        before the zero-gain command; otherwise its next tick re-stiffens the joints and the
+        robot never actually goes limp.
+        """
+        factory, mocks = make_robot
+        robot = arm_for_publish(hardware_mode(factory()), mocks)
+
+        published = []
+        robot._send_zero_torque = lambda: published.append("zero_torque")
+        tick_started = threading.Event()
+
+        def controller_loop():
+            """Mirrors the real loop: check the flag, spend time in inference, then publish.
+
+            The publish is unconditional, so a tick already under way still sends stiff
+            targets even though the shutdown flag flipped while it was running.
+            """
+            while not robot._shutdown_event.is_set():
+                tick_started.set()
+                time.sleep(0.05)
+                published.append("controller")
+
+        robot._controller_thread = threading.Thread(target=controller_loop)
+        robot._controller_thread.start()
+        assert tick_started.wait(timeout=1.0), "controller loop never started a tick"
+
+        robot.disconnect()
+
+        assert "zero_torque" in published
+        after_going_passive = published[published.index("zero_torque") :]
+        assert "controller" not in after_going_passive, "controller published after zero torque"
+
+    def test_simulation_skips_zero_torque(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)  # the fixture builds simulated robots
+        calls = []
+        robot._send_zero_torque = lambda: calls.append("zero_torque")
+
+        robot.disconnect()
+
+        assert calls == []
 
 
 # ---------------------------------------------------------------------------

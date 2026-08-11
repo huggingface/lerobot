@@ -391,24 +391,26 @@ class UnitreeG1(Robot):
             logger.warning(f"Failed to send zero-torque on disconnect: {e}")
 
     def disconnect(self):
-        # Put robot in passive mode before stopping threads
+        # Signal threads to stop and unblock any waits
+        self._shutdown_event.set()
+
+        # Wait for controller thread to finish. It has to be stopped before going passive,
+        # otherwise a tick already in flight re-stiffens the joints and zero torque is not the
+        # robot's last command.
+        if self._controller_thread is not None:
+            self._controller_thread.join(timeout=2.0)
+            if self._controller_thread.is_alive():
+                logger.warning("Controller thread did not stop cleanly")
+
+        # Put robot in passive mode
         if not self.config.is_simulation:
             self._send_zero_torque()
-
-        # Signal thread to stop and unblock any waits
-        self._shutdown_event.set()
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
             self.subscribe_thread.join(timeout=2.0)
             if self.subscribe_thread.is_alive():
                 logger.warning("Subscribe thread did not stop cleanly")
-
-        # Wait for controller thread to finish
-        if self._controller_thread is not None:
-            self._controller_thread.join(timeout=2.0)
-            if self._controller_thread.is_alive():
-                logger.warning("Controller thread did not stop cleanly")
 
         # Close simulation environment
         if self.config.is_simulation and self.sim_env is not None:
