@@ -649,6 +649,16 @@ def test_causal_video_embeddings_blind_to_future_frames(patch_vla_jepa_external_
     )
     assert torch.allclose(causal, causal_perturbed)
 
+    # Positive control: a past-frame perturbation must change the causal embeddings.
+    # Without this, a degenerate _causal_video_embeddings that ignored its input
+    # (e.g. returning zeros) would pass the invariance assert above.
+    perturbed_past = video_pixels.clone()
+    perturbed_past[:, 0] = torch.rand_like(perturbed_past[:, 0])
+    causal_past = policy.model._causal_video_embeddings(
+        perturbed_past, tubelet_size=1, num_positions=num_frames - 1
+    )
+    assert not torch.allclose(causal, causal_past)
+
 
 def test_world_model_loss_causal_context_calls_encoder_per_context_position(
     patch_vla_jepa_external_models: None,
@@ -681,3 +691,47 @@ def test_world_model_loss_causal_context_calls_encoder_per_context_position(
     assert call_count == 1 + t_enc_ctx
     assert torch.isfinite(loss)
     assert logs["wm_loss"] >= 0
+
+
+def test_world_model_loss_feeds_causal_context_to_predictor(
+    patch_vla_jepa_external_models: None,
+) -> None:
+    """The flag must change what actually reaches the predictor, not just how many encoder
+    calls happen. Uses a leaky encoder so the legacy slice would be detectably variant
+    to a future-only perturbation."""
+    from conftest import _FakeVideoEncoder
+    from lerobot.utils.constants import OBS_IMAGES
+
+    class _LeakyFakeVideoEncoder(_FakeVideoEncoder):
+        def get_vision_features(self, pixel_values_videos: Tensor) -> Tensor:
+            local = super().get_vision_features(pixel_values_videos)
+            return local.mean(dim=1, keepdim=True).expand_as(local)  # every position sees all frames
+
+    set_seed_all(42)
+    config = make_config()
+    config.causal_world_model_context = True
+    policy = VLAJEPAPolicy(config)
+    policy.train()
+    policy.model.video_encoder = _LeakyFakeVideoEncoder()
+
+    captured: list[Tensor] = []
+    policy.model.video_predictor.register_forward_pre_hook(
+        lambda module, args: captured.append(args[0].detach().clone())
+    )
+
+    video_key = f"{OBS_IMAGES}.laptop"
+    batch = make_train_batch()
+    perturbed = deepcopy(batch)
+    perturbed[video_key][:, -1] = torch.rand_like(perturbed[video_key][:, -1])
+
+    policy.forward(batch)
+    policy.forward(perturbed)
+    assert len(captured) == 2
+    # Future-only perturbation: the context reaching the predictor must be unchanged.
+    assert torch.allclose(captured[0], captured[1])
+
+    # Positive control: a past-frame perturbation must reach the predictor's context.
+    perturbed_past = deepcopy(batch)
+    perturbed_past[video_key][:, 0] = torch.rand_like(perturbed_past[video_key][:, 0])
+    policy.forward(perturbed_past)
+    assert not torch.allclose(captured[0], captured[2])
