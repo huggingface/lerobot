@@ -964,6 +964,93 @@ def test_session_subtask_after_reset_is_not_clobbered():
         thread.join(timeout=2.0)
 
 
+def test_session_empty_quoted_arguments_are_rejected(capsys):
+    """/subtask "" and /vqa "" must not apply/queue the empty string."""
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, engine, _parent, _run_started = _make_session(reader)
+        thread = _start_session_thread(session)
+        initial = engine.task
+
+        session._handle_line('/subtask ""')
+        assert engine.task == initial  # empty instruction not applied
+
+        session._handle_line('/vqa ""')
+        assert not engine.has_pending_query  # empty question not queued
+
+        out = capsys.readouterr().out
+        assert "Current task:" in out
+        assert "Usage: /vqa <question>" in out
+
+        session._handle_line("/stop")
+        thread.join(timeout=2.0)
+
+
+def test_query_tick_overrun_does_not_fire_fps_warning(caplog):
+    """An inline text generation is *expected* to overrun its tick.
+
+    Firing the FPS warning for it would teach operators to dismiss the one
+    signal the session's log muting deliberately lets through.
+    """
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    parent = Event()
+    stop_event = LinkedEvent(parent)
+    engine = _FakeEngine()
+    original = engine._generate_text
+
+    def slow_generate(obs_processed, query):
+        time.sleep(0.08)  # well past the 50 ms tick budget below
+        return original(obs_processed, query)
+
+    engine._generate_text = slow_generate
+
+    robot = MagicMock()
+    robot.get_observation.return_value = {"joint.pos": 0.0}
+
+    def identity(x):
+        return x
+
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                play_sounds=False,
+                fps=20.0,
+                duration=0.0,
+                use_torch_compile=False,
+                interpolation_multiplier=1,
+                display_data=False,
+                autosteer_interval_s=0.0,
+            ),
+            shutdown_event=stop_event,
+        ),
+        policy=SimpleNamespace(inference=engine),
+        hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
+        processors=SimpleNamespace(
+            teleop_action_processor=identity,
+            robot_action_processor=identity,
+            robot_observation_processor=identity,
+        ),
+        data=SimpleNamespace(dataset=None, dataset_features={}, hw_features={}, ordered_action_keys=[]),
+    )
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(ctx)
+
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.ask("is the cube in the box?")
+
+    with caplog.at_level(logging.WARNING):
+        thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+        thread.start()
+        assert _wait_for(lambda: bool(delivered))
+        stop_event.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+
+    assert not any("running slower" in record.getMessage() for record in caplog.records)
+
+
 def test_session_reset_restores_initial_task():
     with _pipe_stream() as (reader, _writer):
         session, strategy, engine, _parent, _run_started = _make_session(reader)

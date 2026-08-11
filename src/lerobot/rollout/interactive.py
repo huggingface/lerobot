@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -95,14 +96,16 @@ def _mute_system_output() -> Iterator[None]:
     by third-party deprecation notices, not operational signals.
     """
     previous_disable = logging.root.manager.disable
-    saved_warning_filters = warnings.filters[:]
     logging.disable(logging.INFO)
-    warnings.simplefilter("ignore")
     try:
-        yield
+        # catch_warnings restores the filters, the mutation counter, and
+        # showwarning on exit — a hand-rolled filters snapshot misses the
+        # counter bump and can leave warnings suppressed after the session.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            yield
     finally:
         logging.disable(previous_disable)
-        warnings.filters[:] = saved_warning_filters
 
 
 @dataclass(frozen=True)
@@ -289,10 +292,13 @@ class InteractiveSession:
             self._print("Already running — /reset to pause first, or /stop to shut down.")
 
     def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
-        if not cmd.args:
+        # Quotes are stripped before the emptiness check (as in
+        # _cmd_autosteer), so /subtask "" reports the current task instead of
+        # silently applying the empty instruction.
+        task = _strip_quotes(cmd.args)
+        if not task:
             self._print(f"Current task: {_format_task(self.controller.task)}")
             return
-        task = _strip_quotes(cmd.args)
         previous = self.controller.task
         steering = self.controller.autosteer_goal
         if steering is not None:
@@ -306,10 +312,12 @@ class InteractiveSession:
             self._print(f"Task unchanged: {_format_task(task)}")
 
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
-        if not cmd.args:
+        # Quotes stripped before the emptiness check, so /vqa "" prints the
+        # usage hint instead of queueing an empty question.
+        question = _strip_quotes(cmd.args)
+        if not question:
             self._print("Usage: /vqa <question> — e.g. /vqa is the cube inside the box?")
             return
-        question = _strip_quotes(cmd.args)
         result = self.controller.ask(question)
         if result is AskResult.QUEUED:
             self._print(f"Asked: {question!r} — answering from the next observation...")
@@ -317,10 +325,13 @@ class InteractiveSession:
             self._print("This policy has no text head — it cannot answer questions.")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
-        else:
+        elif result is AskResult.BUSY:
             # Could be a previous /vqa or an autosteer subtask query — the
             # channel holds one at a time and does not say which.
             self._print("The policy is busy with another query — try again in a moment.")
+        else:  # a future AskResult variant must not be mislabeled as busy
+            logger.error("Unhandled AskResult %r for /vqa", result)
+            self._print(f"Could not queue the question ({result.value}).")
 
     def _cmd_autosteer(self, cmd: InteractiveCommand) -> None:
         goal = _strip_quotes(cmd.args)
@@ -341,14 +352,16 @@ class InteractiveSession:
         result = self.controller.autosteer(goal)
         if result is AskResult.UNSUPPORTED:
             self._print("This policy has no text head — it cannot plan subtasks.")
-            return
-        if result is AskResult.NOT_RUNNING:
+        elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to plan from.")
-            return
-        self._print(
-            f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
-            "each one is announced here. Take over with /subtask <text> or /autosteer off."
-        )
+        elif result is AskResult.QUEUED:
+            self._print(
+                f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
+                "each one is announced here. Take over with /subtask <text> or /autosteer off."
+            )
+        else:  # a future AskResult variant must not be announced as success
+            logger.error("Unhandled AskResult %r for /autosteer", result)
+            self._print(f"Could not start autosteer ({result.value}).")
 
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
         if self.controller.reset():
@@ -382,5 +395,12 @@ class InteractiveSession:
 
     @staticmethod
     def _print(message: str) -> None:
-        """User-facing chat output; logging stays on stderr, replies on stdout."""
-        print(message, flush=True)
+        """User-facing chat output; logging stays on stderr, replies on stdout.
+
+        One ``write`` call per message, newline included: acknowledgements
+        print on the stdin-listener thread while controller events print on
+        the serve thread, and ``print()``'s separate message/newline writes
+        can interleave mid-line between threads.
+        """
+        sys.stdout.write(message + "\n")
+        sys.stdout.flush()

@@ -282,6 +282,8 @@ Robot reset — holding at initial position. /start to run.
 > /stop
 ```
 
+Lines starting with `>` are what you type; the session itself renders no prompt — your input is only echoed by the terminal (and not at all when piped).
+
 `Ctrl-C` still shuts down as usual, and closing stdin (`Ctrl-D`, or the end of a piped script) ends the session — so a piped script must keep stdin open for the intended duration:
 
 ```bash
@@ -299,7 +301,7 @@ With `--use_torch_compile=true`, a switch whose instruction tokenizes to a diffe
 
 **How `/vqa` reaches the policy.** Same publish/consume split as `/subtask`: the stdin reader queues the question and returns immediately, and the thread that owns the policy answers it — the control thread for sync, the inference thread for RTC. The answer is printed when it is ready, so you can keep issuing commands in the meantime. The channel holds one query at a time: a second question is rejected while one is still waiting to be picked up (a pending autosteer subtask query occupies the same slot); once the policy has started answering, the next question can be queued behind it.
 
-Text generation takes much longer than a control tick, so while the policy answers it produces no new actions: the robot finishes any actions already queued and then holds position until the answer lands. Time spent answering counts against `--duration`.
+Text generation takes much longer than a control tick, so while the policy answers it produces no new actions: the robot finishes any actions already queued and then holds position until the answer lands. Time spent answering counts against `--duration` — which, in interactive mode, bounds each `/start` segment rather than the whole session: the timer restarts at every `/start`.
 
 **How `/autosteer` works.** You give the policy a goal instead of an instruction, and every `--autosteer_interval_s` seconds (default 10) the engine asks it for the next subtask and applies that through the same path as `/subtask`. So RTC blends the switch into the next chunk and sync drops precomputed actions, exactly as with a hand-typed instruction. Each subtask the policy picks is announced in the chat (`Autosteer subtask: ...`) as it is applied, so you always know what the robot is currently trying to do.
 
@@ -374,7 +376,7 @@ Set `play_sounds=False` in the config unless you want the vocal announcements, a
 | `--robot.port`                    | Serial port for the robot                                                                                                                     | --      |
 | `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                              | --      |
 | `--fps`                           | Control loop frequency                                                                                                                        | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                                                                                            | 0       |
+| `--duration`                      | Run time in seconds (0 = infinite); in interactive mode this bounds each `/start` segment, not the session                                    | 0       |
 | `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                           | auto    |
 | `--task`                          | Task description (used when no dataset is provided)                                                                                           | --      |
 | `--display_data`                  | Stream telemetry to Rerun visualization                                                                                                       | false   |

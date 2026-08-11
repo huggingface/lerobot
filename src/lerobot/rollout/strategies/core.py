@@ -247,12 +247,16 @@ class RolloutStrategy(abc.ABC):
 # ---------------------------------------------------------------------------
 
 
-def warn_loop_overrun(dt: float, fps: float, records_data: bool = True) -> None:
-    """Warn that a control-loop tick took longer than its ``1/fps`` budget.
+def warn_loop_overrun(dt: float, target_hz: float, records_data: bool = True) -> None:
+    """Warn that a control-loop tick took longer than its ``1/target_hz`` budget.
 
-    ``dt`` is the measured duration of the tick.  ``records_data`` picks the
-    phrasing: a recording loop drops dataset frames when it misses ticks,
-    while a plain control loop only risks unstable robot control.
+    ``dt`` is the measured duration of the tick.  ``target_hz`` is the
+    effective tick rate the loop is paced at — ``1 / control_interval``,
+    i.e. ``fps × interpolation_multiplier`` when interpolating — not the
+    base fps, so the message names the budget that was actually missed.
+    ``records_data`` picks the phrasing: a recording loop drops dataset
+    frames when it misses ticks, while a plain control loop only risks
+    unstable robot control.
     """
     loop, consequence = (
         ("Record loop", "Dataset frames might be dropped and robot control might be unstable.")
@@ -260,7 +264,7 @@ def warn_loop_overrun(dt: float, fps: float, records_data: bool = True) -> None:
         else ("Control loop", "Robot control might be unstable.")
     )
     logger.warning(
-        f"{loop} is running slower ({1 / dt:.1f} Hz) than the target FPS ({fps} Hz). {consequence} "
+        f"{loop} is running slower ({1 / dt:.1f} Hz) than the target rate ({target_hz:g} Hz). {consequence} "
         "Common causes are: 1) Camera FPS not keeping up "
         "2) Policy inference (action or text) taking too long 3) CPU starvation"
     )

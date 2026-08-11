@@ -74,13 +74,16 @@ class BaseStrategy(RolloutStrategy):
             # control tick, so it must not sit inside the action path), and
             # every backend hands ready answers over here so observers fire on
             # this thread.  No-op when nothing is queued.
-            engine.pump_query(obs_processed)
+            served_query = engine.pump_query(obs_processed)
 
             dt = time.perf_counter() - loop_start
             if (sleep_t := control_interval - dt) > 0:
                 precise_sleep(sleep_t)
-            else:
-                warn_loop_overrun(dt, cfg.fps, records_data=False)
+            elif not served_query:
+                # A tick that generated text inline is *expected* to overrun;
+                # warning on it would teach operators to dismiss the one
+                # signal the interactive session's log muting lets through.
+                warn_loop_overrun(dt, 1.0 / control_interval, records_data=False)
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""

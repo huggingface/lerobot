@@ -249,7 +249,10 @@ class RolloutConfig:
 
     # Runtime
     fps: float = 30.0
-    duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode the
+    # timer restarts at every /start, so this bounds each segment — it is not
+    # a whole-session safety limit.
+    duration: float = 0.0
     # Interactive session: control the rollout from stdin with chat-style
     # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
     # /reset, /stop) while hardware and policy stay warm.  The robot does not

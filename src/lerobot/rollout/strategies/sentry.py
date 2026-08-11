@@ -185,13 +185,16 @@ class SentryStrategy(RolloutStrategy):
                 # frame has been recorded: a sync backend generates here, and
                 # a multi-second generate must not land between this tick's
                 # observation and its ``add_frame``.
-                engine.pump_query(obs_processed)
+                served_query = engine.pump_query(obs_processed)
 
                 dt = time.perf_counter() - loop_start
                 if (sleep_t := control_interval - dt) > 0:
                     precise_sleep(sleep_t)
-                else:
-                    warn_loop_overrun(dt, cfg.fps)
+                elif not served_query:
+                    # A tick that generated text inline is *expected* to
+                    # overrun; warning on it would teach operators to dismiss
+                    # the one signal log muting lets through.
+                    warn_loop_overrun(dt, 1.0 / control_interval)
 
         finally:
             logger.info("Sentry control loop ended")

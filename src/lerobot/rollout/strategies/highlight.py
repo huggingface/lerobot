@@ -171,7 +171,7 @@ class HighlightStrategy(RolloutStrategy):
                     if (sleep_t := control_interval - dt) > 0:
                         precise_sleep(sleep_t)
                     else:
-                        warn_loop_overrun(dt, cfg.fps)
+                        warn_loop_overrun(dt, 1.0 / control_interval)
 
             finally:
                 logger.info("Highlight control loop ended")

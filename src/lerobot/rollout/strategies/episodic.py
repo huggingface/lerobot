@@ -246,7 +246,7 @@ class EpisodicStrategy(RolloutStrategy):
             dt = time.perf_counter() - loop_start
             sleep_t = control_interval - dt
             if sleep_t < 0:
-                warn_loop_overrun(dt, fps)
+                warn_loop_overrun(dt, 1.0 / control_interval)
             precise_sleep(max(sleep_t, 0.0))
             timestamp = time.perf_counter() - start_t
 
