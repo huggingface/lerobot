@@ -31,7 +31,7 @@ from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
 from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RenderGenerationPromptStep
+from lerobot.processor import RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 HIDDEN_SIZE = 8
@@ -316,7 +316,8 @@ def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
         }
     )
 
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
     assert processed["input_ids"].shape == (1, 2)
     assert "messages" not in processed
     assert "query_kind" not in processed
