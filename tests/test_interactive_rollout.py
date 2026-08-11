@@ -1405,7 +1405,7 @@ def test_sentry_tail_saves_count_toward_upload_cadence(monkeypatch):
         frames_before = dataset.add_frame.call_count
         thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
         thread.start()
-        assert _wait_for(lambda: dataset.add_frame.call_count > frames_before)
+        assert _wait_for(lambda n=frames_before: dataset.add_frame.call_count > n)
         stop_event.set()
         _join_session(thread)
         assert not thread.is_alive()
@@ -2320,9 +2320,7 @@ def test_rtc_engine_reset_discards_chunk_from_inflight_inference(caplog):
 
         with caplog.at_level(logging.INFO, logger="lerobot.rollout.inference.rtc"):
             policy.allow_one_inference()  # the stale chunk completes now
-            assert _wait_for(
-                lambda: any("Discarding action chunk" in r.getMessage() for r in caplog.records)
-            )
+            assert _wait_for(lambda: any("Discarding action chunk" in r.getMessage() for r in caplog.records))
         assert engine.action_queue.qsize() == 0
         assert engine.get_action(None) is None
 

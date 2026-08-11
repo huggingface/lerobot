@@ -439,8 +439,7 @@ class InferenceEngine(abc.ABC):
                 # string).  Fail here so the garbage becomes an error answer
                 # instead of steering the robot and labeling recorded frames.
                 raise TypeError(
-                    f"generate_text() must return a non-empty str, got {text!r} "
-                    f"({type(text).__name__})"
+                    f"generate_text() must return a non-empty str, got {text!r} ({type(text).__name__})"
                 )
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
