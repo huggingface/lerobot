@@ -200,11 +200,6 @@ def make_pre_post_processors(
         )
 
     if pretrained_path:
-        if recipe_training_enabled:
-            from lerobot.processor import (
-                render_messages_processor as _render_messages_processor,  # noqa: F401
-            )
-
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
