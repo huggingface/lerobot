@@ -238,6 +238,37 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """Whether this policy implements Real-Time Chunking inference semantics."""
         return False
 
+    def supports_text_generation(self) -> bool:
+        """Whether this policy implements :meth:`generate_text`.
+
+        The rollout stack checks this up front to accept or refuse text
+        queries (``/vqa``, ``/autosteer``), so a policy that overrides
+        :meth:`generate_text` must also override this to return True.
+        """
+        return False
+
+    def generate_text(self, batch: dict[str, Any]) -> str:
+        """Run the policy's text head on a preprocessed observation batch.
+
+        ``batch`` is the output of this policy's preprocessor pipeline for a
+        single observation.  Besides the usual observation features it carries
+        the request as complementary data: the request text under
+        :data:`~lerobot.utils.constants.QUERY_TEXT` (a processor step may have
+        rewritten it into this policy's prompt format) and what is being asked
+        for under :data:`~lerobot.utils.constants.QUERY_KIND` — ``"vqa"``
+        answers a free-form question about the scene, ``"next_subtask"``
+        replies with exactly one subtask toward the given goal.  The batch
+        also holds the current ``task``, so the policy can condition on what
+        the robot is presently doing.
+
+        Returns the generated text.  Must not mutate action-producing state
+        (queues, observation history): a text query happens between control
+        ticks and the action path must not notice it.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head — it cannot answer questions or plan subtasks."
+        )
+
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:

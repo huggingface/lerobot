@@ -28,7 +28,7 @@ from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine, QueryKind
+from .base import InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,11 @@ class SyncInferenceEngine(InferenceEngine):
     # Text queries
     # ------------------------------------------------------------------
 
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when the policy has a text head."""
+        return self._policy.supports_text_generation()
+
     def pump_query(self, obs_processed: dict | None = None) -> None:
         """Serve a pending query inline, then deliver its answer.
 
@@ -158,7 +163,7 @@ class SyncInferenceEngine(InferenceEngine):
         self._service_query(obs_processed)
         self._deliver_answer()
 
-    def _generate_text(self, obs_processed: dict, text: str, kind: QueryKind) -> str:
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on the current observation."""
         obs_frame = build_dataset_frame(self._dataset_features, obs_processed, prefix=OBS_STR)
         autocast_ctx = (
@@ -173,6 +178,6 @@ class SyncInferenceEngine(InferenceEngine):
         task = self.task
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
-            observation = self._mark_query_kind(observation, kind)
+            observation = self._mark_query(observation, query)
             observation = self._preprocessor(observation)
-            return self._policy_generate_text(self._policy, observation, text)
+            return str(self._policy.generate_text(observation))

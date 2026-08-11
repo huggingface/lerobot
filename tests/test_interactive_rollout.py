@@ -37,6 +37,7 @@ from lerobot.rollout import (  # noqa: E402
     InteractiveCommand,
     InteractiveSession,
     LinkedEvent,
+    PolicyQuery,
     QueryKind,
     RolloutController,
     RolloutEvent,
@@ -165,6 +166,8 @@ class _FakeEngine(InferenceEngine):
 
     failed = False
     failure_traceback = None
+    # Plain attribute shadowing the base property, so tests can flip it.
+    supports_text_queries = True
 
     # Declared here to satisfy the ABC; the instances below shadow them.
     def start(self) -> None: ...
@@ -193,16 +196,16 @@ class _FakeEngine(InferenceEngine):
         self._service_query(obs_processed)
         self._deliver_answer()
 
-    def _generate_text(self, obs_processed: dict, text: str, kind) -> str:
-        self.seen_queries.append((kind, text))
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
+        self.seen_queries.append((query.kind, query.text))
         self.seen_query_obs.append(obs_processed)
         if self.text_error is not None:
             raise self.text_error
-        if kind is QueryKind.NEXT_SUBTASK:
+        if query.kind is QueryKind.NEXT_SUBTASK:
             # A stand-in decomposer: one subtask per query, advancing.
             self.subtasks_planned += 1
-            return f"subtask {self.subtasks_planned} of {text}"
-        return f"answer: {text}"
+            return f"subtask {self.subtasks_planned} of {query.text}"
+        return f"answer: {query.text}"
 
 
 def _make_ctx(run_behavior=None):
@@ -1231,32 +1234,45 @@ def test_engine_query_failure_becomes_an_error_answer():
     assert "RuntimeError: no text head" in delivered[0].error
 
 
-def test_engine_reports_policy_without_text_head():
-    class _PolicyWithoutTextHead:
+def test_policy_text_generation_contract_defaults_off():
+    """The base policy declares the text-head contract as opt-in.
+
+    ``supports_text_generation`` is what the rollout stack consults before
+    accepting /vqa or /autosteer, and the default ``generate_text`` must
+    fail loudly (a policy that flips the flag without implementing the
+    method is a bug, not a silent no-op).
+    """
+    from lerobot.policies.pretrained import PreTrainedPolicy
+
+    class _NoTextHead:  # a stand-in ``self``; the base methods touch nothing else
         pass
 
-    with pytest.raises(NotImplementedError, match="has no generate_text"):
-        InferenceEngine._policy_generate_text(_PolicyWithoutTextHead(), {}, "what do you see?")
+    assert PreTrainedPolicy.supports_text_generation(_NoTextHead()) is False
+    with pytest.raises(NotImplementedError, match="has no text head"):
+        PreTrainedPolicy.generate_text(_NoTextHead(), {})
 
 
 @pytest.mark.parametrize("kind", [QueryKind.VQA, QueryKind.NEXT_SUBTASK])
-def test_query_kind_reaches_the_preprocessor_as_complementary_data(kind):
-    """The kind travels in the batch, not as a generate_text argument.
+def test_query_reaches_the_preprocessor_as_complementary_data(kind):
+    """The query travels in the batch, not as generate_text arguments.
 
     ``batch_to_transition`` forwards only an allowlisted set of keys to
-    complementary data, so an unregistered flag would be silently dropped and
+    complementary data, so an unregistered key would be silently dropped and
     the policy's preprocessor step would never see it.
     """
     from lerobot.lerobot_types import TransitionKey
     from lerobot.processor.converters import batch_to_transition
-    from lerobot.utils.constants import QUERY_KIND
+    from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
-    batch = InferenceEngine._mark_query_kind({"observation.state": np.zeros(2), "task": "tidy"}, kind)
+    query = PolicyQuery(kind=kind, text="is the cube in the box?")
+    batch = InferenceEngine._mark_query({"observation.state": np.zeros(2), "task": "tidy"}, query)
     complementary = batch_to_transition(batch)[TransitionKey.COMPLEMENTARY_DATA.value]
 
     assert complementary[QUERY_KIND] == kind.value
-    # It lands beside the task, so a single ComplementaryDataProcessorStep can
-    # read the kind and rewrite the prompt.
+    assert complementary[QUERY_TEXT] == "is the cube in the box?"
+    # They land beside the task, so a single ComplementaryDataProcessorStep
+    # can read the kind and rewrite the query text into this policy's prompt
+    # format before generate_text consumes it.
     assert complementary["task"] == "tidy"
 
 
@@ -1267,6 +1283,27 @@ def test_controller_ask_rejected_while_idle():
 
     assert controller.ask("what do you see?") is AskResult.NOT_RUNNING
     assert not engine.has_pending_query
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_controller_refuses_queries_for_a_policy_without_text_head():
+    """UNSUPPORTED is decided up front, even mid-run — not one tick later."""
+    started = Event()
+    controller, _events, _strategy, engine, _parent, _run_started = _make_controller(
+        run_behavior=_pumping_run(started)
+    )
+    engine.supports_text_queries = False
+    thread = _serve_thread(controller)
+
+    controller.start()
+    assert _wait_for(started.is_set)
+
+    assert controller.ask("what do you see?") is AskResult.UNSUPPORTED
+    assert not engine.has_pending_query
+    assert controller.autosteer("tidy the table") is AskResult.UNSUPPORTED
+    assert engine.autosteer_goal is None
 
     controller.stop()
     thread.join(timeout=2.0)
@@ -1471,9 +1508,9 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands():
 
     original = engine._generate_text
 
-    def slow(obs_processed, text, kind):
+    def slow(obs_processed, query):
         time.sleep(slow_generate)
-        return original(obs_processed, text, kind)
+        return original(obs_processed, query)
 
     engine._generate_text = slow
     engine.start_autosteer("tidy the table", interval_s=0.1)
