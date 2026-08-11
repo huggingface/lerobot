@@ -24,6 +24,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import RenderMessagesStep
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline, ProcessorStep
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 
 @PreTrainedConfig.register_subclass("language_contract_test")
@@ -144,14 +145,14 @@ def test_runtime_query_metadata_is_formatted_by_the_input_pipeline():
     config = ContractConfig(recipe=_subtask_recipe())
     policy = TextHeadPolicy(config)
     preprocessor = _generation_preprocessor(config, ChatTemplateStep())
-    request = {"query_kind": "vqa", "text": "Which {cup} is closest?"}
+    request = {QUERY_KIND: "vqa", QUERY_TEXT: "Which {cup} is closest?"}
 
     batch = preprocessor(request)
     answer = policy.generate_text(batch)
 
     assert answer == "<user>Which {cup} is closest?</user>"
-    assert "text" not in batch
-    assert "query_kind" not in batch
+    assert QUERY_TEXT not in batch
+    assert QUERY_KIND not in batch
 
 
 def test_runtime_subtask_metadata_applies_checkpoint_recipe_before_decoding():
@@ -159,7 +160,7 @@ def test_runtime_subtask_metadata_applies_checkpoint_recipe_before_decoding():
     policy = TextHeadPolicy(config)
     preprocessor = _generation_preprocessor(config, ChatTemplateStep())
 
-    batch = preprocessor({"query_kind": "next_subtask", "text": "Clear the table"})
+    batch = preprocessor({QUERY_KIND: "next_subtask", QUERY_TEXT: "Clear the table"})
     generated = policy.generate_text(batch)
 
     assert generated == (
@@ -170,7 +171,7 @@ def test_runtime_subtask_metadata_applies_checkpoint_recipe_before_decoding():
 
 def test_two_policy_processor_formatters_need_no_client_api_changes():
     config = ContractConfig()
-    request = {"query_kind": "vqa", "text": "What is visible?"}
+    request = {QUERY_KIND: "vqa", QUERY_TEXT: "What is visible?"}
 
     chat_batch = _generation_preprocessor(config, ChatTemplateStep())(request)
     instruction_batch = _generation_preprocessor(config, InstructionTemplateStep())(request)
@@ -190,7 +191,7 @@ def test_policy_pipeline_serializes_explicit_renderer_before_batching():
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
     assert preprocessor.get_config()["steps"][0]["registry_name"] == "render_messages_processor"
     assert preprocessor({"task": "ordinary action input"})["task"] == ["ordinary action input"]
-    assert preprocessor({"query_kind": "vqa", "text": "Question?"})["messages"] == [
+    assert preprocessor({QUERY_KIND: "vqa", QUERY_TEXT: "Question?"})["messages"] == [
         [{"role": "user", "content": "Question?"}]
     ]
 
@@ -203,15 +204,15 @@ def test_preprocessing_does_not_mutate_runtime_request_or_repeat_observation_tra
     request = {
         "observation.state": observation,
         "task": "keep this state",
-        "query_kind": "vqa",
-        "text": "What is happening?",
+        QUERY_KIND: "vqa",
+        QUERY_TEXT: "What is happening?",
     }
 
     batch = preprocessor(request)
     policy.generate_text(batch)
 
-    assert request["query_kind"] == "vqa"
-    assert request["text"] == "What is happening?"
+    assert request[QUERY_KIND] == "vqa"
+    assert request[QUERY_TEXT] == "What is happening?"
     assert request["task"] == "keep this state"
     assert policy.last_model_inputs["observation.state"] is observation
     assert policy.last_model_inputs["task"] == "keep this state"
@@ -226,7 +227,7 @@ def test_config_save_load_restores_recipe_used_by_input_pipeline(tmp_path: Path)
     assert isinstance(loaded, ContractConfig)
     assert isinstance(loaded.recipe, TrainingRecipe)
     batch = _generation_preprocessor(loaded, InstructionTemplateStep())(
-        {"query_kind": "next_subtask", "text": "Fold the towel"}
+        {QUERY_KIND: "next_subtask", QUERY_TEXT: "Fold the towel"}
     )
     assert "Goal: Fold the towel" in TextHeadPolicy(loaded).generate_text(batch)
 

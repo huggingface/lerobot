@@ -38,7 +38,7 @@ LANGUAGE_PERSISTENT = "language_persistent"
 class RenderMessagesStep(ProcessorStep):
     """Render the semantic messages consumed by text-capable policies.
 
-    Runtime requests arrive as ``query_kind`` plus ``text`` and become either a
+    Runtime requests arrive as ``query_kind`` plus ``query_text`` and become either a
     VQA user turn or the checkpoint recipe prefix before its subtask target.
     During recipe training, raw ``language_persistent`` and ``language_events``
     columns become messages plus supervision sidecars. Already-rendered messages
