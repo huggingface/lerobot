@@ -33,16 +33,20 @@ from torch.nn.attention.flex_attention import (
     or_masks,
 )
 
-from lerobot.policies.language import (
-    normalize_semantic_messages,
-    require_single_text_output,
-    semantic_message_content_text,
-)
+from lerobot.policies.language import require_single_text_output
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_being_h05 import BeingH05Config
+from .processor_being_h05 import (
+    BEING_H05_MESSAGE_TOKEN_IDS,
+    BEING_H05_NEWLINE_TOKEN_ID,
+    BEING_H05_PROMPT_TOKEN_IDS,
+    BEING_H05_ROLE_TOKEN_IDS,
+    BEING_H05_SYSTEM_TOKEN_IDS,
+    being_h05_system_message,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer, Qwen3Config
@@ -353,16 +357,6 @@ def _selective_text_cross_entropy(
     return F.cross_entropy(logits, labels[supervised])
 
 
-INTERNLM2_SYSTEM_MESSAGE = (
-    "你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, "
-    "是一个有用无害的人工智能助手。"
-)
-INTERNVL2_5_SYSTEM_MESSAGE = (
-    "你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位"
-    "联合开发的多模态大语言模型。"
-)
-
-
 class InternVLConnector(nn.Module):
     def __init__(self, llm_hidden_size: int, vit_hidden_size: int, downsample_ratio: float):
         super().__init__()
@@ -544,11 +538,7 @@ class BeingH05Model(nn.Module):
         self.unified_action_dim = 200
         self.select_layer = author_config.get("select_layer", -1)
         self.downsample_ratio = author_config.get("downsample_ratio", 0.5)
-        self.system_message = author_config.get("system_message") or (
-            INTERNVL2_5_SYSTEM_MESSAGE
-            if author_config.get("template") == "internvl2_5"
-            else INTERNLM2_SYSTEM_MESSAGE
-        )
+        self.system_message = being_h05_system_message(author_config)
         self.num_timestep_buckets = author_config.get("num_timestep_buckets", 1000)
         self.noise_s = author_config.get("noise_s", 0.999)
         self.num_inference_timesteps = num_inference_steps
@@ -963,10 +953,6 @@ class BeingH05Policy(PreTrainedPolicy):
             ["<|im_start|>", "<|im_end|>", "<img>", "</img>", "<|state_start|>", "<|state_end|>"]
         )
         self._bos, self._eos, self._image_start, self._image_end, self._state_start, self._state_end = special
-        newline = self.tokenizer.encode("\n")
-        if len(newline) != 1:
-            raise ValueError("Being-H0.5 checkpoint tokenizer must encode newline as one token.")
-        self._newline = newline[0]
         self.reset()
 
     @classmethod
@@ -994,6 +980,9 @@ class BeingH05Policy(PreTrainedPolicy):
         pixels: Tensor,
         image_valid: Tensor,
         messages: Sequence[Mapping[str, Any]],
+        system_ids: Sequence[int],
+        role_token_ids: Mapping[str, Sequence[int]],
+        newline_id: int,
     ) -> Tensor:
         sample_images = pixels[image_valid]
         if sample_images.shape[0] == 0:
@@ -1004,9 +993,9 @@ class BeingH05Policy(PreTrainedPolicy):
             torch.tensor(
                 [
                     self._bos,
-                    *self.tokenizer.encode(f"system\n{self.model.system_message}"),
+                    *system_ids,
                     self._eos,
-                    self._newline,
+                    newline_id,
                 ],
                 dtype=torch.long,
                 device=pixels.device,
@@ -1021,11 +1010,14 @@ class BeingH05Policy(PreTrainedPolicy):
             role = str(message.get("role"))
             if role not in {"system", "user", "assistant"}:
                 raise ValueError(f"Being-H0.5 does not support the message role {role!r}.")
-            content = semantic_message_content_text(message.get("content"))
+            role_ids = message.get("role_ids")
+            content_ids = message.get("content_ids")
+            if not isinstance(role_ids, Sequence) or not isinstance(content_ids, Sequence):
+                raise TypeError("Being-H0.5 requires tokenized semantic messages from its preprocessor.")
             parts.append(
                 embed_tokens(
                     torch.tensor(
-                        [self._bos, *self.tokenizer.encode(f"{role}\n")],
+                        [self._bos, *role_ids],
                         dtype=torch.long,
                         device=pixels.device,
                     )
@@ -1037,7 +1029,7 @@ class BeingH05Policy(PreTrainedPolicy):
             parts.append(
                 embed_tokens(
                     torch.tensor(
-                        [*self.tokenizer.encode(content), self._eos, self._newline],
+                        [*content_ids, self._eos, newline_id],
                         dtype=torch.long,
                         device=pixels.device,
                     )
@@ -1048,7 +1040,7 @@ class BeingH05Policy(PreTrainedPolicy):
         parts.append(
             embed_tokens(
                 torch.tensor(
-                    [self._bos, *self.tokenizer.encode("assistant\n")],
+                    [self._bos, *role_token_ids["assistant"]],
                     dtype=torch.long,
                     device=pixels.device,
                 )
@@ -1083,12 +1075,9 @@ class BeingH05Policy(PreTrainedPolicy):
                 "The released Being-H0.5 RoboCasa action fine-tune does not retain usable text "
                 "generation; use lerobot/being_h05_base for VQA."
             )
-        messages = batch.get("being_h05_messages", batch.get("messages"))
-        conversations = normalize_semantic_messages(
-            messages,
-            policy_name="Being-H0.5",
-            batch_size=1,
-        )
+        conversations = batch.get(BEING_H05_MESSAGE_TOKEN_IDS)
+        if not isinstance(conversations, Sequence) or len(conversations) != 1:
+            raise ValueError("Being-H0.5 text generation requires one pretokenized conversation.")
         generated = self._generate_texts(
             batch,
             conversations,
@@ -1119,6 +1108,9 @@ class BeingH05Policy(PreTrainedPolicy):
             raise ValueError("top_p must be in (0, 1].")
 
         pixels = batch["being_h05.pixel_values"]
+        system_ids = batch[BEING_H05_SYSTEM_TOKEN_IDS]
+        role_token_ids = batch[BEING_H05_ROLE_TOKEN_IDS]
+        newline_id = int(batch[BEING_H05_NEWLINE_TOKEN_ID])
         batch_size, views = pixels.shape[:2]
         image_valid = batch.get(
             "being_h05.image_valid",
@@ -1137,6 +1129,9 @@ class BeingH05Policy(PreTrainedPolicy):
                 pixels[sample],
                 image_valid[sample],
                 messages,
+                system_ids,
+                role_token_ids,
+                newline_id,
             )
             logits, cache = self.model.language_model.forward_understanding(
                 inputs_embeds,
@@ -1173,7 +1168,7 @@ class BeingH05Policy(PreTrainedPolicy):
     def _pack_action_model_inputs(self, batch: dict[str, Any], training: bool) -> dict[str, Any]:
         states = batch["being_h05.state"]
         pixels = batch["being_h05.pixel_values"]
-        prompts = batch["being_h05_prompt"]
+        prompts = batch[BEING_H05_PROMPT_TOKEN_IDS]
         device = states.device
         bsz, views = pixels.shape[:2]
         image_valid = batch.get(
@@ -1191,9 +1186,11 @@ class BeingH05Policy(PreTrainedPolicy):
         attn_modes: list[str] = []
         packed_images: list[torch.Tensor] = []
         cursor = 0
-        system_ids = self.tokenizer.encode(f"system\n{self.model.system_message}")
-        user_ids = self.tokenizer.encode("user\n")
-        assistant_ids = self.tokenizer.encode("assistant\n")
+        system_ids = batch[BEING_H05_SYSTEM_TOKEN_IDS]
+        role_ids = batch[BEING_H05_ROLE_TOKEN_IDS]
+        user_ids = role_ids["user"]
+        assistant_ids = role_ids["assistant"]
+        newline_id = int(batch[BEING_H05_NEWLINE_TOKEN_ID])
         for sample in range(bsz):
             sample_images = pixels[sample, image_valid[sample]]
             if sample_images.shape[0] == 0:
@@ -1202,7 +1199,7 @@ class BeingH05Policy(PreTrainedPolicy):
             num_image_tokens = self.model.num_image_token * sample_images.shape[0]
             sample_start = cursor
             rope = 0
-            block = [self._bos, *system_ids, self._eos, self._newline]
+            block = [self._bos, *system_ids, self._eos, newline_id]
             text_ids.extend(block)
             text_indexes.extend(range(cursor, cursor + len(block)))
             position_ids.extend(range(rope, rope + len(block)))
@@ -1223,8 +1220,8 @@ class BeingH05Policy(PreTrainedPolicy):
             cursor += 2
             state_indexes.append(cursor)
             cursor += 1
-            instruction = self.tokenizer.encode(prompts[sample])
-            tail = [self._state_end, *instruction, self._eos, self._newline]
+            instruction = prompts[sample]
+            tail = [self._state_end, *instruction, self._eos, newline_id]
             text_ids.extend(tail)
             text_indexes.extend(range(cursor, cursor + len(tail)))
             cursor += len(tail)
@@ -1281,7 +1278,7 @@ class BeingH05Policy(PreTrainedPolicy):
         """Pack rendered recipe messages with assistant-only language supervision."""
         states = batch["being_h05.state"]
         pixels = batch["being_h05.pixel_values"]
-        messages = batch["being_h05_messages"]
+        messages = batch[BEING_H05_MESSAGE_TOKEN_IDS]
         targets = batch["being_h05_target_message_indices"]
         predict_actions = batch["being_h05_predict_actions"].to(device=states.device, dtype=torch.bool)
         device = states.device
@@ -1312,8 +1309,9 @@ class BeingH05Policy(PreTrainedPolicy):
             text_indexes.extend(range(cursor, cursor + len(tokens)))
             cursor += len(tokens)
 
-        system_ids = self.tokenizer.encode(f"system\n{self.model.system_message}")
-        assistant_ids = self.tokenizer.encode("assistant\n")
+        system_ids = batch[BEING_H05_SYSTEM_TOKEN_IDS]
+        assistant_ids = batch[BEING_H05_ROLE_TOKEN_IDS]["assistant"]
+        newline_id = int(batch[BEING_H05_NEWLINE_TOKEN_ID])
         for sample in range(bsz):
             sample_images = pixels[sample, image_valid[sample]]
             if sample_images.shape[0] == 0:
@@ -1324,7 +1322,7 @@ class BeingH05Policy(PreTrainedPolicy):
             rope = 0
 
             block_start = cursor
-            add_text([self._bos, *system_ids, self._eos, self._newline])
+            add_text([self._bos, *system_ids, self._eos, newline_id])
             content_len = cursor - block_start
             position_ids.extend(range(rope, rope + content_len))
             rope += content_len
@@ -1335,8 +1333,8 @@ class BeingH05Policy(PreTrainedPolicy):
             target_set = set(targets[sample])
             for message_index, message in enumerate(messages[sample]):
                 role = message["role"]
-                role_ids = self.tokenizer.encode(f"{role}\n")
-                content_ids = self.tokenizer.encode(message["content"])
+                role_ids = message["role_ids"]
+                content_ids = message["content_ids"]
                 block_start = cursor
                 if role == "user" and first_user:
                     first_user = False
@@ -1346,9 +1344,9 @@ class BeingH05Policy(PreTrainedPolicy):
                     add_text([self._image_end, self._state_start])
                     state_indexes.append(cursor)
                     cursor += 1
-                    add_text([self._state_end, *content_ids, self._eos, self._newline])
+                    add_text([self._state_end, *content_ids, self._eos, newline_id])
                 else:
-                    block = [self._bos, *role_ids, *content_ids, self._eos, self._newline]
+                    block = [self._bos, *role_ids, *content_ids, self._eos, newline_id]
                     labels = [-100] * len(block)
                     if message_index in target_set:
                         header_length = 1 + len(role_ids)

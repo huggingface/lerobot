@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from PIL import Image
@@ -35,8 +35,37 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from .configuration_being_h05 import BeingH05Config
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+else:
+    AutoTokenizer = None
+
+INTERNLM2_SYSTEM_MESSAGE = (
+    "你是由上海人工智能实验室联合商汤科技开发的书生多模态大模型，英文名叫InternVL, "
+    "是一个有用无害的人工智能助手。"
+)
+INTERNVL2_5_SYSTEM_MESSAGE = (
+    "你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位"
+    "联合开发的多模态大语言模型。"
+)
+BEING_H05_SYSTEM_TOKEN_IDS = "being_h05.system_token_ids"  # nosec B105
+BEING_H05_ROLE_TOKEN_IDS = "being_h05.role_token_ids"  # nosec B105
+BEING_H05_PROMPT_TOKEN_IDS = "being_h05.prompt_token_ids"  # nosec B105
+BEING_H05_MESSAGE_TOKEN_IDS = "being_h05.message_token_ids"  # nosec B105
+BEING_H05_NEWLINE_TOKEN_ID = "being_h05.newline_token_id"  # nosec B105
+
+
+def being_h05_system_message(author_config: dict[str, Any]) -> str:
+    return author_config.get("system_message") or (
+        INTERNVL2_5_SYSTEM_MESSAGE
+        if author_config.get("template") == "internvl2_5"
+        else INTERNLM2_SYSTEM_MESSAGE
+    )
+
 
 STATE_SLOTS = {
     "eef_position": (0, 3),
@@ -149,6 +178,74 @@ class BeingH05MessagesStep(ProcessorStep):
         complementary["being_h05_target_message_indices"] = [list(value) for value in targets]
         complementary["being_h05_predict_actions"] = torch.tensor(predict_actions, dtype=torch.bool)
         transition = transition.copy()
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="being_h05_tokenizer")
+class BeingH05TokenizerStep(ProcessorStep):
+    """Tokenize every dynamic Being-H0.5 prompt before policy execution."""
+
+    tokenizer_name: str
+    system_message: str
+    tokenizer_revision: str | None = None
+    _tokenizer: Any = field(default=None, init=False, repr=False)
+
+    def _get_tokenizer(self):
+        if self._tokenizer is not None:
+            return self._tokenizer
+        require_package("transformers", extra="being_h05")
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.tokenizer_name,
+            revision=self.tokenizer_revision,
+            use_fast=False,
+        )
+        return self._tokenizer
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "tokenizer_name": self.tokenizer_name,
+            "system_message": self.system_message,
+            "tokenizer_revision": self.tokenizer_revision,
+        }
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        tokenizer = self._get_tokenizer()
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        newline = tokenizer.encode("\n")
+        if len(newline) != 1:
+            raise ValueError("Being-H0.5 checkpoint tokenizer must encode newline as one token.")
+        complementary[BEING_H05_NEWLINE_TOKEN_ID] = newline[0]
+        complementary[BEING_H05_SYSTEM_TOKEN_IDS] = tokenizer.encode(f"system\n{self.system_message}")
+        complementary[BEING_H05_ROLE_TOKEN_IDS] = {
+            role: tokenizer.encode(f"{role}\n") for role in ("system", "user", "assistant")
+        }
+
+        prompts = complementary.get("being_h05_prompt")
+        if prompts is not None:
+            complementary[BEING_H05_PROMPT_TOKEN_IDS] = [tokenizer.encode(prompt) for prompt in prompts]
+
+        messages = complementary.get("being_h05_messages")
+        if messages is not None:
+            complementary[BEING_H05_MESSAGE_TOKEN_IDS] = [
+                [
+                    {
+                        "role": message["role"],
+                        "role_ids": tokenizer.encode(f"{message['role']}\n"),
+                        "content_ids": tokenizer.encode(message["content"]),
+                    }
+                    for message in conversation
+                ]
+                for conversation in messages
+            ]
+
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 
@@ -372,7 +469,18 @@ def make_being_h05_pre_post_processors(
     input_steps.append(steps.normalize)
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep(restore=True))
-    input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
+    input_steps.extend(
+        [
+            semantic_step,
+            BeingH05MessagesStep(),
+            BeingH05TokenizerStep(
+                tokenizer_name=config.tokenizer_name,
+                tokenizer_revision=config.tokenizer_revision,
+                system_message=being_h05_system_message(config.author_config),
+            ),
+            steps.to_device,
+        ]
+    )
     output_steps = [BeingH05SemanticUnpackStep()]
     if normalize_actions:
         output_steps.append(BeingH05BinaryActionStep())

@@ -26,12 +26,18 @@ from lerobot.policies.being_h05.processor_being_h05 import (
     BeingH05BinaryActionStep,
     BeingH05MessagesStep,
     BeingH05SemanticPackStep,
+    BeingH05TokenizerStep,
     make_being_h05_pre_post_processors,
     pack_named,
 )
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import NormalizerProcessorStep, RenderMessagesStep, UnnormalizerProcessorStep
+from lerobot.processor import (
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    RenderMessagesStep,
+    UnnormalizerProcessorStep,
+)
 from lerobot.utils.constants import ACTION
 
 
@@ -40,6 +46,21 @@ def _named_state(batch: int = 1) -> dict[str, torch.Tensor]:
         f"observation.state.{name}": torch.zeros(batch, end - start)
         for name, (start, end) in STATE_SLOTS.items()
     }
+
+
+class _FakeTokenizer:
+    def __init__(self):
+        self.ids: dict[str, int] = {}
+
+    def encode(self, text: str) -> list[int]:
+        if text not in self.ids:
+            self.ids[text] = len(self.ids) + 20
+        return [self.ids[text]]
+
+
+def _stub_tokenizer(preprocessor: PolicyProcessorPipeline) -> None:
+    step = next(step for step in preprocessor.steps if isinstance(step, BeingH05TokenizerStep))
+    step._tokenizer = _FakeTokenizer()
 
 
 def test_semantic_slots_and_missing_modality_masks():
@@ -200,6 +221,7 @@ def test_recipe_pipeline_renders_language_columns_before_being_serialization():
     )
 
     preprocessor, _ = make_being_h05_pre_post_processors(config)
+    _stub_tokenizer(preprocessor)
 
     assert isinstance(preprocessor.steps[0], RenderMessagesStep)
     assert preprocessor.steps[0].render_training is True
@@ -286,6 +308,7 @@ def test_quantile_normalization_round_trips_continuous_and_binary_actions(tmp_pa
         pretrained_path=str(tmp_path),
         dataset_stats=dataset_stats,
     )
+    _stub_tokenizer(preprocessor)
     trained_checkpoint = tmp_path / "trained"
     preprocessor.save_pretrained(trained_checkpoint)
     postprocessor.save_pretrained(trained_checkpoint)
@@ -293,6 +316,7 @@ def test_quantile_normalization_round_trips_continuous_and_binary_actions(tmp_pa
         config,
         pretrained_path=str(trained_checkpoint),
     )
+    _stub_tokenizer(preprocessor)
     assert isinstance(preprocessor.steps[2], BeingH05BinaryActionStep)
     assert isinstance(preprocessor.steps[3], NormalizerProcessorStep)
     assert isinstance(preprocessor.steps[4], BeingH05BinaryActionStep)

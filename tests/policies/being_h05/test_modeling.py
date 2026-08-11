@@ -23,6 +23,7 @@ pytest.importorskip("transformers")
 from transformers import Qwen3Config
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, Qwen3MLP
 
+from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.being_h05.configuration_being_h05 import BeingH05Config
 from lerobot.policies.being_h05.modeling_being_h05 import (
     ActionEncoder,
@@ -30,6 +31,10 @@ from lerobot.policies.being_h05.modeling_being_h05 import (
     BeingH05Qwen3ForCausalLM,
     MPGEnhancement,
     _selective_text_cross_entropy,
+)
+from lerobot.policies.being_h05.processor_being_h05 import (
+    BEING_H05_MESSAGE_TOKEN_IDS,
+    BeingH05TokenizerStep,
 )
 
 
@@ -172,7 +177,7 @@ def _packing_policy() -> BeingH05Policy:
 
 
 def _recipe_batch(predict_actions: bool) -> dict:
-    return {
+    batch = {
         "being_h05.state": torch.zeros(1, 200),
         "being_h05.pixel_values": torch.zeros(1, 1, 3, 224, 224),
         "being_h05.image_valid": torch.ones(1, 1, dtype=torch.bool),
@@ -187,6 +192,17 @@ def _recipe_batch(predict_actions: bool) -> dict:
         "action": torch.zeros(1, 2, 200),
         "being_h05.action_valid": torch.ones(1, 2, 200, dtype=torch.bool),
     }
+    step = BeingH05TokenizerStep(tokenizer_name="unused", system_message="system prompt")
+    step._tokenizer = _FakeTokenizer()
+    tokenized = step(
+        {
+            TransitionKey.COMPLEMENTARY_DATA: {
+                "being_h05_messages": batch["being_h05_messages"],
+            }
+        }
+    )[TransitionKey.COMPLEMENTARY_DATA]
+    batch.update(tokenized)
+    return batch
 
 
 def test_recipe_packing_masks_headers_and_supervises_assistant_content_and_eos():
@@ -195,7 +211,8 @@ def test_recipe_packing_masks_headers_and_supervises_assistant_content_and_eos()
     packed = policy._pack_model_inputs(_recipe_batch(predict_actions=True), training=True)
 
     supervised = packed["packed_text_labels"][packed["packed_text_labels"].ne(-100)]
-    assert supervised.tolist() == [policy.tokenizer.encode("answer")[0], policy._eos]
+    answer_id = _recipe_batch(True)[BEING_H05_MESSAGE_TOKEN_IDS][0][1]["content_ids"][0]
+    assert supervised.tolist() == [answer_id, policy._eos]
     assert packed["padded_action_mask"].all()
 
 
