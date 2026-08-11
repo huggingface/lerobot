@@ -79,6 +79,10 @@ class SentryStrategy(RolloutStrategy):
         self._pending_push: Future | None = None
         self._needs_push = Event()
         self._episode_lock = Lock()
+        # Latched when save_episode fails mid-write: the dataset on disk may
+        # then hold committed rows unreachable from metadata, so recording
+        # more into it or pushing it would grow/upload corruption.
+        self._dataset_poisoned = False
 
     def setup(self, ctx: RolloutContext) -> None:
         """Initialise the inference engine and background push executor."""
@@ -99,6 +103,11 @@ class SentryStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the continuous recording loop with automatic episode rotation."""
+        if self._dataset_poisoned:
+            raise RuntimeError(
+                "Refusing to start a new segment: a previous save_episode failed mid-write, so "
+                "the dataset on disk may be partially committed. Inspect it before recording more."
+            )
         engine = self._engine
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
@@ -109,7 +118,6 @@ class SentryStrategy(RolloutStrategy):
         control_interval = interpolator.get_control_interval(cfg.fps)
 
         engine.resume()
-        play_sounds = cfg.play_sounds
         episode_duration_s = self._episode_duration_s
 
         start_time = time.perf_counter()
@@ -160,20 +168,15 @@ class SentryStrategy(RolloutStrategy):
                     # flushes it to disk; ``_episode_lock`` serialises this with
                     # ``push_to_hub`` (run in the background executor) so the
                     # pusher never reads a half-written episode.
+                    self._warn_if_push_in_flight()
                     with self._episode_lock:
                         dataset.save_episode()
-                    self._episodes_since_push += 1
-                    self._needs_push.set()
                     logger.info(
                         "Episode saved (total: %d, elapsed: %.1fs)",
                         dataset.num_episodes,
                         elapsed,
                     )
-                    log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
-
-                    if self._episodes_since_push >= self.config.upload_every_n_episodes:
-                        self._background_push(dataset, cfg)
-                        self._episodes_since_push = 0
+                    self._register_saved_episode(dataset, cfg)
 
                     episode_start = time.perf_counter()
 
@@ -191,24 +194,74 @@ class SentryStrategy(RolloutStrategy):
                     warn_loop_overrun(dt, cfg.fps)
 
         finally:
-            logger.info("Sentry control loop ended — saving final episode")
-            try:
-                with self._episode_lock:
-                    dataset.save_episode()
-                self._needs_push.set()
-            except Exception:
-                # The tail episode could not be committed (nothing was
-                # recorded, or the save failed mid-write).  Drop the in-flight
-                # streaming encode so teardown()'s finalize does not flush a
-                # half-written video, and discard the episode buffer: a failed
-                # save_episode leaves it half-mutated, which would crash the
-                # first add_frame of a restarted segment.  add_frame recreates
-                # a fresh buffer from None.
-                logger.warning("Tail episode was not saved — discarding it", exc_info=True)
-                if dataset.writer is not None:
-                    with contextlib.suppress(Exception):
-                        dataset.writer.cancel_pending_videos()
-                    dataset.writer.episode_buffer = None
+            logger.info("Sentry control loop ended")
+            self._save_tail_episode(dataset, cfg)
+
+    def _save_tail_episode(self, dataset, cfg) -> None:
+        """Commit the segment's partial tail episode; fail loudly on real errors.
+
+        A segment that recorded nothing (``/start`` followed immediately by
+        ``/reset``, or a segment ending right after a rotation) has no tail —
+        guarded up front so the failure path below is reserved for genuinely
+        broken saves.
+
+        A failed ``save_episode`` is *not* recoverable by discarding the
+        buffer: ``DatasetWriter.save_episode`` writes the episode's parquet
+        rows and advances its counters *before* the failure-prone steps
+        (video encode, metadata commit), so a mid-save failure can leave
+        committed rows unreachable from metadata, and the next segment would
+        reuse the same episode index with overlapping row indices.  The
+        dataset is latched as poisoned — refusing further segments and Hub
+        pushes — and the error is re-raised so it reaches the controller's
+        failure surface instead of silently growing corrupt data.
+        """
+        if not dataset.has_pending_frames():
+            logger.info("No frames pending at segment end — nothing to save")
+            return
+        logger.info("Saving the segment's final (partial) episode")
+        self._warn_if_push_in_flight()
+        try:
+            with self._episode_lock:
+                dataset.save_episode()
+        except Exception:
+            self._dataset_poisoned = True
+            # Drop the in-flight streaming encode (so a later finalize cannot
+            # flush a half-written video) and the half-mutated episode buffer,
+            # through the dataset's public API.
+            with contextlib.suppress(Exception):
+                dataset.clear_episode_buffer(delete_images=False)
+            raise
+        self._register_saved_episode(dataset, cfg)
+
+    def _register_saved_episode(self, dataset, cfg) -> None:
+        """Post-save bookkeeping, shared by the rotation and tail-save sites.
+
+        Keeping the upload cadence in one place matters: tail episodes saved
+        at segment end must count toward ``upload_every_n_episodes`` too,
+        otherwise an interactive session whose segments are all shorter than
+        one rotation (~30 min at the defaults) never background-pushes and
+        loses the documented periodic-upload durability.
+        """
+        self._episodes_since_push += 1
+        self._needs_push.set()
+        log_say(f"Episode {dataset.num_episodes} saved", cfg.play_sounds)
+        if self._episodes_since_push >= self.config.upload_every_n_episodes:
+            self._background_push(dataset, cfg)
+            self._episodes_since_push = 0
+
+    def _warn_if_push_in_flight(self) -> None:
+        """Warn — piercing the muted interactive console — before a save that must wait.
+
+        ``save_episode`` contends with a background Hub push for
+        ``_episode_lock``; on a slow uplink an operator's ``/reset`` or
+        ``/stop`` would otherwise freeze the robot at an arbitrary pose for
+        minutes with zero feedback.
+        """
+        if self._pending_push is not None and not self._pending_push.done():
+            logger.warning(
+                "Waiting for an in-flight Hub upload to finish before saving the episode — "
+                "the robot will hold position until it completes..."
+            )
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Flush pending pushes, finalise the dataset, and disconnect hardware."""
@@ -223,9 +276,19 @@ class SentryStrategy(RolloutStrategy):
             self._push_executor = None
 
         if ctx.data.dataset is not None:
+            if self._dataset_poisoned:
+                logger.error(
+                    "The dataset may be partially committed (a save_episode failed mid-write): "
+                    "closing it without pushing. Inspect it before using or uploading it."
+                )
             logger.info("Finalizing dataset...")
             ctx.data.dataset.finalize()
-            if self._needs_push.is_set() and ctx.runtime.cfg.dataset and ctx.runtime.cfg.dataset.push_to_hub:
+            if (
+                not self._dataset_poisoned
+                and self._needs_push.is_set()
+                and ctx.runtime.cfg.dataset
+                and ctx.runtime.cfg.dataset.push_to_hub
+            ):
                 logger.info("Pushing final dataset to hub...")
                 if safe_push_to_hub(
                     ctx.data.dataset,
@@ -248,6 +311,9 @@ class SentryStrategy(RolloutStrategy):
         a time; submitted tasks are queued rather than dropped.
         """
         if self._push_executor is None:
+            return
+        if self._dataset_poisoned:
+            logger.error("Skipping Hub push: a failed save_episode left the dataset possibly corrupt")
             return
 
         if self._pending_push is not None and not self._pending_push.done():

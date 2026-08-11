@@ -1234,23 +1234,86 @@ def test_sentry_labels_frames_with_dispatched_action_task(monkeypatch):
     strategy.teardown(ctx)
 
 
-def test_sentry_discards_tail_episode_when_final_save_fails(monkeypatch):
+def test_sentry_tail_save_failure_poisons_dataset_and_reraises(monkeypatch):
+    """A failed save_episode may have committed rows already; sentry must fail loudly.
+
+    Swallow-and-continue would let the next segment reuse the same episode
+    index with overlapping row indices and upload the corruption to the Hub.
+    """
     strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
     dataset.save_episode.side_effect = ValueError("disk full mid-write")
+    stop_event.set()  # the segment ends on its first tick; the tail save fails
 
-    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
-    thread.start()
-    assert _wait_for(lambda: dataset.add_frame.call_count >= 1)
+    with pytest.raises(ValueError, match="disk full mid-write"):
+        strategy.run(ctx)
+
+    # Cleanup goes through the public API: cancel the in-flight streaming
+    # encode and discard the half-mutated buffer.
+    dataset.clear_episode_buffer.assert_called_once_with(delete_images=False)
+
+    # No further segments on a poisoned dataset...
+    with pytest.raises(RuntimeError, match="partially committed"):
+        strategy.run(ctx)
+
+    # ...and no Hub push of the corruption; teardown still closes the dataset.
+    ctx.runtime.cfg.dataset.push_to_hub = True
+    strategy._needs_push.set()
+    strategy.teardown(ctx)
+    dataset.finalize.assert_called_once()
+    dataset.push_to_hub.assert_not_called()
+
+
+def test_sentry_empty_tail_segment_skips_the_save(monkeypatch):
+    """A segment that recorded nothing must not raise (or log) through the tail save."""
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+    dataset.has_pending_frames.return_value = False
+    stop_event.set()  # end immediately: /start followed by /reset during warmup
+
+    strategy.run(ctx)
+
+    dataset.save_episode.assert_not_called()
+    dataset.clear_episode_buffer.assert_not_called()
+
+
+def test_sentry_tail_saves_count_toward_upload_cadence(monkeypatch):
+    """Interactive segments are typically shorter than one rotation, so the
+    segment-end save is the only save — it must advance the upload cadence."""
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+    strategy.config.upload_every_n_episodes = 2
+    pushes = []
+    monkeypatch.setattr(strategy, "_background_push", lambda dataset, cfg: pushes.append(1))
+
+    for _ in range(2):
+        stop_event.clear()
+        frames_before = dataset.add_frame.call_count
+        thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+        thread.start()
+        assert _wait_for(lambda: dataset.add_frame.call_count > frames_before)
+        stop_event.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+
+    assert dataset.save_episode.call_count == 2
+    assert pushes == [1]  # the second tail save crossed the threshold
+    assert strategy._episodes_since_push == 0  # counter reset after the push
+
+
+def test_sentry_warns_before_blocking_on_inflight_push(monkeypatch, caplog):
+    """/reset//stop during a Hub upload must say why the robot is frozen.
+
+    The WARNING level is deliberate: it pierces the interactive session's
+    log muting.
+    """
+    strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
+    pending = MagicMock()
+    pending.done.return_value = False
+    strategy._pending_push = pending
     stop_event.set()
-    thread.join(timeout=2.0)
-    assert not thread.is_alive()
 
-    # The failed tail save must not leave a half-written streaming encode for
-    # teardown's finalize to flush, nor a half-mutated episode buffer that
-    # would crash the first add_frame of a restarted segment.
-    dataset.writer.cancel_pending_videos.assert_called_once()
-    assert dataset.writer.episode_buffer is None
-    dataset.finalize.assert_not_called()
+    with caplog.at_level(logging.WARNING, logger="lerobot.rollout.strategies.sentry"):
+        strategy.run(ctx)
+
+    assert any("in-flight Hub upload" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
