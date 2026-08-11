@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import shutil
 from collections import deque
@@ -24,18 +23,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 import torch.nn.functional as functional
 from huggingface_hub import save_torch_state_dict, snapshot_download
-from PIL import Image
 from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.language import normalize_semantic_messages, require_single_text_output
+from lerobot.policies.language import require_single_text_output
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -48,10 +45,16 @@ if TYPE_CHECKING or _transformers_available:
     )
 
 from .configuration_wall_oss_05 import WallOSS05Config
+from .processor_wall_oss_05 import (
+    WALL_OSS_ACTION_TOKEN,
+    WALL_OSS_IMAGE_TOKEN,
+    WALL_OSS_PREDICT_ACTIONS,
+    WALL_OSS_PROPRIO_TOKEN,
+)
 
-_ACTION_TOKEN = "<|action|>"  # nosec B105
-_IMAGE_TOKEN = "<|image_pad|>"  # nosec B105
-_PROPRIO_TOKEN = "<|propri|>"  # nosec B105
+_ACTION_TOKEN = WALL_OSS_ACTION_TOKEN
+_IMAGE_TOKEN = WALL_OSS_IMAGE_TOKEN
+_PROPRIO_TOKEN = WALL_OSS_PROPRIO_TOKEN
 _TEXT_TARGET_START = "<|wall_text_target_start|>"  # nosec B105
 _TEXT_TARGET_END = "<|wall_text_target_end|>"  # nosec B105
 _CAMERA_LABELS = {
@@ -823,398 +826,11 @@ class WallOSS05Policy(PreTrainedPolicy):
                 (state_dict.pop(gate_key), state_dict.pop(up_key)), dim=0
             )
 
-    def _get_flow_prompt(self, instruction: str) -> tuple[str, str]:
-        prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nObservation:"
-        for camera_name in self.config.camera_key_mapping.values():
-            label = _CAMERA_LABELS.get(camera_name, camera_name.replace("_", " "))
-            prompt += f" {label}: <|vision_start|>{_IMAGE_TOKEN}<|vision_end|>"
-        prompt += (
-            f"\nInstruction: {instruction}\n"
-            f"Predict the next action in robot action.\nProprioception: {_PROPRIO_TOKEN}\n"
-            "<|im_end|>\n<|im_start|>assistant\n"
-        )
-        return prompt, _ACTION_TOKEN * self.config.chunk_size
-
-    @staticmethod
-    def _message_content(message: dict[str, Any]) -> str:
-        content = message.get("content", "")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            text = "\n".join(
-                str(block.get("text", ""))
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            )
-        elif content is None:
-            text = ""
-        else:
-            text = str(content)
-
-        tool_calls = message.get("tool_calls")
-        if tool_calls:
-            say_texts = []
-            for call in tool_calls:
-                function = call.get("function", {}) if isinstance(call, dict) else {}
-                if function.get("name") != "say":
-                    continue
-                arguments = function.get("arguments", {})
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except (TypeError, ValueError):
-                        arguments = {}
-                if isinstance(arguments, dict) and arguments.get("text"):
-                    say_texts.append(str(arguments["text"]))
-            suffix = "".join(f"<say>{value}</say>" for value in say_texts)
-            if suffix:
-                text = f"{text}\n{suffix}" if text else suffix
-        return text
-
-    def _observation_prompt(self) -> str:
-        prompt = "Observation:"
-        for camera_name in self.config.camera_key_mapping.values():
-            label = _CAMERA_LABELS.get(camera_name, camera_name.replace("_", " "))
-            prompt += f" {label}: <|vision_start|>{_IMAGE_TOKEN}<|vision_end|>"
-        return prompt
-
-    def _format_recipe_prompt(
-        self,
-        messages: list[dict[str, Any]],
-        message_streams: list[str | None],
-        target_message_indices: list[int],
-        task: str,
-    ) -> tuple[str, str, bool]:
-        if len(messages) != len(message_streams):
-            raise ValueError("Recipe messages and message_streams must have equal length.")
-        invalid_targets = [index for index in target_message_indices if not 0 <= index < len(messages)]
-        if invalid_targets:
-            raise ValueError(f"Recipe target indices are out of range: {invalid_targets}.")
-
-        predict_actions = any(stream == "low_level" for stream in message_streams)
-        if predict_actions and not target_message_indices:
-            prefix, postfix = self._get_flow_prompt(task)
-            return prefix, postfix, True
-
-        target_indices = set(target_message_indices)
-        prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-        observation_injected = False
-        for index, message in enumerate(messages):
-            role = str(message.get("role", "user"))
-            content = self._message_content(message)
-            if _TEXT_TARGET_START in content or _TEXT_TARGET_END in content:
-                raise ValueError("Recipe content contains a reserved Wall text-target marker.")
-            if role == "user" and not observation_injected:
-                content = f"{self._observation_prompt()}\n{content}"
-                observation_injected = True
-
-            prompt += f"<|im_start|>{role}\n"
-            if index in target_indices:
-                prompt += f"{_TEXT_TARGET_START}{content}<|im_end|>{_TEXT_TARGET_END}\n"
-            else:
-                prompt += f"{content}<|im_end|>\n"
-
-        if not observation_injected:
-            prompt = (
-                "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-                f"<|im_start|>user\n{self._observation_prompt()}<|im_end|>\n"
-                + prompt.removeprefix("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n")
-            )
-
-        postfix = ""
-        if predict_actions:
-            prompt += (
-                "<|im_start|>user\n"
-                f"Instruction: {task}\n"
-                f"Predict the next action in robot action.\nProprioception: {_PROPRIO_TOKEN}\n"
-                "<|im_end|>\n<|im_start|>assistant\n"
-            )
-            postfix = _ACTION_TOKEN * self.config.chunk_size
-        return prompt, postfix, predict_actions
-
-    @staticmethod
-    def _extract_text_target_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
-        clean_parts: list[str] = []
-        spans: list[tuple[int, int]] = []
-        cursor = 0
-        clean_length = 0
-        while True:
-            start = text.find(_TEXT_TARGET_START, cursor)
-            if start < 0:
-                suffix = text[cursor:]
-                clean_parts.append(suffix)
-                clean_length += len(suffix)
-                break
-            prefix = text[cursor:start]
-            clean_parts.append(prefix)
-            clean_length += len(prefix)
-            payload_start = start + len(_TEXT_TARGET_START)
-            end = text.find(_TEXT_TARGET_END, payload_start)
-            if end < 0:
-                raise ValueError("Wall text-target start marker has no matching end marker.")
-            payload = text[payload_start:end]
-            span_start = clean_length
-            clean_parts.append(payload)
-            clean_length += len(payload)
-            spans.append((span_start, clean_length))
-            cursor = end + len(_TEXT_TARGET_END)
-        if _TEXT_TARGET_END in "".join(clean_parts):
-            raise ValueError("Wall text-target end marker has no matching start marker.")
-        return "".join(clean_parts), spans
-
-    @staticmethod
-    def _resize_image(image: np.ndarray, target: int = 448) -> Image.Image:
-        pil_image = Image.fromarray(image)
-        width, height = pil_image.size
-        if width > height:
-            resized = (target, int(target * height / width))
-        else:
-            resized = (int(target * width / height), target)
-        return pil_image.resize(resized)
-
-    @staticmethod
-    def _expand_image_tokens(texts: list[str], image_grid_thw: Tensor, merge_size: int) -> list[str]:
-        expanded = list(texts)
-        image_index = 0
-        for text_index, text in enumerate(expanded):
-            while _IMAGE_TOKEN in text:
-                token_count = int(image_grid_thw[image_index].prod() // merge_size**2)
-                text = text.replace(_IMAGE_TOKEN, "<|wall_image_placeholder|>" * token_count, 1)
-                image_index += 1
-            expanded[text_index] = text.replace("<|wall_image_placeholder|>", _IMAGE_TOKEN)
-        return expanded
-
-    def _construct_model_input(
-        self,
-        observations: list[dict[str, Any]],
-        prefix_list: list[str],
-        postfix_list: list[str],
-    ) -> dict[str, Any]:
-        if self.processor is None or not hasattr(self, "model"):
-            raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
-
-        device = next(self.model.parameters()).device
-        state = torch.cat([torch.from_numpy(observation["proprioception"]) for observation in observations])
-        state_mask = torch.cat(
-            [torch.from_numpy(observation["agent_pos_mask"]) for observation in observations]
-        ).bool()
-        dof_mask = torch.cat(
-            [torch.from_numpy(observation["dof_mask"]) for observation in observations]
-        ).bool()
-        images = []
-        for observation in observations:
-            for camera_name in self.config.camera_key_mapping.values():
-                images.append(self._resize_image(observation[camera_name]))
-        image_inputs = self.processor.image_processor(images=images, return_tensors="pt")
-        prefix_list = self._expand_image_tokens(
-            prefix_list,
-            image_inputs["image_grid_thw"],
-            int(self.processor.image_processor.merge_size),
-        )
-
-        bins = np.linspace(-1, 1, 513)[:-1]
-        discrete_state = np.digitize(state.cpu().numpy(), bins=bins) - 1
-        discrete_state = discrete_state[:, 0]
-        active_state = state_mask[:, 0].cpu().numpy()
-        for index in range(len(prefix_list)):
-            state_text = " ".join(map(str, discrete_state[index, active_state[index]]))
-            prefix_list[index] = prefix_list[index].replace(_PROPRIO_TOKEN, state_text)
-
-        texts = [prefix + postfix for prefix, postfix in zip(prefix_list, postfix_list, strict=True)]
-        target_spans: list[list[tuple[int, int]]] = []
-        clean_texts = []
-        for text in texts:
-            clean_text, spans = self._extract_text_target_spans(text)
-            clean_texts.append(clean_text)
-            target_spans.append(spans)
-        has_text_targets = any(target_spans)
-        text_inputs = self.processor.tokenizer(
-            clean_texts,
-            return_tensors="pt",
-            padding=True,
-            padding_side="left",
-            truncation=True,
-            max_length=self.config.tokenizer_max_length,
-            return_offsets_mapping=has_text_targets,
-        )
-        input_ids = text_inputs["input_ids"]
-        model_inputs = {
-            "input_ids": input_ids.to(device),
-            "attention_mask": text_inputs["attention_mask"].to(device),
-            "pixel_values": image_inputs["pixel_values"].to(device),
-            "image_grid_thw": image_inputs["image_grid_thw"].to(device),
-            "moe_token_types": (input_ids == self.model.action_token_id).to(device),
-            "dof_mask": dof_mask.to(device),
-        }
-        if has_text_targets:
-            offsets = text_inputs["offset_mapping"]
-            labels = torch.full_like(input_ids, -100)
-            for batch_index, spans in enumerate(target_spans):
-                for span_start, span_end in spans:
-                    token_overlap = (
-                        (offsets[batch_index, :, 1] > span_start)
-                        & (offsets[batch_index, :, 0] < span_end)
-                        & text_inputs["attention_mask"][batch_index].bool()
-                    )
-                    labels[batch_index, token_overlap] = input_ids[batch_index, token_overlap]
-            labels[labels == self.model.action_token_id] = -100
-            if self.processor.tokenizer.pad_token_id is not None:
-                labels[labels == self.processor.tokenizer.pad_token_id] = -100
-            model_inputs["text_labels"] = labels.to(device)
-        return model_inputs
-
     def reset(self) -> None:
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> dict:
         return self.parameters()
-
-    def _tasks(self, batch: dict[str, Any], batch_size: int) -> list[str]:
-        task = batch.get("task")
-        if isinstance(task, str):
-            return [task] * batch_size
-        if (
-            isinstance(task, list)
-            and len(task) == batch_size
-            and all(isinstance(value, str) for value in task)
-        ):
-            return task
-        raise ValueError(f"Expected exactly {batch_size} already-selected task strings.")
-
-    @staticmethod
-    def _image_to_numpy(image: Tensor) -> np.ndarray:
-        if image.ndim == 4:
-            image = image[-1]
-        if image.ndim != 3:
-            raise ValueError(f"Expected CHW image, got shape {tuple(image.shape)}.")
-        image = image.detach().cpu()
-        if image.shape[0] in (1, 3, 4):
-            image = image.permute(1, 2, 0)
-        if image.dtype.is_floating_point:
-            image = image.clamp(0, 1).mul(255).round()
-        return image.to(torch.uint8).numpy()
-
-    def _build_observations(
-        self, batch: dict[str, Any]
-    ) -> tuple[list[dict[str, Any]], Tensor, Tensor, list[str]]:
-        if self.processor is None or not hasattr(self, "model"):
-            raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
-
-        state = batch[OBS_STATE]
-        if state.ndim == 1:
-            state = state.unsqueeze(0)
-        if state.ndim == 3:
-            state = state[:, -1]
-        if state.ndim != 2 or state.shape[-1] != self.config.max_state_dim:
-            raise ValueError(f"Expected canonical state shaped (B,26), got {tuple(state.shape)}.")
-        state_mask = torch.ones_like(state, dtype=torch.bool)
-        batch_size = state.shape[0]
-        tasks = self._tasks(batch, batch_size)
-
-        action_mask = torch.ones(
-            (batch_size, self.config.chunk_size, self.config.max_action_dim),
-            device=state.device,
-            dtype=torch.bool,
-        )
-        observations: list[dict[str, Any]] = []
-        for row in range(batch_size):
-            observation = {
-                "proprioception": state[row : row + 1].unsqueeze(1).detach().cpu().numpy(),
-                "agent_pos_mask": state_mask[row : row + 1].unsqueeze(1).detach().cpu().numpy(),
-                "dof_mask": action_mask[row : row + 1].detach().cpu().numpy(),
-            }
-            for lerobot_key, author_slot in self.config.camera_key_mapping.items():
-                observation[author_slot] = self._image_to_numpy(batch[lerobot_key][row])
-            observations.append(observation)
-        return observations, state_mask, action_mask, tasks
-
-    def _build_model_inputs(self, batch: dict[str, Any]) -> tuple[dict[str, Any], Tensor, Tensor, list[str]]:
-        observations, state_mask, action_mask, tasks = self._build_observations(batch)
-
-        prefix_list, postfix_list = [], []
-        for task in tasks:
-            prefix, postfix = self._get_flow_prompt(task)
-            prefix_list.append(prefix)
-            postfix_list.append(postfix)
-        inputs = self._construct_model_input(observations, prefix_list, postfix_list)
-        return inputs, state_mask, action_mask, tasks
-
-    @staticmethod
-    def _batched_recipe_field(value: Any, batch_size: int, field_name: str) -> list[list[Any]]:
-        if not isinstance(value, list):
-            raise TypeError(f"{field_name} must be a list.")
-        if len(value) == batch_size and all(isinstance(row, list) for row in value):
-            return value
-        if batch_size == 1:
-            return [value]
-        raise ValueError(f"Expected {field_name} for exactly {batch_size} samples.")
-
-    def _build_recipe_model_inputs(
-        self,
-        batch: dict[str, Any],
-    ) -> tuple[dict[str, Any], Tensor, Tensor, list[str], Tensor]:
-        observations, state_mask, action_mask, tasks = self._build_observations(batch)
-        batch_size = len(observations)
-        messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
-        streams_batch = self._batched_recipe_field(
-            batch.get("message_streams", []),
-            batch_size,
-            "message_streams",
-        )
-        targets_batch = self._batched_recipe_field(
-            batch.get("target_message_indices", []),
-            batch_size,
-            "target_message_indices",
-        )
-
-        prefix_list = []
-        postfix_list = []
-        predict_actions = []
-        for messages, streams, targets, task in zip(
-            messages_batch,
-            streams_batch,
-            targets_batch,
-            tasks,
-            strict=True,
-        ):
-            prefix, postfix, predicts_action = self._format_recipe_prompt(
-                messages,
-                streams,
-                targets,
-                task,
-            )
-            prefix_list.append(prefix)
-            postfix_list.append(postfix)
-            predict_actions.append(predicts_action)
-        inputs = self._construct_model_input(observations, prefix_list, postfix_list)
-        return (
-            inputs,
-            state_mask,
-            action_mask,
-            tasks,
-            torch.tensor(predict_actions, device=action_mask.device, dtype=torch.bool),
-        )
-
-    def _build_text_model_inputs(
-        self,
-        batch: dict[str, Any],
-    ) -> dict[str, Any]:
-        observations, _, _, tasks = self._build_observations(batch)
-        if "messages" not in batch:
-            raise ValueError("Wall-OSS-0.5 text generation requires preprocessed `messages`.")
-        messages_batch = normalize_semantic_messages(
-            batch["messages"], policy_name="Wall-OSS-0.5", batch_size=len(tasks)
-        )
-        prefixes = []
-        for messages in messages_batch:
-            prompt, _, _ = self._format_recipe_prompt(
-                messages,
-                [None] * len(messages),
-                [],
-                "",
-            )
-            prefixes.append(f"{prompt}<|im_start|>assistant\n")
-        return self._construct_model_input(observations, prefixes, [""] * len(prefixes))
 
     def _sample_time(self, batch_size: int, device: torch.device) -> Tensor:
         """Sample the checkpoint's ``(1 - Beta(alpha, beta)) * s`` flow time."""
@@ -1229,16 +845,33 @@ class WallOSS05Policy(PreTrainedPolicy):
             sample_time = (time_shift * sample_time) / (1 + (time_shift - 1) * sample_time)
         return sample_time * scale
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
-        if "messages" in batch:
-            inputs, _, action_mask, _, predict_actions = self._build_recipe_model_inputs(batch)
-        else:
-            inputs, _, action_mask, _ = self._build_model_inputs(batch)
-            predict_actions = torch.ones(
-                action_mask.shape[0],
-                device=action_mask.device,
-                dtype=torch.bool,
+    @staticmethod
+    def _pretokenized_inputs(batch: dict[str, Any]) -> dict[str, Tensor]:
+        names = (
+            "input_ids",
+            "attention_mask",
+            "pixel_values",
+            "image_grid_thw",
+            "moe_token_types",
+            "dof_mask",
+            "text_labels",
+        )
+        inputs = {name: batch[name] for name in names if name in batch}
+        required = {"input_ids", "attention_mask", "pixel_values", "image_grid_thw", "moe_token_types"}
+        missing = sorted(required - inputs.keys())
+        if missing:
+            raise ValueError(
+                f"Wall-OSS-0.5 requires tokenized inputs from its policy preprocessor; missing {missing}."
             )
+        return inputs
+
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
+        inputs = self._pretokenized_inputs(batch)
+        action_mask = inputs["dof_mask"]
+        predict_actions = batch.get(
+            WALL_OSS_PREDICT_ACTIONS,
+            torch.ones(action_mask.shape[0], device=action_mask.device, dtype=torch.bool),
+        )
         actions = batch[ACTION]
         if actions.ndim != 3 or actions.shape[-1] != self.config.max_action_dim:
             raise ValueError(f"Expected canonical actions shaped (B,H,26), got {tuple(actions.shape)}.")
@@ -1293,7 +926,7 @@ class WallOSS05Policy(PreTrainedPolicy):
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
         del kwargs
-        inputs, _, _, _ = self._build_model_inputs(batch)
+        inputs = self._pretokenized_inputs(batch)
         output = self.model.generate_flow_action(
             action_horizon=self.config.chunk_size,
             action_dim=self.config.max_action_dim,
@@ -1310,7 +943,7 @@ class WallOSS05Policy(PreTrainedPolicy):
         """Decode one response from contract-rendered messages."""
         if self.processor is None or not hasattr(self, "model"):
             raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
-        inputs = self._build_text_model_inputs(batch)
+        inputs = self._pretokenized_inputs(batch)
         output_ids = self.model.generate_text(
             **inputs,
             max_new_tokens=100,

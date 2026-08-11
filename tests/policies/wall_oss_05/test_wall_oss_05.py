@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 import torch
 from safetensors import safe_open
@@ -33,8 +32,17 @@ from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
     WallOSS05Policy,
     WallOSS05VisionMLP,
 )
-from lerobot.policies.wall_oss_05.processor_wall_oss_05 import WallOSS05TaskPassthrough
-from lerobot.processor import RenderMessagesStep
+from lerobot.policies.wall_oss_05.processor_wall_oss_05 import (
+    WALL_OSS_PREDICT_ACTIONS,
+    WallOSS05TaskPassthrough,
+    WallOSS05TokenizerStep,
+)
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    RenderMessagesStep,
+    batch_to_transition,
+    transition_to_batch,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -58,21 +66,6 @@ def test_default_loss_weights_use_one_to_ten_text_flow_ratio():
 
     assert config.text_loss_weight == 0.1
     assert config.flow_loss_weight == 1.0
-
-
-class _FakeAdapter:
-    def __init__(self):
-        self.received_tasks: list[str] = []
-        self.received_observations = None
-
-    def get_flow_prompt(self, task):
-        self.received_tasks.append(task)
-        return f"prefix<{task}>", "<|action|>"
-
-    def construct_model_input(self, observations, prefix_list, postfix_list):
-        self.received_observations = observations
-        assert len(prefix_list) == len(postfix_list) == len(observations)
-        return {"input_ids": torch.zeros((len(observations), 1), dtype=torch.long)}
 
 
 class _TinyAuthorModel(nn.Module):
@@ -120,6 +113,14 @@ class _CharTokenizer:
     pad_token_id = 0
     eos_token_id = 2
 
+    def __init__(self):
+        self.seen_texts: list[str] = []
+
+    @staticmethod
+    def convert_tokens_to_ids(token):
+        assert token == "<|action|>"
+        return 999
+
     def __call__(
         self,
         texts,
@@ -134,6 +135,7 @@ class _CharTokenizer:
         del return_tensors, padding, truncation
         assert padding_side == "left"
         texts = [texts] if isinstance(texts, str) else texts
+        self.seen_texts = list(texts)
         encoded = []
         offsets = []
         for text in texts:
@@ -168,6 +170,40 @@ class _FakeImageProcessor:
         }
 
 
+def _tokenizer_step(config: WallOSS05Config | None = None) -> WallOSS05TokenizerStep:
+    config = config or _config()
+    step = WallOSS05TokenizerStep(
+        processor_name="unused",
+        camera_key_mapping=config.camera_key_mapping,
+        chunk_size=config.chunk_size,
+        max_state_dim=config.max_state_dim,
+        tokenizer_max_length=config.tokenizer_max_length,
+    )
+    step._processor = SimpleNamespace(
+        tokenizer=_CharTokenizer(),
+        image_processor=_FakeImageProcessor(),
+    )
+    return step
+
+
+def _stub_tokenizer(preprocessor: PolicyProcessorPipeline) -> WallOSS05TokenizerStep:
+    step = next(step for step in preprocessor.steps if isinstance(step, WallOSS05TokenizerStep))
+    fake = _tokenizer_step()
+    step._processor = fake._processor
+    return step
+
+
+def _model_inputs(batch_size: int = 1) -> dict[str, torch.Tensor]:
+    return {
+        "input_ids": torch.zeros(batch_size, 3, dtype=torch.long),
+        "attention_mask": torch.ones(batch_size, 3, dtype=torch.long),
+        "pixel_values": torch.zeros(batch_size * 2, 3, 2, 2),
+        "image_grid_thw": torch.tensor([[1, 2, 2]] * (batch_size * 2)),
+        "moe_token_types": torch.zeros(batch_size, 3, dtype=torch.bool),
+        "dof_mask": torch.ones(batch_size, 32, 26, dtype=torch.bool),
+    }
+
+
 def _batch(batch_size=2):
     return {
         OBS_STATE: torch.arange(batch_size * 26, dtype=torch.float32).reshape(batch_size, 26),
@@ -188,6 +224,7 @@ def _stats(q01: float = 0.0, q99: float = 2.0) -> dict[str, dict[str, torch.Tens
 
 def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
     preprocessor, postprocessor = make_pre_post_processors(_config(), dataset_stats=_stats())
+    _stub_tokenizer(preprocessor)
     batch = _batch(batch_size=1)
     batch[OBS_STATE] = torch.tensor([[-1.0, 1.0, 3.0] + [1.0] * 23])
     batch[ACTION] = torch.full((1, 32, 26), 0.5)
@@ -204,6 +241,7 @@ def test_recipe_processor_renders_joint_text_and_action_supervision():
 
     config = _config(use_language_recipe=True)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
+    _stub_tokenizer(preprocessor)
     batch = _batch(batch_size=1)
     batch.update(
         {
@@ -237,33 +275,28 @@ def test_recipe_processor_renders_joint_text_and_action_supervision():
 def test_native_prompt_and_image_token_expansion_preserve_the_contract():
     pytest.importorskip("transformers")
 
-    policy = WallOSS05Policy(_config(), load_model=False)
-    prefix, postfix = policy._get_flow_prompt("pick the cup?!")
+    step = _tokenizer_step()
+    prefix, postfix = step._flow_prompt("pick the cup?!")
     assert "Instruction: pick the cup?!" in prefix
     assert "front view:" in prefix
     assert "right wrist view:" in prefix
     assert postfix.count("<|action|>") == 32
 
-    expanded = policy._expand_image_tokens(
-        [prefix],
-        torch.tensor([[1, 4, 4], [1, 8, 4]]),
-        merge_size=2,
-    )
-    assert expanded[0].count("<|image_pad|>") == 12
+    assert prefix.count("<|image_pad|>") == 2
 
 
 def test_native_text_prompts_cover_subtask_and_vqa_contracts():
     pytest.importorskip("transformers")
 
-    policy = WallOSS05Policy(_config(), load_model=False)
+    step = _tokenizer_step()
 
-    subtask, _, _ = policy._format_recipe_prompt(
+    subtask, _, _ = step._recipe_prompt(
         [{"role": "user", "content": "put the cup away\nPredict the next action in language.\n"}],
         [None],
         [],
         "",
     )
-    vqa, _, _ = policy._format_recipe_prompt(
+    vqa, _, _ = step._recipe_prompt(
         [{"role": "user", "content": "Where is the cup?"}],
         [None],
         [],
@@ -280,8 +313,8 @@ def test_native_text_prompts_cover_subtask_and_vqa_contracts():
 def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
     pytest.importorskip("transformers")
 
-    policy = WallOSS05Policy(_config(), load_model=False)
-    prefix, postfix, predict_actions = policy._format_recipe_prompt(
+    step = _tokenizer_step()
+    prefix, postfix, predict_actions = step._recipe_prompt(
         [
             {"role": "user", "content": "sort the blocks"},
             {"role": "assistant", "content": "pick up the red block"},
@@ -290,10 +323,10 @@ def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
         [1],
         "sort the blocks",
     )
-    clean_prompt, spans = policy._extract_text_target_spans(prefix + postfix)
+    clean_prompt, spans = step._target_spans(prefix + postfix)
 
     assert predict_actions
-    assert postfix.count("<|action|>") == policy.config.chunk_size
+    assert postfix.count("<|action|>") == step.chunk_size
     assert len(spans) == 1
     start, end = spans[0]
     assert clean_prompt[start:end] == "pick up the red block<|im_end|>"
@@ -303,32 +336,21 @@ def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
 def test_native_input_builder_creates_assistant_only_text_labels():
     pytest.importorskip("transformers")
 
-    policy = WallOSS05Policy(_config(tokenizer_max_length=2000), load_model=False)
-    policy.processor = SimpleNamespace(
-        tokenizer=_CharTokenizer(),
-        image_processor=_FakeImageProcessor(),
+    step = _tokenizer_step(_config(tokenizer_max_length=2000))
+    batch = _batch(batch_size=1)
+    batch.update(
+        {
+            "messages": [
+                [
+                    {"role": "user", "content": "Where is the cup?"},
+                    {"role": "assistant", "content": "on the left"},
+                ]
+            ],
+            "message_streams": [["high_level", "high_level"]],
+            "target_message_indices": [[1]],
+        }
     )
-    policy.model = nn.Module()
-    policy.model.anchor = nn.Parameter(torch.ones(1))
-    policy.model.action_token_id = 999
-    observation = {
-        "proprioception": np.zeros((1, 1, 26), dtype=np.float32),
-        "agent_pos_mask": np.ones((1, 1, 26), dtype=bool),
-        "dof_mask": np.ones((1, 32, 26), dtype=bool),
-        "face_view": np.zeros((16, 16, 3), dtype=np.uint8),
-        "right_wrist_view": np.zeros((16, 16, 3), dtype=np.uint8),
-    }
-    prefix, postfix, _ = policy._format_recipe_prompt(
-        [
-            {"role": "user", "content": "Where is the cup?"},
-            {"role": "assistant", "content": "on the left"},
-        ],
-        ["high_level", "high_level"],
-        [1],
-        "find the cup",
-    )
-
-    inputs = policy._construct_model_input([observation], [prefix], [postfix])
+    inputs = transition_to_batch(step(batch_to_transition(batch)))
     labels = inputs["text_labels"][0]
     supervised_ids = labels[labels != -100]
     expected = torch.tensor(
@@ -387,14 +409,8 @@ def test_policy_text_generation_decodes_native_model_tokens():
     policy = WallOSS05Policy(_config(), load_model=False)
     policy.processor = SimpleNamespace(tokenizer=Tokenizer())
     policy.model = TextModel()
-    policy._build_text_model_inputs = lambda *args, **kwargs: {
-        "input_ids": torch.tensor([[1]]),
-        "attention_mask": torch.tensor([[1]]),
-    }
 
-    output = policy.generate_text(
-        {"task": ["locate cup"], "messages": [[{"role": "user", "content": "Where is it?"}]]}
-    )
+    output = policy.generate_text(_model_inputs())
 
     assert output == "the cup is left"
     assert policy.model.kwargs["max_new_tokens"] == 100
@@ -481,16 +497,13 @@ def test_task_passthrough_does_not_rewrite():
 
 
 def test_exact_selected_task_reaches_policy_formatter_unchanged():
-    policy = WallOSS05Policy(_config(), load_model=False)
-    adapter = _FakeAdapter()
-    policy.processor = object()
-    policy.model = _TinyAuthorModel()
-    policy._get_flow_prompt = adapter.get_flow_prompt
-    policy._construct_model_input = adapter.construct_model_input
     tasks = ["pick the cup?!", "leave punctuation unchanged..."]
-    preprocessor, _ = make_pre_post_processors(policy.config, dataset_stats=_stats(0, 52))
-    policy._build_model_inputs(preprocessor(_batch()))
-    assert adapter.received_tasks == tasks
+    preprocessor, _ = make_pre_post_processors(_config(), dataset_stats=_stats(0, 52))
+    step = _stub_tokenizer(preprocessor)
+
+    preprocessor(_batch())
+
+    assert all(task in text for task, text in zip(tasks, step._processor.tokenizer.seen_texts, strict=True))
 
 
 def test_pre_and_postprocessors_are_serializable(tmp_path):
@@ -529,6 +542,7 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
             }
         },
     )
+    _stub_tokenizer(loaded_preprocessor)
     batch = _batch(batch_size=1)
     batch[OBS_STATE] = torch.full((1, 26), 15.0)
     batch[ACTION] = torch.full((1, 32, 26), 15.0)
@@ -549,6 +563,7 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
         config,
         pretrained_path=str(fine_tuned_checkpoint),
     )
+    _stub_tokenizer(reloaded_preprocessor)
     torch.testing.assert_close(
         reloaded_preprocessor(batch)[OBS_STATE],
         torch.zeros_like(processed[OBS_STATE]),
@@ -562,13 +577,11 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
 def test_forward_backward_update_is_finite_and_tiny_batch_overfits():
     config = _config()
     policy = WallOSS05Policy(config, load_model=False)
-    adapter = _FakeAdapter()
     policy.processor = object()
     policy.model = _TinyAuthorModel()
-    policy._get_flow_prompt = adapter.get_flow_prompt
-    policy._construct_model_input = adapter.construct_model_input
     optimizer = torch.optim.SGD(policy.parameters(), lr=0.2)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats(0, 52))
+    _stub_tokenizer(preprocessor)
     batch = preprocessor(_batch())
 
     initial_loss = None
@@ -599,20 +612,11 @@ def test_recipe_training_routes_text_and_optional_action_losses(predict_actions,
     policy = WallOSS05Policy(config, load_model=False)
     policy.processor = object()
     policy.model = _TinyJointAuthorModel()
-    action_mask = torch.ones(1, 32, 26, dtype=torch.bool)
-    policy._build_recipe_model_inputs = lambda batch: (
-        {
-            "input_ids": torch.zeros(1, 4, dtype=torch.long),
-            "attention_mask": torch.ones(1, 4, dtype=torch.long),
-            "text_labels": torch.tensor([[-100, 1, 2, -100]]),
-        },
-        torch.ones(1, 26, dtype=torch.bool),
-        action_mask,
-        ["sort blocks"],
-        torch.tensor([predict_actions]),
-    )
     batch = _batch(batch_size=1)
     batch["messages"] = [[{"role": "assistant", "content": "pick red"}]]
+    batch.update(_model_inputs())
+    batch["text_labels"] = torch.tensor([[-100, 1, 2]])
+    batch[WALL_OSS_PREDICT_ACTIONS] = torch.tensor([predict_actions])
 
     loss, metrics = policy(batch)
     loss.backward()
