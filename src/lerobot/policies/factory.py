@@ -46,6 +46,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .evo1.configuration_evo1 import Evo1Config
 from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
@@ -217,7 +218,15 @@ def make_pre_post_processors(
             revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-        return _reconcile_pretrained_processors(policy_cfg, preprocessor, postprocessor)
+        if isinstance(policy_cfg, Evo1Config):
+            from .evo1.processor_evo1 import reconcile_evo1_processors
+
+            preprocessor, postprocessor = reconcile_evo1_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
+        return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
     # function by naming convention (lazy import keeps optional dependencies optional).
@@ -482,23 +491,3 @@ def _make_processors_from_policy_config(
     if "dataset_meta" in inspect.signature(function).parameters:
         call_kwargs["dataset_meta"] = dataset_meta
     return function(config, **call_kwargs)
-
-
-def _reconcile_pretrained_processors(
-    config: PreTrainedConfig,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Let a policy migrate checkpoint-loaded processors by naming convention.
-
-    Serialized pipelines cannot capture every policy-local compatibility rule. A
-    policy may expose ``reconcile_{type}_processors`` from its ``processor_*``
-    module to update an older pipeline after generic deserialization. Policies
-    without such a hook receive the pipelines unchanged.
-    """
-    module_path = config.__class__.__module__.replace("configuration_", "processor_")
-    module = importlib.import_module(module_path)
-    function = getattr(module, f"reconcile_{config.type}_processors", None)
-    if function is None:
-        return preprocessor, postprocessor
-    return function(config, preprocessor, postprocessor)
