@@ -273,7 +273,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def supports_text_generation(self) -> bool:
         """Whether this policy has a usable text head."""
-        return type(self)._generate_preprocessed_text is not PreTrainedPolicy._generate_preprocessed_text
+        return False
 
     def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode text from a batch prepared by the normal policy input pipeline.
@@ -284,18 +284,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         policy-specific processor steps then apply native chat formatting,
         multimodal markers, and tokenization. This method only runs the text head.
         """
-        if not self.supports_text_generation():
-            raise NotImplementedError(
-                f"{type(self).__name__} has no text head. Implement "
-                "`_generate_preprocessed_text` to query it."
-            )
-
-        return self._generate_preprocessed_text(batch)
-
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
-        """Decode one text response from policy-native, model-ready inputs."""
         raise NotImplementedError(
-            f"{type(self).__name__} has no text head. Implement `_generate_preprocessed_text` to query it."
+            f"{type(self).__name__} has no text head. Override `supports_text_generation` "
+            "and `generate_text` to query it."
         )
 
     def push_model_to_hub(

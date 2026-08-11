@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
 
 from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
@@ -177,10 +178,14 @@ def make_pre_post_processors(
     Raises:
         ValueError: If no processor factory exists for the given policy configuration type.
     """
+    recipe_training_enabled = language_recipe_enabled(
+        use_language_recipe=getattr(policy_cfg, "use_language_recipe", False),
+        recipe_path=getattr(policy_cfg, "recipe_path", None),
+    )
     if (
         pretrained_path
         and kwargs.get("dataset_stats") is not None
-        and getattr(policy_cfg, "rebuild_pretrained_processors", False)
+        and (getattr(policy_cfg, "rebuild_pretrained_processors", False) or recipe_training_enabled)
     ):
         logging.info(
             "Building processor pipelines from the active policy config instead of loading them from %s.",
@@ -193,7 +198,7 @@ def make_pre_post_processors(
         )
 
     if pretrained_path:
-        if policy_cfg.type == "being_h05" and getattr(policy_cfg, "recipe_path", None):
+        if recipe_training_enabled:
             from lerobot.processor import (
                 render_messages_processor as _render_messages_processor,  # noqa: F401
             )
