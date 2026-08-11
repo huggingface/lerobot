@@ -12,6 +12,14 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.policies.language import (
+    join_semantic_message_text,
+    last_semantic_message_text,
+    normalize_semantic_messages,
+    require_single_semantic_conversation,
+    require_single_text_output,
+    semantic_message_content_text,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor.batch_processor import AddBatchDimensionProcessorStep
 from lerobot.processor.pipeline import PolicyProcessorPipeline, ProcessorStep
@@ -64,7 +72,10 @@ class ContractPolicy(PreTrainedPolicy):
 
 
 class TextHeadPolicy(ContractPolicy):
-    def _generate_preprocessed_text(self, batch) -> str:
+    def supports_text_generation(self) -> bool:
+        return True
+
+    def generate_text(self, batch) -> str:
         self.last_model_inputs = batch
         return batch["native_prompt"]
 
@@ -220,9 +231,10 @@ def test_config_save_load_restores_recipe_used_by_input_pipeline(tmp_path: Path)
     assert "Goal: Fold the towel" in TextHeadPolicy(loaded).generate_text(batch)
 
 
-def test_supports_text_generation_detects_the_protected_decoder_hook():
+def test_text_capable_policy_overrides_support_and_public_generation_method():
     assert not ContractPolicy(ContractConfig()).supports_text_generation()
     assert TextHeadPolicy(ContractConfig()).supports_text_generation()
+    assert TextHeadPolicy.generate_text is not PreTrainedPolicy.generate_text
 
 
 def test_policy_without_text_head_raises_clear_error():
@@ -230,3 +242,26 @@ def test_policy_without_text_head_raises_clear_error():
 
     with pytest.raises(NotImplementedError, match="has no text head"):
         policy.generate_text({})
+
+
+def test_semantic_message_utilities_normalize_extract_and_validate():
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "feature": "observation.images.front"},
+                {"type": "text", "text": "What is visible?"},
+            ],
+        },
+        {"role": "assistant", "content": "A blue cube."},
+    ]
+
+    assert normalize_semantic_messages(conversation, policy_name="Test") == [conversation]
+    assert require_single_semantic_conversation([conversation], policy_name="Test") == conversation
+    assert semantic_message_content_text(conversation[0]["content"]) == "What is visible?"
+    assert join_semantic_message_text(conversation) == "What is visible?\nA blue cube."
+    assert last_semantic_message_text(conversation, role="user") == "What is visible?"
+    assert require_single_text_output([" answer "], policy_name="Test") == "answer"
+
+    with pytest.raises(ValueError, match="expected one Test prompt"):
+        require_single_semantic_conversation([conversation, conversation], policy_name="Test")
