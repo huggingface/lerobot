@@ -173,8 +173,15 @@ class RolloutStrategy(abc.ABC):
             teleop.disconnect()
 
     @staticmethod
-    def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
-        """Smoothly interpolate the robot back to its initial position."""
+    def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
+        """Smoothly interpolate the robot back to its initial position.
+
+        Returns ``True`` when the interpolation completed, ``False`` when it
+        failed partway — the robot may then be anywhere between its previous
+        pose and the target, so callers with a positioning guarantee to
+        uphold (the controller's ``RESET_DONE`` event) must not report
+        success on ``False``.
+        """
         robot = hw.robot_wrapper
         target = hw.initial_position
         try:
@@ -190,6 +197,8 @@ class RolloutStrategy(abc.ABC):
                 precise_sleep(1 / fps)
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
+            return False
+        return True
 
     @staticmethod
     def _log_telemetry(

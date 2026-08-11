@@ -228,8 +228,15 @@ class InteractiveSession:
             self._print("Robot reset — holding at initial position. /start to run.")
         elif event is RolloutEvent.RESET_SKIPPED:
             self._print("Robot paused — no initial position captured, holding current pose. /start to run.")
+        elif event is RolloutEvent.RESET_FAILED:
+            self._print(
+                "Reset FAILED — the return move errored, so the robot may NOT be at its "
+                "initial position. Check the robot before /start."
+            )
         elif event is RolloutEvent.ENGINE_FAILED:
-            self._report_engine_failure()
+            self._report_failure("Inference engine failed — shutting down.")
+        elif event is RolloutEvent.STRATEGY_FAILED:
+            self._report_failure("Rollout strategy failed (robot or recording error) — shutting down.")
 
     def _report_answer(self, answer: QueryAnswer) -> None:
         """Render a resolved text query (an operator question or an autosteer turn)."""
@@ -247,9 +254,9 @@ class InteractiveSession:
         else:
             self._print(f"Could not answer {answer.question!r} — {answer.error}")
 
-    def _report_engine_failure(self) -> None:
-        """Surface a fatal engine error despite the muted console logging."""
-        self._print("Inference engine failed — shutting down.")
+    def _report_failure(self, headline: str) -> None:
+        """Surface a fatal engine/strategy error despite the muted console logging."""
+        self._print(headline)
         failure_traceback = self.controller.failure_traceback
         if failure_traceback:
             self._print(failure_traceback)

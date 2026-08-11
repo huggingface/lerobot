@@ -266,6 +266,20 @@ def test_controller_requires_linked_event():
         RolloutController(MagicMock(), ctx)
 
 
+def test_controller_rejects_one_shot_strategies():
+    """The library path enforces the same restartable-run() contract as the CLI.
+
+    Wrapping a one-shot strategy would finalize the dataset on the first
+    segment and record into it again on the second.
+    """
+    from lerobot.rollout import EpisodicStrategyConfig
+
+    ctx, strategy, _engine, _parent, _run_started = _make_ctx()
+    strategy.config = EpisodicStrategyConfig()
+    with pytest.raises(ValueError, match="supports_interactive"):
+        RolloutController(strategy, ctx)
+
+
 def test_controller_start_reset_stop_flow_and_events():
     controller, events, strategy, engine, _parent, run_started = _make_controller()
     thread = _serve_thread(controller)
@@ -373,6 +387,95 @@ def test_controller_set_task_and_reset_restores_launch_task():
 
     controller.stop()
     thread.join(timeout=2.0)
+
+
+def test_controller_is_one_shot_and_refuses_commands_after_stop():
+    """Commands after serve() has returned must be refused, not acknowledged."""
+    controller, _events, strategy, engine, _parent, _run_started = _make_controller()
+    thread = _serve_thread(controller)
+    controller.stop()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert controller.stopped
+
+    initial = engine.task
+    assert controller.start() is False
+    assert controller.reset() is False
+    assert controller.set_task("fold the towel") is False
+    assert engine.task == initial  # the refused set_task touched nothing
+    assert controller.ask("what do you see?") is AskResult.NOT_RUNNING
+    time.sleep(0.05)
+    strategy.run.assert_not_called()
+
+    with pytest.raises(RuntimeError, match="one-shot"):
+        controller.serve()
+
+
+def test_controller_strategy_failure_reaches_the_failure_surface():
+    """A strategy.run() exception must not masquerade as a deliberate stop.
+
+    Robot I/O and recording failures used to unwind through serve() with a
+    clean STOPPED event, controller.failed False, and the traceback lost to
+    the thread excepthook.
+    """
+
+    def exploding_run(c):
+        raise RuntimeError("robot io broke")
+
+    controller, events, _strategy, _engine, _parent, _run_started = _make_controller(exploding_run)
+    thread = _serve_thread(controller)
+    controller.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()  # serve() ended cleanly instead of dying with the exception
+
+    assert RolloutEvent.STRATEGY_FAILED in events
+    assert RolloutEvent.SEGMENT_ENDED not in events
+    assert events[-1] is RolloutEvent.STOPPED
+    assert controller.failed
+    assert "robot io broke" in controller.failure_traceback
+
+
+def test_controller_failed_return_move_emits_reset_failed():
+    """RESET_DONE promises the robot is home; a failed move must not claim it."""
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller()
+    strategy.return_to_initial_position.return_value = False  # the move errored partway
+    thread = _serve_thread(controller)
+
+    controller.reset()
+    assert _wait_for(lambda: RolloutEvent.RESET_FAILED in events)
+    assert RolloutEvent.RESET_DONE not in events
+
+    controller.stop()
+    thread.join(timeout=2.0)
+
+
+def test_segment_startup_aborts_when_engine_failed_in_the_guard_window():
+    """A fatal failure landing between serve()'s failed-check and segment
+    startup must not start a segment against a dead engine.
+
+    The engine signals failure by setting the shutdown event — in
+    interactive mode the LinkedEvent's *local* flag, exactly the flag
+    segment startup clears — so the startup guard must re-check
+    engine.failed itself.
+    """
+    controller, _events, strategy, engine, _parent, _run_started = _make_controller()
+    engine.failed = True
+    controller._running.set()  # as serve() does under the control lock
+    controller._run_segment()
+    strategy.run.assert_not_called()
+    assert not controller.running
+
+
+def test_return_to_initial_position_reports_completion():
+    """The now-public primitive tells its caller whether the move finished."""
+    from lerobot.rollout.strategies import RolloutStrategy
+
+    hw = SimpleNamespace(robot_wrapper=MagicMock(), initial_position={"joint.pos": 1.0})
+    hw.robot_wrapper.get_observation.return_value = {"joint.pos": 0.0}
+    assert RolloutStrategy.return_to_initial_position(hw, duration_s=0.02, fps=50) is True
+
+    hw.robot_wrapper.get_observation.side_effect = OSError("serial port died")
+    assert RolloutStrategy.return_to_initial_position(hw, duration_s=0.02, fps=50) is False
 
 
 def test_controller_engine_failure_emits_event():
