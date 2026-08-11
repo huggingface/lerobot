@@ -77,7 +77,12 @@ class StdinCommandListener:
                 pass
 
     def start(self) -> None:
-        """Start the reader thread (idempotent)."""
+        """Start the reader thread (idempotent).
+
+        Callbacks fire on the reader thread — except when the stream is
+        missing (``sys.stdin`` is ``None``), in which case ``on_eof`` fires
+        synchronously on the caller's thread before ``start()`` returns.
+        """
         if self._thread is not None:
             return
         if self._stream is None:

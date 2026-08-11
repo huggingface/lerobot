@@ -48,7 +48,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action, warn_loop_overrun
 
 logger = logging.getLogger(__name__)
 
@@ -246,12 +246,7 @@ class EpisodicStrategy(RolloutStrategy):
             dt = time.perf_counter() - loop_start
             sleep_t = control_interval - dt
             if sleep_t < 0:
-                logger.warning(
-                    f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({fps} Hz). "
-                    "Dataset frames might be dropped and robot control might be unstable. "
-                    "Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long "
-                    "3) CPU starvation"
-                )
+                warn_loop_overrun(dt, fps)
             precise_sleep(max(sleep_t, 0.0))
             timestamp = time.perf_counter() - start_t
 

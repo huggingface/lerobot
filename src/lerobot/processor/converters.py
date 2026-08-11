@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
-from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, REWARD, TRUNCATED
+from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, QUERY_TEXT, REWARD, TRUNCATED
 
 
 @singledispatch
@@ -164,8 +164,13 @@ _COMPLEMENTARY_KEYS = (
     "messages",
     "message_streams",
     "target_message_indices",
-    "text",
+    # Stamped onto the inference batch by the rollout engines' _mark_query()
+    # (lerobot.rollout.inference.base) right before the preprocessor runs.
+    # Allowlisted so batch_to_transition carries them into complementary_data,
+    # where a prompt-formatting processor step can read the kind and rewrite
+    # QUERY_TEXT; dropping them breaks rollout text queries (/vqa, /autosteer).
     QUERY_KIND,
+    QUERY_TEXT,
 )
 
 
