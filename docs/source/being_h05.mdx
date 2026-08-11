@@ -228,7 +228,7 @@ using a custom evaluation loop.
 
 ### Text and VQA
 
-The base `PreTrainedPolicy.generate_text` entry point uses the same InternVL vision tower, Qwen3
+Being-H0.5's `generate_text` implementation uses the same InternVL vision tower, Qwen3
 understanding stream, and language-model head stored in the checkpoint. It
 receives a batch prepared by the normal input pipeline. The runtime puts
 `query_kind` (`vqa` or `next_subtask`) and caller-owned `text` into complementary
@@ -242,8 +242,8 @@ answer = policy.generate_text(processed_request)
 
 The shared first processor step turns those two fields into semantic messages.
 Being-H0.5's policy-specific steps then insert camera embeddings, native roles,
-and tokenizer control tokens. The policy implements only
-`_generate_preprocessed_text`; it does not override the public API. Sampling
+and tokenizer control tokens. The policy overrides `supports_text_generation`
+and `generate_text` directly. Sampling
 settings live in the saved policy config. The released RoboCasa action-only
 fine-tune still raises a clear error because it does not retain a usable text
 head; use the base checkpoint for VQA.

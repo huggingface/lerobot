@@ -33,6 +33,11 @@ from torch.nn.attention.flex_attention import (
     or_masks,
 )
 
+from lerobot.policies.language import (
+    normalize_semantic_messages,
+    require_single_text_output,
+    semantic_message_content_text,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -69,20 +74,6 @@ else:
     TopPLogitsWarper = None
     apply_rotary_pos_emb = None
     create_causal_mask = None
-
-
-def _generation_message_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            str(block["text"])
-            for block in content
-            if isinstance(block, Mapping) and block.get("type") == "text" and "text" in block
-        )
-    if content is None:
-        return ""
-    return str(content)
 
 
 _compiled_flex_attention = torch.compile(flex_attention)
@@ -1030,7 +1021,7 @@ class BeingH05Policy(PreTrainedPolicy):
             role = str(message.get("role"))
             if role not in {"system", "user", "assistant"}:
                 raise ValueError(f"Being-H0.5 does not support the message role {role!r}.")
-            content = _generation_message_text(message.get("content"))
+            content = semantic_message_content_text(message.get("content"))
             parts.append(
                 embed_tokens(
                     torch.tensor(
@@ -1081,8 +1072,11 @@ class BeingH05Policy(PreTrainedPolicy):
             logits = TopPLogitsWarper(top_p)(generated_ids, logits)
         return torch.multinomial(logits.softmax(dim=-1), num_samples=1).squeeze(-1)
 
+    def supports_text_generation(self) -> bool:
+        return True
+
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from observations and semantic recipe messages."""
         if "robocasa" in str(getattr(self.config, "author_model_id", "") or "").lower():
             raise RuntimeError(
@@ -1090,13 +1084,11 @@ class BeingH05Policy(PreTrainedPolicy):
                 "generation; use lerobot/being_h05_base for VQA."
             )
         messages = batch.get("being_h05_messages", batch.get("messages"))
-        if not isinstance(messages, list) or not messages:
-            raise ValueError("Being-H0.5 text generation requires preprocessed `messages`.")
-        conversations = [messages] if isinstance(messages[0], Mapping) else messages
-        if len(conversations) != 1:
-            raise ValueError(
-                f"The interactive runtime expected one Being-H0.5 prompt, got {len(conversations)}."
-            )
+        conversations = normalize_semantic_messages(
+            messages,
+            policy_name="Being-H0.5",
+            batch_size=1,
+        )
         generated = self._generate_texts(
             batch,
             conversations,
@@ -1104,7 +1096,7 @@ class BeingH05Policy(PreTrainedPolicy):
             temperature=self.config.text_temperature,
             top_p=self.config.text_top_p,
         )
-        return generated[0].strip() if generated else ""
+        return require_single_text_output(generated, policy_name="Being-H0.5")
 
     def _generate_texts(
         self,

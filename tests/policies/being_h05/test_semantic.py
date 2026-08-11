@@ -177,7 +177,8 @@ def test_config_and_factories_are_wired_without_importing_author_dependencies():
     assert postprocessor.steps[0].get_config() == {}
     assert isinstance(postprocessor.steps[1], UnnormalizerProcessorStep)
     policy_class = get_policy_class("being_h05")
-    assert policy_class.generate_text is PreTrainedPolicy.generate_text
+    assert policy_class.generate_text is not PreTrainedPolicy.generate_text
+    assert policy_class.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert not hasattr(policy_class, "generate_texts")
 
 

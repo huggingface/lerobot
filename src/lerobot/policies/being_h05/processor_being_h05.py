@@ -25,7 +25,9 @@ from PIL import Image
 from torchvision.transforms import InterpolationMode, functional as tvf
 
 from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.policies.language import normalize_semantic_messages, semantic_message_content_text
 from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
@@ -79,23 +81,11 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-def _message_content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return "" if content is None else str(content)
-    return "\n".join(
-        block["text"]
-        for block in content
-        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
-    )
-
-
 def _serialize_message(message: dict[str, Any]) -> dict[str, str]:
     role = message.get("role")
     if role not in {"system", "user", "assistant"}:
         raise ValueError(f"Being-H0.5 does not support the message role {role!r}.")
-    content = _message_content_to_text(message.get("content"))
+    content = semantic_message_content_text(message.get("content"))
     say_texts = []
     for call in message.get("tool_calls") or []:
         function = call.get("function") if isinstance(call, dict) else None
@@ -129,8 +119,7 @@ class BeingH05MessagesStep(ProcessorStep):
         if not messages:
             return transition
         is_batched = not isinstance(messages[0], dict)
-        if not is_batched:
-            messages = [messages]
+        messages = normalize_semantic_messages(messages, policy_name="Being-H0.5")
         streams = complementary.get("message_streams")
         targets = complementary.get("target_message_indices")
         if streams is None:
@@ -375,7 +364,10 @@ def make_being_h05_pre_post_processors(
     input_steps.append(steps.normalize)
     if normalize_actions:
         input_steps.append(BeingH05BinaryActionStep(restore=True))
-    if config.use_language_recipe or config.recipe_path:
+    if language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    ):
         input_steps.append(RenderMessagesStep(recipe=config.recipe))
     input_steps.extend([semantic_step, BeingH05MessagesStep(), steps.to_device])
     output_steps = [BeingH05SemanticUnpackStep()]

@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from lerobot.configs import (
     FeatureType,
@@ -23,7 +22,12 @@ from lerobot.configs import (
     PolicyFeature,
     PreTrainedConfig,
 )
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import (
+    MessageTurn,
+    TrainingRecipe,
+    language_recipe_enabled,
+    resolve_recipe_override,
+)
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION
 
@@ -52,11 +56,6 @@ def _being_h05_default_recipe() -> TrainingRecipe:
             ),
         ]
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load an explicit external recipe override."""
-    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("being_h05")
@@ -111,14 +110,7 @@ class BeingH05Config(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.recipe_path is not None:
-            try:
-                self.recipe = _load_recipe(self.recipe_path)
-            except FileNotFoundError:
-                if self.recipe is None:
-                    raise
-                # A reloaded checkpoint already carries its recipe inline; a stale
-                # path only matters on the training machine that set it.
+        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
         if self.unified_state_dim != 200 or self.unified_action_dim != 200:
             raise ValueError("Being-H0.5 checkpoints require the semantic 200D state/action spaces.")
         if self.chunk_size < self.n_action_steps:
@@ -162,14 +154,12 @@ class BeingH05Config(PreTrainedConfig):
 
     @property
     def rebuild_pretrained_processors(self) -> bool:
-        return (
-            self.use_language_recipe
-            or self.recipe_path is not None
-            or any(
-                self.normalization_mapping.get(feature, NormalizationMode.IDENTITY)
-                != NormalizationMode.IDENTITY
-                for feature in ("STATE", "ACTION")
-            )
+        return language_recipe_enabled(
+            use_language_recipe=self.use_language_recipe,
+            recipe_path=self.recipe_path,
+        ) or any(
+            self.normalization_mapping.get(feature, NormalizationMode.IDENTITY) != NormalizationMode.IDENTITY
+            for feature in ("STATE", "ACTION")
         )
 
     @property
