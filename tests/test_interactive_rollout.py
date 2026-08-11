@@ -22,17 +22,19 @@ import io
 import logging
 import os
 import time
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import numpy as np
 import pytest
+import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.rollout import (  # noqa: E402
     AskResult,
+    BaseStrategyConfig,
     InferenceEngine,
     InteractiveSession,
     LinkedEvent,
@@ -40,6 +42,7 @@ from lerobot.rollout import (  # noqa: E402
     QueryKind,
     RolloutController,
     RolloutEvent,
+    RolloutStrategy,
 )
 
 # Front-end and engine internals, deliberately not part of the package's
@@ -70,6 +73,19 @@ def _pipe_stream():
             writer.close()
         with contextlib.suppress(OSError, ValueError):
             reader.close()
+
+
+def _join_session(thread: Thread) -> None:
+    """Join a session/serve/strategy thread and assert it actually exited.
+
+    Session threads mute logging process-wide for their lifetime: a hung
+    thread surviving a bare join(timeout=...) would silently keep
+    ``logging.disable(INFO)`` active for the rest of the pytest process,
+    blanking every later caplog/INFO assertion with no visible connection
+    to the culprit.
+    """
+    thread.join(timeout=2.0)
+    assert not thread.is_alive(), "thread did not exit — a hung session leaks process-wide log muting"
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +237,12 @@ def _make_ctx(run_behavior=None):
         hardware=SimpleNamespace(initial_position={"joint.pos": 0.0}),
     )
 
-    strategy = MagicMock()
+    # Autospec so a signature drift on the strategy interface (e.g. a new
+    # required parameter on return_to_initial_position) fails here instead
+    # of on real hardware during /reset.
+    strategy = create_autospec(RolloutStrategy, instance=True)
+    # A real config: the controller enforces supports_interactive on it.
+    strategy.config = BaseStrategyConfig()
     run_started = Event()
 
     def default_run(c):
@@ -314,7 +335,7 @@ def test_controller_start_reset_stop_flow_and_events():
 
     # stop() ends serve(); teardown stays with the caller.
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
     strategy.teardown.assert_not_called()
     assert events[-1] is RolloutEvent.STOPPED
@@ -353,7 +374,7 @@ def test_controller_start_rejected_during_segment_startup():
     assert strategy.run.call_count == 1
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_start_returns_false_while_running():
@@ -367,7 +388,7 @@ def test_controller_start_returns_false_while_running():
     assert strategy.run.call_count == 1
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_set_task_and_reset_restores_launch_task():
@@ -388,7 +409,7 @@ def test_controller_set_task_and_reset_restores_launch_task():
     assert controller.task == initial
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_is_one_shot_and_refuses_commands_after_stop():
@@ -396,7 +417,7 @@ def test_controller_is_one_shot_and_refuses_commands_after_stop():
     controller, _events, strategy, engine, _parent, _run_started = _make_controller()
     thread = _serve_thread(controller)
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
     assert controller.stopped
 
@@ -427,7 +448,7 @@ def test_controller_strategy_failure_reaches_the_failure_surface():
     controller, events, _strategy, _engine, _parent, _run_started = _make_controller(exploding_run)
     thread = _serve_thread(controller)
     controller.start()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()  # serve() ended cleanly instead of dying with the exception
 
     assert RolloutEvent.STRATEGY_FAILED in events
@@ -448,7 +469,7 @@ def test_controller_failed_return_move_emits_reset_failed():
     assert RolloutEvent.RESET_DONE not in events
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_segment_startup_aborts_when_engine_failed_in_the_guard_window():
@@ -489,7 +510,7 @@ def test_controller_engine_failure_emits_event():
     controller, events, strategy, _engine, _parent, _run_started = _make_controller(failing_run)
     thread = _serve_thread(controller)
     controller.start()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
     strategy.return_to_initial_position.assert_not_called()
     assert RolloutEvent.ENGINE_FAILED in events
@@ -510,7 +531,7 @@ def test_controller_segment_ended_event_on_natural_end():
     assert not controller.running
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_reset_skipped_without_initial_position():
@@ -525,7 +546,7 @@ def test_controller_reset_skipped_without_initial_position():
     strategy.return_to_initial_position.assert_not_called()
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_callback_errors_do_not_kill_serve():
@@ -540,7 +561,7 @@ def test_controller_callback_errors_do_not_kill_serve():
     controller.start()
     assert _wait_for(run_started.is_set)
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
 
 
@@ -550,7 +571,7 @@ def test_controller_works_without_event_callback():
     thread = _serve_thread(controller)
     controller.start()
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
 
 
@@ -606,7 +627,7 @@ def test_session_start_reset_restart_stop_flow():
 
         # /stop ends the session; teardown stays with the caller (the CLI script).
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         strategy.teardown.assert_not_called()
 
@@ -616,7 +637,7 @@ def test_session_stop_while_idle():
         session, strategy, _engine, _parent, _run_started = _make_session(reader)
         thread = _start_session_thread(session)
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         strategy.run.assert_not_called()
 
@@ -629,7 +650,7 @@ def test_session_reset_while_idle_returns_to_initial_position():
         assert _wait_for(lambda: strategy.return_to_initial_position.call_count == 1)
         assert thread.is_alive()
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_start_while_running_is_rejected():
@@ -644,7 +665,7 @@ def test_session_start_while_running_is_rejected():
         assert strategy.run.call_count == 1
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_reset_cancels_pending_start():
@@ -661,7 +682,7 @@ def test_session_reset_cancels_pending_start():
         strategy.run.assert_not_called()
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_stop_cancels_pending_start():
@@ -670,7 +691,7 @@ def test_session_stop_cancels_pending_start():
         session._handle_line("/start")
         session._handle_line("/stop")
         thread = _start_session_thread(session)
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         strategy.run.assert_not_called()
 
@@ -683,7 +704,7 @@ def test_session_exits_on_parent_shutdown():
         assert _wait_for(run_started.is_set)
 
         parent.set()  # SIGINT/SIGTERM path
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
 
 
@@ -699,7 +720,7 @@ def test_session_stops_on_engine_failure(capsys):
         session, strategy, _engine, _parent, _run_started = _make_session(reader, run_behavior=failing_run)
         thread = _start_session_thread(session)
         session._handle_line("/start")
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         # A failed engine ends the session instead of returning to idle, and
         # the captured traceback is surfaced despite the muted console logs.
@@ -714,7 +735,7 @@ def test_session_stops_on_engine_failure_while_idle():
         thread = _start_session_thread(session)
         time.sleep(0.05)
         engine.failed = True
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         strategy.run.assert_not_called()
 
@@ -737,7 +758,7 @@ def test_session_returns_to_idle_when_run_ends_naturally():
         assert _wait_for(lambda: strategy.run.call_count == 2)
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_unknown_input_does_not_start(capsys):
@@ -756,7 +777,7 @@ def test_session_unknown_input_does_not_start(capsys):
         assert "commands start with '/'" in out
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_eof_stops_session():
@@ -764,7 +785,7 @@ def test_session_eof_stops_session():
         session, strategy, _engine, _parent, _run_started = _make_session(reader)
         thread = _start_session_thread(session)
         writer.close()  # EOF on the command stream
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         strategy.run.assert_not_called()
 
@@ -781,7 +802,7 @@ def test_session_commands_via_stream():
 
         writer.write("/stop\n")
         writer.flush()
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
         assert strategy.run.call_count == 1
 
@@ -810,7 +831,7 @@ def test_session_mutes_logs_below_warning_and_restores_on_exit():
             lib_logger.error("visible-error")  # errors must surface mid-session
 
             session._handle_line("/stop")
-            thread.join(timeout=2.0)
+            _join_session(thread)
 
         output = lib_stream.getvalue()
         assert "muted-info" not in output
@@ -824,6 +845,9 @@ def test_session_mutes_logs_below_warning_and_restores_on_exit():
         assert "post-session-info" in lib_stream.getvalue()
     finally:
         lib_logger.removeHandler(lib_handler)
+        # An assertion failure mid-test must not leak the process-wide gate
+        # into the rest of the suite.
+        logging.disable(logging.NOTSET)
 
 
 def test_session_restores_preexisting_disable_level():
@@ -835,7 +859,7 @@ def test_session_restores_preexisting_disable_level():
             thread = _start_session_thread(session)
             assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
             session._handle_line("/stop")
-            thread.join(timeout=2.0)
+            _join_session(thread)
         assert logging.root.manager.disable == logging.DEBUG
     finally:
         logging.disable(logging.NOTSET)
@@ -900,7 +924,7 @@ def test_session_drives_real_base_strategy():
         assert _wait_for(lambda: engine.resume.call_count >= 2)
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
 
 
@@ -923,7 +947,7 @@ def test_session_subtask_sets_and_reports_task(capsys):
         assert "Task unchanged: 'grab the red cube'" in out
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_subtask_strips_quotes_and_works_while_running():
@@ -941,7 +965,7 @@ def test_session_subtask_strips_quotes_and_works_while_running():
         assert session.controller.running
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_subtask_after_reset_is_not_clobbered():
@@ -963,7 +987,7 @@ def test_session_subtask_after_reset_is_not_clobbered():
         assert engine.task == "put the cube in the box"
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_empty_quoted_arguments_are_rejected(capsys):
@@ -984,7 +1008,7 @@ def test_session_empty_quoted_arguments_are_rejected(capsys):
         assert "Usage: /vqa <question>" in out
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_query_tick_overrun_does_not_fire_fps_warning(caplog):
@@ -1047,7 +1071,7 @@ def test_query_tick_overrun_does_not_fire_fps_warning(caplog):
         thread.start()
         assert _wait_for(lambda: bool(delivered))
         stop_event.set()
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
 
     assert not any("running slower" in record.getMessage() for record in caplog.records)
@@ -1067,7 +1091,7 @@ def test_session_reset_restores_initial_task():
         assert engine.task == initial
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 # ---------------------------------------------------------------------------
@@ -1274,7 +1298,7 @@ def test_sentry_run_is_restartable_and_finalizes_only_in_teardown(monkeypatch):
     thread.start()
     assert _wait_for(lambda: dataset.add_frame.call_count >= 2)
     stop_event.set()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert not thread.is_alive()
 
     # The segment saved its partial episode but left the dataset open.
@@ -1288,7 +1312,7 @@ def test_sentry_run_is_restartable_and_finalizes_only_in_teardown(monkeypatch):
     thread.start()
     assert _wait_for(lambda: dataset.add_frame.call_count >= frames_before + 2)
     stop_event.set()
-    thread.join(timeout=2.0)
+    _join_session(thread)
     assert dataset.save_episode.call_count == 2
     dataset.finalize.assert_not_called()
 
@@ -1318,7 +1342,7 @@ def test_sentry_labels_frames_with_dispatched_action_task(monkeypatch):
         lambda: any(call.args[0]["task"] == "fold the towel" for call in dataset.add_frame.call_args_list)
     )
     stop_event.set()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
     tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
     assert tasks[0] == "pick up the cube"
@@ -1383,7 +1407,7 @@ def test_sentry_tail_saves_count_toward_upload_cadence(monkeypatch):
         thread.start()
         assert _wait_for(lambda: dataset.add_frame.call_count > frames_before)
         stop_event.set()
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
 
     assert dataset.save_episode.call_count == 2
@@ -1604,7 +1628,7 @@ def test_controller_ask_rejected_while_idle():
     assert not engine.has_pending_query
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_refuses_queries_for_a_policy_without_text_head():
@@ -1625,7 +1649,7 @@ def test_controller_refuses_queries_for_a_policy_without_text_head():
     assert engine.autosteer_goal is None
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_ask_answers_via_event():
@@ -1648,7 +1672,7 @@ def test_controller_ask_answers_via_event():
     assert answers[0].answer == "answer: is the cube in the box?"
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_ask_rejects_a_second_question_while_one_is_pending():
@@ -1663,7 +1687,7 @@ def test_controller_ask_rejects_a_second_question_while_one_is_pending():
     assert controller.ask("second?") is AskResult.BUSY
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_drops_pending_question_when_segment_ends():
@@ -1691,7 +1715,7 @@ def test_controller_drops_pending_question_when_segment_ends():
     assert not engine.has_pending_query
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_session_vqa_usage_and_idle_rejection(capsys):
@@ -1708,7 +1732,7 @@ def test_session_vqa_usage_and_idle_rejection(capsys):
         assert not engine.has_pending_query
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
@@ -1774,13 +1798,39 @@ def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
         assert engine.seen_query_obs[0] == {"joint.pos": 0.42}
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
         assert not thread.is_alive()
 
 
 # ---------------------------------------------------------------------------
 # Autosteer (policy-driven subtask sequencing)
 # ---------------------------------------------------------------------------
+
+
+class _FakeClock:
+    """Deterministic stand-in for the engine module's perf_counter."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def engine_clock(monkeypatch):
+    """Replace the engine module's clock so interval tests cannot race real time.
+
+    The engine module only uses ``time.perf_counter``, so swapping the whole
+    module reference keeps the patch scoped to the engine (a global
+    ``time.perf_counter`` patch would leak into unrelated threads).
+    """
+    clock = _FakeClock()
+    monkeypatch.setattr("lerobot.rollout.inference.base.time", SimpleNamespace(perf_counter=clock))
+    return clock
 
 
 def test_engine_autosteer_queries_immediately_then_waits_for_the_interval():
@@ -1800,22 +1850,23 @@ def test_engine_autosteer_queries_immediately_then_waits_for_the_interval():
     assert engine.seen_queries == [(QueryKind.NEXT_SUBTASK, "tidy the table")]
 
 
-def test_engine_autosteer_requeries_once_the_interval_elapses():
+def test_engine_autosteer_requeries_once_the_interval_elapses(engine_clock):
     engine = _FakeEngine()
-    engine.start_autosteer("tidy the table", interval_s=0.1)
+    engine.start_autosteer("tidy the table", interval_s=10.0)
 
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
 
+    engine_clock.advance(9.9)  # just inside the interval, however loaded the runner
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
 
-    time.sleep(0.15)
+    engine_clock.advance(0.2)  # past the interval
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 2 of tidy the table"
 
 
-def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands():
+def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands(engine_clock):
     """A generate slower than the interval must not queue the next back-to-back.
 
     On the sync backend generation blocks the control loop, so timing the
@@ -1823,23 +1874,26 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands():
     subtask it was just given.
     """
     engine = _FakeEngine()
-    slow_generate = 0.15
-
     original = engine._generate_text
 
     def slow(obs_processed, query):
-        time.sleep(slow_generate)
+        engine_clock.advance(15.0)  # generation alone outlasts the 10 s interval
         return original(obs_processed, query)
 
     engine._generate_text = slow
-    engine.start_autosteer("tidy the table", interval_s=0.1)
+    engine.start_autosteer("tidy the table", interval_s=10.0)
 
-    engine.pump_query({"joint.pos": 0.0})  # generation alone outlasts the interval
+    engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
 
     # The clock started when the subtask landed, so the next query is not due.
     engine.pump_query({"joint.pos": 0.0})
     assert len(engine.seen_queries) == 1
+
+    # After a full interval of (fake) robot motion, it is.
+    engine_clock.advance(10.1)
+    engine.pump_query({"joint.pos": 0.0})
+    assert len(engine.seen_queries) == 2
 
 
 def test_engine_autosteer_does_not_count_idle_pumps():
@@ -2001,7 +2055,7 @@ def test_controller_segment_end_drops_stale_autosteer_answer_but_delivers_vqa():
     assert not any(a.kind is QueryKind.NEXT_SUBTASK for a in answers)
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_autosteer_rejected_while_idle():
@@ -2012,7 +2066,7 @@ def test_controller_autosteer_rejected_while_idle():
     assert engine.autosteer_goal is None
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_controller_autosteer_stopped_by_reset_set_task_and_segment_end():
@@ -2043,7 +2097,7 @@ def test_controller_autosteer_stopped_by_reset_set_task_and_segment_end():
     assert controller.task == controller.initial_task
 
     controller.stop()
-    thread.join(timeout=2.0)
+    _join_session(thread)
 
 
 def test_session_autosteer_reports_status_and_hands_control_back(capsys):
@@ -2088,7 +2142,7 @@ def test_session_autosteer_reports_status_and_hands_control_back(capsys):
         assert session.controller.task == steady
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
 
 
 def test_session_subtask_takes_over_from_autosteer(capsys):
@@ -2112,7 +2166,217 @@ def test_session_subtask_takes_over_from_autosteer(capsys):
         assert session.controller.task == "put the cube down"
 
         session._handle_line("/stop")
-        thread.join(timeout=2.0)
+        _join_session(thread)
+
+
+# ---------------------------------------------------------------------------
+# RTC inference engine: the async half of the engine contract
+# ---------------------------------------------------------------------------
+
+
+class _IdentityPipeline:
+    """Stand-in for PolicyProcessorPipeline: no steps, identity transform."""
+
+    steps = ()
+
+    def __call__(self, batch):
+        return batch
+
+    def reset(self):
+        pass
+
+
+class _StubChunkPolicy:
+    """A chunk policy whose inferences the test releases one at a time.
+
+    ``predict_action_chunk`` blocks until ``allow_one_inference()`` (a
+    counting semaphore, so releases are never lost), which makes the RTC
+    background loop's timing fully deterministic: the test always knows how
+    many chunks have been produced and what task each was conditioned on.
+    """
+
+    def __init__(self, chunk_len: int = 10, action_dim: int = 2):
+        from threading import Semaphore
+
+        self.chunk_len = chunk_len
+        self.action_dim = action_dim
+        self._release = Semaphore(0)
+        self.in_inference = Event()
+        self.predicted_tasks: list[str] = []
+        self.generate_thread_names: list[str] = []
+
+    def allow_one_inference(self) -> None:
+        self._release.release()
+
+    def unblock(self) -> None:
+        """Wake any predict parked on the gate so teardown never stalls."""
+        self._release.release(3)
+
+    def predict_action_chunk(self, batch, inference_delay=0, prev_chunk_left_over=None):
+        self.in_inference.set()
+        released = self._release.acquire(timeout=2.0)
+        self.in_inference.clear()
+        if not released:
+            raise TimeoutError("test never released the inference gate")
+        self.predicted_tasks.append(batch["task"][0])
+        return torch.zeros(1, self.chunk_len, self.action_dim)
+
+    def reset(self):
+        pass
+
+    def supports_text_generation(self):
+        return True
+
+    def generate_text(self, batch):
+        from lerobot.utils.constants import QUERY_TEXT
+
+        self.generate_thread_names.append(current_thread().name)
+        return f"answer: {batch[QUERY_TEXT]}"
+
+
+def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.inference import RTCInferenceEngine
+
+    policy = _StubChunkPolicy(chunk_len=chunk_len)
+    engine = RTCInferenceEngine(
+        policy=policy,
+        preprocessor=_IdentityPipeline(),
+        postprocessor=_IdentityPipeline(),
+        robot_wrapper=SimpleNamespace(robot_type="mock", action_features={}),
+        rtc_config=RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0),
+        hw_features={
+            "observation.state": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        task="task A",
+        fps=30.0,
+        device="cpu",
+        rtc_queue_threshold=rtc_queue_threshold,
+    )
+    return engine, policy
+
+
+_RTC_OBS = {"j1.pos": 0.0, "j2.pos": 0.0}
+
+
+@contextlib.contextmanager
+def _running_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
+    engine, policy = _make_rtc_engine(rtc_queue_threshold=rtc_queue_threshold, chunk_len=chunk_len)
+    engine.start()
+    try:
+        engine.resume()
+        engine.notify_observation(dict(_RTC_OBS))
+        yield engine, policy
+    finally:
+        policy.unblock()
+        engine.stop()
+
+
+def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task():
+    """Actions queued under the old instruction keep its label after set_task.
+
+    ``dispatched_task`` may only advance to the new instruction when an
+    action from a chunk *conditioned on it* is popped — that is the whole
+    point of frame provenance for recording strategies.
+    """
+    with _running_rtc_engine() as (engine, policy):
+        policy.allow_one_inference()  # first chunk, conditioned on "task A"
+        assert _wait_for(lambda: len(policy.predicted_tasks) == 1)
+        assert _wait_for(lambda: engine.get_action(None) is not None)
+        assert engine.dispatched_task == "task A"
+
+        # The loop is already parked inside the next predict — with the task
+        # for that chunk (still A) taken before we switch — so nothing new
+        # can merge until we allow it.
+        assert _wait_for(policy.in_inference.is_set)
+        assert engine.set_task("task B") is True
+
+        # Leftovers still serve under the old label — deterministically so,
+        # since the gate is closed.
+        assert engine.get_action(None) is not None
+        assert engine.dispatched_task == "task A"
+
+        policy.allow_one_inference()  # the in-flight chunk (still task A) lands
+        policy.allow_one_inference()  # the next chunk is conditioned on task B
+        assert _wait_for(lambda: len(policy.predicted_tasks) == 3)
+        assert policy.predicted_tasks == ["task A", "task A", "task B"]
+
+        def _dispatched_b():
+            return engine.get_action(None) is not None and engine.dispatched_task == "task B"
+
+        assert _wait_for(_dispatched_b)
+
+
+def test_rtc_engine_reset_discards_chunk_from_inflight_inference(caplog):
+    """A chunk whose inference started before reset() must not reach the queue.
+
+    This is the reset-isolation guarantee: without it, the first actions
+    after the next /start jerk the robot toward the pre-reset pose.
+    """
+    with _running_rtc_engine() as (engine, policy):
+        assert _wait_for(policy.in_inference.is_set)  # inference in flight
+
+        engine.reset()  # bumps the epoch, clears queue and observation
+
+        with caplog.at_level(logging.INFO, logger="lerobot.rollout.inference.rtc"):
+            policy.allow_one_inference()  # the stale chunk completes now
+            assert _wait_for(
+                lambda: any("Discarding action chunk" in r.getMessage() for r in caplog.records)
+            )
+        assert engine.action_queue.qsize() == 0
+        assert engine.get_action(None) is None
+
+        # The engine is not dead: a fresh observation produces a fresh chunk.
+        engine.notify_observation(dict(_RTC_OBS))
+        assert _wait_for(policy.in_inference.is_set)
+        policy.allow_one_inference()
+        assert _wait_for(lambda: engine.get_action(None) is not None)
+
+
+def test_rtc_engine_answers_vqa_on_rtc_thread_delivered_by_control_pump():
+    """ask() is answered by the RTC thread; the observer fires only from pump_query.
+
+    rtc_queue_threshold=-1 parks the chunk path, so the loop's only work is
+    the query channel — the half of the engine contract
+    (control_thread_owns_policy=False) that the base-class channel exists
+    to serve.
+    """
+    with _running_rtc_engine(rtc_queue_threshold=-1) as (engine, policy):
+        delivered = []
+        engine.set_answer_observer(delivered.append)
+
+        assert engine.supports_text_queries
+        assert engine.ask("what do you see?") is True
+
+        # The RTC thread claims and answers it...
+        assert _wait_for(lambda: len(engine._ready_answers) > 0)
+        assert policy.generate_thread_names == ["RTCInference"]
+        # ...but never fires the observer itself.
+        assert delivered == []
+
+        # Only the control thread's pump hands the answer over.
+        engine.pump_query()
+        assert len(delivered) == 1
+        assert delivered[0].ok
+        assert delivered[0].answer == "answer: what do you see?"
+
+
+def test_rtc_engine_get_action_raises_on_unlabeled_action():
+    """A foreign writer merging without task provenance must fail loudly.
+
+    An unlabeled action would silently corrupt dispatched_task and the frame
+    labels recording strategies derive from it.
+    """
+    from lerobot.policies.rtc import ActionQueue
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    engine, _policy = _make_rtc_engine()
+    queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0))
+    queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0)  # no task label
+    engine._action_queue = queue
+
+    with pytest.raises(RuntimeError, match="task provenance"):
+        engine.get_action(None)
 
 
 # ---------------------------------------------------------------------------
@@ -2148,3 +2412,33 @@ def test_interactive_allows_sentry():
     )
     assert cfg.interactive is True
     assert cfg.dataset.streaming_encoding is True  # sentry forces streaming
+
+
+def test_autosteer_interval_rejects_negative_values():
+    """A negative interval must be a CLI error.
+
+    If the validation regressed, start_autosteer's max(0.0, ...) clamp would
+    quietly turn the typo into back-to-back full text generations.
+    """
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    with pytest.raises(ValueError, match="autosteer_interval_s"):
+        RolloutConfig(
+            robot=MockRobotConfig(),
+            policy=SimpleNamespace(device="cpu"),
+            autosteer_interval_s=-1.0,
+        )
+
+
+def test_autosteer_interval_accepts_zero():
+    """0 is the legitimate re-plan-every-tick edge; only negatives are errors."""
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(),
+        policy=SimpleNamespace(device="cpu"),
+        autosteer_interval_s=0.0,
+    )
+    assert cfg.autosteer_interval_s == 0.0
