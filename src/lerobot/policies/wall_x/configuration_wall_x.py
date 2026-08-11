@@ -13,16 +13,14 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from lerobot.configs import (
     FeatureType,
     NormalizationMode,
     PolicyFeature,
     PreTrainedConfig,
-    recipe as recipe_module,
 )
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe
+from lerobot.configs.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -45,16 +43,6 @@ def _wall_x_default_recipe() -> TrainingRecipe:
             ),
         ]
     )
-
-
-def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        config_dir = Path(recipe_module.__file__).resolve().parent
-        candidates = (config_dir / path, config_dir / "recipes" / path)
-        path = next((candidate for candidate in candidates if candidate.exists()), path)
-    return TrainingRecipe.from_yaml(path)
 
 
 @PreTrainedConfig.register_subclass("wall_x")
@@ -104,9 +92,8 @@ class WallXConfig(PreTrainedConfig):
     # otherwise falls back to the native per-chunk SDPA implementation.
     vision_attn_implementation: str = "auto"
 
-    # Optional language-recipe supervision. Setting `recipe_path` opts training in
-    # and loads the YAML into `recipe` (relative paths resolve against
-    # src/lerobot/configs/recipes/).
+    use_language_recipe: bool = False
+    # Optional explicit external language-recipe override.
     recipe_path: str | None = None
     # WALL-X's language contract: defaults to the WALL-OSS trained subtask wording;
     # a fine-tune with `recipe_path` replaces it, and the checkpoint then prompts
@@ -132,14 +119,7 @@ class WallXConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        if self.recipe_path is not None:
-            try:
-                self.recipe = _load_recipe(self.recipe_path)
-            except FileNotFoundError:
-                if self.recipe is None:
-                    raise
-                # A reloaded checkpoint already carries its recipe inline; a stale
-                # path only matters on the training machine that set it.
+        self.recipe = resolve_recipe_override(self.recipe, self.recipe_path)
 
         # Input validation
         if self.n_action_steps > self.chunk_size:

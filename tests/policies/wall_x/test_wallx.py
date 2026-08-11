@@ -164,9 +164,8 @@ def test_generation_preparation_synthesizes_cache_positions():
 
 
 def test_policy_exposes_text_generation(monkeypatch):
-    assert WallXPolicy.generate_text is PreTrainedPolicy.generate_text
-    assert WallXPolicy.supports_text_generation is PreTrainedPolicy.supports_text_generation
-    assert WallXPolicy._generate_preprocessed_text is not PreTrainedPolicy._generate_preprocessed_text
+    assert WallXPolicy.generate_text is not PreTrainedPolicy.generate_text
+    assert WallXPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert not hasattr(WallXPolicy, "generate_texts")
 
     class Inputs(dict):
@@ -252,8 +251,10 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
     assert "text" not in batch
 
 
-def test_wall_x_recipe_name_resolves_from_the_canonical_recipe_directory():
-    config = WallXConfig(device="cpu", recipe_path="subtask_joint.yaml")
+def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
+    path = tmp_path / "recipe.yaml"
+    path.write_text("messages:\n  - {role: user, content: '${task}', stream: low_level}\n")
+    config = WallXConfig(device="cpu", recipe_path=str(path))
 
     assert config.recipe is not None
     assert config.recipe.messages is not None

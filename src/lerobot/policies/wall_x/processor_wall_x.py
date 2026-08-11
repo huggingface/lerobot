@@ -19,6 +19,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
@@ -30,7 +31,7 @@ from lerobot.processor import (
 )
 from lerobot.processor.render_messages_processor import RenderMessagesStep
 
-from .configuration_wall_x import WallXConfig, _load_recipe
+from .configuration_wall_x import WallXConfig
 
 
 def make_wall_x_pre_post_processors(
@@ -64,17 +65,12 @@ def make_wall_x_pre_post_processors(
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
     language_steps = []
-    if config.recipe_path:
-        # Re-resolve the path here, not only in `WallXConfig.__post_init__`: a caller
-        # may set `recipe_path` after construction, and training must render the
-        # same recipe the checkpoint prompts itself with (`config.recipe`).
-        try:
-            config.recipe = _load_recipe(config.recipe_path)
-        except FileNotFoundError:
-            if config.recipe is None:
-                raise
-            # Checkpoints carry the resolved recipe inline, so deployment and
-            # resumed training do not depend on the original machine's path.
+    if language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    ):
+        if config.recipe is None:
+            raise ValueError("WALL-X language training requires a recipe in policy config.")
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps = [

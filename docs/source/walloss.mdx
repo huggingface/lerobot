@@ -58,9 +58,9 @@ answer = policy.generate_text(processed_batch)
 ```
 
 `vqa` preserves the question as the user payload. `next_subtask` applies the
-checkpoint recipe before `${subtask}`. WALL-X inherits the single public
-`generate_text(processed_batch)` API and implements only the protected decoder
-hook for its Qwen vision-language expert.
+checkpoint recipe before `${subtask}`. WALL-X directly overrides the public
+`generate_text(processed_batch)` API for its Qwen vision-language expert and
+reports that capability through `supports_text_generation()`.
 
 The interactive language runtime can generate a subtask and then condition
 WALL-OSS action prediction on it:

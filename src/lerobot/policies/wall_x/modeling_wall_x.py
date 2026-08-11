@@ -59,6 +59,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..language import normalize_semantic_messages, require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
@@ -2301,7 +2302,9 @@ class WallXPolicy(PreTrainedPolicy):
 
         image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
         orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-        messages_batch = self._batched_recipe_field(batch["messages"], batch_size, "messages")
+        messages_batch = normalize_semantic_messages(
+            batch["messages"], policy_name="WALL-OSS", batch_size=batch_size
+        )
         texts = [
             process_grounding_points(
                 self._format_generation_messages(messages, img_keys),
@@ -2331,8 +2334,11 @@ class WallXPolicy(PreTrainedPolicy):
                 inputs[key] = value.to(batch[OBS_STATE].device)
         return inputs
 
+    def supports_text_generation(self) -> bool:
+        return True
+
     @torch.no_grad()
-    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages and the current observation."""
         self.eval()
         inputs = self._build_text_inputs(batch)
@@ -2360,11 +2366,7 @@ class WallXPolicy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
-        if len(outputs) != 1:
-            raise ValueError(
-                f"The interactive runtime expected one WALL-OSS text output, got {len(outputs)}."
-            )
-        return outputs[0]
+        return require_single_text_output(outputs, policy_name="WALL-OSS")
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
