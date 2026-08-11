@@ -684,7 +684,7 @@ def test_session_commands_via_stream():
         assert strategy.run.call_count == 1
 
 
-def test_session_mutes_logs_below_error_and_restores_on_exit():
+def test_session_mutes_logs_below_warning_and_restores_on_exit():
     import warnings
 
     # Libraries like transformers attach their own console handler with
@@ -701,10 +701,10 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
 
             lib_logger.info("muted-info")
-            lib_logger.warning("muted-warning")
+            lib_logger.warning("visible-warning")  # e.g. control loop missing its FPS target
             lib_logger.error("visible-error")  # errors must surface mid-session
 
             session._handle_line("/stop")
@@ -712,7 +712,7 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
 
         output = lib_stream.getvalue()
         assert "muted-info" not in output
-        assert "muted-warning" not in output
+        assert "visible-warning" in output
         assert "visible-error" in output
 
         # Everything is restored once the session ends.
@@ -731,7 +731,7 @@ def test_session_restores_preexisting_disable_level():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
             session._handle_line("/stop")
             thread.join(timeout=2.0)
         assert logging.root.manager.disable == logging.DEBUG
@@ -1535,8 +1535,8 @@ def test_engine_autosteer_does_not_count_idle_pumps():
     assert engine.task == "pick up the cube"
 
 
-def test_engine_autosteer_success_is_not_published_as_an_answer():
-    """Subtasks surface as the task itself, not as operator-facing chatter."""
+def test_engine_autosteer_success_is_published_after_being_applied():
+    """A picked subtask is applied to the task first, then announced."""
     engine = _FakeEngine()
     delivered = []
     engine.set_answer_observer(delivered.append)
@@ -1545,7 +1545,11 @@ def test_engine_autosteer_success_is_not_published_as_an_answer():
     engine.pump_query({"joint.pos": 0.0})
 
     assert engine.task == "subtask 1 of tidy the table"
-    assert delivered == []
+    assert len(delivered) == 1
+    assert delivered[0].kind is QueryKind.NEXT_SUBTASK
+    assert delivered[0].ok
+    assert delivered[0].answer == "subtask 1 of tidy the table"
+    assert delivered[0].question == "tidy the table"
 
 
 def test_engine_autosteer_stops_and_reports_on_failure():
@@ -1645,7 +1649,17 @@ def test_session_autosteer_reports_status_and_hands_control_back(capsys):
 
         session._handle_line("/autosteer tidy the table")
         assert _wait_for(lambda: session.controller.task.startswith("subtask "))
-        assert "Autosteer on — goal 'tidy the table'" in capsys.readouterr().out
+        chat = capsys.readouterr().out
+        assert "Autosteer on — goal 'tidy the table'" in chat
+
+        # Each picked subtask is announced in the chat (the announcement is
+        # delivered by the pump that applied it, so poll a few more ticks).
+        def _subtask_announced():
+            nonlocal chat
+            chat += capsys.readouterr().out
+            return "Autosteer subtask: 'subtask " in chat
+
+        assert _wait_for(_subtask_announced)
 
         session._handle_line("/autosteer")
         assert "Autosteer on — goal 'tidy the table'." in capsys.readouterr().out

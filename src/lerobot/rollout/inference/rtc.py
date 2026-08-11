@@ -326,7 +326,6 @@ class RTCInferenceEngine(InferenceEngine):
         obs_batch = prepare_observation_for_inference(
             obs_batch, torch.device(self._device), task, self._robot.robot_type
         )
-        obs_batch["task"] = [task]
         obs_batch = self._mark_query(obs_batch, query)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():

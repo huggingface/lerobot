@@ -43,13 +43,13 @@ ended through the session's :class:`LinkedEvent` (installed as
 propagate through the linked event's parent, so Ctrl-C behaves exactly as in
 non-interactive runs.
 
-While the session runs, log records below ERROR and Python warnings are
+While the session runs, log records below WARNING and Python warnings are
 suppressed process-wide (via ``logging.disable``) so routine system output
-does not interleave with the chat prompt; ERROR and CRITICAL records still
-reach the console, and a fatal inference-engine error is additionally
-reported with its captured traceback.  Normal logging resumes when the
-session ends (so teardown logs are visible).  Run without ``--interactive``
-to see the full live log output.
+does not interleave with the chat prompt; WARNING records and above still
+reach the console (e.g. the control loop missing its FPS target), and a
+fatal inference-engine error is additionally reported with its captured
+traceback.  Normal logging resumes when the session ends (so teardown logs
+are visible).  Run without ``--interactive`` to see the full live log output.
 
 The command table is intentionally a name → (handler, argument hint, help)
 mapping so further commands (``/ask`` and the rest of the language-runtime
@@ -83,20 +83,21 @@ _BANNER_RULE = "─" * 60
 
 @contextlib.contextmanager
 def _mute_system_output() -> Iterator[None]:
-    """Suppress log records below ERROR and Python warnings, process-wide.
+    """Suppress log records below WARNING and Python warnings, process-wide.
 
     System logs (policy, robot, control loop) contend with the chat prompt
     for the terminal.  ``logging.disable`` gates records before any handler
     dispatch, which covers non-propagating library loggers (``transformers``,
-    ``datasets``) and loggers created mid-session alike; ERROR and CRITICAL
-    records still get through, so failures stay visible.  The gate applies to
-    every handler — including file handlers, which therefore also miss
-    INFO/WARNING records for the duration.  Python warnings bypass logging
-    entirely and are silenced separately.
+    ``datasets``) and loggers created mid-session alike; WARNING and above
+    still get through, so control-loop overruns and failures stay visible.
+    The gate applies to every handler — including file handlers, which
+    therefore also miss INFO/DEBUG records for the duration.  Python warnings
+    bypass logging entirely and are silenced separately: they are dominated
+    by third-party deprecation notices, not operational signals.
     """
     previous_disable = logging.root.manager.disable
     saved_warning_filters = warnings.filters[:]
-    logging.disable(logging.WARNING)
+    logging.disable(logging.INFO)
     warnings.simplefilter("ignore")
     try:
         yield
@@ -233,16 +234,16 @@ class InteractiveSession:
             self._report_engine_failure()
 
     def _report_answer(self, answer: QueryAnswer) -> None:
-        """Render a resolved text query.
-
-        Successful autosteer subtasks never arrive here — they show up as
-        the task itself, which is what tells the operator the robot's
-        intent.  A failure does, because the sequencer has just stopped.
-        """
+        """Render a resolved text query (an operator question or an autosteer turn)."""
         if answer.kind is QueryKind.NEXT_SUBTASK:
-            self._print(
-                f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: {answer.error}"
-            )
+            if answer.ok:
+                # The engine has already applied it via set_task; just announce.
+                self._print(f"Autosteer subtask: {answer.answer!r}")
+            else:
+                self._print(
+                    f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: "
+                    f"{answer.error}"
+                )
         elif answer.ok:
             self._print(f"Q: {answer.question}\nA: {answer.answer}")
         else:
@@ -341,7 +342,7 @@ class InteractiveSession:
             return
         self._print(
             f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
-            "watch them with /subtask, take over with /subtask <text> or /autosteer off."
+            "each one is announced here. Take over with /subtask <text> or /autosteer off."
         )
 
     def _cmd_reset(self, cmd: InteractiveCommand) -> None:
@@ -370,7 +371,7 @@ class InteractiveSession:
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"Task: {_format_task(self.controller.initial_task)}\n"
             f"{self._render_help()}\n"
-            "System logs and warnings are muted during the session (errors still show).\n"
+            "Routine system logs are muted during the session (warnings and errors still show).\n"
             f"{_BANNER_RULE}"
         )
 

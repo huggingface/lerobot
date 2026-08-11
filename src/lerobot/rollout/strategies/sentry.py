@@ -30,7 +30,13 @@ from lerobot.utils.utils import log_say
 
 from ..configs import SentryStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
+from .core import (
+    RolloutStrategy,
+    estimate_max_episode_seconds,
+    safe_push_to_hub,
+    send_next_action,
+    warn_loop_overrun,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +187,7 @@ class SentryStrategy(RolloutStrategy):
                 if (sleep_t := control_interval - dt) > 0:
                     precise_sleep(sleep_t)
                 else:
-                    logger.warning(
-                        f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                    )
+                    warn_loop_overrun(dt, cfg.fps)
 
         finally:
             logger.info("Sentry control loop ended — saving final episode")

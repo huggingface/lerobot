@@ -253,7 +253,7 @@ class RolloutConfig:
     # queries.  Each query is a full generation pass, so this is a
     # cost/responsiveness knob: lower values re-plan sooner but spend a larger
     # share of the loop generating text instead of acting.
-    autosteer_interval_s: float = 3.0
+    autosteer_interval_s: float = 10.0
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""

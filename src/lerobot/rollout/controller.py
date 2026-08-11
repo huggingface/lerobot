@@ -148,10 +148,13 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     QUERY_ANSWERED = "query_answered"
-    """A question queued with :meth:`RolloutController.ask` was resolved.  The
-    event payload is a :class:`~lerobot.rollout.inference.QueryAnswer`; check
-    its ``ok`` before reading ``answer``, since it also reports questions the
-    policy could not handle and ones dropped when the run ended first."""
+    """A text query was resolved: a question queued with
+    :meth:`RolloutController.ask`, or one of the autosteer sequencer's turns
+    (kind ``NEXT_SUBTASK`` — a success carries the subtask just applied to the
+    task, a failure the reason the sequencer stopped).  The event payload is a
+    :class:`~lerobot.rollout.inference.QueryAnswer`; check its ``ok`` before
+    reading ``answer``, since it also reports questions the policy could not
+    handle and ones dropped when the run ended first."""
 
     ENGINE_FAILED = "engine_failed"
     """The inference engine hit an unrecoverable error; ``serve()`` is about

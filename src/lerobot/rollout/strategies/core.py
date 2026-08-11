@@ -204,6 +204,25 @@ class RolloutStrategy(abc.ABC):
 # ---------------------------------------------------------------------------
 
 
+def warn_loop_overrun(dt: float, fps: float, records_data: bool = True) -> None:
+    """Warn that a control-loop tick took longer than its ``1/fps`` budget.
+
+    ``dt`` is the measured duration of the tick.  ``records_data`` picks the
+    phrasing: a recording loop drops dataset frames when it misses ticks,
+    while a plain control loop only risks unstable robot control.
+    """
+    loop, consequence = (
+        ("Record loop", "Dataset frames might be dropped and robot control might be unstable.")
+        if records_data
+        else ("Control loop", "Robot control might be unstable.")
+    )
+    logger.warning(
+        f"{loop} is running slower ({1 / dt:.1f} Hz) than the target FPS ({fps} Hz). {consequence} "
+        "Common causes are: 1) Camera FPS not keeping up "
+        "2) Policy inference (action or text) taking too long 3) CPU starvation"
+    )
+
+
 def safe_push_to_hub(dataset, tags=None, private=False) -> bool:
     """Push dataset to hub, skipping if no episodes have been saved.
 

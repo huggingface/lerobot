@@ -299,7 +299,7 @@ With `--use_torch_compile=true`, a switch whose instruction tokenizes to a diffe
 
 Text generation takes much longer than a control tick, so while the policy answers it produces no new actions: the robot finishes any actions already queued and then holds position until the answer lands. Time spent answering counts against `--duration`.
 
-**How `/autosteer` works.** You give the policy a goal instead of an instruction, and every `--autosteer_interval_s` seconds (default 3) the engine asks it for the next subtask and applies that through the same path as `/subtask`. So RTC blends the switch into the next chunk and sync drops precomputed actions, exactly as with a hand-typed instruction. Successful subtasks are not announced separately — the task itself is what tells you the robot's intent, so watch it with `/subtask`.
+**How `/autosteer` works.** You give the policy a goal instead of an instruction, and every `--autosteer_interval_s` seconds (default 10) the engine asks it for the next subtask and applies that through the same path as `/subtask`. So RTC blends the switch into the next chunk and sync drops precomputed actions, exactly as with a hand-typed instruction. Successful subtasks are not announced separately — the task itself is what tells you the robot's intent, so watch it with `/subtask`.
 
 Progress through the plan lives in the policy, not in the rollout: every query re-sends the same goal, and the policy decides what comes next. That is why the sequencer does not survive a segment — restarting one resets the policy, and the plan with it. It also stops on `/reset`, on `/subtask` (setting the instruction by hand takes over), on `/autosteer off`, and on the first planning failure, which is reported rather than retried every interval.
 

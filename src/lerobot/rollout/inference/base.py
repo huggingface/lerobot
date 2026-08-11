@@ -69,10 +69,10 @@ class QueryAnswer:
     inference failure, run ended first) so the caller can report it instead
     of silently dropping it.
 
-    Successful ``NEXT_SUBTASK`` queries never reach here — they are applied
-    to the task directly, and the task is how the operator sees the robot's
-    intent.  Failures do, because a sequencer that stalls silently is worse
-    than one that says so.
+    ``NEXT_SUBTASK`` answers report the sequencer's turns: a success carries
+    the subtask the engine has *already applied* through ``set_task`` (the
+    receiver only announces it, never applies it again), a failure the reason
+    the sequencer just stopped.
     """
 
     question: str
@@ -400,13 +400,13 @@ class InferenceEngine(abc.ABC):
             return
         if query.kind is QueryKind.NEXT_SUBTASK:
             # Applied here, on the policy-owning thread, so the subtask is live
-            # for the very next inference.  Not published as an answer: the
-            # task is how the operator sees the robot's intent.
+            # for the very next inference.
             self.set_task(text)
             # Armed only now, so the interval measures robot motion between
             # subtasks rather than wall-clock that a slow generate ate into.
             self._schedule_next_autosteer()
-            return
+        # Published after being applied, so an observer announcing the subtask
+        # never gets ahead of the task it describes.
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
