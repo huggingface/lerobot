@@ -166,8 +166,11 @@ class _FakeEngine(InferenceEngine):
 
     failed = False
     failure_traceback = None
-    # Plain attribute shadowing the base property, so tests can flip it.
+    # Plain attributes shadowing the base properties, so tests can flip them.
     supports_text_queries = True
+    # Answer inline on the caller's thread like the sync backend, so tests
+    # drive the base pump_query's real poll/service/deliver path.
+    control_thread_owns_policy = True
 
     # Declared here to satisfy the ABC; the instances below shadow them.
     def start(self) -> None: ...
@@ -184,17 +187,10 @@ class _FakeEngine(InferenceEngine):
         self.resume = MagicMock()
         self.notify_observation = MagicMock()
         self.get_action = MagicMock(return_value=None)
-        # Text queries: answer inline on the caller's thread like the sync
-        # backend, so tests drive the real service/deliver plumbing.
         self.text_error: Exception | None = None
         self.seen_query_obs: list = []
         self.seen_queries: list = []
         self.subtasks_planned = 0
-
-    def pump_query(self, obs_processed=None) -> None:
-        self._poll_autosteer(obs_processed)
-        self._service_query(obs_processed)
-        self._deliver_answer()
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         self.seen_queries.append((query.kind, query.text))

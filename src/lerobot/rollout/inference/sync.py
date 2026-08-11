@@ -148,20 +148,10 @@ class SyncInferenceEngine(InferenceEngine):
         """True when the policy has a text head."""
         return self._policy.supports_text_generation()
 
-    def pump_query(self, obs_processed: dict | None = None) -> None:
-        """Serve a pending query inline, then deliver its answer.
-
-        This backend runs inference on the control thread, so the control
-        thread is also the one allowed to touch the policy — servicing the
-        query here keeps that invariant.  Deliberately *not* folded into
-        ``get_action``: text generation takes far longer than a control
-        tick, and stalling the action path mid-dispatch would leave a
-        recording strategy pairing a stale observation with a fresh
-        timestamp.  Strategies call this at the end of a tick instead.
-        """
-        self._poll_autosteer(obs_processed)
-        self._service_query(obs_processed)
-        self._deliver_answer()
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """Inference runs inline on the control thread, so queries are served there too."""
+        return True
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on the current observation."""

@@ -306,16 +306,10 @@ class RTCInferenceEngine(InferenceEngine):
         """True when the policy has a text head."""
         return self._policy.supports_text_generation()
 
-    def pump_query(self, obs_processed: dict | None = None) -> None:
-        """Advance the sequencer and deliver ready answers.  Control thread only.
-
-        The policy is owned by the RTC background thread, which services
-        queries in ``_rtc_loop`` — this only queues autosteer queries and
-        hands finished answers to the observer, so observers fire on the
-        control thread and the policy is never touched here.
-        """
-        self._poll_autosteer(obs_processed)
-        self._deliver_answer()
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """The RTC background thread owns the policy; it services queries in ``_rtc_loop``."""
+        return False
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
