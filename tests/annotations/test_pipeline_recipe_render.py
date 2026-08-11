@@ -52,12 +52,9 @@ from ._helpers import make_canned_responder  # noqa: E402
 def _build_style_blend_recipe() -> TrainingRecipe:
     """Inline blend recipe that consumes every style this pipeline produces.
 
-    The language schema/DSL work used to ship
-    ``src/lerobot/configs/recipes/pi05_hirobot.yaml`` as a canonical
-    example, but that file was dropped during review. The contract this
-    test guards is "the recipe DSL can render non-empty messages from
-    pipeline output", which doesn't require a specific YAML — so we build
-    the equivalent blend in code.
+    The contract this test guards is "the recipe DSL can render non-empty
+    messages from pipeline output", which does not require a policy-owned
+    recipe, so this representative blend stays inline.
     """
     return TrainingRecipe(
         blend={

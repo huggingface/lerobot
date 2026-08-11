@@ -54,6 +54,9 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     config_class = FastWAMConfig
     name = "fastwam"
+    # FSDP2 wrap units: MoTLayer is the single FSDP owner of each layer's expert blocks
+    # (the blocks are re-parented onto it precisely so sharding has one boundary to hook).
+    _fsdp_wrap_modules = ["MoTLayer"]
 
     def __init__(
         self,
