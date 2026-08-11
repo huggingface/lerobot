@@ -255,7 +255,7 @@ class DatasetReader:
         }
         padding = {
             f"{key}_is_pad": torch.BoolTensor(
-                [(abs_idx + delta < ep_start) | (abs_idx + delta >= ep_end) for delta in delta_idx]
+                [(abs_idx + delta < ep_start) or (abs_idx + delta >= ep_end) for delta in delta_idx]
             )
             for key, delta_idx in self.delta_indices.items()
         }
