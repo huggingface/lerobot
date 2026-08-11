@@ -42,6 +42,11 @@ DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
 
+# Complementary-data flag naming the runtime text-generation request
+# ("vqa" or "next_subtask"). Runtime sets it together with ``text`` before
+# the normal policy input processor runs.
+QUERY_KIND = "query_kind"
+
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
 

@@ -193,6 +193,28 @@
 - sections:
   - local: contributing
     title: Contribute to LeRobot
+  - local: writing_docstrings
+    title: Writing docstrings
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
+- sections:
+  - local: api/robots
+    title: Robots
+  - local: api/teleoperators
+    title: Teleoperators
+  - local: api/cameras
+    title: Cameras
+  - local: api/motors
+    title: Motors
+  - local: api/datasets
+    title: Datasets
+  - local: api/policies
+    title: Policies
+  - local: api/processor
+    title: Processors
+  - local: api/envs
+    title: Environments
+  - local: api/configs
+    title: Configuration
+  title: "API Reference"
