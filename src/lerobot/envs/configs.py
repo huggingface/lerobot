@@ -777,7 +777,8 @@ class RoboTwinEnvConfig(EnvConfig):
     observation_height: int = 240
     observation_width: int = 320
     # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
-    # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
+    # (for world-model policies like LingBot-VA). "ee_absolute": native 16-d absolute end-effector
+    # poses and state (for Hy-VLA), passed through to RoboTwin without delta composition.
     action_mode: str = "joint"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
@@ -795,7 +796,11 @@ class RoboTwinEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
-        if self.action_mode == "ee":
+        if self.action_mode not in ("joint", "ee", "ee_absolute"):
+            raise ValueError(
+                f"RoboTwin action_mode must be 'joint', 'ee', or 'ee_absolute'; got {self.action_mode!r}"
+            )
+        if self.action_mode in ("ee", "ee_absolute"):
             self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(16,))
         cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
         for cam in cam_list:
@@ -811,7 +816,7 @@ class RoboTwinEnvConfig(EnvConfig):
         if self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(
                 type=FeatureType.STATE,
-                shape=(14,),  # 14 DOF: 7 per arm
+                shape=(16,) if self.action_mode == "ee_absolute" else (14,),
             )
         elif self.obs_type != "pixels":
             raise ValueError(

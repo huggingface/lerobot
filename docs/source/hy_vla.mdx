@@ -1,0 +1,264 @@
+# Hy-Embodied-0.5-VLA
+
+Hy-Embodied-0.5-VLA (Hy-VLA) is Tencent's bimanual
+vision-language-action policy. It combines the
+[Hy-Embodied-0.5](https://huggingface.co/tencent/HY-Embodied-0.5)
+vision-language model with a compact flow-matching action expert.
+
+## Model Overview
+
+Hy-VLA combines a Hunyuan vision-language model, temporal multi-camera vision
+encoding, and a flow-matching action expert. The released checkpoints use a
+dual-arm pose representation and generate action chunks conditioned on images,
+robot state, and a natural-language task.
+
+### What the LeRobot Integration Covers
+
+The LeRobot integration provides:
+
+- ready-to-use UMI and RoboTwin checkpoints on the Hugging Face Hub;
+- training and inference through `lerobot-train` and `lerobot-eval`;
+- serializable preprocessing for the released dual-arm mappings;
+- checkpoint save/resume through standard LeRobot APIs; and
+- native Hunyuan VLM, MoT, video-attention, and flow-action components.
+
+The author repository is not required at runtime.
+
+## Installation Requirements
+
+1. Install LeRobot by following the [installation guide](./installation).
+2. Install the Hy-VLA dependencies:
+
+```bash
+uv sync --locked --extra hy_vla
+```
+
+<Warning>
+
+The Hy-VLA extra uses LeRobot's standard Transformers dependency, so it can be
+installed alongside other policy extras. Hy-VLA uses eager attention, which
+needs more GPU memory than fused attention implementations.
+
+</Warning>
+
+## Checkpoints
+
+| Variant  | LeRobot checkpoint                                                          | Action chunk                           | Image history |
+| -------- | --------------------------------------------------------------------------- | -------------------------------------- | ------------: |
+| UMI      | [`lerobot/hy_vla_umi`](https://huggingface.co/lerobot/hy_vla_umi)           | 50 relative actions at 10 Hz           |       1 frame |
+| RoboTwin | [`lerobot/hy_vla_robotwin`](https://huggingface.co/lerobot/hy_vla_robotwin) | 20 relative + 20 absolute model tokens |      6 frames |
+
+Use the UMI checkpoint as the starting point for fine-tuning. Use the
+RoboTwin checkpoint for the RoboTwin evaluation setup below. The inference
+configuration, processor state, normalization statistics, and tokenizer are
+stored with each checkpoint and load automatically.
+
+## Usage
+
+Load the checkpoint that matches the target contract with the standard policy
+path:
+
+```bash
+--policy.path=lerobot/hy_vla_umi
+```
+
+Use `lerobot/hy_vla_umi` for UMI-compatible fine-tuning and
+`lerobot/hy_vla_robotwin` for the documented RoboTwin evaluation protocol. Do
+not interchange their image-history, action-representation, or decoding
+settings.
+
+### Text generation
+
+Hy-VLA is a dual-tower model: a VLM tower and an action expert. The expert never
+produces vocabulary logits, so its language-modelling head is dropped at load —
+in the released checkpoints it is randomly initialized and unused. The **VLM
+tower keeps its own head**, tied to the embedding matrix. The normal input
+pipeline consumes runtime `query_kind`/`text`, renders semantic messages, and
+the shared base `generate_text` method drives the policy hook:
+
+```python
+subtask_request = preprocessor({**observation, "query_kind": "next_subtask", "text": task})
+subtask = policy.generate_text(subtask_request)
+vqa_request = preprocessor(
+    {**observation, "query_kind": "vqa", "text": "Which cup is closest?"}
+)
+answer = policy.generate_text(vqa_request)
+```
+
+Hy-VLA overrides `supports_text_generation` and `generate_text` directly.
+Decoding runs through Hy's own `embed_prefix`, so the images, modality masks and
+visual-segment attention match training.
+
+<Tip warning={true}>
+
+Text quality on the released action fine-tunes is **unverified**. An action
+fine-tune can erode language badly enough to make the head unusable even though
+it is architecturally intact — Being-H0.5's RoboCasa checkpoint is a documented
+case. Check the output on your checkpoint before relying on it, and co-train with
+`text_loss_weight` if you need the head to survive your own fine-tune.
+
+</Tip>
+
+Text runs as its own prefill: Hy does not produce language alongside an action
+chunk, so `predict_action_chunk_with_text` stays at the base default and reports
+no text. Use `generate_text` instead.
+
+## Training
+
+Hy-VLA supports the standard LeRobot training pipeline:
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/hy_vla_umi \
+  --policy.device=cuda \
+  --dataset.repo_id=<user/dataset> \
+  --batch_size=1 \
+  --steps=<steps> \
+  --output_dir=outputs/train/hy_vla
+```
+
+The policy optimizes a flow-matching objective over the action chunk and uses
+the task string from the dataset as its language instruction. LeRobot
+checkpoints save the model, optimizer, scheduler, tokenizer, and processor
+state, so normal checkpoint resume works without a separate conversion step.
+
+## Data Requirements
+
+The released UMI checkpoint expects three cameras:
+
+| Camera role   | Dataset feature                 |
+| ------------- | ------------------------------- |
+| Exterior/head | `observation.images.top_head`   |
+| Left wrist    | `observation.images.hand_left`  |
+| Right wrist   | `observation.images.hand_right` |
+
+Its native state and action are both 16D:
+
+```text
+left xyz(3), quaternion xyzw(4), gripper(1),
+right xyz(3), quaternion xyzw(4), gripper(1)
+```
+
+Datasets with different camera names can use the training
+[`rename_map`](./rename_map). A dataset with a
+different robot state or action contract needs an explicit embodiment adapter;
+it must not be treated as a truncated dual-arm vector.
+
+<Tip>
+
+Start with `--batch_size=1` and
+`--policy.freeze_vision_encoder=true --policy.train_expert_only=true` for a
+lower-memory fine-tuning run. Increase the batch size or unfreeze components
+only after measuring available GPU memory and held-out performance.
+
+</Tip>
+
+## Evaluation
+
+### RoboTwin
+
+RoboTwin requires its SAPIEN and CuRobo simulator dependencies. The Hy-VLA
+checkpoint uses absolute end-effector control, so select `ee_absolute` and
+rename the simulator camera features to the checkpoint's camera names:
+
+```bash
+LEROBOT_ROBOTWIN_OFFICIAL_INSTRUCTION=1 \
+LEROBOT_ROBOTWIN_INSTRUCTION_TYPE=unseen \
+lerobot-eval \
+  --policy.path=lerobot/hy_vla_robotwin \
+  --policy.device=cuda \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --env.action_mode=ee_absolute \
+  --env.obs_type=pixels_agent_pos \
+  --eval.n_episodes=10 \
+  --eval.batch_size=1 \
+  --eval.use_async_envs=false \
+  --output_dir=outputs/eval/hy_vla_robotwin \
+  '--rename_map={"observation.images.head_camera":"observation.images.top_head","observation.images.left_camera":"observation.images.hand_left","observation.images.right_camera":"observation.images.hand_right"}'
+```
+
+The RoboTwin policy samples a 20-action physical chunk, executes 7 actions,
+and then replans. It uses 6 observation frames sampled at an interval of 5
+environment steps. These values are already stored in the published
+checkpoint.
+
+Use `--eval.batch_size=1`. If you build a custom rollout loop that loads the
+policy, preprocessor, and postprocessor separately, reset all three at every
+episode boundary. Standard LeRobot synchronous and RTC inference already do
+this.
+
+## State and Action Representation
+
+The released checkpoints operate on a native 16D bimanual pose but use a 20D
+representation inside the model:
+
+```text
+left xyz(3), rotation-6D rows(6), gripper(1),
+right xyz(3), rotation-6D rows(6), gripper(1)
+```
+
+Processors packaged with the checkpoint convert quaternions to and from the
+6D rotation representation, apply normalization, pad the model input to 32D,
+and restore native environment actions.
+
+The UMI checkpoint predicts 50 relative actions. RoboTwin uses 40 action
+tokens: 20 relative poses followed by 20 absolute poses. Its postprocessor
+combines the paired predictions into 20 physical actions. Do not override a
+checkpoint's `embodiment`, action representation, or decoding mode unless you
+are implementing and validating a new adapter.
+
+## Key Configuration Parameters
+
+| Option                     | Description                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `embodiment`               | Data/action adapter: `umi_dual_arm` or `robotwin_dual_arm`.                    |
+| `freeze_vision_encoder`    | Freezes the vision encoder during fine-tuning.                                 |
+| `train_expert_only`        | Trains the action expert and projections while keeping the VLM frozen.         |
+| `execution_horizon`        | Number of physical actions served before the policy samples a new chunk.       |
+| `action_decode_mode`       | Decodes relative, absolute, or blended actions when supported by a checkpoint. |
+| `attention_implementation` | Selects the attention backend; published checkpoints default to `eager`.       |
+| `flow_loss_weight`         | Weight on the continuous flow-action loss. Default `1.0`.                      |
+| `text_loss_weight`         | Weight on assistant-token cross-entropy. Default `0.01`.                       |
+| `text_max_new_tokens`      | Decode budget for `generate_text`. Default `64`.                               |
+
+### Joint text and flow training
+
+When a batch carries `text_labels`, the VLM tower's hidden states over the
+language span — already produced by the pass the flow objective needs — are
+projected through the tied vocabulary head and supervised with next-token
+cross-entropy. The cost is one projection over the labelled positions; there is
+no second forward pass.
+
+Labels align to the language tokens and use `-100` wherever the loss must not
+apply: image tokens, the task prompt, and right padding. An action-only batch
+carries no labels and trains exactly as before.
+
+Text is weighted well below flow by default. Its job is to stop the language head
+drifting during an action fine-tune, not to compete with control.
+
+## Limitations
+
+- The released checkpoints are bimanual policies and expect the documented
+  dual-arm state and action contract.
+- `generate_text` is wired to the VLM tower's head, but text quality on the
+  released action fine-tunes has not been measured.
+- The integration includes the model runtime and standard LeRobot training
+  path, but not the author's dataset-preparation pipeline or distributed
+  launcher.
+
+## References
+
+- [Hy-Embodied-0.5 model](https://huggingface.co/tencent/HY-Embodied-0.5)
+- [Hy-VLA repository](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA)
+- [LeRobot UMI checkpoint](https://huggingface.co/lerobot/hy_vla_umi)
+- [LeRobot RoboTwin checkpoint](https://huggingface.co/lerobot/hy_vla_robotwin)
+
+## License
+
+The bundled Hy-VLA runtime is licensed under Apache 2.0. See the
+[upstream repository](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA)
+and the official
+[UMI](https://huggingface.co/tencent/Hy-Embodied-0.5-VLA-UMI) and
+[RoboTwin](https://huggingface.co/tencent/Hy-Embodied-0.5-VLA-RoboTwin)
+checkpoint cards.
