@@ -460,6 +460,93 @@ class TestPublishLowcmd:
 
 
 # ---------------------------------------------------------------------------
+# Reset
+# ---------------------------------------------------------------------------
+
+
+def sim_ready(robot):
+    """Point the robot at a stub sim env so reset() takes its single-publish branch."""
+    robot.sim_env = MagicMock()
+    return robot
+
+
+def published_targets(robot):
+    return {motor.name: robot.msg.motor_cmd[motor.value].q for motor in G1_29_JointIndex}
+
+
+class TestReset:
+    def test_homes_to_controller_pose(self, make_robot):
+        """The controller's home pose is what its policy expects, so it wins over the config."""
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset()
+
+        assert all(q == pytest.approx(0.25) for q in published_targets(robot).values())
+
+    def test_homes_to_config_without_ctrl(self, make_robot):
+        factory, mocks = make_robot
+        robot = sim_ready(arm_for_publish(factory(default_positions=[0.7] * NUM_MOTORS), mocks))
+
+        robot.reset()
+
+        assert all(q == pytest.approx(0.7) for q in published_targets(robot).values())
+
+    def test_explicit_pose_still_wins(self, make_robot):
+        factory, mocks = make_robot
+        controller = TokenController()
+        controller.default_angles = np.full(NUM_MOTORS, 0.25, np.float32)
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset(default_positions=np.full(NUM_MOTORS, -0.1, np.float32))
+
+        assert all(q == pytest.approx(-0.1) for q in published_targets(robot).values())
+
+    def test_clears_controller_state(self, make_robot):
+        factory, mocks = make_robot
+        controller = TokenController()
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        robot.reset()
+
+        assert controller.reset_calls == 1
+
+    def test_holds_control_authority(self, make_robot):
+        """A controller tick starting mid-reset must wait instead of fighting the sweep.
+
+        The tick is launched from inside reset's own publish, so it is guaranteed to land while
+        the homing sweep is in progress rather than depending on thread scheduling.
+        """
+        factory, mocks = make_robot
+        controller = TokenController()
+        robot = sim_ready(arm_for_publish(factory(controller=controller), mocks))
+
+        ticks: list[threading.Thread] = []
+        blocked: list[bool] = []
+
+        def controller_tick():
+            with robot._control_lock:  # what the controller loop holds around a tick
+                pass
+
+        def on_write(msg):
+            tick = threading.Thread(target=controller_tick)
+            tick.start()
+            tick.join(timeout=0.2)
+            blocked.append(tick.is_alive())
+            ticks.append(tick)
+
+        robot.lowcmd_publisher.Write = on_write
+        robot.reset()
+        for tick in ticks:
+            tick.join(timeout=1.0)
+
+        assert blocked == [True], "a controller tick got through while reset was homing"
+        assert all(not tick.is_alive() for tick in ticks), "tick never got control back"
+
+
+# ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,7 @@ from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
+    NUM_MOTORS,
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
@@ -137,6 +138,9 @@ class UnitreeG1(Robot):
         # Guards the shared lowcmd message: the controller thread, send_action(), reset() and
         # the shutdown path all publish through it, and a torn update still carries a valid CRC.
         self._lowcmd_lock = threading.Lock()
+        # Decides who may drive the joints over a span of time: one controller tick, or a whole
+        # reset sweep. Coarser than _lowcmd_lock, which only makes a single command atomic.
+        self._control_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.subscribe_thread = None
 
@@ -279,16 +283,18 @@ class UnitreeG1(Robot):
                 with self._controller_action_lock:
                     controller_input = dict(self.controller_input)
 
-                # Run controller step
-                controller_action = self.controller.run_step(controller_input, lowstate)
+                # Run controller step and publish it as one turn of control, so a reset sweep
+                # cannot interleave its own targets with this tick's.
+                with self._control_lock:
+                    controller_action = self.controller.run_step(controller_input, lowstate)
 
-                # Write controller output snapshot
-                with self._controller_action_lock:
-                    self.controller_output = dict(controller_action)
+                    # Write controller output snapshot
+                    with self._controller_action_lock:
+                        self.controller_output = dict(controller_action)
 
-                ctrl_kp = self.controller.kp if hasattr(self.controller, "kp") else None
-                ctrl_kd = self.controller.kd if hasattr(self.controller, "kd") else None
-                self.publish_lowcmd(controller_action, kp=ctrl_kp, kd=ctrl_kd)
+                    ctrl_kp = self.controller.kp if hasattr(self.controller, "kp") else None
+                    ctrl_kd = self.controller.kd if hasattr(self.controller, "kd") else None
+                    self.publish_lowcmd(controller_action, kp=ctrl_kp, kd=ctrl_kd)
 
             elapsed = time.time() - start_time
             sleep_time = max(0, control_dt - elapsed)
@@ -365,9 +371,9 @@ class UnitreeG1(Robot):
             self.msg.motor_cmd[joint].q = lowstate.motor_state[joint.value].q
 
         # Ease into the controller's home pose before it takes over, so the first commands
-        # don't snap from the connect-time pose.
+        # don't snap from the connect-time pose. reset() picks that pose up on its own.
         if self.controller is not None and hasattr(self.controller, "default_angles"):
-            self.reset(default_positions=self.controller.default_angles)
+            self.reset()
 
         # Start controller thread if enabled
         if self.controller is not None:
@@ -562,45 +568,54 @@ class UnitreeG1(Robot):
         if control_dt is None:
             control_dt = self.config.control_dt
         if default_positions is None:
-            default_positions = np.array(self.config.default_positions, dtype=np.float32)
+            # Home to the controller's own pose when it has one: that is what its policy was
+            # trained around (SONIC reads it from the ONNX metadata), whereas the config default
+            # is a generic fallback for raw joint teleop.
+            controller_home = getattr(self.controller, "default_angles", None)
+            source = self.config.default_positions if controller_home is None else controller_home
+            default_positions = np.array(source, dtype=np.float32)
 
-        if self.config.is_simulation and self.sim_env is not None:
-            self.sim_env.reset()
-            self.publish_lowcmd(
-                {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
-            )
-        else:
-            total_time = 3.0
-            num_steps = int(total_time / control_dt)
+        # Hold control authority for the whole sweep. Otherwise the controller thread keeps
+        # publishing its own targets throughout, and the robot is driven by two writers at once.
+        with self._control_lock:
+            if self.config.is_simulation and self.sim_env is not None:
+                self.sim_env.reset()
+                self.publish_lowcmd(
+                    {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
+                )
+            else:
+                total_time = 3.0
+                num_steps = int(total_time / control_dt)
 
-            # get current state
-            obs = self.get_observation()
+                # get current state
+                obs = self.get_observation()
 
-            # record current positions
-            init_dof_pos = np.zeros(29, dtype=np.float32)
-            for motor in G1_29_JointIndex:
-                init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
-
-            # Interpolate to default position
-            for step in range(num_steps):
-                start_time = time.time()
-
-                alpha = step / num_steps
-                action_dict = {}
+                # record current positions
+                init_dof_pos = np.zeros(NUM_MOTORS, dtype=np.float32)
                 for motor in G1_29_JointIndex:
-                    target_pos = default_positions[motor.value]
-                    interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
-                    action_dict[f"{motor.name}.q"] = float(interp_pos)
+                    init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
-                self.publish_lowcmd(action_dict)
+                # Interpolate to default position
+                for step in range(num_steps):
+                    start_time = time.time()
 
-                # Maintain constant control rate
-                elapsed = time.time() - start_time
-                sleep_time = max(0, control_dt - elapsed)
-                time.sleep(sleep_time)
+                    alpha = step / num_steps
+                    action_dict = {}
+                    for motor in G1_29_JointIndex:
+                        target_pos = default_positions[motor.value]
+                        interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
+                        action_dict[f"{motor.name}.q"] = float(interp_pos)
 
-        # Reset controller internal state (gait phase, obs history, etc.)
-        if self.controller is not None and hasattr(self.controller, "reset"):
-            self.controller.reset()
+                    self.publish_lowcmd(action_dict)
+
+                    # Maintain constant control rate
+                    elapsed = time.time() - start_time
+                    sleep_time = max(0, control_dt - elapsed)
+                    time.sleep(sleep_time)
+
+            # Reset controller internal state (gait phase, obs history, etc.) while the thread
+            # is still held off, so it cannot half-refill the buffers we are clearing.
+            if self.controller is not None and hasattr(self.controller, "reset"):
+                self.controller.reset()
 
         logger.info("Reached default position")
