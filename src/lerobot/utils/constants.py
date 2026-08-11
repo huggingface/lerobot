@@ -42,10 +42,15 @@ DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
 
-# Complementary-data flag naming the runtime text-generation request
-# ("vqa" or "next_subtask"). Runtime sets it together with ``text`` before
-# the normal policy input processor runs.
+# Complementary-data keys describing a text-generation request.  Set by the
+# rollout inference engines before the preprocessor runs — QUERY_KIND names what
+# is being asked for ("vqa", "next_subtask", ...) and QUERY_TEXT carries the
+# request itself (the operator's question, or the autosteer goal) — so a
+# processor step can format the prompt according to the kind of request. The
+# text keeps the standard complementary-data key used by recipe rendering.
+# Absent on ordinary action inference.
 QUERY_KIND = "query_kind"
+QUERY_TEXT = "text"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

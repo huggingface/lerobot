@@ -31,7 +31,7 @@ from threading import Lock
 
 import torch
 
-from lerobot.utils.constants import QUERY_KIND
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,10 @@ logger = logging.getLogger(__name__)
 class QueryKind(Enum):
     """What the policy's text head is being asked for.
 
-    Both kinds return text, but the policy preprocesses them differently —
-    a high-level goal is formatted so the reply is exactly one subtask —
-    so the kind is passed through to ``generate_text``.
+    Both kinds return text, but they are preprocessed differently — a
+    high-level goal is formatted so the reply is exactly one subtask — so
+    the kind travels in the batch alongside the query text (see
+    :meth:`InferenceEngine._mark_query`).
     """
 
     VQA = "vqa"
@@ -129,13 +130,15 @@ class InferenceEngine(abc.ABC):
     :meth:`_service_query`.  The answer lands in a slot and is handed to
     the observer registered via :meth:`set_answer_observer` when the
     control thread next calls :meth:`pump_query`, so observers never fire
-    on a background inference thread.
+    on a background inference thread.  Whether the channel can be served
+    at all is reported by :attr:`supports_text_queries`, which callers
+    check *before* queueing so a policy without a text head is refused up
+    front instead of failing one tick later.
 
     Optional hooks
     --------------
-    ``notify_observation`` / ``pause`` / ``resume`` / ``pump_query`` have
-    a no-op default so rollout strategies can invoke them
-    unconditionally.
+    ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
+    so rollout strategies can invoke them unconditionally.
 
     Subclasses must call ``super().__init__(task=...)``; the task and
     query holders are set up there.
@@ -233,6 +236,18 @@ class InferenceEngine(abc.ABC):
     # Text queries (VQA)
     # ------------------------------------------------------------------
 
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when this backend's policy can serve text queries.
+
+        Backends holding a policy report ``policy.supports_text_generation()``;
+        the default is False so a backend without a text path never accepts a
+        query it cannot serve.  Callers (the controller's ``ask`` /
+        ``autosteer``) check this before queueing, so the operator is refused
+        immediately instead of receiving an error answer a tick later.
+        """
+        return False
+
     def set_answer_observer(self, observer: Callable[[QueryAnswer], None] | None) -> None:
         """Register the callback :meth:`pump_query` hands ready answers to."""
         with self._query_lock:
@@ -300,13 +315,16 @@ class InferenceEngine(abc.ABC):
             dropped, self._pending_query = self._pending_query, None
         return dropped
 
+    @abc.abstractmethod
     def pump_query(self, obs_processed: dict | None = None) -> None:
         """Service the query channel.  Call from the control thread only.
 
-        Backends whose policy is owned by a background thread answer
-        there and only *deliver* here (this default).  Backends that run
-        inference on the control thread override this to also answer, so
-        the policy is still only ever touched by its owning thread.
+        Implementations must run, in order: :meth:`_poll_autosteer` (so
+        the sequencer can queue its next-subtask query), then
+        :meth:`_service_query` — but *only* when this backend's policy is
+        owned by the control thread; async backends answer on their
+        inference thread instead and skip it here — and finally
+        :meth:`_deliver_answer`, so observers always fire on this thread.
 
         ``obs_processed`` is the processed observation of the current
         control tick; pass ``None`` when none is available (the
@@ -314,8 +332,6 @@ class InferenceEngine(abc.ABC):
         rather than served without a view, and the autosteer sequencer does
         not advance.
         """
-        self._poll_autosteer(obs_processed)
-        self._deliver_answer()
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         with self._query_lock:
@@ -371,7 +387,7 @@ class InferenceEngine(abc.ABC):
         if query is None:
             return
         try:
-            text = self._generate_text(obs_processed, query.text, query.kind)
+            text = self._generate_text(obs_processed, query)
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
             if query.kind is QueryKind.NEXT_SUBTASK:
@@ -395,41 +411,31 @@ class InferenceEngine(abc.ABC):
             return
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
 
-    def _generate_text(self, obs_processed: dict, text: str, kind: QueryKind) -> str:
-        """Run the policy's text head on ``obs_processed``.  Backend-specific."""
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
+        """Run the policy's text head on ``obs_processed``.  Backend-specific.
+
+        Implementations build the batch, stamp the query into it with
+        :meth:`_mark_query`, run the preprocessor, and call
+        ``policy.generate_text(batch)``.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not support text queries — no /vqa or /autosteer on this backend."
         )
 
     @staticmethod
-    def _policy_generate_text(policy, observation: dict) -> str:
-        """Call the policy's text head, with a clear error when it has none.
-
-        The kind of request is not an argument here: backends stamp it into
-        the batch under :data:`~lerobot.utils.constants.QUERY_KIND` *before*
-        preprocessing (see :meth:`_mark_query_kind`), so the preprocessor has
-        already formatted the prompt by the time this runs.
-        """
-        generate = getattr(policy, "generate_text", None)
-        if not callable(generate):
-            raise NotImplementedError(
-                f"{type(policy).__name__} has no generate_text(processed_batch) — "
-                "this policy cannot answer questions or plan subtasks."
-            )
-        return str(generate(observation))
-
-    @staticmethod
-    def _mark_query_kind(batch: dict, kind: QueryKind, text: str) -> dict:
-        """Add the complete text request to ``batch`` before preprocessing.
+    def _mark_query(batch: dict, query: PolicyQuery) -> dict:
+        """Stamp ``batch`` with the query's kind and text, for the preprocessor.
 
         Call between ``prepare_observation_for_inference`` and the
-        preprocessor pipeline. ``QUERY_KIND`` and ``text`` are complementary
-        data, so the default policy processor can render the complete prompt.
-        The kind is stored as the plain enum value so processor steps need not
-        import this module; both values remain unbatched request metadata.
+        preprocessor pipeline.  ``QUERY_KIND`` and ``QUERY_TEXT`` are in the
+        converters' complementary-data allowlist, so they survive
+        ``batch_to_transition`` and land beside ``task``. The shared message
+        renderer consumes both fields before policy-specific formatting and
+        tokenization. Stored as plain strings and left unbatched because they
+        describe the request rather than an observation sample.
         """
-        batch[QUERY_KIND] = kind.value
-        batch["text"] = text
+        batch[QUERY_KIND] = query.kind.value
+        batch[QUERY_TEXT] = query.text
         return batch
 
     def _publish_answer(self, answer: QueryAnswer) -> None:

@@ -44,7 +44,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine, QueryKind
+from .base import InferenceEngine, PolicyQuery
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +297,27 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._obs_holder["obs"] = obs
 
-    def _generate_text(self, obs_processed: dict, text: str, kind: QueryKind) -> str:
+    # ------------------------------------------------------------------
+    # Text queries
+    # ------------------------------------------------------------------
+
+    @property
+    def supports_text_queries(self) -> bool:
+        """True when the policy has a text head."""
+        return self._policy.supports_text_generation()
+
+    def pump_query(self, obs_processed: dict | None = None) -> None:
+        """Advance the sequencer and deliver ready answers.  Control thread only.
+
+        The policy is owned by the RTC background thread, which services
+        queries in ``_rtc_loop`` — this only queues autosteer queries and
+        hands finished answers to the observer, so observers fire on the
+        control thread and the policy is never touched here.
+        """
+        self._poll_autosteer(obs_processed)
+        self._deliver_answer()
+
+    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
         obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
         # The live task, read without consuming the task-changed edge — that
@@ -307,10 +327,10 @@ class RTCInferenceEngine(InferenceEngine):
             obs_batch, torch.device(self._device), task, self._robot.robot_type
         )
         obs_batch["task"] = [task]
-        obs_batch = self._mark_query_kind(obs_batch, kind, text)
+        obs_batch = self._mark_query(obs_batch, query)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            return self._policy_generate_text(self._policy, preprocessed)
+            return str(self._policy.generate_text(preprocessed))
 
     # ------------------------------------------------------------------
     # RTC: background inference thread
