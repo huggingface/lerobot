@@ -112,6 +112,60 @@ def test_stdin_listener_blocking_fallback():
     listener.stop()
 
 
+def test_stdin_listener_blocking_bytes_stream_reaches_eof():
+    """A bytes stream on the blocking path must fire on_eof and end the thread.
+
+    ``readline()`` returns ``b""`` at EOF there, which a ``== ""`` check misses
+    — the regression this guards against was a 100% CPU busy loop that never
+    signalled EOF.
+    """
+    lines: list[str] = []
+    eof = Event()
+    listener = StdinCommandListener(lines.append, on_eof=eof.set, stream=io.BytesIO(b"/start\n"))
+    assert not listener._use_select
+    listener.start()
+    assert _wait_for(eof.is_set)
+    assert lines == ["/start"]
+    assert _wait_for(lambda: not listener._thread.is_alive())
+    listener.stop()
+
+
+def test_stdin_listener_final_line_without_newline_is_flushed_at_eof():
+    """A trailing command with no newline (printf '/stop') is delivered before on_eof."""
+    lines: list[str] = []
+    eof = Event()
+
+    with _pipe_stream() as (reader, writer):
+        listener = StdinCommandListener(lines.append, on_eof=eof.set, stream=reader)
+        listener.start()
+        writer.write("/start\n/stop")
+        writer.flush()
+        assert _wait_for(lambda: lines == ["/start"])
+
+        writer.close()
+        assert _wait_for(eof.is_set)
+        assert lines == ["/start", "/stop"]
+        listener.stop()
+
+
+def test_stdin_listener_accumulates_line_split_across_reads():
+    """A line arriving in two chunks is delivered once, whole."""
+    lines: list[str] = []
+
+    with _pipe_stream() as (reader, writer):
+        listener = StdinCommandListener(lines.append, stream=reader)
+        listener.start()
+        writer.write("/subtask grab ")
+        writer.flush()
+        time.sleep(0.05)  # let the listener consume the partial chunk
+        assert lines == []
+
+        writer.write("the cube\n")
+        writer.flush()
+        assert _wait_for(lambda: lines == ["/subtask grab the cube"])
+        listener.stop()
+
+
 def test_stdin_listener_none_stdin_treated_as_eof(monkeypatch):
     """A missing sys.stdin (daemonized process) must fire on_eof, not hang silently."""
     monkeypatch.setattr(sys, "stdin", None)

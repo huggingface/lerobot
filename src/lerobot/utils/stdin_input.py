@@ -19,7 +19,11 @@ hotkeys: :class:`TerminalKeyListener` reads single raw bytes in cbreak mode,
 whereas :class:`StdinCommandListener` here assembles whole typed lines and
 leaves the terminal in canonical (line-buffered, echoing) mode — the operator
 is typing chat-style commands, not pressing hotkeys.  The two cannot share
-stdin at the same time.
+stdin at the same time.  More generally the listener must be the stream's
+*sole* consumer: in select mode it reads the file descriptor directly with
+``os.read``, so nothing else in the process may read the same stream while it
+runs, and bytes already slurped into a buffered wrapper (e.g. by an earlier
+``input()`` call) are invisible to it.
 
 Environment support: reading works over SSH (the session's pty is a regular
 TTY file descriptor), in headless setups (no display server is involved,
@@ -57,7 +61,7 @@ class StdinCommandListener:
         self,
         on_line: Callable[[str], None],
         on_eof: Callable[[], None] | None = None,
-        stream: IO[str] | None = None,
+        stream: IO[str] | IO[bytes] | None = None,
         poll_interval_s: float = 0.2,
     ) -> None:
         self._on_line = on_line
@@ -123,7 +127,11 @@ class StdinCommandListener:
         the buffered lines would never be delivered — breaking pasted or
         piped command sequences.
         """
-        fd = self._stream.fileno()
+        try:
+            fd = self._stream.fileno()
+        except (OSError, ValueError):  # closed between construction and thread start
+            self._emit_read_error()
+            return
         buffer = b""
         while self._running:
             try:
@@ -141,13 +149,14 @@ class StdinCommandListener:
             if not self._running:
                 return
             if chunk == b"":  # EOF: Ctrl-D or the piped input ended
-                self._emit_line(buffer)  # a final command without trailing newline still counts
+                # A final command without trailing newline still counts.
+                self._emit_line(buffer.decode(errors="replace"))
                 self._emit_eof()
                 return
             buffer += chunk
             while b"\n" in buffer:
                 raw, buffer = buffer.split(b"\n", 1)
-                self._emit_line(raw)
+                self._emit_line(raw.decode(errors="replace"))
 
     def _run_blocking(self) -> None:
         while self._running:
@@ -158,13 +167,13 @@ class StdinCommandListener:
                 return
             if not self._running:
                 return
-            if line == "":  # EOF
+            if not line:  # EOF: "" on text streams, b"" on bytes streams
                 self._emit_eof()
                 return
-            self._emit_line(line.encode() if isinstance(line, str) else line)
+            self._emit_line(line if isinstance(line, str) else line.decode(errors="replace"))
 
-    def _emit_line(self, raw: bytes) -> None:
-        line = raw.decode(errors="replace").strip()
+    def _emit_line(self, line: str) -> None:
+        line = line.strip()
         if not line:
             return
         try:
