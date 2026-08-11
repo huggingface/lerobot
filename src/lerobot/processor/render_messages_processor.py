@@ -24,14 +24,13 @@ import numpy as np
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.utils.constants import QUERY_KIND
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
 
 LANGUAGE_EVENTS = "language_events"
 LANGUAGE_PERSISTENT = "language_persistent"
-TEXT = "text"
 
 
 @dataclass
@@ -138,9 +137,9 @@ class RenderMessagesStep(ProcessorStep):
         complementary_data: dict[str, Any],
         kind: str,
     ) -> EnvTransition:
-        text = complementary_data.get(TEXT)
+        text = complementary_data.get(QUERY_TEXT)
         if not isinstance(text, str):
-            raise TypeError(f"Text generation requires complementary data {TEXT!r} to be a string.")
+            raise TypeError(f"Text generation requires complementary data {QUERY_TEXT!r} to be a string.")
 
         if kind == "vqa":
             messages = [{"role": "user", "content": text}]
@@ -159,7 +158,7 @@ class RenderMessagesStep(ProcessorStep):
         new_transition = transition.copy()
         new_complementary_data = dict(complementary_data)
         new_complementary_data.pop(QUERY_KIND)
-        new_complementary_data.pop(TEXT)
+        new_complementary_data.pop(QUERY_TEXT)
         new_complementary_data["messages"] = messages
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = new_complementary_data
         return new_transition
