@@ -25,11 +25,10 @@ from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
-    RenderGenerationPromptStep,
+    RenderMessagesStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.processor.render_messages_processor import RenderMessagesStep
 
 from .configuration_wall_x import WallXConfig
 
@@ -64,22 +63,19 @@ def make_wall_x_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
-    language_steps = []
-    if language_recipe_enabled(
+    render_training = language_recipe_enabled(
         use_language_recipe=config.use_language_recipe,
         recipe_path=config.recipe_path,
-    ):
-        if config.recipe is None:
-            raise ValueError("WALL-X language training requires a recipe in policy config.")
-        language_steps.append(RenderMessagesStep(recipe=config.recipe))
+    )
+    if render_training and config.recipe is None:
+        raise ValueError("WALL-X language training requires a recipe in policy config.")
 
     input_steps = [
-        RenderGenerationPromptStep(config.recipe),
+        RenderMessagesStep(config.recipe, render_training=render_training),
         steps.rename_observations,
         steps.add_batch_dim,
         WallXTaskProcessor(),  # Process task description
         steps.normalize,
-        *language_steps,
         steps.to_device,
     ]
 

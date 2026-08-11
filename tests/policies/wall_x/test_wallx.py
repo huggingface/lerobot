@@ -36,7 +36,7 @@ from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, Wall
 from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
 from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
-from lerobot.processor import RenderGenerationPromptStep  # noqa: E402
+from lerobot.processor import RenderMessagesStep  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -243,7 +243,8 @@ def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
         }
     )
 
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
     assert batch["messages"] == [
         [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}]
     ]
