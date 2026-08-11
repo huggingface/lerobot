@@ -25,6 +25,7 @@ from ..g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
     G1_29_JointIndex,
+    RobotController,
     get_gravity_orientation,
 )
 
@@ -77,10 +78,10 @@ def load_groot_policies(
     return policy_balance, policy_walk
 
 
-class GrootLocomotionController:
+class GrootLocomotionController(RobotController):
     """GR00T lower-body locomotion controller for the Unitree G1."""
 
-    control_dt = CONTROL_DT  # Expose for unitree_g1.py
+    control_dt = CONTROL_DT
 
     def __init__(self):
         # Load policies

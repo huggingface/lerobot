@@ -26,6 +26,7 @@ from ..g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
+    RobotController,
     get_gravity_orientation,
 )
 
@@ -95,10 +96,10 @@ def load_policy(
     return policy, kp, kd
 
 
-class HolosomaLocomotionController:
+class HolosomaLocomotionController(RobotController):
     """Holosoma lower-body locomotion controller for Unitree G1."""
 
-    control_dt = CONTROL_DT  # Expose for unitree_g1.py
+    control_dt = CONTROL_DT
 
     def __init__(self):
         # Load policy and gains

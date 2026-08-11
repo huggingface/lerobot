@@ -41,7 +41,9 @@ from huggingface_hub import hf_hub_download
 from ..g1_utils import (
     ISAACLAB_TO_MUJOCO,
     MUJOCO_TO_ISAACLAB,
+    NUM_MOTORS,
     G1_29_JointIndex,
+    RobotController,
     get_gravity_orientation,
 )
 
@@ -49,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
+HISTORY_LEN = 10  # proprioception frames the decoder conditions on
+HISTORY_LEN = 10  # proprioception frames the decoder looks back over
 
 # Latent-token feature-key prefixes: action carries the token, obs echoes it back.
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
@@ -57,7 +61,8 @@ TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, no
 # SONIC decoder checkpoint. Deploy constants (kp/kd, default_angles, action_scale,
 # neutral_token) are baked into the ONNX metadata; see upload_sonic_decoder.py.
 DEFAULT_SONIC_REPO_ID = "lerobot/sonic_decoder"
-DECODER_INPUT_DIM = 994  # token(64) + 10-frame proprio history + gravity
+# token + HISTORY_LEN frames of (angular velocity, joint pos, joint vel, last action) + gravity
+DECODER_INPUT_DIM = TOKEN_DIM + HISTORY_LEN * (3 + 3 * NUM_MOTORS) + HISTORY_LEN * 3  # 994
 
 # Decoder filename mapping: the full decoder (default) or NVIDIA's distilled low-latency one.
 POLICY_FILES = {
@@ -104,7 +109,7 @@ def load_policy(
     return decoder, arr["kp"], arr["kd"], arr["default_angles"], arr["action_scale"], arr["neutral_token"]
 
 
-class SonicWholeBodyController:
+class SonicWholeBodyController(RobotController):
     """Full-body SONIC decoder controller for UnitreeG1's background controller thread.
 
     Token-only deploy (encoder bypassed): each tick it appends the latest robot state to
@@ -130,13 +135,13 @@ class SonicWholeBodyController:
         logger.info("SonicWholeBodyController initialized")
 
     def reset(self) -> None:
-        """Reset internal state for a new episode: held token and 10-frame history buffers."""
-        self.last_action_mj = np.zeros(29, np.float32)
-        self.h_q_mj = [np.zeros(29, np.float32)] * 10
-        self.h_dq_mj = [np.zeros(29, np.float32)] * 10
-        self.h_ang = [np.zeros(3, np.float32)] * 10
-        self.h_act_mj = [np.zeros(29, np.float32)] * 10
-        self.h_quat = [np.array([1, 0, 0, 0], np.float32)] * 10
+        """Reset internal state for a new episode: held token and proprioception history."""
+        self.last_action_mj = np.zeros(NUM_MOTORS, np.float32)
+        self.h_q_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_dq_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_ang = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_act_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_quat = [np.array([1, 0, 0, 0], np.float32) for _ in range(HISTORY_LEN)]
         self._last_token = None  # neutral token is re-seeded on the first tick
 
     def observation_state(self) -> dict[str, float]:
@@ -146,9 +151,18 @@ class SonicWholeBodyController:
         return {f"{TOKEN_STATE_PREFIX}.{i}.pos": float(v) for i, v in enumerate(token)}
 
     def run_step(self, action: dict, lowstate) -> dict:
-        if lowstate is None:
-            return {}
+        """Decode one control tick into absolute joint-position targets.
 
+        Args:
+            action: Latest action snapshot. All 64 ``motion_token.{i}.pos`` keys must be
+                present to update the latent; any other content (joystick axes, a partial
+                chunk) leaves the previously held token in place.
+            lowstate: Unitree lowstate carrying joint positions/velocities and IMU state.
+
+        Returns:
+            Absolute joint targets keyed ``<joint>.q`` for all 29 joints: ``default_angles``
+            plus the decoder's residual, scaled by ``action_scale``.
+        """
         # Token: reassemble the dense 64-D latent from motion_token.{i}.pos (all keys required);
         # else hold the last one (neutral until the first real token, which decodes to a stand).
         keys = [f"{TOKEN_ACTION_PREFIX}.{i}.pos" for i in range(TOKEN_DIM)]
@@ -178,7 +192,12 @@ class SonicWholeBodyController:
         obs = np.zeros(DECODER_INPUT_DIM, np.float32)
         obs[:TOKEN_DIM] = self._last_token
         off = TOKEN_DIM
-        for hist, sz in ((self.h_ang, 3), (self.h_q_mj, 29), (self.h_dq_mj, 29), (self.h_act_mj, 29)):
+        for hist, sz in (
+            (self.h_ang, 3),
+            (self.h_q_mj, NUM_MOTORS),
+            (self.h_dq_mj, NUM_MOTORS),
+            (self.h_act_mj, NUM_MOTORS),
+        ):
             for frame in reversed(hist):
                 obs[off : off + sz] = frame
                 off += sz

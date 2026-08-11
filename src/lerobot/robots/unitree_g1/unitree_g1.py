@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -36,8 +36,9 @@ from .g1_utils import (
     REMOTE_AXES,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
+    RobotController,
     default_remote_input,
-    make_locomotion_controller,
+    make_robot_controller,
 )
 
 if TYPE_CHECKING or _unitree_sdk_available:
@@ -62,15 +63,6 @@ else:
     CRC = None
 
 logger = logging.getLogger(__name__)
-
-
-@runtime_checkable
-class LocomotionController(Protocol):
-    control_dt: float
-
-    def run_step(self, action: dict, lowstate) -> dict: ...
-
-    def reset(self) -> None: ...
 
 
 # DDS topic names follow Unitree SDK naming conventions
@@ -148,7 +140,7 @@ class UnitreeG1(Robot):
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
         # Controller loaded dynamically
-        self.controller: LocomotionController | None = make_locomotion_controller(config.controller)
+        self.controller: RobotController | None = make_robot_controller(config.controller)
         # Controller thread state
         self._controller_thread = None
         self._controller_action_lock = threading.Lock()
