@@ -35,8 +35,8 @@ API for driving a rollout programmatically (from an application, a network
 server, a notebook, ...) without any of this module's terminal I/O.
 
 Threading model: a daemon stdin-listener thread parses lines and calls the
-controller's thread-safe methods (``start``/``reset``/``stop``/``set_task``);
-it never touches hardware or policy state.  ``RolloutController.serve()``
+controller's thread-safe methods (``start``/``reset``/``stop``/``set_task``/
+``ask``/``autosteer``); it never touches hardware or policy state.  ``RolloutController.serve()``
 runs on the main thread and executes ``strategy.run(ctx)`` in *segments*,
 ended through the session's :class:`LinkedEvent` (installed as
 ``ctx.runtime.shutdown_event``).  Real shutdown signals (SIGINT/SIGTERM)
@@ -52,9 +52,8 @@ traceback.  Normal logging resumes when the session ends (so teardown logs
 are visible).  Run without ``--interactive`` to see the full live log output.
 
 The command table is intentionally a name → (handler, argument hint, help)
-mapping so further commands (``/ask`` and the rest of the language-runtime
-work in PR #4183/#4234) can be registered without restructuring the parser,
-the help output, or the session loop.
+mapping so further commands can be registered without restructuring the
+parser, the help output, or the session loop.
 """
 
 from __future__ import annotations
@@ -174,8 +173,7 @@ class InteractiveSession:
         self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
 
         # name -> (handler, argument hint, help line); /help and the banner
-        # render from this table, so future commands (e.g. /ask) stay
-        # documented for free.
+        # render from this table, so future commands stay documented for free.
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),

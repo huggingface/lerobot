@@ -164,6 +164,11 @@ _COMPLEMENTARY_KEYS = (
     "messages",
     "message_streams",
     "target_message_indices",
+    # Stamped onto the inference batch by the rollout engines' _mark_query()
+    # (lerobot.rollout.inference.base) right before the preprocessor runs.
+    # Allowlisted so batch_to_transition carries them into complementary_data,
+    # where a prompt-formatting processor step can read the kind and rewrite
+    # QUERY_TEXT; dropping them breaks rollout text queries (/vqa, /autosteer).
     QUERY_KIND,
     QUERY_TEXT,
 )

@@ -177,9 +177,10 @@ class SentryStrategy(RolloutStrategy):
 
                     episode_start = time.perf_counter()
 
-                # Service the /vqa channel at the end of the tick, after the
-                # frame has been recorded: a sync backend answers here, and a
-                # multi-second generate must not land between this tick's
+                # Service the text-query channel (/vqa answers and the
+                # /autosteer sequencer) at the end of the tick, after the
+                # frame has been recorded: a sync backend generates here, and
+                # a multi-second generate must not land between this tick's
                 # observation and its ``add_frame``.
                 engine.pump_query(obs_processed)
 

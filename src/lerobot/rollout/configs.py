@@ -238,7 +238,7 @@ class RolloutConfig:
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
 
-    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger)
+    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
@@ -251,12 +251,12 @@ class RolloutConfig:
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
     # Interactive session: control the rollout from stdin with chat-style
-    # commands (/start, /subtask <text>, /reset, /stop) while hardware and
-    # policy stay warm.  The robot does not move until /start is received,
-    # `/subtask` re-instructs the policy mid-run, and logs below ERROR are
-    # muted while the session runs so they don't interleave with the prompt.
-    # Supported with --strategy.type=base (no recording) and sentry
-    # (continuous recording; frames carry dispatched-action task provenance).
+    # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
+    # /reset, /stop) while hardware and policy stay warm.  The robot does not
+    # move until /start is received, and logs below WARNING are muted while
+    # the session runs so they don't interleave with the prompt.  Supported
+    # with --strategy.type=base (no recording) and sentry (continuous
+    # recording; frames carry dispatched-action task provenance).
     interactive: bool = False
     # /autosteer: seconds of robot motion between two "what is the next
     # subtask?" queries to the policy.  Measured from the moment a subtask is

@@ -151,8 +151,11 @@ class InferenceEngine(abc.ABC):
         self._dispatched_task = task
         self._task_lock = Lock()
 
-        # Text-query channel.  Its own lock, so a slow generate never
-        # blocks a concurrent ``set_task`` (and vice versa).
+        # Text-query channel.  Its own lock, separate from the task holder's;
+        # both only guard short slot handoffs — no lock is ever held across
+        # text generation (``_service_query`` claims the query, generates
+        # lock-free, then publishes), so a slow generate never blocks a
+        # concurrent ``set_task`` or ``ask``.
         self._query_lock = Lock()
         self._pending_query: PolicyQuery | None = None
         self._ready_answer: QueryAnswer | None = None
@@ -450,12 +453,13 @@ class InferenceEngine(abc.ABC):
         Call between ``prepare_observation_for_inference`` and the
         preprocessor pipeline.  ``QUERY_KIND`` and ``QUERY_TEXT`` are in the
         converters' complementary-data allowlist, so they survive
-        ``batch_to_transition`` and land beside ``task`` — where a
-        ``ComplementaryDataProcessorStep`` can read the kind and rewrite
-        ``QUERY_TEXT`` in place into this policy's prompt format before
-        ``generate_text`` consumes it.  Stored as plain strings so processor
-        steps need not import this module, and unbatched because they
-        describe the request, not a sample.
+        ``batch_to_transition`` and land beside ``task``.  That is the
+        intended extension point for text-capable policies: a policy-specific
+        ``ComplementaryDataProcessorStep`` (none exists in-tree yet) can read
+        the kind there and rewrite ``QUERY_TEXT`` in place into its prompt
+        format before ``generate_text`` consumes it.  Stored as plain strings
+        so processor steps need not import this module, and unbatched because
+        they describe the request, not a sample.
         """
         batch[QUERY_KIND] = query.kind.value
         batch[QUERY_TEXT] = query.text

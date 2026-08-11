@@ -92,9 +92,11 @@ class RolloutStrategy(abc.ABC):
         """Clear episode-scoped control state so a paused session can restart cleanly.
 
         Resets the inference engine (policy hidden state, action queues), the
-        action interpolator, and the cached processed observation.  Used by the
-        interactive session between run segments; only call while the control
-        loop is not running.
+        action interpolator, and the cached processed observation.
+        ``RolloutController`` calls this on its serve thread before each run
+        segment (``_init_engine`` also runs it once during setup).  Only call
+        while the control loop is not running: the engine and interpolator
+        resets are not synchronized against a live loop.
         """
         if self._engine is not None:
             self._engine.reset()
@@ -218,6 +220,10 @@ class RolloutStrategy(abc.ABC):
         ``supports_interactive``, in which case it is called once per
         interactive segment and must be restartable (see the class
         docstring for the contract).
+
+        Implementations must call ``engine.resume()`` before entering their
+        loop: async backends start with inference paused, and the interactive
+        controller pauses the engine again at the end of every segment.
         """
 
     @abc.abstractmethod

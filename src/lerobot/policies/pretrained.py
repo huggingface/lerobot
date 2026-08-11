@@ -217,8 +217,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Chunking policies answer most control ticks from a queue filled by an
         earlier forward pass, so a mid-episode change to the conditioning —
         e.g. a new language instruction — would otherwise only take effect
-        once that queue drains (up to ``chunk_size`` ticks).  Dropping the
-        queue forces a fresh forward pass on the next ``select_action``.
+        once that queue drains (up to ``n_action_steps`` ticks, the queue's
+        length).  Dropping the queue forces a fresh forward pass on the next
+        ``select_action``.
 
         Unlike :meth:`reset` this keeps the rest of the episode state (e.g.
         observation history), so it does not perturb policies that condition

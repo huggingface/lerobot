@@ -198,8 +198,11 @@ class RTCInferenceEngine(InferenceEngine):
     def failure_traceback(self) -> str | None:
         """Traceback captured when the RTC thread died (see ``failed``).
 
-        Kept on the engine so consumers that mute console logging (the
-        interactive session) can still surface the fatal error.
+        Kept on the engine as data, not just logged: the failure happens on a
+        background thread at an arbitrary time, so consumers re-surface it
+        when someone is looking — ``RolloutController.failure_traceback``
+        exposes it to API callers, and the interactive session prints it in
+        the chat flow when it reports the failure.
         """
         return self._failure_traceback
 
@@ -250,14 +253,15 @@ class RTCInferenceEngine(InferenceEngine):
     def reset(self) -> None:
         """Reset the policy, processors, and action queue.
 
-        Call while the engine is paused (both DAgger transitions and the
-        interactive session do): the RTC thread may still be finishing an
-        inference started before the pause, so ``reset`` also drops the last
-        published observation — it can be arbitrarily stale by the time the
-        engine resumes (e.g. the robot was returned to its initial position
-        in the meantime), and a chunk computed from it would jerk the robot
-        toward the old pose — and bumps the reset epoch so any in-flight
-        chunk is discarded instead of merged into the cleared queue.
+        Safe to call while the RTC thread is paused (DAgger transitions, the
+        interactive session) or still running (episode-start resets, the
+        post-warmup flush): either way an inference may be in flight, so
+        ``reset`` also drops the last published observation — it can be
+        arbitrarily stale by the time actions are next consumed (e.g. the
+        robot was returned to its initial position in the meantime), and a
+        chunk computed from it would jerk the robot toward the old pose —
+        and bumps the reset epoch so an in-flight chunk is discarded instead
+        of merged into the cleared queue.
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
@@ -288,6 +292,11 @@ class RTCInferenceEngine(InferenceEngine):
         # labels between chunks); expose it for frame labeling.
         action, task = queued
         if task is None:
+            # Every merge in this engine labels its chunk (see _rtc_loop), so a
+            # missing label means a foreign writer touched the queue.  Fail
+            # loudly: an unlabeled action would silently corrupt
+            # ``dispatched_task`` and the frame labels recording strategies
+            # derive from it.
             raise RuntimeError("RTC action queue returned an action without task provenance")
         self._set_dispatched_task(task)
         return action
@@ -353,14 +362,17 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
 
-                # Answer a queued /vqa question here: this is the thread that
-                # owns the policy.  Above the refill branch on purpose — a
-                # question asked while the queue is full would otherwise wait
-                # for it to drain.  ``_service_query`` swallows its own errors,
-                # so a bad question never trips the consecutive-error counter
-                # below.  The chunk path re-runs the preprocessor on its own
-                # observation, so the stateful steps (relative-action
-                # anchoring) are not left holding this one.
+                # Serve a queued text query here — an operator's /vqa question
+                # or the autosteer sequencer's next-subtask request (which
+                # ``_service_query`` applies via ``set_task``, so the chunk
+                # path below picks it up on this very iteration): this is the
+                # thread that owns the policy.  Above the refill branch on
+                # purpose — a query issued while the queue is full would
+                # otherwise wait for it to drain.  ``_service_query`` swallows
+                # its own errors, so a bad question never trips the
+                # consecutive-error counter below.  The chunk path re-runs the
+                # preprocessor on its own observation, so the stateful steps
+                # (relative-action anchoring) are not left holding this one.
                 self._service_query(obs)
 
                 if queue.qsize() <= self._rtc_queue_threshold:

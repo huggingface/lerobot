@@ -116,8 +116,8 @@ class SyncInferenceEngine(InferenceEngine):
         with torch.inference_mode(), autocast_ctx:
             if task_changed:
                 # Chunking policies serve actions from an internal queue filled
-                # under the previous instruction (up to chunk_size ticks of stale
-                # behavior), so drop them and let the new instruction take effect
+                # under the previous instruction (up to n_action_steps ticks of
+                # stale behavior), so drop them and let the new instruction take effect
                 # on this very tick.  Deliberately narrower than ``policy.reset``:
                 # observation history and other episode state are kept, so a
                 # policy that conditions on them (and one that ignores the task
@@ -169,5 +169,11 @@ class SyncInferenceEngine(InferenceEngine):
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
             observation = self._mark_query(observation, query)
+            # Reuses the action path's preprocessor, which is safe only while
+            # its steps are stateless per call: the one stateful step that
+            # matters (an enabled RelativeActionsProcessorStep) is rejected for
+            # this backend at context-build time.  Revisit if that rejection is
+            # lifted — a query advancing a stateful step would let the action
+            # path notice the query.
             observation = self._preprocessor(observation)
             return str(self._policy.generate_text(observation))

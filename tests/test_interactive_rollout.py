@@ -993,8 +993,9 @@ def test_drop_queued_actions_clears_both_queue_conventions():
     from lerobot.policies.pretrained import PreTrainedPolicy
     from lerobot.utils.constants import ACTION
 
-    # PreTrainedPolicy's metaclass demands a config_class, so exercise the
-    # method against stand-ins carrying each queue idiom.
+    # Subclassing PreTrainedPolicy demands a config_class (enforced in its
+    # __init_subclass__), so exercise the method against stand-ins carrying
+    # each queue idiom.
     flush = PreTrainedPolicy.drop_queued_actions
 
     queues_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style

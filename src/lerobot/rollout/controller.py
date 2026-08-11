@@ -185,7 +185,8 @@ class RolloutController:
     ``build_rollout_context(cfg, LinkedEvent(shutdown_event))``.
 
     Thread safety: the control methods (:meth:`start`, :meth:`reset`,
-    :meth:`stop`, :meth:`set_task`) may be called from any thread and are
+    :meth:`stop`, :meth:`set_task`, :meth:`ask`, :meth:`autosteer`,
+    :meth:`stop_autosteer`) may be called from any thread and are
     serialized by an internal lock, so calls issued in order from one thread
     keep that order — e.g. a ``set_task`` right after a ``reset`` is not
     clobbered by the reset's task restore.  Commands are last-write-wins:
@@ -377,8 +378,9 @@ class RolloutController:
         """Let the policy decompose ``goal`` and drive its own subtasks.
 
         Every ``autosteer_interval_s`` seconds the engine asks the policy
-        for the next subtask and applies it through :meth:`set_task`,
-        so the switch takes the usual instruction-change path.  Progress
+        for the next subtask and applies it through the *engine's*
+        ``set_task`` (not this controller's, which would stop the
+        sequencer), so the switch takes the usual instruction-change path.  Progress
         through the plan lives in the policy — each query re-sends the same
         goal — which is why the sequencer does not survive a segment:
         restarting a segment resets the policy, and with it the plan.
