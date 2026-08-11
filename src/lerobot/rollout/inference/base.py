@@ -426,11 +426,8 @@ class InferenceEngine(abc.ABC):
             return
         if query.kind is QueryKind.NEXT_SUBTASK:
             # Applied here, on the policy-owning thread, so the subtask is live
-            # for the very next inference and before the observer announces it.
-            subtask = text.strip()
-            if subtask:
-                self.set_task(subtask)
-            text = subtask
+            # for the very next inference.
+            self.set_task(text)
             # Armed only now, so the interval measures robot motion between
             # subtasks rather than wall-clock that a slow generate ate into.
             self._schedule_next_autosteer()
@@ -456,10 +453,13 @@ class InferenceEngine(abc.ABC):
         Call between ``prepare_observation_for_inference`` and the
         preprocessor pipeline.  ``QUERY_KIND`` and ``QUERY_TEXT`` are in the
         converters' complementary-data allowlist, so they survive
-        ``batch_to_transition`` and land beside ``task``. The shared message
-        renderer consumes both fields before policy-specific formatting and
-        tokenization. Stored as plain strings and left unbatched because they
-        describe the request rather than an observation sample.
+        ``batch_to_transition`` and land beside ``task``.  That is the
+        intended extension point for text-capable policies: a policy-specific
+        ``ComplementaryDataProcessorStep`` (none exists in-tree yet) can read
+        the kind there and rewrite ``QUERY_TEXT`` in place into its prompt
+        format before ``generate_text`` consumes it.  Stored as plain strings
+        so processor steps need not import this module, and unbatched because
+        they describe the request, not a sample.
         """
         batch[QUERY_KIND] = query.kind.value
         batch[QUERY_TEXT] = query.text

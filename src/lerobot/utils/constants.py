@@ -46,11 +46,10 @@ INFO = "info"
 # rollout inference engines before the preprocessor runs — QUERY_KIND names what
 # is being asked for ("vqa", "next_subtask", ...) and QUERY_TEXT carries the
 # request itself (the operator's question, or the autosteer goal) — so a
-# processor step can format the prompt according to the kind of request. The
-# text keeps the standard complementary-data key used by recipe rendering.
+# processor step can format the prompt according to the kind of request.
 # Absent on ordinary action inference.
 QUERY_KIND = "query_kind"
-QUERY_TEXT = "text"
+QUERY_TEXT = "query_text"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

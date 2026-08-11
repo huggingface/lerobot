@@ -15,6 +15,7 @@ from lerobot.processor.render_messages_processor import (  # noqa: E402
     _fallback_low_level_render,
     _select_batch_indices,
 )
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT  # noqa: E402
 
 
 def test_render_messages_step_renders_task_fallback_without_language_columns():
@@ -59,8 +60,8 @@ def test_render_messages_step_can_disable_training_fallback_for_action_inference
 def test_runtime_query_rejects_raw_training_language():
     transition = create_transition(
         complementary_data={
-            "query_kind": "vqa",
-            "text": "What is visible?",
+            QUERY_KIND: "vqa",
+            QUERY_TEXT: "What is visible?",
             "language_events": [],
         }
     )
