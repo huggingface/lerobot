@@ -33,12 +33,11 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenderGenerationPromptStep,
+    RenderMessagesStep,
     UnnormalizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.processor.render_messages_processor import RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_wall_oss_05 import WallOSS05Config
@@ -263,18 +262,16 @@ def make_wall_oss_05_pre_post_processors(
     """Build the serializable Wall input/output pipelines."""
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
-    language_steps = []
-    if language_recipe_enabled(
+    render_training = language_recipe_enabled(
         use_language_recipe=config.use_language_recipe,
         recipe_path=config.recipe_path,
-    ):
-        if config.recipe is None:
-            raise ValueError("Wall-OSS-0.5 language training requires a recipe in policy config.")
-        language_steps.append(RenderMessagesStep(recipe=config.recipe))
+    )
+    if render_training and config.recipe is None:
+        raise ValueError("Wall-OSS-0.5 language training requires a recipe in policy config.")
     native_dim_holder: dict[str, int] = {}
     return make_policy_processor_pipelines(
         input_steps=[
-            RenderGenerationPromptStep(config.recipe),
+            RenderMessagesStep(config.recipe, render_training=render_training),
             steps.rename_observations,
             steps.add_batch_dim,
             WallOSS05TaskPassthrough(),
@@ -284,7 +281,6 @@ def make_wall_oss_05_pre_post_processors(
             WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
             steps.normalize,
             WallOSS05ClampNormalizedProcessorStep(),
-            *language_steps,
             steps.to_device,
         ],
         output_steps=[

@@ -34,7 +34,7 @@ from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
     WallOSS05VisionMLP,
 )
 from lerobot.policies.wall_oss_05.processor_wall_oss_05 import WallOSS05TaskPassthrough
-from lerobot.processor import RenderGenerationPromptStep
+from lerobot.processor import RenderMessagesStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -227,7 +227,8 @@ def test_recipe_processor_renders_joint_text_and_action_supervision():
 
     processed = preprocessor(batch)
 
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is True
     assert processed["messages"][0][-1]["content"] == "pick up the red block"
     assert processed["message_streams"] == [["low_level", "low_level"]]
     assert processed["target_message_indices"] == [[1]]
