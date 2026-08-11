@@ -329,3 +329,32 @@ def _substitute(template: str, bindings: dict[str, Any]) -> str:
 def load_recipe(path: str | Path) -> TrainingRecipe:
     """Load a :class:`TrainingRecipe` from a YAML file at ``path``."""
     return TrainingRecipe.from_yaml(path)
+
+
+def resolve_recipe_override(
+    recipe: TrainingRecipe | None,
+    recipe_path: str | Path | None,
+) -> TrainingRecipe | None:
+    """Resolve an external recipe while keeping checkpoint-inline recipes portable.
+
+    Fresh configurations fail when their requested override does not exist. A
+    reloaded checkpoint may retain the original training-machine path alongside
+    its serialized recipe; in that case the inline recipe remains authoritative.
+    """
+    if recipe_path is None:
+        return recipe
+    try:
+        return load_recipe(recipe_path)
+    except FileNotFoundError:
+        if recipe is None:
+            raise
+        return recipe
+
+
+def language_recipe_enabled(
+    *,
+    use_language_recipe: bool = False,
+    recipe_path: str | Path | None = None,
+) -> bool:
+    """Whether training requested a built-in recipe or an external override."""
+    return use_language_recipe or recipe_path is not None
