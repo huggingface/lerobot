@@ -82,39 +82,36 @@ policy.path=your-org/your-eo1-checkpoint
 
 ### Text generation and interactive control
 
-EO-1 exposes the Qwen backbone's native text generation using the same batched
-images and task field used for action inference:
+EO-1 exposes the Qwen backbone through the shared policy text contract. Runtime
+adds `query_kind` and `text`, then runs the normal EO-1 input processor:
 
 ```python
-answers = policy.generate_texts(
-    batch,
-    kind="vqa",
-    user_text="Which object is closest to the gripper?",
-)
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
 ```
 
-Use `kind="caption"` for a scene description, `kind="grounding"` for a spatial
-query, or `kind="subtask"` for a language-level next action. Text is generated
-by EO-1 itself; no separate VLM is loaded.
-
-`generate_texts` is the batched form. `generate_text` is the single-sample
-method the interactive language runtime calls; it decodes with the sampling
-settings stored on the checkpoint in `config.generation`.
+`vqa` preserves the caller's question. `next_subtask` applies the recipe stored
+in the EO-1 policy config. EO-1 inherits `generate_text(processed_batch)` and
+implements only `_generate_preprocessed_text`; no separate VLM is loaded.
 
 With the interactive language runtime, EO-1 can generate a subtask and rebuild
 its action prompt from that current subtask:
 
 ```bash
 lerobot-rollout \
-  --language \
   --policy.path=your-org/your-eo1-checkpoint \
   --policy.device=cuda \
   --task="clear the table" \
-  --mode=action
+  --interactive=true
 ```
 
-Use `/ask <question>` for image-grounded VQA or `--direct_subtask` to bypass
-subtask generation and condition actions directly on the supplied task.
+After `/start`, use `/vqa <question>`, `/autosteer <goal>`, or
+`/subtask <text>`.
 
 ## Training
 
@@ -136,15 +133,15 @@ lerobot-train \
 
 ### Train with language annotations
 
-Set `recipe_path` to train EO-1 from LeRobot's optional language columns. The
-joint subtask recipe supervises a selected assistant response and its
-continuous action chunk in the same sequence:
+Enable the recipe owned by `EO1Config` to train from LeRobot's optional
+language columns. The built-in joint recipe supervises a selected assistant
+response and its continuous action chunk in the same sequence:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=your_org/your_language_annotated_dataset \
   --policy.type=eo1 \
-  --policy.recipe_path=recipes/subtask_joint.yaml \
+  --policy.use_language_recipe=true \
   --policy.text_loss_weight=0.01 \
   --policy.flow_loss_weight=1.0 \
   --policy.device=cuda \
@@ -155,11 +152,12 @@ lerobot-train \
 Targeted assistant turns receive next-token cross-entropy, while `low_level`
 recipe streams receive flow-action supervision. A row may receive either
 objective or both. User prompts, images, state tokens, action tokens, and
-padding are excluded from text loss. Without `recipe_path`, EO-1 keeps its
+padding are excluded from text loss. Without `use_language_recipe`, EO-1 keeps its
 original action-only training path.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
-schema and available recipes.
+schema and recipe structure. `recipe_path` may point to an explicit external
+YAML override; LeRobot does not provide shared default recipe files.
 
 ### Key Training Parameters
 

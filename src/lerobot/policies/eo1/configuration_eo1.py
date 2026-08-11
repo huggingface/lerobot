@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lerobot.configs import recipe as recipe_module
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -49,12 +48,12 @@ def _eo1_default_recipe() -> TrainingRecipe:
             MessageTurn(
                 role="user",
                 content="${task}\nPredict the next action in language.",
-                stream="high_level",
+                stream="low_level",
             ),
             MessageTurn(
                 role="assistant",
                 content="${subtask}",
-                stream="high_level",
+                stream="low_level",
                 target=True,
                 if_present="subtask",
             ),
@@ -63,13 +62,8 @@ def _eo1_default_recipe() -> TrainingRecipe:
 
 
 def _load_recipe(path_str: str) -> TrainingRecipe:
-    """Load a recipe YAML, resolving relative paths against src/lerobot/configs/recipes/."""
-    path = Path(path_str)
-    if not path.is_absolute() and not path.exists():
-        candidate = Path(recipe_module.__file__).resolve().parent / path
-        if candidate.exists():
-            path = candidate
-    return TrainingRecipe.from_yaml(path)
+    """Load an explicit external recipe override."""
+    return TrainingRecipe.from_yaml(Path(path_str))
 
 
 @PreTrainedConfig.register_subclass("eo1")
@@ -122,15 +116,18 @@ class EO1Config(PreTrainedConfig):
 
     # Training settings.
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
-    # Convenience pointer to a recipe YAML (relative paths resolve against
-    # src/lerobot/configs/recipes/). Setting it opts training into recipe-rendered
-    # language supervision and loads the file into `recipe` below.
+    # The built-in recipe lives in this policy config. Enable it for annotated
+    # training with `use_language_recipe`; `recipe_path` is only an explicit
+    # external override.
+    use_language_recipe: bool = False
     recipe_path: str | None = None
     # EO-1's language contract. Defaults to the subtask wording the released
     # checkpoints answer; a fine-tune with `recipe_path` replaces it, and the
     # checkpoint then prompts itself with the recipe it was trained on.
     recipe: TrainingRecipe | dict | None = field(default_factory=lambda: _eo1_default_recipe())
     tokenizer_max_length: int = 1000
+    text_temperature: float = 0.0
+    text_top_p: float = 1.0
     flow_loss_weight: float = 1.0
     text_loss_weight: float = 0.01
 
@@ -178,6 +175,10 @@ class EO1Config(PreTrainedConfig):
             raise ValueError("EO-1 loss weights must be non-negative.")
         if self.flow_loss_weight == 0 and self.text_loss_weight == 0:
             raise ValueError("At least one EO-1 training loss must be enabled.")
+        if self.text_temperature < 0:
+            raise ValueError("text_temperature must be non-negative.")
+        if not 0 < self.text_top_p <= 1:
+            raise ValueError("text_top_p must be in (0, 1].")
 
         # Populate the serialized backbone config only when the caller did not provide one.
         if self.vlm_config is None:

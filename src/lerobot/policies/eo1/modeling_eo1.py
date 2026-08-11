@@ -243,101 +243,32 @@ class EO1Policy(PreTrainedPolicy):
             "action_token_id": processor.tokenizer.convert_tokens_to_ids(DEFAULT_ACTION_TOKEN),
         }
 
-    def generate_text(self, batch: dict[str, Tensor], prompt: str) -> str:
-        """Answer `prompt` about the current observation with EO-1's own text head."""
-        return self._one_text(batch, kind="vqa", user_text=prompt)
-
-    def _one_text(self, batch: dict[str, Tensor], *, kind: str, user_text: str | None = None) -> str:
-        outputs = self.generate_texts(
-            batch,
-            kind=kind,
-            user_text=user_text,
-            temperature=self.config.text_temperature,
-            top_p=self.config.text_top_p,
-        )
-        if len(outputs) != 1:
-            raise ValueError(f"The interactive runtime expected one EO-1 text output, got {len(outputs)}.")
-        return outputs[0]
-
     @torch.no_grad()
-    def generate_texts(
-        self,
-        batch: dict[str, Any],
-        *,
-        kind: str = "vqa",
-        user_text: str | list[str] | None = None,
-        max_new_tokens: int = 100,
-        min_new_tokens: int = 0,
-        temperature: float = 0.0,
-        top_p: float = 1.0,
-    ) -> list[str]:
-        """Generate EO-1 captions, VQA answers, or subtasks for a whole batch."""
+    def _generate_preprocessed_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response from EO-1 model-ready inputs."""
         self.eval()
-        allowed_kinds = {"vqa", "caption", "grounding", "text", "subtask"}
-        if kind not in allowed_kinds:
-            raise ValueError(f"Unsupported EO-1 text kind: {kind!r}.")
-
-        state = batch[OBS_STATE]
-        batch_size = state.shape[0]
-        tasks = self._batch_tasks(batch.get("task", [""] * batch_size), batch_size)
-        if user_text is None:
-            if kind == "caption":
-                prompts = ["Describe the image in one sentence."] * batch_size
-            elif kind == "subtask":
-                # The wording comes from the checkpoint's recipe (config.recipe).
-                prompts = [self.build_prompt("subtask", task=task) for task in tasks]
-            else:
-                prompts = tasks
-        elif isinstance(user_text, str):
-            prompts = [user_text] * batch_size
-        elif len(user_text) == batch_size and all(isinstance(value, str) for value in user_text):
-            prompts = user_text
-        else:
-            raise ValueError(f"EO-1 expected exactly {batch_size} text prompts.")
-
-        image_rows = self._runtime_images(batch, batch_size)
-        messages = [
-            [
-                {"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]},
-                {
-                    "role": "user",
-                    "content": [*image_rows[row], {"type": "text", "text": prompt}],
-                },
-            ]
-            for row, prompt in enumerate(prompts)
-        ]
         processor = self._get_text_processor()
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-            processor_kwargs={
-                "padding": True,
-                "padding_side": "left",
-                "min_pixels": self.config.image_min_pixels,
-                "max_pixels": self.config.image_max_pixels,
-            },
-        )
+        input_names = ("input_ids", "attention_mask", "pixel_values", "image_grid_thw", "mm_token_type_ids")
+        inputs = {name: batch[name] for name in input_names if name in batch}
         prompt_length = inputs["input_ids"].shape[1]
-        device = state.device
-        inputs = {key: value.to(device) for key, value in inputs.items() if isinstance(value, Tensor)}
-        do_sample = temperature > 0
+        do_sample = self.config.text_temperature > 0
         tokenizer = processor.tokenizer
         pad_token_id = tokenizer.pad_token_id
         if pad_token_id is None:
             pad_token_id = tokenizer.eos_token_id
         generation_kwargs: dict[str, Any] = {
-            "max_new_tokens": max_new_tokens,
-            "min_new_tokens": min_new_tokens,
+            "max_new_tokens": 100,
+            "min_new_tokens": 0,
             "do_sample": do_sample,
             "pad_token_id": pad_token_id,
         }
         if do_sample:
-            generation_kwargs.update(temperature=temperature, top_p=top_p)
+            generation_kwargs.update(
+                temperature=self.config.text_temperature,
+                top_p=self.config.text_top_p,
+            )
         generated = self.model.vlm_backbone.generate(**inputs, **generation_kwargs)
-        return [
+        outputs = [
             text.strip()
             for text in processor.batch_decode(
                 generated[:, prompt_length:],
@@ -345,6 +276,9 @@ class EO1Policy(PreTrainedPolicy):
                 clean_up_tokenization_spaces=True,
             )
         ]
+        if len(outputs) != 1:
+            raise ValueError(f"The interactive runtime expected one EO-1 text output, got {len(outputs)}.")
+        return outputs[0]
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:

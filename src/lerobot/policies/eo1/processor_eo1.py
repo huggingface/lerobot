@@ -30,6 +30,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RenderGenerationPromptStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -110,15 +111,20 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
         recipe_messages = complementary_data.get("messages")
         recipe_streams = complementary_data.get("message_streams")
         recipe_targets = complementary_data.get("target_message_indices")
+        generation_request = recipe_messages is not None and recipe_streams is None
         messages = []
         adjusted_targets: list[list[int]] = []
         for i in range(len(tasks)):
             if recipe_messages is not None:
                 row_messages = recipe_messages[i] if len(tasks) > 1 else recipe_messages[0]
-                row_streams = recipe_streams[i] if len(tasks) > 1 else recipe_streams[0]
-                row_targets = recipe_targets[i] if len(tasks) > 1 else recipe_targets[0]
+                row_streams = (
+                    [] if generation_request else (recipe_streams[i] if len(tasks) > 1 else recipe_streams[0])
+                )
+                row_targets = (
+                    [] if generation_request else (recipe_targets[i] if len(tasks) > 1 else recipe_targets[0])
+                )
                 if not isinstance(row_messages, list) or not isinstance(row_streams, list):
-                    raise TypeError("EO-1 recipe messages and streams must be batched lists.")
+                    raise TypeError("EO-1 messages and streams must be batched lists.")
 
                 rendered = [{"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]}]
                 image_blocks = [{"type": "image", "image": images[key][i]} for key in self._image_keys]
@@ -127,16 +133,18 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                     str(message.get("role", "user")) == "user" for message in row_messages
                 )
                 if inserted_observation_turn:
+                    observation_content = [*image_blocks]
+                    if not generation_request:
+                        observation_content.append(
+                            {
+                                "type": "text",
+                                "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                            }
+                        )
                     rendered.append(
                         {
                             "role": "user",
-                            "content": [
-                                *image_blocks,
-                                {
-                                    "type": "text",
-                                    "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
-                                },
-                            ],
+                            "content": observation_content,
                         }
                     )
                     injected_images = True
@@ -161,14 +169,15 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                     if say_text:
                         blocks.append({"type": "text", "text": say_text})
                     if converted.get("role") == "user" and not injected_images:
-                        blocks = [
-                            *image_blocks,
-                            {
-                                "type": "text",
-                                "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
-                            },
-                            *blocks,
-                        ]
+                        state_blocks = []
+                        if not generation_request:
+                            state_blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                                }
+                            )
+                        blocks = [*image_blocks, *state_blocks, *blocks]
                         injected_images = True
                     converted["content"] = blocks
                     rendered.append(converted)
@@ -235,6 +244,7 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
 
         complementary_data["messages"] = messages
         complementary_data["target_message_indices"] = adjusted_targets
+        complementary_data["text_generation_request"] = generation_request
 
         return complementary_data
 
@@ -286,6 +296,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         if messages is None:
             raise ValueError("Messages are required for EO1QwenProcessorStep.")
         target_message_indices = complementary_data.pop("target_message_indices", None)
+        generation_request = complementary_data.pop("text_generation_request", False)
         has_text_targets = bool(
             target_message_indices and any(bool(indices) for indices in target_message_indices)
         )
@@ -297,7 +308,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         inputs = self._processor.apply_chat_template(
             messages,
             tokenize=True,
-            add_generation_prompt=False,
+            add_generation_prompt=generation_request,
             return_dict=True,
             return_tensors="pt",
             processor_kwargs={
@@ -367,9 +378,14 @@ def make_eo1_pre_post_processors(
         # may set `recipe_path` after construction, and training must render the
         # same recipe the checkpoint prompts itself with (`config.recipe`).
         config.recipe = _load_recipe(config.recipe_path)
+
+    if config.use_language_recipe or config.recipe_path:
+        if config.recipe is None:
+            raise ValueError("EO-1 language training requires a recipe in policy config.")
         language_steps.append(RenderMessagesStep(recipe=config.recipe))
 
     input_steps: list[ProcessorStep] = [
+        RenderGenerationPromptStep(config.recipe),
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,

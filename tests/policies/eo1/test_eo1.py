@@ -30,6 +30,8 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
 from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RenderGenerationPromptStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 HIDDEN_SIZE = 8
@@ -109,8 +111,21 @@ class DummyVLMBackbone(nn.Module):
         return torch.cat([input_ids, suffix], dim=1)
 
 
+class DummyTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    @staticmethod
+    def add_tokens(*args, **kwargs):
+        return 0
+
+    @staticmethod
+    def convert_tokens_to_ids(token):
+        return {"<|state_pad|>": STATE_TOKEN_ID, "<|action_pad|>": ACTION_TOKEN_ID}.get(token, 3)
+
+
 class DummyTextProcessor:
-    tokenizer = SimpleNamespace(pad_token_id=0, eos_token_id=2)
+    tokenizer = DummyTokenizer()
 
     def apply_chat_template(self, messages, **kwargs):
         del kwargs
@@ -268,29 +283,50 @@ def test_lerobot_eo1_exposes_image_conditioned_text_generation(monkeypatch):
     )
     policy = EO1Policy(make_eo1_config())
     policy._text_processor = DummyTextProcessor()
-    batch = {
-        OBS_STATE: torch.zeros(1, STATE_DIM),
-        "observation.images.image": torch.zeros(1, 3, 16, 16),
-        "task": ["clear the table"],
-    }
+    batch = make_policy_batch(include_action=False)
 
-    output = policy.generate_texts(batch, kind="vqa", user_text="Where is the cup?")
-
-    assert output == ["the cup is left of the plate"]
-    # The runtime contract is the single-sample form, decoding with `config.generation`.
-    assert policy.generate_text(batch, "Where is the cup?") == "the cup is left of the plate"
+    assert EO1Policy.generate_text is PreTrainedPolicy.generate_text
+    assert policy.generate_text(batch) == "the cup is left of the plate"
     assert policy.supports_text_generation()
-    # The runtime fills this with the operator's goal and calls `generate_text`.
-    assert policy.build_prompt("subtask", task="clear the table") == (
-        "clear the table\nPredict the next action in language."
+    assert not hasattr(EO1Policy, "generate_texts")
+
+
+def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.processor_eo1.Qwen2_5_VLProcessor.from_pretrained",
+        lambda *args, **kwargs: DummyTextProcessor(),
     )
+    config = make_eo1_config()
+    preprocessor, _ = make_eo1_pre_post_processors(
+        config,
+        dataset_stats={
+            OBS_STATE: {"mean": torch.zeros(STATE_DIM), "std": torch.ones(STATE_DIM)},
+            ACTION: {"mean": torch.zeros(ACTION_DIM), "std": torch.ones(ACTION_DIM)},
+        },
+    )
+
+    processed = preprocessor(
+        {
+            OBS_STATE: torch.zeros(STATE_DIM),
+            "observation.images.image": torch.zeros(3, 16, 16),
+            "task": "current subtask",
+            "query_kind": "next_subtask",
+            "text": "clear the table",
+        }
+    )
+
+    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert processed["input_ids"].shape == (1, 2)
+    assert "messages" not in processed
+    assert "query_kind" not in processed
+    assert "text" not in processed
 
 
 def test_eo1_recipe_processor_builds_sparse_joint_labels():
     pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
     config = make_eo1_config()
     config.vlm_base = "Qwen/Qwen2.5-VL-3B-Instruct"
-    config.recipe_path = "recipes/subtask_joint.yaml"
+    config.use_language_recipe = True
     preprocessor, _ = make_eo1_pre_post_processors(
         config,
         dataset_stats={
