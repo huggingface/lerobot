@@ -5,7 +5,13 @@ from textwrap import dedent
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe, load_recipe
+from lerobot.configs.recipe import (
+    MessageTurn,
+    TrainingRecipe,
+    language_recipe_enabled,
+    load_recipe,
+    resolve_recipe_override,
+)
 
 
 def _minimal_message_turn(content: str = "${task}") -> MessageTurn:
@@ -191,6 +197,25 @@ def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):
     # on the structural result so a future divergence is caught here.
     assert via_helper.bindings == via_classmethod.bindings
     assert len(via_helper.messages) == len(via_classmethod.messages)
+
+
+def test_recipe_override_helpers_load_explicit_paths_and_keep_inline_checkpoint_recipe(
+    tmp_path: Path,
+):
+    inline = TrainingRecipe(messages=[_minimal_message_turn(), _minimal_target_turn()])
+    override_path = tmp_path / "override.yaml"
+    override_path.write_text("messages:\n  - {role: user, content: external, stream: low_level}\n")
+
+    resolved = resolve_recipe_override(inline, override_path)
+
+    assert resolved is not None
+    assert resolved.messages[0].content == "external"
+    assert resolve_recipe_override(inline, tmp_path / "stale.yaml") is inline
+    with pytest.raises(FileNotFoundError):
+        resolve_recipe_override(None, tmp_path / "missing.yaml")
+    assert language_recipe_enabled(use_language_recipe=True)
+    assert language_recipe_enabled(recipe_path=override_path)
+    assert not language_recipe_enabled()
 
 
 def test_from_yaml_rejects_non_mapping(tmp_path: Path):
