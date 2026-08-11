@@ -10,6 +10,7 @@ from lerobot.configs.recipe import MessageTurn, TrainingRecipe, render_message_t
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import RenderMessagesStep
 from lerobot.processor.converters import create_transition
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 
 def _subtask_recipe() -> TrainingRecipe:
@@ -36,7 +37,7 @@ def _subtask_recipe() -> TrainingRecipe:
 
 
 def _process(step: RenderMessagesStep, text: str, kind: str = "vqa", **values):
-    transition = create_transition(complementary_data={"text": text, "query_kind": kind, **values})
+    transition = create_transition(complementary_data={QUERY_TEXT: text, QUERY_KIND: kind, **values})
     return step(transition)
 
 
@@ -53,8 +54,8 @@ def test_vqa_preserves_text_and_never_consults_the_recipe(monkeypatch):
     data = output[TransitionKey.COMPLEMENTARY_DATA]
 
     assert data["messages"] == [{"role": "user", "content": text}]
-    assert "text" not in data
-    assert "query_kind" not in data
+    assert QUERY_TEXT not in data
+    assert QUERY_KIND not in data
 
 
 def test_missing_query_kind_is_a_noop_for_ordinary_action_preprocessing():
@@ -153,8 +154,8 @@ def test_step_does_not_mutate_recipe_transition_or_runtime_state():
     original_recipe = asdict(recipe)
     transition = create_transition(
         complementary_data={
-            "text": "Clear the table",
-            "query_kind": "next_subtask",
+            QUERY_TEXT: "Clear the table",
+            QUERY_KIND: "next_subtask",
             "subtask": "currently reaching",
         }
     )

@@ -206,7 +206,7 @@ def make_my_policy_pre_post_processors(
 Runtime puts caller-owned text and its intent in complementary data before running the
 normal policy input pipeline:
 
-| `query_kind`   | Caller-owned `text`              | Recipe behavior                                      | Result                     |
+| `query_kind`   | Caller-owned `query_text`        | Recipe behavior                                      | Result                     |
 | -------------- | -------------------------------- | ---------------------------------------------------- | -------------------------- |
 | `vqa`          | a question about the observation | no recipe wording; preserve text as the user payload | best-effort generated text |
 | `next_subtask` | a high-level task or instruction | render the checkpoint recipe before `${subtask}`     | next executable subtask    |
@@ -218,7 +218,7 @@ action prediction, then asks the policy to decode the processed batch:
 request = {
     **observation,
     "query_kind": "vqa",
-    "text": "Which cup is closest to the gripper?",
+    "query_text": "Which cup is closest to the gripper?",
 }
 batch = preprocessor(request)
 answer = policy.generate_text(batch)
@@ -239,7 +239,7 @@ text_batch = preprocessor(
         **observation,
         "task": runtime_state.task,
         "query_kind": "next_subtask",
-        "text": goal,
+        "query_text": goal,
     }
 )
 subtask = policy.generate_text(text_batch).strip()
@@ -252,7 +252,7 @@ batch = preprocessor({**observation, "task": runtime_state.task})
 action_chunk = policy.predict_action_chunk(batch)
 ```
 
-The message-rendering step consumes `query_kind` and `text`; they do not leak into model
+The message-rendering step consumes `query_kind` and `query_text`; they do not leak into model
 inputs. Inputs without `query_kind` pass through unchanged, so the same preprocessor
 continues to serve ordinary action prediction. `generate_text` only decodes its prepared
 batch—it does not mutate runtime state, replace the active task, enqueue actions, or run
@@ -264,7 +264,7 @@ error instead of silently treating it as a query.
 Text-capable policies explicitly place one `RenderMessagesStep` in their normal input
 pipeline before batching or policy-native message formatting. The step owns both runtime
 queries and recipe-training annotations: `render_training` enables raw dataset rendering,
-while runtime `query_kind` plus `text` works in either mode. Existing semantic `messages`
+while runtime `query_kind` plus `query_text` works in either mode. Existing semantic `messages`
 pass through unchanged. Subsequent policy-specific steps apply the model-native chat
 template, image markers, delimiters, and tokenization. The policy class implements only
 text decoding from the already-prepared batch:
@@ -306,7 +306,7 @@ class MyPolicy(PreTrainedPolicy):
 Text generation therefore follows one processor chain:
 
 ```text
-runtime adds query_kind + text
+runtime adds query_kind + query_text
               ↓
 RenderMessagesStep
               ↓

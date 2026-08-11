@@ -19,7 +19,7 @@ The design splits cleanly into three layers:
    (`role`, `content`, optional images, optional tool calls). The checkpoint
    therefore carries the exact recipe used by that policy.
 3. **Semantic-message format** — one dependency-light `RenderMessagesStep`
-   handles runtime `query_kind`/`text`, existing semantic messages, and recipe
+   handles runtime `query_kind`/`query_text`, existing semantic messages, and recipe
    training annotations. Training emits HF-style `messages` plus LeRobot-specific
    sidecars (`message_streams`, `target_message_indices`) for policy processors.
 
