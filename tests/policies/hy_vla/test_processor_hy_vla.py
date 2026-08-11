@@ -25,12 +25,12 @@ from lerobot.policies.hy_vla.processor_hy_vla import (
 )
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    RenderMessagesStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.processor.text_generation_processor import RenderGenerationPromptStep
 
 
 def _native_state() -> torch.Tensor:
@@ -80,7 +80,8 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
     stats = _stats(50)
     stats["action_std"] = stats["action_std"].double()
     preprocessor, postprocessor = make_hy_vla_pre_post_processors(config, norm_stats=stats)
-    assert isinstance(preprocessor.steps[0], RenderGenerationPromptStep)
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
     state = _native_state()
     processed = preprocessor(_batch(state, state.repeat(50, 1)))
     assert processed["task"] == ["raw_task_with_underscore\nkeep-newline"]
