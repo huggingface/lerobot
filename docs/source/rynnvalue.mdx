@@ -1,0 +1,120 @@
+# RynnValue
+
+RynnValue is a language-conditioned robotic value model that predicts the remaining time, in seconds, until a task is completed. LeRobot converts that temporal distance into the higher-is-better potential used by the paper:
+
+```text
+potential = -remaining_time
+```
+
+**Paper**: [RynnValue: Scaling Robotic Value Foundation Models with Temporal Distance](https://arxiv.org/abs/2608.09853)
+**Original code**: [github.com/alibaba-damo-academy/RynnValue](https://github.com/alibaba-damo-academy/RynnValue)
+**Checkpoints**: [RynnValue-4B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-4B), [RynnValue-8B](https://huggingface.co/Alibaba-DAMO-Academy/RynnValue-8B)
+
+## LeRobot integration
+
+The integration ports the released architecture into LeRobot rather than executing checkpoint code with `trust_remote_code`. It preserves:
+
+- Interleaved image, `<relative_value>`, and `<value>` query groups.
+- Eight-token grouped representations concatenated before each value head.
+- Distributional absolute and relative temporal heads.
+- Symlog-spaced, two-hot value decoding.
+- Value-isolation attention during inference.
+- Official sharded 4B and 8B checkpoint loading.
+
+The integration is inference-only. It does not reproduce the paper's 7,000-hour data mixture, temporal sampling augmentations, or training pipeline.
+
+## Installation
+
+From a source checkout:
+
+```bash
+uv sync --extra rynnvalue
+```
+
+Or with pip:
+
+```bash
+pip install -e ".[rynnvalue]"
+```
+
+The 4B checkpoint is approximately 10 GB. A CUDA GPU with enough memory for the selected checkpoint is strongly recommended.
+
+## Convert an official checkpoint
+
+Convert the official weights, native architecture configuration, tokenizer, and image processor into one self-contained LeRobot checkpoint:
+
+```bash
+uv run python -m lerobot.rewards.rynnvalue.convert_rynnvalue_checkpoint \
+    --source-model-id Alibaba-DAMO-Academy/RynnValue-4B \
+    --output-dir outputs/rynnvalue-4b
+```
+
+The output directory contains LeRobot's `config.json` and `model.safetensors` alongside the processor assets. It can be uploaded as one model repository or used locally without executing remote model code.
+
+## Inputs and outputs
+
+The preprocessor reads:
+
+- `observation.images.top` by default, as one frame or a chronological frame sequence.
+- `task` as the natural-language instruction.
+- Fixed robot and camera descriptions through `robot_description` and `camera_description`.
+
+The released checkpoints have metadata prompting enabled. Provide at least one robot or camera description unless you deliberately set `use_meta=False` for an ablation.
+
+When a trajectory contains more than `max_frames` frames, the processor uniformly samples the full history while retaining its first and last frames. The default is eight frames.
+
+`compute_reward()` returns one scalar per trajectory:
+
+- `reward_output="potential"` (default) returns `-v_end`, where `v_end` is the final queried frame's predicted remaining time.
+- `reward_output="remaining_time"` returns `v_end` directly for diagnostics.
+
+If a checkpoint has multiple absolute-value heads, LeRobot averages them before selecting the final frame.
+
+## Usage
+
+```python
+from lerobot.rewards import make_reward_pre_post_processors
+from lerobot.rewards.rynnvalue import RynnValueRewardModel
+
+model = RynnValueRewardModel.from_pretrained(
+    "outputs/rynnvalue-4b",
+    cli_overrides=[
+        "device=cuda",
+        "robot_description='a single-arm robot'",
+        "camera_description='a third-person workspace camera'",
+    ],
+)
+preprocessor, _ = make_reward_pre_post_processors(model.config)
+
+batch = {
+    "observation.images.top": frames,  # (T,C,H,W) or (B,T,C,H,W)
+    "task": "put the cube in the drawer",
+}
+encoded = preprocessor(batch)
+potential = model.compute_reward(encoded)
+```
+
+Use `Alibaba-DAMO-Academy/RynnValue-8B` as the converter's `--source-model-id` to select the larger checkpoint. `--revision` can pin a Hub commit.
+
+## Checkpoint format
+
+The converted `config.json` embeds the native architecture configuration, while `model.safetensors` stores weights under the LeRobot reward wrapper. Loading the converted checkpoint therefore does not need the original repository to construct the model. Processor assets are loaded from the same local directory or Hub repository.
+
+Subsequent calls to `save_pretrained()` refresh the embedded native configuration before writing the checkpoint. A LeRobot checkpoint is never reconstructed from the upstream `model_id`; older checkpoints without embedded `model_config` must be reconverted.
+
+## Reward shaping
+
+The scalar returned by LeRobot is the state potential, not a complete transition reward. Apply potential-based shaping in the RL loop:
+
+```text
+r_shape = gamma * potential_next - potential
+```
+
+The paper combines this term with a sparse task reward. LeRobot does not infer task termination or success from the language generation branch in `compute_reward()`.
+
+## Limitations
+
+- Inference uses eager custom attention; Flash Attention and SDPA do not implement RynnValue's prediction-slot isolation.
+- The current API scores complete supplied histories and is not a streaming KV-cache reward server.
+- Natural-language video analysis, match, and success generation remain available in the native core model but are not used by `compute_reward()`.
+- Training RynnValue from scratch is outside this integration.
