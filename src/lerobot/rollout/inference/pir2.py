@@ -22,13 +22,13 @@ denoising step on it, hands the finished front to the robot, slides the buffer f
 appends fresh noise at the back -- so the schedule reproduces itself and the robot is fed
 continuously without ever waiting for a full chunk.
 
-The vision-language prefix is refreshed by its own thread and reused by every denoising step in
-between, so conditioning updates at the backbone's rate rather than once per chunk. pi0.5
-discretizes proprioception into the tokenized prompt, so a cached prefix holds stale joint state
-as well; what keeps the expert anchored is the clamped clean front of the buffer, which is the
-positions the robot is being commanded to right now. That covers where the arm is, but not the
-gap between commanded and actual, so this engine does not react to external disturbance the way
-the paper's separate proprioception channel does (arXiv 2607.26055, Sec. 3.2).
+The vision-language prefix runs on its own thread as fast as the backbone allows, and each
+denoising step conditions on whichever cache is newest. On pi0.5 that prefix carries joint state
+too, since proprioception is discretized into the tokenized prompt; the clamped clean front of
+the buffer is what keeps the expert anchored to where the robot actually is. That covers
+configuration but not the gap between commanded and actual position, so this engine will not
+react to an external disturbance the way a dedicated proprioception channel would
+(arXiv 2607.26055, Sec. 3.2).
 """
 
 from __future__ import annotations
@@ -54,6 +54,8 @@ logger = logging.getLogger(__name__)
 _IDLE_SLEEP_S = 0.001
 _JOIN_TIMEOUT_S = 5.0
 _MAX_CONSECUTIVE_ERRORS = 3
+# Floor for the finished-action cushion, so a d=1 schedule still absorbs one slow call.
+_MIN_PENDING_ACTIONS = 2
 
 
 def estimate_pir2_delay(latencies: deque[float], time_per_step: float, max_delay: int) -> int:
@@ -87,7 +89,7 @@ class PiR2InferenceEngine(InferenceEngine):
         shutdown_event: Event | None = None,
     ) -> None:
         required_methods = (
-            "encode_slow_channel",
+            "encode_prefix",
             "warm_start_realtime_buffer",
             "realtime_substep",
         )
@@ -126,8 +128,8 @@ class PiR2InferenceEngine(InferenceEngine):
         self._last_stale_warning = 0.0
 
         self._buffer: torch.Tensor | None = None
-        self._slow: Any = None
-        self._slow_lock = Lock()
+        self._prefix: Any = None
+        self._prefix_lock = Lock()
         self._emitted: deque[torch.Tensor] = deque()
         self._emitted_lock = Lock()
         self._obs_holder: dict[str, Any] = {}
@@ -191,8 +193,8 @@ class PiR2InferenceEngine(InferenceEngine):
         self._postprocessor.reset()
         self._buffer = None
         self._latencies.clear()
-        with self._slow_lock:
-            self._slow = None
+        with self._prefix_lock:
+            self._prefix = None
         with self._emitted_lock:
             self._emitted.clear()
 
@@ -244,23 +246,23 @@ class PiR2InferenceEngine(InferenceEngine):
                 if obs is None:
                     time.sleep(_IDLE_SLEEP_S)
                     continue
-                slow = self._policy.encode_slow_channel(self._prepare_batch(obs))
-                with self._slow_lock:
-                    self._slow = slow
+                prefix = self._policy.encode_prefix(self._prepare_batch(obs))
+                with self._prefix_lock:
+                    self._prefix = prefix
         except Exception:
             logger.exception("piR2 VLM thread terminating")
             self._error.set()
             if self._global_shutdown_event is not None:
                 self._global_shutdown_event.set()
 
-    def _current_slow_channel(self) -> Any | None:
+    def _current_prefix(self) -> Any | None:
         """Return the newest prefix cache, warning when it falls badly behind."""
-        with self._slow_lock:
-            slow = self._slow
-        if slow is None:
+        with self._prefix_lock:
+            prefix = self._prefix
+        if prefix is None:
             return None
         now = time.perf_counter()
-        age_s = 0.0 if slow.captured_at is None else now - slow.captured_at
+        age_s = 0.0 if prefix.captured_at is None else now - prefix.captured_at
         age_steps = int(age_s * self._fps)
         if age_steps > self._stale_prefix_steps and now - self._last_stale_warning > 5.0:
             self._last_stale_warning = now
@@ -270,7 +272,7 @@ class PiR2InferenceEngine(InferenceEngine):
                 age_steps,
                 age_s,
             )
-        return slow
+        return prefix
 
     def _denoise_loop(self) -> None:
         try:
@@ -283,21 +285,30 @@ class PiR2InferenceEngine(InferenceEngine):
                     continue
 
                 try:
-                    started = time.perf_counter()
                     delay = estimate_pir2_delay(self._latencies, time_per_step, self._max_delay)
 
-                    slow = self._current_slow_channel()
-                    if slow is None:
-                        # The VLM thread has not produced its first cache yet.
+                    # A substep emits `delay` actions but can finish in less than the `delay`
+                    # control ticks the robot needs to consume them, so the expert outruns the
+                    # control loop. Running ahead buys nothing: it only makes each executed action
+                    # older, which is what this engine exists to avoid. Hold one substep of
+                    # cushion against latency jitter and idle otherwise.
+                    if self.pending_actions() >= max(2 * delay, _MIN_PENDING_ACTIONS):
                         time.sleep(_IDLE_SLEEP_S)
                         continue
 
+                    prefix = self._current_prefix()
+                    if prefix is None:
+                        # The vision-language thread has not produced its first cache yet.
+                        time.sleep(_IDLE_SLEEP_S)
+                        continue
+
+                    started = time.perf_counter()
                     if self._buffer is None:
                         # Episode start: nothing is in flight, so fall back to a full denoise
                         # and re-noise the result onto the staircase.
-                        self._buffer = self._policy.warm_start_realtime_buffer(slow, delay)
+                        self._buffer = self._policy.warm_start_realtime_buffer(prefix, delay)
 
-                    emitted, self._buffer = self._policy.realtime_substep(slow, self._buffer, delay)
+                    emitted, self._buffer = self._policy.realtime_substep(prefix, self._buffer, delay)
                     self._publish(emitted)
 
                     self._latencies.append(time.perf_counter() - started)

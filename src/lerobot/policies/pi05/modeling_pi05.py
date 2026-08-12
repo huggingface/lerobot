@@ -146,7 +146,7 @@ def _sample_training_rtc_prefix_mask(
 
 
 @dataclass
-class PiR2SlowChannel:
+class CachedPrefix:
     """Cached vision-language prefix, valid across many action-expert calls.
 
     Holding this instead of re-running the backbone every call is what takes the VLM off the
@@ -910,9 +910,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     def prefill_prefix(self, images, img_masks, tokens, masks, states=None, state_masks=None):
         """Run the vision-language prefix once and return its attention mask and KV cache.
 
-        This is piR2's slow channel (arXiv 2607.26055): the cache is valid for as many action
-        expert calls as you care to make against it, so a background thread can refresh it on
-        its own cadence while the expert keeps denoising against the last one.
+        The cache stays valid for as many action-expert calls as you care to make against it, so
+        a background thread can refresh it as fast as the backbone allows while the expert keeps
+        denoising against the newest one available (arXiv 2607.26055, Sec. 3.2).
         """
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
@@ -1476,7 +1476,7 @@ class PI05Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def encode_slow_channel(self, batch: dict[str, Tensor]) -> PiR2SlowChannel:
+    def encode_prefix(self, batch: dict[str, Tensor]) -> CachedPrefix:
         """Run the vision-language prefix and return a cache the action expert can reuse.
 
         In piR2 this is the only work that scales with backbone size, and it is meant to run on
@@ -1489,29 +1489,29 @@ class PI05Policy(PreTrainedPolicy):
         prefix_pad_masks, past_key_values = self.model.prefill_prefix(
             images, img_masks, tokens, masks, states, state_masks
         )
-        return PiR2SlowChannel(
+        return CachedPrefix(
             prefix_pad_masks=prefix_pad_masks,
             past_key_values=past_key_values,
             captured_at=time.perf_counter(),
         )
 
     @torch.no_grad()
-    def warm_start_realtime_buffer(self, slow: PiR2SlowChannel, delay: int) -> Tensor:
+    def warm_start_realtime_buffer(self, prefix: CachedPrefix, delay: int) -> Tensor:
         """Build the initial action buffer at episode start, when nothing is in flight yet."""
         self.eval()
-        return self.model.warm_start_staircase_buffer(slow.prefix_pad_masks, slow.past_key_values, delay)
+        return self.model.warm_start_staircase_buffer(prefix.prefix_pad_masks, prefix.past_key_values, delay)
 
     @torch.no_grad()
-    def realtime_substep(self, slow: PiR2SlowChannel, buffer: Tensor, delay: int) -> tuple[Tensor, Tensor]:
+    def realtime_substep(self, prefix: CachedPrefix, buffer: Tensor, delay: int) -> tuple[Tensor, Tensor]:
         """Advance the buffer by one denoising step, returning ``delay`` finished actions.
 
-        ``slow`` may have been encoded several control steps ago; the clamped clean front of
+        ``prefix`` may have been encoded several control steps ago; the clamped clean front of
         ``buffer`` is what tells the expert where the robot currently is.
         """
         self.eval()
         emitted, next_buffer = self.model.staircase_denoise_step(
-            slow.prefix_pad_masks,
-            slow.past_key_values,
+            prefix.prefix_pad_masks,
+            prefix.past_key_values,
             buffer,
             delay,
         )

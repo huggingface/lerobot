@@ -24,12 +24,16 @@ delay estimation, emission counts, guards) rather than anything about denoising 
 import logging
 import time
 from collections import deque
-from threading import Event
+from threading import Event, Timer
 
 import pytest
 import torch
 
-from lerobot.rollout.inference.pir2 import PiR2InferenceEngine, estimate_pir2_delay
+from lerobot.rollout.inference.pir2 import (
+    _MIN_PENDING_ACTIONS,
+    PiR2InferenceEngine,
+    estimate_pir2_delay,
+)
 
 CHUNK_SIZE = 16
 ACTION_DIM = 6
@@ -41,7 +45,7 @@ class _FakeConfig:
         self.rtc_training_schedule = "staircase"
 
 
-class _FakeSlowChannel:
+class _FakePrefix:
     def __init__(self, captured_at):
         self.captured_at = captured_at
 
@@ -53,23 +57,23 @@ class _FakePolicy:
         self.config = _FakeConfig()
         self.warm_starts = 0
         self.substep_delays: list[int] = []
-        self.slow_channel_calls = 0
+        self.prefix_encode_calls = 0
         self.seen_prefixes: list[object] = []
 
     def reset(self):
         pass
 
-    def encode_slow_channel(self, batch):
-        self.slow_channel_calls += 1
-        return _FakeSlowChannel(captured_at=time.perf_counter())
+    def encode_prefix(self, batch):
+        self.prefix_encode_calls += 1
+        return _FakePrefix(captured_at=time.perf_counter())
 
-    def warm_start_realtime_buffer(self, slow, delay):
+    def warm_start_realtime_buffer(self, prefix, delay):
         self.warm_starts += 1
         return torch.zeros(1, CHUNK_SIZE, ACTION_DIM)
 
-    def realtime_substep(self, slow, buffer, delay):
+    def realtime_substep(self, prefix, buffer, delay):
         self.substep_delays.append(delay)
-        self.seen_prefixes.append(slow)
+        self.seen_prefixes.append(prefix)
         # Tag every emitted action with the call index so the test can spot duplicates.
         emitted = torch.full((1, delay, ACTION_DIM), float(len(self.substep_delays)))
         return emitted, buffer
@@ -169,16 +173,24 @@ def test_max_delay_never_exceeds_half_the_chunk():
 
 
 def _run_iterations(engine, policy, iterations):
-    """Drive the loop body directly, avoiding thread-timing flakiness in tests."""
+    """Drive the loop body directly, avoiding thread-timing flakiness in tests.
+
+    Returns every action the (simulated) robot consumed, in order.
+    """
     engine._obs_holder = {"obs": {}, "robot_type": "fake"}  # noqa: SLF001
     engine.notify_observation({})
     engine.resume()
-    if engine._slow is None:  # noqa: SLF001
+    if engine._prefix is None:  # noqa: SLF001
         # Stand in for the VLM thread, which the loop cannot run without.
-        engine._slow = policy.encode_slow_channel({})  # noqa: SLF001
+        engine._prefix = policy.encode_prefix({})  # noqa: SLF001
+    consumed = []
     for _ in range(iterations):
         engine._shutdown_event.clear()  # noqa: SLF001
         _single_iteration(engine)
+        # Stand in for the robot: with no consumer, backpressure stalls the loop.
+        while (action := engine.get_action(None)) is not None:
+            consumed.append(action)
+    return consumed
 
 
 def _single_iteration(engine):
@@ -208,17 +220,16 @@ def test_buffer_is_warm_started_once_and_then_carried_across_calls():
 
 
 def test_substeps_reuse_one_cached_prefix_instead_of_re_encoding():
-    # The whole point of the slow channel: the backbone runs on its own thread, and the denoising
-    # loop never pays for it.
+    # The backbone runs on its own thread, so the denoising loop never pays for it.
     policy = _FakePolicy()
     engine = _make_engine(policy=policy)
-    engine._slow = policy.encode_slow_channel({})  # noqa: SLF001
+    engine._prefix = policy.encode_prefix({})  # noqa: SLF001
 
     _run_iterations(engine, policy, 3)
 
-    assert policy.slow_channel_calls == 1
+    assert policy.prefix_encode_calls == 1
     assert len(policy.substep_delays) == 3
-    assert all(prefix is engine._slow for prefix in policy.seen_prefixes)  # noqa: SLF001
+    assert all(prefix is engine._prefix for prefix in policy.seen_prefixes)  # noqa: SLF001
 
 
 def test_denoise_loop_waits_for_the_first_cache():
@@ -231,7 +242,7 @@ def test_denoise_loop_waits_for_the_first_cache():
     engine._shutdown_event.set()  # noqa: SLF001
     engine._denoise_loop()  # noqa: SLF001
 
-    assert policy.slow_channel_calls == 0
+    assert policy.prefix_encode_calls == 0
     assert policy.substep_delays == []
 
 
@@ -239,7 +250,7 @@ def test_a_badly_stale_prefix_is_reported(caplog):
     policy = _FakePolicy()
     engine = _make_engine(policy=policy)
     # Older than a whole chunk at 30 fps, so the plan behind the clean front is out of date.
-    engine._slow = _FakeSlowChannel(captured_at=time.perf_counter() - 2 * CHUNK_SIZE / 30.0)  # noqa: SLF001
+    engine._prefix = _FakePrefix(captured_at=time.perf_counter() - 2 * CHUNK_SIZE / 30.0)  # noqa: SLF001
 
     with caplog.at_level(logging.WARNING):
         _run_iterations(engine, policy, 1)
@@ -262,24 +273,40 @@ def test_a_fresh_prefix_is_not_reported_as_stale(caplog):
 def test_every_substep_emits_exactly_delay_actions():
     policy = _FakePolicy()
     engine = _make_engine(policy=policy)
-    _run_iterations(engine, policy, 2)
+    consumed = _run_iterations(engine, policy, 2)
 
-    assert engine.pending_actions() == sum(policy.substep_delays)
-    action = engine.get_action(None)
-    assert action.shape == (ACTION_DIM,)
+    assert len(consumed) == sum(policy.substep_delays)
+    assert consumed[0].shape == (ACTION_DIM,)
 
 
 def test_emitted_actions_are_handed_out_in_order_without_duplicates():
     policy = _FakePolicy()
     engine = _make_engine(policy=policy)
-    _run_iterations(engine, policy, 3)
+    consumed = _run_iterations(engine, policy, 3)
 
     # Each fake substep tags its actions with its call index, so the tags must be non-decreasing.
-    tags = []
-    while (action := engine.get_action(None)) is not None:
-        tags.append(action[0].item())
+    tags = [action[0].item() for action in consumed]
     assert tags == sorted(tags)
     assert len(tags) == sum(policy.substep_delays)
+
+
+def test_the_loop_stops_denoising_while_the_robot_is_behind():
+    # Running ahead of the robot buys nothing and only ages the actions it will execute, so a
+    # backed-up queue must idle the expert rather than grow without bound.
+    policy = _FakePolicy()
+    engine = _make_engine(policy=policy)
+    engine._obs_holder = {"obs": {}, "robot_type": "fake"}  # noqa: SLF001
+    engine.notify_observation({})
+    engine.resume()
+    engine._prefix = policy.encode_prefix({})  # noqa: SLF001
+
+    # Nothing consumes, so the loop should fill its cushion and then spin without substepping.
+    engine._shutdown_event.clear()  # noqa: SLF001
+    Timer(1.0, engine._shutdown_event.set).start()  # noqa: SLF001
+    engine._denoise_loop()  # noqa: SLF001
+
+    assert engine.pending_actions() == _MIN_PENDING_ACTIONS
+    assert len(policy.substep_delays) == _MIN_PENDING_ACTIONS
 
 
 def test_get_action_returns_none_when_nothing_has_been_emitted():
