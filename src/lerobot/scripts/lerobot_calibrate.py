@@ -53,6 +53,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    accessible_teleop,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,

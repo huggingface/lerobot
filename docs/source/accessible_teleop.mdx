@@ -1,0 +1,224 @@
+# Accessible Teleoperation
+
+Most teleoperation in LeRobot assumes an operator who can hold a leader arm, work a gamepad, or type
+on a keyboard. `accessible_teleop` is for operators who cannot. It lets one person bind each robot
+joint, one at a time, to whatever small movement they can produce reliably: a facial movement read by
+a webcam, a single key, or an on-screen joystick reachable with a mouse, a trackball, or a head
+pointer.
+
+Two ideas make a few millimetres of usable movement enough to drive a whole arm:
+
+- **Control is joint-space and velocity-integrated.** Deflecting an input moves a joint while it is
+  held and stops when the input returns to neutral. Nothing maps operator position directly onto
+  joint angle, so a small range of motion still reaches the whole workspace.
+- **Every channel is calibrated to the person, not the device.** Each input has its own neutral point
+  and its own comfortable range in each direction, and each joint has its own dead zone, gain,
+  smoothing, and speed. An operator whose eyebrows travel further than their lips does not have to
+  compromise on one to use the other.
+
+A browser page served on loopback is the input surface. It reports raw sensor readings and lets the
+operator edit their mapping live; all conditioning, integration, and limiting happens in Python, so a
+stalled tab or a dropped socket stops the robot rather than surprising it.
+
+## Installation
+
+```bash
+pip install 'lerobot[accessible-teleop,feetech]'
+```
+
+Face tracking loads MediaPipe from a CDN the first time the page runs, then the browser caches it.
+The joystick and keyboard channels work with no network access at all; set
+`--teleop.face_tracking=false` to skip MediaPipe entirely, or point `--teleop.mediapipe_base_url` and
+`--teleop.face_landmarker_url` at a local mirror.
+
+## Running it
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_arm \
+    --robot.max_relative_target=5 \
+    --teleop.type=accessible_teleop \
+    --teleop.id=my_profile
+```
+
+The control page opens automatically at `http://127.0.0.1:8777`. `connect()` blocks until it attaches.
+
+<Tip warning={true}>
+  Keep the page on `127.0.0.1` or `localhost`. Browsers only grant camera access
+  to secure contexts, and a bare LAN address is not one. Reaching the page from
+  another device needs a TLS terminator in front of it.
+</Tip>
+
+## Setting up a profile
+
+1. **Bind a joint.** Pick an input for it from the dropdown. Nothing is bound by default, because the
+   right mapping is personal and six live axes at once is not a reasonable starting point.
+2. **Calibrate face channels.** Start the camera, relax, press **Calibrate**, and move that one feature
+   through the range you can hold comfortably for five seconds. Each direction is measured separately.
+   A face channel produces no motion until it has been calibrated.
+3. **Tune it.** Raise the dead zone until tremor and involuntary movement stop reaching the robot.
+   Raise the gain so you reach full speed without exhausting your range. Raise the smoothing if the
+   joint feels twitchy, and lower the speed on joints that carry the arm's weight.
+4. **Drive.** Press **Engage control** or the space bar. Press it again, or **Stop**, to release.
+
+A few things about the page are worth knowing before you use it:
+
+- **Joysticks are relative.** Wherever you press becomes the zero point, and the command is your
+  offset from there. Nothing jumps when you make contact, and **Movement needed for full speed** sets
+  how far you have to travel — lower it if your comfortable range is small.
+- **A pad only appears once something is bound to it**, and a pad with a single bound axis is drawn as
+  a track along that axis. The other axis is ignored, so a wobble cannot leak into a joint you did not
+  mean to drive.
+- **Robot view** shows any camera attached to the machine, opened by the browser rather than relayed
+  through Python. In fullscreen the joysticks come with you and the space bar still works.
+- **One page drives at a time.** Open several and the one holding its clutch closed wins; the others
+  say so in the header. A page that is hidden or backgrounded releases its clutch, because its update
+  loop stops and it can no longer be steering.
+- **A joint at its limit says which way it cannot go**, so a control that appears dead is
+  distinguishable from one that is refusing to push a joint further into a mechanical stop.
+
+The profile is saved automatically to
+`~/.cache/huggingface/lerobot/calibration/teleoperators/accessible_teleop/<id>.json` whenever you
+change it, and reloaded on the next run. It holds both the bindings and the captured ranges, so it is
+the thing to copy between machines or to hand to someone setting up the same operator elsewhere.
+
+It sits alongside the motor calibration files but is not one: it describes an operator rather than a
+piece of hardware. Nothing about it is specific to the arm you happen to be driving.
+
+## Available channels
+
+| Channel                                    | What it reads                                                               |
+| ------------------------------------------ | --------------------------------------------------------------------------- |
+| `face.brow_vertical`                       | Eyebrows lowered against eyebrows raised                                    |
+| `face.lip_lateral`                         | Lips moved left against right                                               |
+| `face.mouth_open`                          | Jaw open against mouth closed                                               |
+| `face.mouth_shape`                         | Pucker against smile                                                        |
+| `face.eye_wink`                            | Left eye squeeze against right, so an ordinary two-eye blink mostly cancels |
+| `pad_a.x`, `pad_a.y`, `pad_b.x`, `pad_b.y` | Two on-screen joysticks, draggable or arrow-key driven                      |
+| Any two keys                               | Chosen per joint; one drives it positive, the other negative                |
+
+Face channels are signed differences between MediaPipe blendshapes, so a relaxed face sits near zero
+and the two directions of a movement land on opposite signs.
+
+## Safety
+
+This teleoperator commands absolute joint positions it integrates itself, so it has to be careful
+about where it thinks the robot is.
+
+- **Nothing moves until you engage.** The commanded pose only changes while the clutch is held closed,
+  so until then every cycle repeats the same action and the arm holds still.
+- **It anchors on where the arm really is.** `lerobot-teleoperate` and `lerobot-record` hand this
+  teleoperator the follower's observation before reading each action, so the pose it holds is the
+  pose the arm is already in and engaging cannot produce a jump. Drive it from your own loop without
+  doing that and it starts from `start_pose` instead, which the follower may be far away from — see
+  [anchoring](#anchoring-on-the-robots-real-position). Run with `--robot.max_relative_target` either
+  way, so the robot rate-limits any approach.
+- **Silence stops the robot.** If no input frame arrives within `input_timeout_s` (0.5 s by default) the
+  clutch is released, so a closed tab, a crashed browser, or a dead Wi-Fi link cannot leave a joint
+  travelling.
+- **Losing your face is not losing control.** When tracking drops, face-driven joints stop while
+  keyboard and joystick joints keep working.
+- **Steps are bounded.** The integrator honours at most `max_step_s` (60 ms) of elapsed time per cycle,
+  so a stalled loop or a suspended laptop cannot turn into one large jump.
+- **Travel is limited, but limits never force motion.** A joint cannot be driven further outside
+  `joint_limits`, yet a joint that starts outside them — parked against a mechanical stop, or left
+  there when you tightened the limits — can still be driven back in. Clamping outright would command
+  a jump nobody asked for.
+
+These are software limits, not a hardware safety system. Clear the workspace before you engage.
+
+### Setting the limits for your arm
+
+Every SO-101 has a slightly different usable range, because calibration records it by driving each
+joint into its mechanical stop. Commanding past that range presses the joint into the stop, so
+`joint_limits` defaults to a cautious ±75° on the arm joints. Read your own from
+`~/.cache/huggingface/lerobot/calibration/robots/so_follower/<id>.json`, where the half-range in
+degrees is `(range_max - range_min) / 2 * 360 / 4095`:
+
+```python
+import json
+
+calibration = json.load(open("~/.cache/huggingface/lerobot/calibration/robots/so_follower/my_arm.json"))
+for joint, values in calibration.items():
+    half = (values["range_max"] - values["range_min"]) / 2 * 360 / 4095
+    print(f"{joint}: +/-{half:.0f} deg")
+```
+
+Leave a few degrees of margin, and remember the gripper is a percentage rather than an angle.
+
+### Anchoring on the robot's real position
+
+`send_feedback` accepts the follower's observation and re-anchors the commanded pose, which is what
+removes the jump on first engage. The stock loops do this for you. In a loop of your own, call it
+before `get_action()` on every cycle:
+
+```python
+from lerobot.robots.so_follower import SO101Follower, SOFollowerRobotConfig
+from lerobot.teleoperators.accessible_teleop import AccessibleTeleop, AccessibleTeleopConfig
+
+robot = SO101Follower(SOFollowerRobotConfig(port="/dev/tty.usbmodem58760431541", id="my_arm"))
+teleop = AccessibleTeleop(AccessibleTeleopConfig(id="my_profile"))
+robot.connect()
+teleop.connect()
+
+while True:
+    observation = robot.get_observation()
+    teleop.send_feedback(observation)  # ignored while the clutch is engaged
+    robot.send_action(teleop.get_action())
+```
+
+## Configuring it from the command line
+
+Bindings can be set without touching the page, which is useful for reproducing a known-good profile:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_arm \
+    --teleop.type=accessible_teleop \
+    --teleop.id=my_profile \
+    --teleop.bindings='{
+      shoulder_pan: {source: joystick, channel: pad_a.x, speed: 25},
+      shoulder_lift: {source: joystick, channel: pad_a.y, speed: 20},
+      elbow_flex: {source: keyboard, positive_key: KeyF, negative_key: KeyG},
+      gripper: {source: face, channel: face.mouth_open, speed: 60}
+    }'
+```
+
+A saved profile takes precedence over these values, because it represents what the operator actually
+tuned. Delete the calibration file to start from the config again.
+
+| Option              | Default               | Purpose                                           |
+| ------------------- | --------------------- | ------------------------------------------------- |
+| `joints`            | the six SO-101 joints | Which joints to command, in page order            |
+| `bindings`          | all unbound           | Per-joint input and tuning                        |
+| `joint_limits`      | ±75°, gripper 0–100   | Travel limit in the follower's normalized units   |
+| `start_pose`        | mid-range, gripper 50 | Pose held until the robot's own position is known |
+| `host` / `web_port` | `127.0.0.1` / `8777`  | Where the page is served                          |
+| `open_browser`      | `true`                | Open the page automatically                       |
+| `connect_timeout_s` | `180`                 | How long `connect` waits for the page             |
+| `input_timeout_s`   | `0.5`                 | Silence tolerated before the clutch is released   |
+| `max_step_s`        | `0.06`                | Largest integration step honoured                 |
+| `face_tracking`     | `true`                | Serve the face channels at all                    |
+
+## Recording datasets
+
+The teleoperator emits the same `{joint}.pos` action keys as a leader arm, and holds a steady pose
+whenever the clutch is open, so `lerobot-record` works unchanged. Episodes recorded before the
+operator engages contain that held pose rather than a gap:
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=my_arm \
+    --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}' \
+    --teleop.type=accessible_teleop \
+    --teleop.id=my_profile \
+    --dataset.repo_id=${HF_USER}/accessible-pick-place \
+    --dataset.num_episodes=20 \
+    --dataset.single_task="Pick up the cube"
+```

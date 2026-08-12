@@ -1,0 +1,1301 @@
+<!doctype html>
+<!--
+Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LeRobot accessible teleoperation</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1014;
+        --panel: #161b22;
+        --panel-2: #1d242d;
+        --line: #2c3540;
+        --text: #e8edf2;
+        --muted: #93a1b0;
+        --accent: #5ac8fa;
+        --live: #4ade80;
+        --warn: #fbbf24;
+        --stop: #f87171;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      h1 {
+        font-size: 17px;
+        margin: 0;
+        letter-spacing: 0.01em;
+      }
+      h2 {
+        font-size: 13px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 12px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+        gap: 20px;
+        padding: 20px 24px 60px;
+        align-items: start;
+      }
+      @media (max-width: 1080px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 18px;
+        margin-bottom: 20px;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 14px;
+        cursor: pointer;
+        min-height: 40px;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      select,
+      input[type="text"] {
+        font: inherit;
+        color: inherit;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        min-height: 40px;
+        width: 100%;
+      }
+      .clutch {
+        font-size: 16px;
+        font-weight: 600;
+        padding: 12px 22px;
+        min-height: 52px;
+        border-width: 2px;
+      }
+      .clutch.is-live {
+        background: rgba(74, 222, 128, 0.14);
+        border-color: var(--live);
+        color: var(--live);
+      }
+      .estop {
+        border-color: var(--stop);
+        color: var(--stop);
+        font-weight: 600;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .dot.ok {
+        background: var(--live);
+      }
+      .dot.warn {
+        background: var(--warn);
+      }
+      .dot.bad {
+        background: var(--stop);
+      }
+      .joint {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 12px;
+        background: var(--panel-2);
+      }
+      .joint.is-live {
+        border-color: rgba(74, 222, 128, 0.5);
+      }
+      .joint-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .joint-head strong {
+        font-size: 15px;
+      }
+      .joint-head .sub {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+      }
+      .warn-text {
+        color: var(--warn);
+        margin: 8px 0 0;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .row > label {
+        flex: 1 1 200px;
+        min-width: 0;
+      }
+      .tune {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px 16px;
+        margin-top: 12px;
+      }
+      .tune label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .tune span {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 2px;
+      }
+      .tune output {
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+        height: 28px;
+      }
+      .bar {
+        position: relative;
+        height: 8px;
+        border-radius: 4px;
+        background: #10151b;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .bar i {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        background: var(--accent);
+      }
+      .bar b {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+        background: var(--line);
+      }
+      .pads {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .pads:has(> [hidden]) {
+        grid-template-columns: 1fr;
+      }
+      #scene-wrap {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #000;
+      }
+      #scene {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+        background: #000;
+      }
+      #scene-wrap:fullscreen #scene {
+        width: 100vw;
+        height: 100vh;
+        aspect-ratio: auto;
+      }
+      #scene-overlay {
+        display: none;
+      }
+      /* The overlay only earns its space in fullscreen, where the rest of the page is gone
+         and the operator still needs the clutch state and their joysticks. */
+      #scene-wrap:fullscreen #scene-overlay {
+        position: absolute;
+        inset: auto 0 0 0;
+        display: flex;
+        gap: 32px;
+        align-items: flex-end;
+        justify-content: space-between;
+        padding: 24px;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+      }
+      #scene-wrap:fullscreen .pads {
+        width: 340px;
+      }
+      #scene-status {
+        font-size: 18px;
+      }
+      #scene-status.is-live {
+        color: var(--live);
+      }
+      .pad {
+        position: relative;
+        aspect-ratio: 1;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: radial-gradient(circle at center, #141a21, #0e1319);
+        touch-action: none;
+        cursor: grab;
+      }
+      /* One bound axis needs a track, not a square: the shape tells you which way it moves. */
+      .pad[data-axes="x"] {
+        aspect-ratio: 4 / 1;
+        border-radius: 999px;
+        cursor: ew-resize;
+      }
+      .pad[data-axes="y"] {
+        aspect-ratio: 1 / 3;
+        margin: 0 auto;
+        width: 90px;
+        border-radius: 999px;
+        cursor: ns-resize;
+      }
+      .pad.is-holding {
+        cursor: grabbing;
+        border-color: var(--accent);
+      }
+      .pad.is-active {
+        border-color: var(--accent);
+      }
+      .pad i {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 34px;
+        height: 34px;
+        margin: -17px 0 0 -17px;
+        border-radius: 50%;
+        background: var(--accent);
+        opacity: 0.85;
+      }
+      .pad b {
+        position: absolute;
+        inset: 12px;
+        border: 1px dashed var(--line);
+        border-radius: 50%;
+      }
+      .pad[data-axes="x"] b,
+      .pad[data-axes="y"] b {
+        inset: 6px;
+        border-radius: 999px;
+      }
+      /* Marks where the finger landed, so the operator can see what they are moving from. */
+      .pad u {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        margin: -5px 0 0 -5px;
+        border-radius: 50%;
+        background: var(--muted);
+        opacity: 0;
+      }
+      .pad.is-holding u {
+        opacity: 0.7;
+      }
+      .keys {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .keycap {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: center;
+      }
+      .keycap.is-capturing {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .keycap kbd {
+        font: 600 15px ui-monospace, monospace;
+      }
+      .keycap small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .channel {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .channel:last-child {
+        border-bottom: 0;
+      }
+      .channel .name {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .channel .bar {
+        flex: 1 1 120px;
+        margin: 0;
+      }
+      video {
+        width: 100%;
+        border-radius: 10px;
+        background: #000;
+        /* Mirrored so moving left on screen matches moving left in the room. */
+        transform: scaleX(-1);
+        display: block;
+      }
+      video[hidden] {
+        display: none;
+      }
+      .banner {
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+        font-size: 14px;
+        border: 1px solid var(--warn);
+        background: rgba(251, 191, 36, 0.1);
+        color: var(--warn);
+      }
+      .banner.bad {
+        border-color: var(--stop);
+        background: rgba(248, 113, 113, 0.1);
+        color: var(--stop);
+      }
+      code {
+        font: 12px ui-monospace, monospace;
+        color: var(--muted);
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Accessible teleoperation &middot; LeRobot</h1>
+        <div class="sub" id="profile-name"></div>
+      </div>
+      <div class="row">
+        <span class="pill"><i class="dot" id="dot-link"></i><span id="link-text">connecting</span></span>
+        <span class="pill"><i class="dot" id="dot-face"></i><span id="face-text">camera off</span></span>
+        <button class="clutch" id="clutch" aria-pressed="false">Engage control</button>
+        <button class="estop" id="estop">Stop</button>
+      </div>
+    </header>
+
+    <main>
+      <div>
+        <section>
+          <h2>Joint and input map</h2>
+          <div id="arm-banner" class="banner">
+            This teleoperator has not been told where the arm actually is, so it is holding
+            its configured start pose. Engaging control could move the arm there. Clear the
+            workspace first.
+          </div>
+          <div id="joints"></div>
+        </section>
+      </div>
+
+      <div>
+        <section id="scene-section">
+          <h2>Robot view</h2>
+          <div class="row" style="margin-bottom: 12px">
+            <label>
+              <select id="scene-device" aria-label="Camera for the robot view"></select>
+            </label>
+            <button id="scene-start">Start view</button>
+            <button id="scene-full" disabled>Fullscreen</button>
+          </div>
+          <div id="scene-wrap">
+            <video id="scene" playsinline muted autoplay></video>
+            <div id="scene-overlay"><div id="scene-status" class="sub"></div></div>
+          </div>
+          <p class="sub" id="scene-note" style="margin: 10px 0 0">
+            Point a camera at the workspace. In fullscreen the joysticks come with you, and
+            Space still engages control.
+          </p>
+        </section>
+
+        <section id="pads-section">
+          <h2>On-screen joysticks</h2>
+          <div class="pads" id="pads">
+            <div id="pad_a_wrap">
+              <div
+                class="pad"
+                id="pad_a"
+                role="application"
+                tabindex="0"
+                aria-label="Joystick A. Press anywhere and move from there, or focus and use the arrow keys."
+              >
+                <b></b><u></u><i></i>
+              </div>
+              <div class="sub" style="margin-top: 6px">Pad A</div>
+            </div>
+            <div id="pad_b_wrap">
+              <div
+                class="pad"
+                id="pad_b"
+                role="application"
+                tabindex="0"
+                aria-label="Joystick B. Press anywhere and move from there, or focus and use the arrow keys."
+              >
+                <b></b><u></u><i></i>
+              </div>
+              <div class="sub" style="margin-top: 6px">Pad B</div>
+            </div>
+          </div>
+          <div class="tune" id="pads-tune" style="margin-top: 14px">
+            <label>
+              <span>Movement needed for full speed <b id="pad-travel-value">60 px</b></span>
+              <input id="pad-travel" type="range" min="15" max="200" step="5" value="60" />
+            </label>
+          </div>
+          <p class="sub" style="margin: 10px 0 0">
+            Press anywhere on the pad and move from that point; wherever you land becomes the
+            centre, so nothing jumps and a short movement can reach full speed.
+          </p>
+        </section>
+
+        <section id="face-section">
+          <h2>Face channels</h2>
+          <div class="row" style="margin-bottom: 12px">
+            <button id="camera">Start camera</button>
+            <span class="sub" id="camera-note">Video stays in this tab.</span>
+          </div>
+          <video id="video" playsinline muted hidden></video>
+          <div id="channels"></div>
+        </section>
+
+        <section>
+          <h2>Commanded pose</h2>
+          <div id="pose"></div>
+        </section>
+      </div>
+    </main>
+
+    <div class="visually-hidden" role="status" aria-live="polite" id="announcer"></div>
+
+    <script type="module">
+      const BOOTSTRAP = __LEROBOT_BOOTSTRAP__;
+
+      const CAPTURE_MS = 5000;
+      const MIN_RANGE = 0.06;
+      const SEND_HZ = 60;
+      const RESERVED_KEYS = new Set(["Space"]);
+
+      const JOINT_LABELS = {
+        shoulder_pan: ["Shoulder pan", "left", "right"],
+        shoulder_lift: ["Shoulder lift", "down", "up"],
+        elbow_flex: ["Elbow flex", "fold", "extend"],
+        wrist_flex: ["Wrist flex", "down", "up"],
+        wrist_roll: ["Wrist roll", "left", "right"],
+        gripper: ["Gripper", "close", "open"],
+      };
+
+      const CHANNEL_LABELS = {
+        "face.brow_vertical": ["Eyebrows down / up", "Relax your mouth, then lower and raise both eyebrows."],
+        "face.lip_lateral": ["Lips left / right", "Move your lips comfortably left, then right."],
+        "face.mouth_open": ["Mouth close / open", "Gently close, then open your mouth."],
+        "face.mouth_shape": ["Pucker / smile", "Pucker, return to neutral, then smile."],
+        "face.eye_wink": ["Left / right eye squeeze", "Squeeze one eye, relax, then the other."],
+        "pad_a.x": ["Pad A left / right", ""],
+        "pad_a.y": ["Pad A down / up", ""],
+        "pad_b.x": ["Pad B left / right", ""],
+        "pad_b.y": ["Pad B down / up", ""],
+      };
+
+      const label = (id) => (CHANNEL_LABELS[id] ? CHANNEL_LABELS[id][0] : id);
+      const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+      const signed = (v, d = 1) => (v > 0 ? "+" : "") + v.toFixed(d);
+
+      const state = {
+        bindings: BOOTSTRAP.bindings,
+        calibrations: BOOTSTRAP.calibrations,
+        pads: { pad_a: { x: 0, y: 0 }, pad_b: { x: 0, y: 0 } },
+        faceSignals: {},
+        keys: {},
+        engaged: false,
+        tracking: false,
+        capture: null,
+        socket: null,
+        anchored: false,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const announce = (text) => ($("announcer").textContent = text);
+
+      // ── connection ─────────────────────────────────────────────────────
+
+      function connect() {
+        const socket = new WebSocket(`ws://${location.host}/ws`);
+        state.socket = socket;
+
+        socket.addEventListener("open", () => {
+          setDot("link", "ok", "connected");
+          sendProfile();
+        });
+        socket.addEventListener("close", () => {
+          setDot("link", "bad", "disconnected");
+          setEngaged(false);
+          setTimeout(connect, 1000);
+        });
+        socket.addEventListener("message", (event) => {
+          const message = JSON.parse(event.data);
+          if (message.type === "state") renderState(message);
+        });
+      }
+
+      function send(payload) {
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+          state.socket.send(JSON.stringify(payload));
+        }
+      }
+
+      function sendProfile() {
+        send({ type: "profile", bindings: state.bindings, calibrations: state.calibrations });
+      }
+
+      function setDot(name, tone, text) {
+        $(`dot-${name}`).className = `dot ${tone}`;
+        $(`${name}-text`).textContent = text;
+      }
+
+      // ── clutch ─────────────────────────────────────────────────────────
+
+      function setEngaged(next) {
+        state.engaged = next;
+        const button = $("clutch");
+        button.classList.toggle("is-live", next);
+        button.setAttribute("aria-pressed", String(next));
+        button.textContent = next ? "Control is live \u00b7 press to hold" : "Engage control";
+        announce(next ? "Control engaged" : "Control released");
+      }
+
+      $("clutch").addEventListener("click", () => setEngaged(!state.engaged));
+      $("estop").addEventListener("click", () => {
+        setEngaged(false);
+        send({ type: "stop" });
+        announce("Stopped");
+      });
+
+      // ── joysticks ──────────────────────────────────────────────────────
+
+      // How far the finger travels for full deflection, in CSS pixels. Small values suit a
+      // small comfortable range of movement, which is the whole point of this teleoperator.
+      let padTravel = Number(localStorage.getItem("padTravel")) || 60;
+
+      for (const pad of ["pad_a", "pad_b"]) {
+        const element = $(pad);
+        const knob = element.querySelector("i");
+        const origin = element.querySelector("u");
+        let pointer = null;
+        let anchor = null;
+
+        const apply = (x, y) => {
+          // An axis nothing is bound to should not be able to contribute a stray command.
+          const axes = padAxes(pad);
+          if (!axes.x) x = 0;
+          if (!axes.y) y = 0;
+          const length = Math.hypot(x, y);
+          if (length > 1) {
+            x /= length;
+            y /= length;
+          }
+          state.pads[pad] = { x, y };
+          knob.style.transform = `translate(${x * 38}%, ${-y * 38}%)`;
+          element.classList.toggle("is-active", Math.hypot(x, y) > 0.02);
+        };
+        // Relative to where the finger landed, not to the centre of the pad. Absolute
+        // mapping means touching near an edge commands full speed instantly, and forces the
+        // operator to cross the whole pad to reach it.
+        const fromPointer = (event) => {
+          if (!anchor) return;
+          apply(
+            clamp((event.clientX - anchor.x) / padTravel, -1, 1),
+            clamp(-(event.clientY - anchor.y) / padTravel, -1, 1),
+          );
+        };
+        const release = () => {
+          pointer = null;
+          anchor = null;
+          element.classList.remove("is-holding");
+          apply(0, 0);
+        };
+
+        element.addEventListener("pointerdown", (event) => {
+          pointer = event.pointerId;
+          anchor = { x: event.clientX, y: event.clientY };
+          element.setPointerCapture(event.pointerId);
+          element.classList.add("is-holding");
+          const rect = element.getBoundingClientRect();
+          origin.style.left = `${event.clientX - rect.left}px`;
+          origin.style.top = `${event.clientY - rect.top}px`;
+          apply(0, 0);
+        });
+        element.addEventListener("pointermove", (event) => {
+          if (pointer === event.pointerId) fromPointer(event);
+        });
+        element.addEventListener("pointerup", release);
+        element.addEventListener("pointercancel", release);
+        element.addEventListener("lostpointercapture", release);
+        element.addEventListener("blur", release);
+        element.addEventListener("keydown", (event) => {
+          const step = event.shiftKey ? 0.35 : 1;
+          const current = state.pads[pad];
+          if (event.key === "ArrowLeft") apply(-step, current.y);
+          else if (event.key === "ArrowRight") apply(step, current.y);
+          else if (event.key === "ArrowUp") apply(current.x, step);
+          else if (event.key === "ArrowDown") apply(current.x, -step);
+          else return;
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        element.addEventListener("keyup", (event) => {
+          if (!event.key.startsWith("Arrow")) return;
+          event.preventDefault();
+          event.stopPropagation();
+          apply(0, 0);
+        });
+      }
+
+      const padTravelInput = $("pad-travel");
+      padTravelInput.value = String(padTravel);
+      const showPadTravel = () => ($("pad-travel-value").textContent = `${padTravel} px`);
+      showPadTravel();
+      padTravelInput.addEventListener("input", () => {
+        padTravel = Number(padTravelInput.value);
+        localStorage.setItem("padTravel", String(padTravel));
+        showPadTravel();
+      });
+
+      // ── keyboard ───────────────────────────────────────────────────────
+
+      let capturingKey = null;
+
+      function keyCap(code) {
+        if (code.startsWith("Key")) return code.slice(3);
+        if (code.startsWith("Digit")) return code.slice(5);
+        return { ArrowUp: "\u2191", ArrowDown: "\u2193", ArrowLeft: "\u2190", ArrowRight: "\u2192" }[code] ?? code;
+      }
+
+      window.addEventListener("keydown", (event) => {
+        if (capturingKey) {
+          event.preventDefault();
+          if (event.code !== "Escape" && !RESERVED_KEYS.has(event.code)) {
+            state.bindings[capturingKey.joint][capturingKey.slot] = event.code;
+            sendProfile();
+          }
+          capturingKey = null;
+          renderJoints();
+          return;
+        }
+        if (event.code === "Space" && !event.repeat) {
+          event.preventDefault();
+          setEngaged(!state.engaged);
+          return;
+        }
+        state.keys[event.code] = true;
+      });
+      window.addEventListener("keyup", (event) => {
+        state.keys[event.code] = false;
+      });
+      window.addEventListener("blur", () => {
+        state.keys = {};
+        setEngaged(false);
+      });
+      document.addEventListener("visibilitychange", () => {
+        // A hidden tab stops running its loop, so it must not walk away still engaged.
+        if (document.hidden) {
+          state.keys = {};
+          setEngaged(false);
+        }
+      });
+
+      // ── joint map ──────────────────────────────────────────────────────
+
+      const jointsRoot = $("joints");
+
+      function renderJoints() {
+        jointsRoot.replaceChildren();
+        for (const joint of BOOTSTRAP.joints) {
+          jointsRoot.appendChild(renderJoint(joint));
+        }
+        syncPadVisibility();
+      }
+
+      /** Which axes of a pad any joint is actually bound to. */
+      function padAxes(pad) {
+        const bound = (axis) =>
+          Object.values(state.bindings).some(
+            (binding) => binding.source === "joystick" && binding.channel === `${pad}.${axis}`,
+          );
+        return { x: bound("x"), y: bound("y") };
+      }
+
+      /** Show a joystick only once a joint is bound to it; an unused pad is just clutter. */
+      function syncPadVisibility() {
+        let anyVisible = false;
+        for (const pad of ["pad_a", "pad_b"]) {
+          const axes = padAxes(pad);
+          const used = axes.x || axes.y;
+          $(`${pad}_wrap`).hidden = !used;
+          // A pad with one bound axis is drawn as a track along that axis.
+          $(pad).dataset.axes = axes.x && axes.y ? "xy" : axes.x ? "x" : "y";
+          anyVisible ||= used;
+        }
+        $("pads-section").hidden = !anyVisible;
+      }
+
+      function renderJoint(joint) {
+        const binding = state.bindings[joint];
+        const [name, negative, positive] = JOINT_LABELS[joint] ?? [joint, "negative", "positive"];
+        const limits = BOOTSTRAP.jointLimits[joint] ?? [-100, 100];
+        const unit = joint === "gripper" ? "%" : "\u00b0";
+
+        const card = document.createElement("div");
+        card.className = "joint";
+        card.dataset.joint = joint;
+
+        const head = document.createElement("div");
+        head.className = "joint-head";
+        head.innerHTML =
+          `<strong>${name}</strong><span class="sub">${negative} \u2194 ${positive}</span>` +
+          `<span class="sub" data-role="readout">\u2014</span>`;
+        card.appendChild(head);
+
+        const row = document.createElement("div");
+        row.className = "row";
+
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", `Input for ${name}`);
+        select.appendChild(new Option("No input", "none", false, binding.source === "none"));
+        const taken = takenChannels(joint);
+        const groups = [
+          ["On-screen joystick", BOOTSTRAP.joystickChannels.map((c) => [`joystick:${c}`, label(c), c])],
+          ["Keyboard", [["keyboard:", "Two keys \u00b7 choose your own", null]]],
+          ["Face movement", BOOTSTRAP.faceChannels.map((c) => [`face:${c}`, label(c), c])],
+        ];
+        const currentValue =
+          binding.source === "none" ? "none" : `${binding.source}:${binding.channel ?? ""}`;
+        for (const [groupName, options] of groups) {
+          if (!options.length) continue;
+          const group = document.createElement("optgroup");
+          group.label = groupName;
+          for (const [value, text, channel] of options) {
+            const busy = channel !== null && value !== currentValue && taken.has(channel);
+            const option = new Option(busy ? `${text} \u00b7 taken` : text, value, false, value === currentValue);
+            option.disabled = busy;
+            group.appendChild(option);
+          }
+          select.appendChild(group);
+        }
+        select.addEventListener("change", () => {
+          const [source, channel] = select.value === "none" ? ["none", null] : select.value.split(":");
+          Object.assign(binding, { source, channel: channel || null });
+          if (source !== "keyboard") {
+            binding.positive_key = null;
+            binding.negative_key = null;
+          }
+          sendProfile();
+          renderJoints();
+        });
+        const selectLabel = document.createElement("label");
+        selectLabel.appendChild(select);
+        row.appendChild(selectLabel);
+
+        const invert = document.createElement("button");
+        invert.textContent = "Invert";
+        invert.setAttribute("aria-pressed", String(binding.invert));
+        invert.style.borderColor = binding.invert ? "var(--accent)" : "";
+        invert.disabled = binding.source === "none";
+        invert.addEventListener("click", () => {
+          binding.invert = !binding.invert;
+          sendProfile();
+          renderJoints();
+        });
+        row.appendChild(invert);
+
+        if (binding.source === "face" && binding.channel) {
+          const calibrate = document.createElement("button");
+          const ready = state.calibrations[binding.channel]?.ready;
+          calibrate.dataset.role = "calibrate";
+          calibrate.textContent = ready ? "Recalibrate" : "Calibrate";
+          calibrate.addEventListener("click", () => startCapture(binding.channel));
+          row.appendChild(calibrate);
+        }
+        card.appendChild(row);
+
+        if (binding.source === "face" && binding.channel && !state.calibrations[binding.channel]?.ready) {
+          // Silence here is the worst outcome: the joint looks bound but cannot move.
+          const warning = document.createElement("p");
+          warning.className = "sub warn-text";
+          warning.dataset.role = "face-warning";
+          card.appendChild(warning);
+        }
+
+        syncTrackingControls(card);
+
+        if (binding.source === "keyboard") {
+          const keys = document.createElement("div");
+          keys.className = "keys";
+          for (const [slot, direction] of [
+            ["positive_key", positive],
+            ["negative_key", negative],
+          ]) {
+            const button = document.createElement("button");
+            button.className = "keycap";
+            const active = capturingKey?.joint === joint && capturingKey?.slot === slot;
+            button.classList.toggle("is-capturing", active);
+            button.innerHTML = active
+              ? `<kbd>press a key</kbd><small>${direction}</small>`
+              : `<kbd>${binding[slot] ? keyCap(binding[slot]) : "pick"}</kbd><small>${direction}</small>`;
+            button.addEventListener("click", () => {
+              capturingKey = active ? null : { joint, slot };
+              renderJoints();
+            });
+            keys.appendChild(button);
+          }
+          card.appendChild(keys);
+        }
+
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        bar.innerHTML = "<b></b><i data-role='fill'></i>";
+        bar.dataset.low = String(limits[0]);
+        bar.dataset.high = String(limits[1]);
+        bar.dataset.unit = unit;
+        card.appendChild(bar);
+
+        const tune = document.createElement("div");
+        tune.className = "tune";
+        const controls = [
+          ["gain", "Gain", 0.5, 3.5, 0.1, (v) => `${v.toFixed(1)}\u00d7`],
+          ["deadzone", "Dead zone", 0.02, 0.4, 0.01, (v) => `${Math.round(v * 100)}%`],
+          ["smoothing", "Smoothing", 0.0, 0.95, 0.01, (v) => `${Math.round(v * 100)}%`],
+          ["speed", "Speed", 2, 120, 1, (v) => `${v.toFixed(0)} ${unit}/s`],
+        ];
+        for (const [key, text, min, max, step, format] of controls) {
+          const wrapper = document.createElement("label");
+          const output = document.createElement("output");
+          output.textContent = format(binding[key]);
+          const caption = document.createElement("span");
+          caption.append(text, output);
+          const slider = document.createElement("input");
+          Object.assign(slider, { type: "range", min, max, step, value: binding[key] });
+          slider.setAttribute("aria-label", `${text} for ${name}`);
+          slider.addEventListener("input", () => {
+            binding[key] = Number(slider.value);
+            output.textContent = format(binding[key]);
+          });
+          slider.addEventListener("change", sendProfile);
+          wrapper.append(caption, slider);
+          tune.appendChild(wrapper);
+        }
+        card.appendChild(tune);
+        return card;
+      }
+
+      function takenChannels(exceptJoint) {
+        const taken = new Set();
+        for (const [joint, binding] of Object.entries(state.bindings)) {
+          if (joint !== exceptJoint && binding.channel) taken.add(binding.channel);
+        }
+        return taken;
+      }
+
+      // ── face channels ──────────────────────────────────────────────────
+
+      const channelsRoot = $("channels");
+
+      function renderChannels() {
+        channelsRoot.replaceChildren();
+        for (const channel of BOOTSTRAP.faceChannels) {
+          const row = document.createElement("div");
+          row.className = "channel";
+          row.dataset.channel = channel;
+          const calibration = state.calibrations[channel];
+          row.innerHTML =
+            `<span class="name">${label(channel)}<br><code data-role="hint">` +
+            `${calibration?.ready ? "calibrated" : "not calibrated"}</code></span>` +
+            `<span class="bar"><b></b><i data-role="fill"></i></span>`;
+          channelsRoot.appendChild(row);
+        }
+      }
+
+      /**
+       * Reflect the current tracking state in the joint cards, in place.
+       *
+       * Whether a face channel can be calibrated depends on the camera, which starts long
+       * after the cards are built and drops out whenever the face leaves frame. Rebuilding
+       * the cards on every flip would throw away focus and interrupt whatever the operator
+       * is doing, so the few affected controls are updated directly instead.
+       */
+      function syncTrackingControls(root) {
+        for (const card of root ? [root] : jointsRoot.children) {
+          const calibrate = card.querySelector("[data-role='calibrate']");
+          if (calibrate) {
+            calibrate.disabled = !state.tracking;
+            calibrate.title = state.tracking ? "" : "Start the camera first";
+          }
+          const warning = card.querySelector("[data-role='face-warning']");
+          if (warning) {
+            warning.textContent = state.tracking
+              ? "This joint stays still until you calibrate the channel."
+              : "This joint stays still until you start the camera and calibrate the channel.";
+          }
+        }
+      }
+
+      function setTracking(next) {
+        if (state.tracking === next) return;
+        state.tracking = next;
+        syncTrackingControls();
+      }
+
+      function startCapture(channel) {
+        const neutral = state.faceSignals[channel] ?? 0;
+        state.capture = { channel, neutral, min: 0, max: 0, until: performance.now() + CAPTURE_MS };
+        state.calibrations[channel] = {
+          neutral,
+          negative_range: MIN_RANGE,
+          positive_range: MIN_RANGE,
+          ready: false,
+        };
+        announce(`Calibrating ${label(channel)}. ${CHANNEL_LABELS[channel]?.[1] ?? ""}`);
+        renderJoints();
+      }
+
+      function stepCapture(now) {
+        const capture = state.capture;
+        if (!capture) return;
+        if (!state.tracking) {
+          state.capture = null;
+          announce("Calibration stopped: the camera lost your face.");
+          return;
+        }
+        const delta = (state.faceSignals[capture.channel] ?? 0) - capture.neutral;
+        capture.min = Math.min(capture.min, delta);
+        capture.max = Math.max(capture.max, delta);
+        if (now < capture.until) return;
+
+        state.calibrations[capture.channel] = {
+          neutral: capture.neutral,
+          negative_range: Math.max(Math.abs(capture.min), MIN_RANGE),
+          positive_range: Math.max(capture.max, MIN_RANGE),
+          ready: true,
+        };
+        state.capture = null;
+        sendProfile();
+        renderChannels();
+        renderJoints();
+        announce(`${label(capture.channel)} calibrated.`);
+      }
+
+      let landmarker = null;
+      const video = $("video");
+
+      $("camera").addEventListener("click", async () => {
+        const button = $("camera");
+        button.disabled = true;
+        button.textContent = "Starting\u2026";
+        try {
+          const { FaceLandmarker, FilesetResolver } = await import(
+            `${BOOTSTRAP.mediapipeBaseUrl}/vision_bundle.mjs`
+          );
+          const vision = await FilesetResolver.forVisionTasks(`${BOOTSTRAP.mediapipeBaseUrl}/wasm`);
+          landmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: BOOTSTRAP.faceLandmarkerUrl },
+            runningMode: "VIDEO",
+            numFaces: 1,
+            outputFaceBlendshapes: true,
+          });
+          video.srcObject = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 },
+          });
+          video.hidden = false;
+          await video.play();
+          button.textContent = "Camera on";
+          $("camera-note").textContent = "Video stays in this tab; only the five channel values are sent.";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Start camera";
+          $("camera-note").textContent = `Camera unavailable: ${error.message}`;
+          setDot("face", "bad", "camera failed");
+        }
+      });
+
+      function readFaceSignals(timestamp) {
+        if (!landmarker || video.readyState < 2) return;
+        const result = landmarker.detectForVideo(video, timestamp);
+        const shapes = result.faceBlendshapes?.[0]?.categories;
+        if (!shapes) {
+          setTracking(false);
+          setDot("face", "warn", "face not found");
+          return;
+        }
+        const score = Object.fromEntries(shapes.map((c) => [c.categoryName, c.score]));
+        const at = (name) => score[name] ?? 0;
+        state.faceSignals = {
+          "face.brow_vertical":
+            (at("browInnerUp") + at("browOuterUpLeft") + at("browOuterUpRight")) / 3 -
+            (at("browDownLeft") + at("browDownRight")) / 2,
+          "face.mouth_open": at("jawOpen") - at("mouthClose"),
+          "face.lip_lateral": at("mouthRight") - at("mouthLeft"),
+          "face.mouth_shape":
+            (at("mouthSmileLeft") + at("mouthSmileRight")) / 2 - at("mouthPucker"),
+          "face.eye_wink": at("eyeBlinkRight") - at("eyeBlinkLeft"),
+        };
+        setTracking(true);
+        setDot("face", "ok", "tracking");
+      }
+
+      // ── robot view ─────────────────────────────────────────────────────
+
+      // A camera watching the workspace is served straight to the page by the browser rather
+      // than relayed through Python: no extra latency, and no video on the control socket.
+
+      const scene = $("scene");
+      const sceneWrap = $("scene-wrap");
+      const sceneDevice = $("scene-device");
+      let sceneStream = null;
+
+      async function listSceneCameras() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((device) => device.kind === "videoinput");
+        const chosen = sceneDevice.value;
+        sceneDevice.replaceChildren();
+        for (const [index, camera] of cameras.entries()) {
+          // Labels stay empty until the user has granted camera access once.
+          const name = camera.label || `Camera ${index + 1}`;
+          sceneDevice.appendChild(new Option(name, camera.deviceId, false, camera.deviceId === chosen));
+        }
+        if (!cameras.length) sceneDevice.appendChild(new Option("No camera found", ""));
+      }
+
+      async function startScene() {
+        const deviceId = sceneDevice.value;
+        stopScene();
+        sceneStream = await navigator.mediaDevices.getUserMedia({
+          video: deviceId ? { deviceId: { exact: deviceId } } : true,
+        });
+        scene.srcObject = sceneStream;
+        await scene.play();
+        $("scene-full").disabled = false;
+        $("scene-start").textContent = "Restart view";
+        await listSceneCameras();
+      }
+
+      function stopScene() {
+        for (const track of sceneStream?.getTracks() ?? []) track.stop();
+        sceneStream = null;
+      }
+
+      $("scene-start").addEventListener("click", async () => {
+        $("scene-note").textContent = "Starting the camera\u2026";
+        try {
+          await startScene();
+          $("scene-note").textContent =
+            "In fullscreen the joysticks come with you, and Space still engages control.";
+        } catch (error) {
+          $("scene-note").textContent = `Camera unavailable: ${error.message}`;
+        }
+      });
+      sceneDevice.addEventListener("change", () => {
+        if (sceneStream) startScene().catch(() => {});
+      });
+      $("scene-full").addEventListener("click", () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else sceneWrap.requestFullscreen();
+      });
+
+      // Carry the joysticks into fullscreen rather than duplicating them: moving the nodes
+      // keeps their pointer handlers and their current values intact.
+      const padsHome = $("pads");
+      document.addEventListener("fullscreenchange", () => {
+        if (document.fullscreenElement === sceneWrap) {
+          $("scene-overlay").appendChild(padsHome);
+        } else {
+          $("pads-section").appendChild(padsHome);
+        }
+        $("scene-full").textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+      });
+
+      listSceneCameras().catch(() => {});
+
+      // ── readouts ───────────────────────────────────────────────────────
+
+      function fill(bar, fraction, negative) {
+        const element = bar.querySelector("[data-role='fill']");
+        const width = Math.abs(clamp(fraction, -1, 1)) * 50;
+        element.style.width = `${width}%`;
+        element.style.left = negative ? `${50 - width}%` : "50%";
+      }
+
+      function renderState(message) {
+        state.anchored = message.anchored;
+        $("arm-banner").hidden = message.anchored;
+        const status = $("scene-status");
+        status.classList.toggle("is-live", Boolean(message.engaged));
+        status.textContent = message.engaged
+          ? "Control is live \u00b7 Space to release"
+          : "Control released \u00b7 Space to engage";
+        if (message.clients > 1) {
+          setDot("link", "warn", `${message.clients} pages open \u00b7 close the others`);
+        } else {
+          setDot("link", "ok", "connected");
+        }
+        for (const card of jointsRoot.children) {
+          const joint = card.dataset.joint;
+          const position = message.pose?.[joint];
+          if (position === undefined) continue;
+          const bar = card.querySelector(".bar");
+          const low = Number(bar.dataset.low);
+          const high = Number(bar.dataset.high);
+          const centre = (low + high) / 2;
+          const span = (high - low) / 2 || 1;
+          const offset = (position - centre) / span;
+          fill(bar, offset, offset < 0);
+          const blocked = message.blocked?.[joint] ?? 0;
+          const [, negative, positive] = JOINT_LABELS[joint] ?? [joint, "negative", "positive"];
+          const note = blocked ? ` \u00b7 at limit, cannot ${blocked > 0 ? positive : negative}` : "";
+          card.querySelector("[data-role='readout']").textContent =
+            `${signed(position)}${bar.dataset.unit}${note}`;
+          card.classList.toggle("is-live", Math.abs(message.velocity?.[joint] ?? 0) > 0.01);
+        }
+        $("pose").innerHTML = Object.entries(message.pose ?? {})
+          .map(
+            ([joint, value]) =>
+              `<div class="channel"><span class="name">${JOINT_LABELS[joint]?.[0] ?? joint}</span>` +
+              `<code>${signed(value, 2)}</code></div>`,
+          )
+          .join("");
+      }
+
+      // ── loop ───────────────────────────────────────────────────────────
+
+      let lastSend = 0;
+
+      function tick(timestamp) {
+        requestAnimationFrame(tick);
+        readFaceSignals(timestamp);
+        stepCapture(timestamp);
+
+        for (const channel of BOOTSTRAP.faceChannels) {
+          const row = channelsRoot.querySelector(`[data-channel='${channel}']`);
+          if (!row) continue;
+          const calibration = state.calibrations[channel];
+          const raw = state.faceSignals[channel] ?? 0;
+          const delta = raw - (calibration?.neutral ?? 0);
+          const span =
+            (delta < 0 ? calibration?.negative_range : calibration?.positive_range) || 1;
+          const normalized = clamp(delta / span, -1, 1);
+          fill(row.querySelector(".bar"), normalized, normalized < 0);
+          if (state.capture?.channel === channel) {
+            row.querySelector("[data-role='hint']").textContent =
+              `capturing \u00b7 ${((state.capture.until - timestamp) / 1000).toFixed(1)}s`;
+          }
+        }
+
+        if (timestamp - lastSend < 1000 / SEND_HZ) return;
+        lastSend = timestamp;
+        send({
+          type: "input",
+          channels: {
+            ...state.faceSignals,
+            "pad_a.x": state.pads.pad_a.x,
+            "pad_a.y": state.pads.pad_a.y,
+            "pad_b.x": state.pads.pad_b.x,
+            "pad_b.y": state.pads.pad_b.y,
+          },
+          keys: state.keys,
+          engaged: state.engaged,
+          tracking: state.tracking,
+        });
+      }
+
+      $("profile-name").textContent = `Profile: ${BOOTSTRAP.robotId}`;
+      if (!BOOTSTRAP.faceTracking) $("face-section").hidden = true;
+      renderJoints();
+      renderChannels();
+      connect();
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

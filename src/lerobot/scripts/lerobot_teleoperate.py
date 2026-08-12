@@ -47,6 +47,19 @@ lerobot-teleoperate \
     --display_mode=foxglove
 ```
 
+Example teleoperation without a leader arm, driven from a browser page by whatever small
+movement the operator has (see ``docs/source/accessible_teleop.mdx``):
+
+```shell
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=black \
+    --robot.max_relative_target=5 \
+    --teleop.type=accessible_teleop \
+    --teleop.id=my_profile
+```
+
 Example teleoperation with bimanual so100:
 
 ```shell
@@ -104,6 +117,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    accessible_teleop,
     bi_openarm_leader,
     bi_openarm_mini,
     bi_rebot_102_leader,
@@ -194,7 +208,10 @@ def teleop_loop(
         # given that it is the identity processor as default
         obs = robot.get_observation()
 
-        if robot.name == "unitree_g1":
+        # accessible_teleop integrates a velocity command into a position, so it needs the
+        # robot's measured pose to start from; without it the first engaged action would
+        # command its configured start pose and the arm would jump to reach it.
+        if robot.name == "unitree_g1" or teleop.name == "accessible_teleop":
             teleop.send_feedback(obs)
 
         # Get teleop action

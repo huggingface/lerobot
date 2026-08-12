@@ -39,6 +39,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .keyboard import KeyboardTeleop
 
         return KeyboardTeleop(config)
+    elif config.type == "accessible_teleop":
+        from .accessible_teleop import AccessibleTeleop
+
+        return AccessibleTeleop(config)
     elif config.type == "koch_leader":
         from .koch_leader import KochLeader
 
