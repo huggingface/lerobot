@@ -21,6 +21,7 @@ from .factory import (
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig as RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
@@ -28,6 +29,7 @@ __all__ = [
     # Configuration classes
     "RewardClassifierConfig",
     "RobometerConfig",
+    "RynnValueConfig",
     "SARMConfig",
     "TOPRewardConfig",
     # Base class
