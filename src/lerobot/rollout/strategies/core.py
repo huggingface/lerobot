@@ -50,6 +50,7 @@ class RolloutStrategy(abc.ABC):
         self._engine: InferenceEngine | None = None
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
+        self._warmup_observation_timeout_logged: bool = False
         self._cached_obs_processed: dict | None = None
 
     def _init_engine(self, ctx: RolloutContext) -> None:
@@ -66,6 +67,7 @@ class RolloutStrategy(abc.ABC):
         self._engine.reset()
         self._engine.start()
         self._warmup_flushed = False
+        self._warmup_observation_timeout_logged = False
         self._cached_obs_processed = None
         logger.info("Inference engine started")
 
@@ -104,9 +106,7 @@ class RolloutStrategy(abc.ABC):
         if not use_torch_compile:
             return False
         if not engine.ready:
-            dt = time.perf_counter() - loop_start
-            if (sleep_t := control_interval - dt) > 0:
-                precise_sleep(sleep_t)
+            self._wait_for_next_tick(loop_start, control_interval)
             return True
         if not self._warmup_flushed:
             logger.info("Warmup complete — flushing stale state and resuming engine")
@@ -115,6 +115,34 @@ class RolloutStrategy(abc.ABC):
             self._warmup_flushed = True
             engine.resume()
         return False
+
+    @staticmethod
+    def _wait_for_next_tick(loop_start: float, control_interval: float) -> None:
+        """Sleep for the remainder of the current control tick."""
+        dt = time.perf_counter() - loop_start
+        if (sleep_t := control_interval - dt) > 0:
+            precise_sleep(sleep_t)
+
+    def _get_observation_or_wait_for_warmup(
+        self, robot, use_torch_compile: bool, loop_start: float, control_interval: float
+    ) -> dict | None:
+        """Read an observation, tolerating stale camera frames during compile warmup.
+
+        Torch compilation can hold the GIL long enough for camera background threads
+        to miss the freshness watchdog. A successful observation is still required to
+        start warmup, so retry only a stale-frame timeout while the engine is not ready.
+        """
+        try:
+            return robot.get_observation()
+        except TimeoutError:
+            if not use_torch_compile or self._engine.ready:
+                raise
+
+            if not self._warmup_observation_timeout_logged:
+                logger.warning("Camera observation timed out during torch.compile warmup; retrying")
+                self._warmup_observation_timeout_logged = True
+            self._wait_for_next_tick(loop_start, control_interval)
+            return None
 
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
         """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
