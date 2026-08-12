@@ -215,4 +215,6 @@
     title: Environments
   - local: api/configs
     title: Configuration
+  - local: api/async_inference
+    title: Async Inference
   title: "API Reference"

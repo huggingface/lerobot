@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Client side: The environment evolves with a time resolution equal to 1/fps"""
+"""Client side: The environment evolves with a time resolution equal to 1/fps."""
 
 DEFAULT_FPS = 30
 

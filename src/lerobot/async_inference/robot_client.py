@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""Run the async-inference robot client.
+
 Example command:
 ```shell
 python src/lerobot/async_inference/robot_client.py \
@@ -81,14 +82,20 @@ from .helpers import (
 
 
 class RobotClient:
+    """Connects a robot to a remote `PolicyServer`: streams observations, receives action chunks.
+
+    Runs two threads: one that sends observations and receives predicted action chunks, and one
+    that runs the robot control loop, consuming actions from the local queue.
+    """
+
     prefix = "robot_client"
     logger = get_logger(prefix)
 
     def __init__(self, config: RobotClientConfig):
-        """Initialize RobotClient with unified configuration.
+        """Initialize the client and connect to `config.robot`.
 
         Args:
-            config: RobotClientConfig containing all configuration parameters
+            config (`RobotClientConfig`): Client configuration (robot, policy, server address, fps).
         """
         # Store configuration
         self.config = config
@@ -138,10 +145,11 @@ class RobotClient:
 
     @property
     def running(self):
+        """Whether the client is currently connected and processing observations/actions."""
         return not self.shutdown_event.is_set()
 
     def start(self):
-        """Start the robot client and connect to the policy server"""
+        """Start the robot client and connect to the policy server."""
         try:
             # client-server handshake
             start_time = time.perf_counter()
@@ -171,7 +179,7 @@ class RobotClient:
             return False
 
     def stop(self):
-        """Stop the robot client"""
+        """Stop the robot client."""
         self.shutdown_event.set()
 
         self.robot.disconnect()
@@ -184,8 +192,18 @@ class RobotClient:
         self,
         obs: TimedObservation,
     ) -> bool:
-        """Send observation to the policy server.
-        Returns True if the observation was sent successfully, False otherwise."""
+        """Send an observation to the policy server.
+
+        Args:
+            obs (`TimedObservation`): Observation to send.
+
+        Returns:
+            `bool`: Whether the observation was sent successfully.
+
+        Raises:
+            RuntimeError: If the client isn't running (call `start()` first).
+            ValueError: If `obs` isn't a `TimedObservation`.
+        """
         if not self.running:
             raise RuntimeError("Client not running. Run RobotClient.start() before sending observations.")
 
@@ -215,6 +233,11 @@ class RobotClient:
             return False
 
     def _inspect_action_queue(self):
+        """Return the local action queue's current size and sorted timesteps, for logging.
+
+        Returns:
+            `tuple[int, list[int]]`: Queue size and the sorted timesteps of its contents.
+        """
         with self.action_queue_lock:
             queue_size = self.action_queue.qsize()
             timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
@@ -226,7 +249,7 @@ class RobotClient:
         incoming_actions: list[TimedAction],
         aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
     ):
-        """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
+        """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn."""
         if aggregate_fn is None:
             # default aggregate function: take the latest action
             def aggregate_fn(x1, x2):
@@ -267,7 +290,7 @@ class RobotClient:
             self.action_queue = future_action_queue
 
     def receive_actions(self, verbose: bool = False):
-        """Receive actions from the policy server"""
+        """Receive actions from the policy server."""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
         self.logger.info("Action receiving thread starting")
@@ -359,17 +382,24 @@ class RobotClient:
                 self.logger.error(f"Error receiving actions: {e}")
 
     def actions_available(self):
-        """Check if there are actions available in the queue"""
+        """Check if there are actions available in the queue."""
         with self.action_queue_lock:
             return not self.action_queue.empty()
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
+        """Convert a flat predicted action tensor into `self.robot`'s action feature dict.
+
+        Args:
+            action_tensor (`torch.Tensor`): Predicted action, ordered like `self.robot.action_features`.
+
+        Returns:
+            `dict[str, float]`: Action keyed by `self.robot`'s action feature names.
+        """
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
     def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
-        """Reading and performing actions in local queue"""
-
+        """Reading and performing actions in local queue."""
         # Lock only for queue operations
         get_start = time.perf_counter()
         with self.action_queue_lock:
@@ -401,11 +431,20 @@ class RobotClient:
         return _performed_action
 
     def _ready_to_send_observation(self):
-        """Flags when the client is ready to send an observation"""
+        """Flags when the client is ready to send an observation."""
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
+        """Capture a robot observation, timestamp it, and send it to the policy server.
+
+        Args:
+            task (`str`): Task description attached to the observation.
+            verbose (`bool`, *optional*, defaults to `False`): Whether to log detailed timing info.
+
+        Returns:
+            `RawObservation`: The raw observation captured from the robot.
+        """
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
@@ -456,7 +495,7 @@ class RobotClient:
             self.logger.error(f"Error in observation sender: {e}")
 
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
-        """Combined function for executing actions and streaming observations"""
+        """Combined function for executing actions and streaming observations."""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
         self.logger.info("Control loop thread starting")
@@ -483,6 +522,11 @@ class RobotClient:
 
 @draccus.wrap()
 def async_client(cfg: RobotClientConfig):
+    """CLI entry point: connect `cfg.robot` to a `PolicyServer` and run the async control loop.
+
+    Args:
+        cfg (`RobotClientConfig`): Parsed from the CLI.
+    """
     logging.info(pformat(asdict(cfg)))
 
     # TODO: Assert if checking robot support is still needed with the plugin system

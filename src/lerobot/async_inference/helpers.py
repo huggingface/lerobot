@@ -51,6 +51,11 @@ Observation = dict[str, torch.Tensor]
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
+    """Plot the client's action queue size over environment steps.
+
+    Args:
+        action_queue_size (`list[int]`): Queue size recorded at each environment step.
+    """
     import matplotlib.pyplot as plt
 
     _, ax = plt.subplots()
@@ -64,14 +69,32 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
 
 
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
+    """Convert `robot`'s observation feature schema to LeRobot dataset feature keys/dtypes.
+
+    Args:
+        robot (`Robot`): Robot whose observation features to map.
+
+    Returns:
+        `dict[str, dict]`: Feature schema keyed by LeRobot observation feature name.
+    """
     return hw_to_dataset_features(robot.observation_features, OBS_STR, use_video=False)
 
 
 def is_image_key(k: str) -> bool:
+    """Whether `k` is a LeRobot observation-image feature key."""
     return k.startswith(OBS_IMAGES)
 
 
 def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
+    """Resize a channel-last robot observation image to the policy's expected channel-first size.
+
+    Args:
+        image (`torch.Tensor`): Image tensor of shape `(H, W, C)`.
+        resize_dims (`tuple[int, int, int]`): Target `(C, H, W)` shape; only `H`/`W` are used.
+
+    Returns:
+        `torch.Tensor`: Resized image, shape `(C, H, W)`.
+    """
     assert image.ndim == 3, f"Image must be (C, H, W)! Received {image.shape}"
     # (H, W, C) -> (C, H, W) for resizing from robot obsevation resolution to policy image resolution
     image = image.permute(2, 0, 1)
@@ -90,6 +113,18 @@ def raw_observation_to_observation(
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
+    """Convert a raw robot observation into a policy-ready observation.
+
+    Args:
+        raw_observation (`RawObservation`): Observation as received from the robot.
+        lerobot_features (`dict[str, dict]`): Feature schema mapping robot keys to LeRobot dataset
+            feature keys, as returned by `map_robot_keys_to_lerobot_features`.
+        policy_image_features (`dict[str, PolicyFeature]`): Policy's expected image feature shapes,
+            used to resize observation images.
+
+    Returns:
+        `Observation`: Observation with resized, batched image tensors, ready for policy inference.
+    """
     observation = {}
 
     observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
@@ -105,7 +140,7 @@ def raw_observation_to_observation(
 
 
 def prepare_image(image: torch.Tensor) -> torch.Tensor:
-    """Minimal preprocessing to turn RGB uint8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
+    """Minimal preprocessing to turn RGB uint8 images to float32 in [0, 1], and create a memory-contiguous tensor."""
     if image.dtype == torch.uint8:
         image = image.type(torch.float32) / 255
     image = image.contiguous()
@@ -146,8 +181,10 @@ def prepare_raw_observation(
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
 ) -> Observation:
-    """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
-    policy_image_features)."""
+    """Match keys from the raw `robot_obs` dict to the keys expected by a given policy.
+
+    The policy's expected keys are passed via `policy_image_features`.
+    """
     # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} ->
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
@@ -174,15 +211,14 @@ def prepare_raw_observation(
 
 
 def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
-    """
-    Get a logger using the standardized logging setup from utils.py.
+    """Get a logger using the standardized logging setup from utils.py.
 
     Args:
-        name: Logger name (e.g., 'policy_server', 'robot_client')
-        log_to_file: Whether to also log to a file
+        name (`str`): Logger name (e.g. `"policy_server"`, `"robot_client"`).
+        log_to_file (`bool`, *optional*, defaults to `True`): Whether to also log to a file.
 
     Returns:
-        Configured logger instance
+        `logging.Logger`: Configured logger instance.
     """
     # Create logs directory if logging to file
     if log_to_file:
@@ -203,35 +239,56 @@ class TimedData:
     """A data object with timestamp and timestep information.
 
     Args:
-        timestamp: Unix timestamp relative to data's creation.
-        data: The actual data to wrap a timestamp around.
-        timestep: The timestep of the data.
+        timestamp (`float`): Unix timestamp relative to the data's creation.
+        timestep (`int`): The timestep of the data.
     """
 
     timestamp: float
     timestep: int
 
     def get_timestamp(self):
+        """Return `self.timestamp`."""
         return self.timestamp
 
     def get_timestep(self):
+        """Return `self.timestep`."""
         return self.timestep
 
 
 @dataclass
 class TimedAction(TimedData):
+    """A predicted action, timestamped and timestepped.
+
+    Args:
+        timestamp (`float`): Unix timestamp relative to the action's creation.
+        timestep (`int`): The timestep of the action.
+        action (`Action`): The predicted action tensor.
+    """
+
     action: Action
 
     def get_action(self):
+        """Return `self.action`."""
         return self.action
 
 
 @dataclass
 class TimedObservation(TimedData):
+    """An observation, timestamped and timestepped.
+
+    Args:
+        timestamp (`float`): Unix timestamp relative to the observation's creation.
+        timestep (`int`): The timestep of the observation.
+        observation (`RawObservation`): The raw observation, as received from the robot.
+        must_go (`bool`, *optional*, defaults to `False`): Whether this observation must be processed
+            even if a newer one has since arrived (e.g. the first observation of an episode).
+    """
+
     observation: RawObservation
     must_go: bool = False
 
     def get_observation(self):
+        """Return `self.observation`."""
         return self.observation
 
 
@@ -244,7 +301,7 @@ class FPSTracker:
     total_obs_count: int = 0
 
     def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
-        """Calculate average FPS vs target"""
+        """Calculate average FPS vs target."""
         self.total_obs_count += 1
 
         # Initialize first observation time
@@ -258,13 +315,24 @@ class FPSTracker:
         return {"avg_fps": avg_fps, "target_fps": self.target_fps}
 
     def reset(self):
-        """Reset the FPS tracker state"""
+        """Reset the FPS tracker state."""
         self.first_timestamp = None
         self.total_obs_count = 0
 
 
 @dataclass
 class RemotePolicyConfig:
+    """Configuration sent by the `RobotClient` to instantiate a policy on the `PolicyServer`.
+
+    Args:
+        policy_type (`str`): Registered policy type (e.g. `"act"`, `"pi0"`).
+        pretrained_name_or_path (`str`): Local path or Hub repo id of the pretrained policy.
+        lerobot_features (`dict[str, PolicyFeature]`): Feature schema the policy was trained with.
+        actions_per_chunk (`int`): Number of actions the policy predicts per inference call.
+        device (`str`, *optional*, defaults to `"cpu"`): Device to load the policy onto.
+        rename_map (`dict[str, str]`, *optional*): Feature-key rename map applied before inference.
+    """
+
     policy_type: str
     pretrained_name_or_path: str
     lerobot_features: dict[str, PolicyFeature]
@@ -274,15 +342,17 @@ class RemotePolicyConfig:
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
-    """Check if two observation states are similar, under a tolerance threshold"""
+    """Check if two observation states are similar, under a tolerance threshold."""
     return bool(torch.linalg.norm(obs1_state - obs2_state) < atol)
 
 
 def observations_similar(
     obs1: TimedObservation, obs2: TimedObservation, lerobot_features: dict[str, dict], atol: float = 1
 ) -> bool:
-    """Check if two observations are similar, under a tolerance threshold. Measures distance between
-    observations as the difference in joint-space between the two observations.
+    """Check if two observations are similar, under a tolerance threshold.
+
+    Measures distance between observations as the difference in joint-space between the two
+    observations.
 
     NOTE(fracapuano): This is a very simple check, and it is enough for the current use case.
     An immediate next step is to use (fast) perceptual difference metrics comparing some camera views,

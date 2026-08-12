@@ -85,7 +85,7 @@ class PolicyServerConfig:
 
     @property
     def environment_dt(self) -> float:
-        """Environment time step, in seconds"""
+        """Environment time step, in seconds."""
         return 1 / self.fps
 
     def to_dict(self) -> dict:
@@ -150,7 +150,7 @@ class RobotClientConfig:
 
     @property
     def environment_dt(self) -> float:
-        """Environment time step, in seconds"""
+        """Environment time step, in seconds."""
         return 1 / self.fps
 
     def __post_init__(self):
