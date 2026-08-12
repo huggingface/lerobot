@@ -40,7 +40,8 @@ class _RecordingVisionTower:
 
     def embed_image(self, image: torch.Tensor) -> torch.Tensor:
         self.call_batch_sizes.append(image.shape[0])
-        # Make the output a recognizable function of the input so a mis-split would show up.
+        # Make the output a recognizable function of the input, so splitting the batched call
+        # back into per-camera chunks in the wrong order would show up.
         marker = image.flatten(1).mean(dim=1)
         return marker[:, None, None].expand(image.shape[0], TOKENS_PER_IMAGE, EMBED_DIM).clone()
 
