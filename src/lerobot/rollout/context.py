@@ -533,6 +533,7 @@ def build_rollout_context(
         use_torch_compile=torch_compile_active,
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
+        visualize_predictions=cfg.display_extra_data,
     )
 
     # --- 8. Assemble ---------------------------------------------------
