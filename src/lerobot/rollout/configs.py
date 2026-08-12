@@ -239,6 +239,10 @@ class RolloutConfig:
     # Runtime
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Robot commands sent per policy action.  Values > 1 linearly interpolate
+    # between consecutive policy actions for smoother motion: commands go to
+    # the robot at ``fps × multiplier`` Hz while policy inference and dataset
+    # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -272,6 +276,9 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.interpolation_multiplier < 1:
+            raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")

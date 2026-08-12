@@ -17,7 +17,11 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import sys
+import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -138,6 +142,17 @@ def test_rollout_config_passes_policy_pretrained_revision(monkeypatch):
     ]
     assert cfg.policy.pretrained_path == "user/policy"
     assert cfg.policy.pretrained_revision == "cli-sha"
+
+
+@pytest.mark.parametrize("multiplier", [0, -1])
+def test_rollout_config_rejects_a_multiplier_below_one(multiplier):
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    # Validated in __post_init__ ahead of everything else, so the run fails at
+    # parse time rather than after the hardware is already connected.
+    with pytest.raises(ValueError, match="interpolation_multiplier must be >= 1"):
+        RolloutConfig(robot=MockRobotConfig(), interpolation_multiplier=multiplier)
 
 
 def test_load_pretrained_policy_passes_revision(monkeypatch):
@@ -509,3 +524,763 @@ def test_rollout_context_fields():
 
     field_names = {f.name for f in dataclasses.fields(RolloutContext)}
     assert field_names == {"runtime", "hardware", "policy", "processors", "data"}
+
+
+# ---------------------------------------------------------------------------
+# CycleTimer
+# ---------------------------------------------------------------------------
+
+_CORE_LOGGER = "lerobot.rollout.strategies.core"
+
+
+def _timer_warnings(caplog):
+    return [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class _FakeClock:
+    """Virtual clock standing in for ``time.perf_counter`` and ``precise_sleep``.
+
+    ``CycleTimer``'s contract is pure arithmetic over deadlines, so exercising it
+    against the wall clock only adds scheduler noise: every margin has to be wide
+    enough for a loaded CI machine, which makes the assertions loose and the suite
+    slow.  Driving it here instead makes the pacing exact — ``advance`` stands in
+    for loop-body work, and the timer's own sleeps move the same clock forward.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.overshoot = 0.0
+        self.sleeps: list[float] = []
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        """Simulate *seconds* of work inside the loop body."""
+        self.now += seconds
+
+    def precise_sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        # `overshoot` models a sleep that returns late — the OS descheduling the
+        # process, or a coarse timer granularity.
+        self.now += seconds + self.overshoot
+
+    def __getattr__(self, name):
+        # Anything else CycleTimer's module reaches for on `time` still works.
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Patch the strategies-core clock, scoped to that module's namespace only."""
+    from lerobot.rollout.strategies import core
+
+    fake = _FakeClock()
+    monkeypatch.setattr(core, "time", fake)
+    monkeypatch.setattr(core, "precise_sleep", fake.precise_sleep)
+    return fake
+
+
+def test_cycle_timer_validates_arguments():
+    from lerobot.rollout.strategies import CycleTimer
+
+    with pytest.raises(ValueError, match="fps"):
+        CycleTimer(0.0)
+    with pytest.raises(ValueError, match="multiplier"):
+        CycleTimer(30.0, 0)
+
+
+def test_cycle_timer_paces_ticks_to_base_fps(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for tick in range(4):  # two full cycles
+            timer.tick(new_cycle=tick % 2 == 0)
+            timer.wait()
+    assert clock.now == pytest.approx(2 * (1 / 10.0))
+    assert not _timer_warnings(caplog)
+
+
+def test_cycle_timer_spaces_interpolated_commands_evenly(clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # Interpolation exists to smooth motion, so every tick must be spaced by
+    # 1/(fps × multiplier) — not batched at the start of each cycle.
+    timer = CycleTimer(10.0, 2)  # 50 ms slots
+    stamps = []
+    for tick in range(4):
+        timer.tick(new_cycle=tick % 2 == 0)
+        stamps.append(clock.now)
+        timer.wait()
+    gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
+    assert gaps == pytest.approx([0.05, 0.05, 0.05])
+
+
+def test_cycle_timer_slow_policy_tick_borrows_from_interpolated_ticks(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
+    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
+        timer.tick(new_cycle=True)
+        clock.advance(0.06)  # policy tick overruns its 50 ms slot
+        timer.wait()
+        timer.tick()  # instant interpolated tick absorbs the overrun
+        timer.wait()
+    # The 60 ms + 0 ms cycle fits the 100 ms budget: no user-facing warning,
+    # only a DEBUG note about the tick that missed its slot.
+    assert not _timer_warnings(caplog)
+    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("slot" in r.getMessage() for r in debugs)
+    # The cycle still ends on its deadline, so the policy cadence is held.
+    assert clock.now == pytest.approx(0.10)
+
+
+def test_cycle_timer_warns_when_cycle_misses_base_fps(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2)  # 100 ms cycle budget
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(4):  # two groups; the first is start-up and is not reported
+            timer.tick(new_cycle=True)
+            clock.advance(0.12)  # blows the whole cycle budget
+            timer.wait()
+    warnings = _timer_warnings(caplog)
+    assert len(warnings) == 1
+    assert "target FPS (10" in warnings[0].getMessage()
+
+
+def test_cycle_timer_does_not_report_the_startup_group(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # The interpolator primes its buffer with a single action, so inference runs
+    # on two consecutive ticks at start-up and the first group legitimately runs
+    # over budget.  Reporting it would warn on every healthy launch.
+    timer = CycleTimer(10.0, 2)
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(2):
+            timer.tick(new_cycle=True)
+            clock.advance(0.12)
+            timer.wait()
+    assert not _timer_warnings(caplog)
+
+
+def test_cycle_timer_multiplier_one_warns_per_slow_tick(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(20.0, 1)  # 50 ms budget, every tick is a cycle
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(3):  # first tick is the start-up group
+            timer.tick(new_cycle=True)
+            clock.advance(0.08)
+            timer.wait()
+    warnings = _timer_warnings(caplog)
+    assert len(warnings) == 2
+    assert "Dataset frames" in warnings[0].getMessage()
+
+
+def test_cycle_timer_control_only_phrasing(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(20.0, 1, records_data=False)
+    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
+        for _ in range(2):
+            timer.tick(new_cycle=True)
+            clock.advance(0.08)
+            timer.wait()
+    (warning,) = _timer_warnings(caplog)
+    assert "Dataset frames" not in warning.getMessage()
+    assert "Robot control might be unstable" in warning.getMessage()
+
+
+def test_cycle_timer_debug_message_omits_recording_when_not_recording(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2, records_data=False)
+    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
+        timer.tick(new_cycle=True)
+        clock.advance(0.06)  # overruns the 50 ms slot, fits the 100 ms budget
+        timer.wait()
+    (debug,) = (r for r in caplog.records if r.levelno == logging.DEBUG)
+    assert "recording" not in debug.getMessage()
+
+
+def test_cycle_timer_warns_when_every_tick_reports_a_new_cycle(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # Regression: when the interpolator is starved or frozen (async backend
+    # yielding no action, DAgger paused/correcting), every tick reports
+    # new_cycle=True.  Tying the slow-loop warning to cycle completion made it
+    # structurally unreachable in exactly that regime.  Groups of `multiplier`
+    # ticks are measured regardless, so a genuinely slow loop still warns.
+    timer = CycleTimer(10.0, 2)  # 100 ms budget per 2 ticks
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(6):  # three groups; the first is start-up
+            timer.tick(new_cycle=True)
+            clock.advance(0.07)  # 140 ms per 2-tick group
+            timer.wait()
+    warnings = _timer_warnings(caplog)
+    assert len(warnings) == 2  # one per closed group, not one per tick
+    assert "target FPS (10" in warnings[0].getMessage()
+
+
+@pytest.mark.parametrize("multiplier", [2, 3])
+def test_cycle_timer_silent_on_healthy_loop_driven_by_the_real_interpolator(caplog, clock, multiplier):
+    from lerobot.rollout.strategies import CycleTimer
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Regression: the reporting window must not depend on WHERE it starts
+    # relative to the policy cycle.  The real interpolator primes with a
+    # single-action buffer, which permanently offsets groups from cycles, so
+    # hand-aligned `new_cycle` flags (what a naive test supplies) hide the bug.
+    # Drive the flags from the real interpolator instead, with an inference tick
+    # deliberately longer than one 1/(fps × N) slot — the regime interpolation
+    # exists for — while total work per cycle stays well inside the 1/fps budget.
+    fps = 20.0
+    policy_work = 1.0 / (fps * multiplier) * 1.5  # overruns its slot
+    interp_work = 0.002
+    assert policy_work + (multiplier - 1) * interp_work < 1.0 / fps  # healthy loop
+
+    interpolator = ActionInterpolator(multiplier=multiplier)
+    timer = CycleTimer(fps, multiplier)
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for i in range(4 * multiplier):
+            needs_action = interpolator.needs_new_action()
+            timer.tick(new_cycle=needs_action)
+            if needs_action:
+                interpolator.add(torch.tensor([float(i)]))
+                clock.advance(policy_work)
+            else:
+                clock.advance(interp_work)
+            interpolator.get()
+            timer.wait()
+    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
+
+
+def test_cycle_timer_reports_time_lost_inside_the_pacing_sleep(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # Loop-body work fits the budget comfortably, but every pacing sleep returns
+    # 10 ms late, so the achieved cadence really is below target.  That shortfall
+    # is not the caller's doing and would fire constantly on a loaded machine, so
+    # it is reported at DEBUG rather than as the slow-loop warning.
+    clock.overshoot = 0.01
+    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
+    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
+        for _ in range(6):
+            timer.tick(new_cycle=True)
+            clock.advance(0.01)
+            timer.wait()
+
+    assert not _timer_warnings(caplog)
+    debugs = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("went missing outside the loop body" in m for m in debugs), debugs
+
+
+def test_cycle_timer_stays_silent_about_sleeps_on_a_punctual_clock(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # Same loop, sleeps that return on time: nothing to report at all.
+    timer = CycleTimer(10.0, 2)
+    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
+        for _ in range(6):
+            timer.tick(new_cycle=True)
+            clock.advance(0.01)
+            timer.wait()
+
+    assert not caplog.records
+
+
+def test_cycle_timer_starved_but_fast_loop_stays_silent(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # The same all-new-cycle regime must not warn when the loop is keeping up.
+    timer = CycleTimer(10.0, 2)
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(4):
+            timer.tick(new_cycle=True)
+            timer.wait()
+    assert not _timer_warnings(caplog)
+
+
+def test_cycle_timer_new_cycle_reanchors_pacing(clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # The interpolator's startup buffer holds a single action, so the second
+    # tick requests a fresh action one tick early.  Re-anchoring must restart
+    # the pacing slots from that tick rather than keep the stale anchor.
+    timer = CycleTimer(10.0, 2)  # 50 ms slots
+    timer.tick(new_cycle=True)
+    timer.wait()  # sleeps to the first slot deadline
+    reanchor = clock.now
+    timer.tick(new_cycle=True)
+    timer.wait()
+    # Paced from the re-anchor, so a full slot — not the 0 ms a stale anchor
+    # (already past its second deadline) would have produced.
+    assert clock.now - reanchor == pytest.approx(0.05)
+
+
+def test_handle_warmup_is_a_noop_without_torch_compile():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy, CycleTimer
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = MagicMock(ready=False)
+    timer = CycleTimer(20.0, 2)
+
+    assert strategy._handle_warmup(False, timer) is False
+    strategy._engine.reset.assert_not_called()
+
+
+def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog, clock):
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy, CycleTimer
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Warm-up ticks are paced through the timer, and the flush resets the
+    # interpolator — which then re-primes over two consecutive inference ticks,
+    # exactly like loop start-up.  The group spanning them legitimately exceeds
+    # budget, so `timer.restart()` must re-arm the start-up exemption; without it
+    # every torch.compile run would warn once right after warm-up.
+    fps, multiplier = 20.0, 2  # 25 ms slots, 50 ms cycle budget
+    engine = MagicMock(ready=False)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator(multiplier=multiplier)
+    timer = CycleTimer(fps, multiplier)
+
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        # Two slow warm-up ticks close one over-budget group (80 ms > 50 ms).
+        for _ in range(2):
+            timer.tick(new_cycle=True)
+            clock.advance(0.04)
+            assert strategy._handle_warmup(True, timer) is True
+
+        engine.ready = True
+        timer.tick(new_cycle=True)
+        assert strategy._handle_warmup(True, timer) is False
+
+        # Stale warm-up state is discarded and the engine is put back to work.
+        engine.reset.assert_called_once()
+        engine.resume.assert_called_once()
+        assert strategy._warmup_flushed
+        assert strategy._interpolator.needs_new_action()
+
+        # The two re-priming inference ticks that follow are also over budget.
+        clock.advance(0.04)
+        timer.wait()
+        timer.tick(new_cycle=True)
+        clock.advance(0.04)
+        timer.wait()
+
+    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
+
+    # A subsequent over-budget group is still reported — the exemption is armed
+    # once per restart, not switched off.
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        for _ in range(2):
+            timer.tick(new_cycle=True)
+            clock.advance(0.04)
+            timer.wait()
+    assert len(_timer_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Recording cadence with interpolation
+# ---------------------------------------------------------------------------
+
+
+_LOOP_FEATURES = {
+    "observation.state": {"dtype": "float32", "shape": (1,), "names": ["m.pos"]},
+    "action": {"dtype": "float32", "shape": (1,), "names": ["m.pos"]},
+}
+
+
+def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
+    """Build a mocked RolloutContext-alike for driving a strategy loop.
+
+    The robot's ``get_observation`` sets the shutdown event on the
+    *num_ticks*-th call, so the loop runs exactly *num_ticks* full ticks, and
+    invokes *on_tick* with the 1-based tick index so tests can inject events
+    (keypresses, phase changes) at a chosen tick.
+
+    The engine yields a strictly increasing action per policy call, so an
+    interpolated command (a midpoint, ``x.5``) is distinguishable from the
+    policy's own end-point action (a whole number) in the recorded frames.
+    """
+    shutdown_event = threading.Event()
+    cfg = SimpleNamespace(
+        fps=fps,
+        interpolation_multiplier=multiplier,
+        duration=0.0,
+        dataset=SimpleNamespace(single_task="task"),
+        task="task",
+        play_sounds=False,
+        display_data=False,
+        use_torch_compile=False,
+    )
+    robot = MagicMock()
+    calls = {"n": 0}
+
+    def _get_observation():
+        calls["n"] += 1
+        if on_tick is not None:
+            on_tick(calls["n"])
+        if calls["n"] >= num_ticks:
+            shutdown_event.set()
+        return {"m.pos": float(calls["n"])}
+
+    robot.get_observation.side_effect = _get_observation
+    engine = MagicMock()
+    actions = {"n": 0}
+
+    def _get_action(_obs_frame):
+        actions["n"] += 1
+        return torch.tensor([float(actions["n"])])
+
+    engine.get_action.side_effect = _get_action
+    dataset = MagicMock()
+    dataset.num_episodes = 0
+    # A real (non-existent) path so VideoEncodingManager's image-dir cleanup no-ops.
+    dataset.root = Path("/nonexistent-lerobot-rollout-test")
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(cfg=cfg, shutdown_event=shutdown_event),
+        hardware=SimpleNamespace(robot_wrapper=robot, teleop=MagicMock(), initial_position=None),
+        processors=SimpleNamespace(
+            robot_observation_processor=MagicMock(side_effect=lambda obs: obs),
+            robot_action_processor=lambda pair: pair[0],
+            teleop_action_processor=lambda pair: pair[0],
+        ),
+        policy=SimpleNamespace(inference=engine),
+        data=SimpleNamespace(dataset=dataset, dataset_features=_LOOP_FEATURES, ordered_action_keys=["m.pos"]),
+    )
+    return ctx, dataset
+
+
+def _recorded_actions(dataset) -> list[float]:
+    """Action values of the frames handed to ``dataset.add_frame``."""
+    return [call.args[0]["action"][0] for call in dataset.add_frame.call_args_list]
+
+
+def _make_sentry(ctx, multiplier: int):
+    from lerobot.rollout import SentryStrategyConfig
+    from lerobot.rollout.strategies import SentryStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    strategy = SentryStrategy(SentryStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=multiplier)
+    strategy._episode_duration_s = 1e9
+    return strategy
+
+
+def test_sentry_records_once_per_interpolation_cycle():
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+
+    _make_sentry(ctx, 2).run(ctx)
+
+    # 8 ticks at fps × 2 → 4 recorded frames at the base fps cadence, each
+    # carrying the policy's own action rather than an interpolated midpoint.
+    assert dataset.add_frame.call_count == 4
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_sentry_runs_inference_once_per_cycle_and_reuses_processed_observation():
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+
+    _make_sentry(ctx, 2).run(ctx)
+
+    # The interpolator's startup buffer holds one action, so a fresh action is
+    # pulled on ticks 1, 2, 4, 6 and 8 — five policy ticks across eight ticks,
+    # never once per tick.
+    engine = ctx.policy.inference
+    assert engine.get_action.call_count == 5
+    assert engine.notify_observation.call_count == 5
+    # The observation processor is the expensive step gated to policy ticks;
+    # interpolated ticks reuse the cached result.
+    assert ctx.processors.robot_observation_processor.call_count == 5
+    # ...while the raw observation is still refreshed every tick for the
+    # action processors.
+    assert ctx.hardware.robot_wrapper.get_observation.call_count == 8
+
+
+def test_sentry_records_every_tick_at_default_multiplier():
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=4)
+
+    _make_sentry(ctx, 1).run(ctx)
+
+    # multiplier=1 (the default): every tick is a full cycle and records.
+    assert dataset.add_frame.call_count == 4
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_base_strategy_drives_robot_without_recording():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+
+    strategy.run(ctx)
+
+    # Commands go out every tick (fps × 2) while inference stays at fps, and
+    # nothing is recorded.
+    assert ctx.hardware.robot_wrapper.send_action.call_count == 8
+    assert ctx.policy.inference.get_action.call_count == 5
+    assert dataset.add_frame.call_count == 0
+
+
+def test_highlight_buffers_once_per_interpolation_cycle():
+    from lerobot.rollout import HighlightStrategyConfig
+    from lerobot.rollout.ring_buffer import RolloutRingBuffer
+    from lerobot.rollout.strategies import HighlightStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+    strategy = HighlightStrategy(HighlightStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._ring = RolloutRingBuffer(max_seconds=10.0, max_memory_mb=64, fps=200.0)
+
+    strategy.run(ctx)
+
+    # Without a save request every recorded frame lands in the ring buffer,
+    # once per interpolation cycle.
+    assert len(strategy._ring) == 4
+    assert dataset.add_frame.call_count == 0
+
+
+def test_highlight_save_toggle_starts_and_ends_live_recording():
+    from lerobot.rollout import HighlightStrategyConfig
+    from lerobot.rollout.ring_buffer import RolloutRingBuffer
+    from lerobot.rollout.strategies import HighlightStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    strategy = HighlightStrategy(HighlightStrategyConfig())
+
+    # First keypress lands on tick 2, so the record tick that follows it
+    # (tick 3) flushes the ring and starts live recording; the second lands on
+    # tick 6, so tick 7 closes the episode.
+    def on_tick(n):
+        if n in (2, 6):
+            strategy._save_requested.set()
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8, on_tick=on_tick)
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._ring = RolloutRingBuffer(max_seconds=10.0, max_memory_mb=64, fps=200.0)
+
+    strategy.run(ctx)
+
+    # Record ticks are 1, 3, 5, 7.  Tick 1 buffers into the ring; tick 3 drains
+    # that buffered frame into the dataset — the whole point of the strategy —
+    # and starts live recording, so its own frame follows; tick 5 records live;
+    # tick 7 closes the episode with its frame added exactly once.
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
+    assert dataset.save_episode.call_count == 1
+    assert not strategy._recording_live.is_set()
+    assert len(strategy._ring) == 0
+
+
+def test_episodic_records_once_per_interpolation_cycle():
+    from lerobot.rollout import EpisodicStrategyConfig
+    from lerobot.rollout.strategies import EpisodicStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+    strategy = EpisodicStrategy(EpisodicStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+
+    strategy._policy_loop(
+        ctx=ctx,
+        robot=ctx.hardware.robot_wrapper,
+        events={"exit_early": False},
+        features=_LOOP_FEATURES,
+        fps=200.0,
+        control_time_s=10.0,
+        dataset=dataset,
+        single_task="task",
+    )
+
+    assert dataset.add_frame.call_count == 4
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_dagger_continuous_records_once_per_interpolation_cycle():
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
+    strategy = DAggerStrategy(DAggerStrategyConfig(record_autonomous=True, num_episodes=1))
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._episode_duration_s = 1e9
+
+    strategy._run_continuous(ctx)
+
+    assert dataset.add_frame.call_count == 4
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
+    for call in dataset.add_frame.call_args_list:
+        assert call.args[0]["intervention"].item() is False
+
+
+@pytest.mark.parametrize("correction_ticks", [1, 2, 3])
+def test_dagger_records_policy_actions_after_a_correction_of_any_length(correction_ticks):
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Returning to AUTONOMOUS resets the interpolator, restarting its cycle.
+    # The record phase has to restart with it: an odd-length correction
+    # otherwise flips the parity, and every later autonomous frame stores the
+    # interpolated midpoint (x.5) instead of the policy's own action.
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
+    )
+    first_correcting = 8
+    last_correcting = first_correcting + correction_ticks - 1
+    schedule = {
+        6: "pause_resume",  # -> PAUSED
+        7: "correction",  # -> CORRECTING
+        last_correcting: "correction",  # -> PAUSED
+        last_correcting + 1: "pause_resume",  # -> AUTONOMOUS (interpolator reset)
+    }
+
+    def on_tick(n):
+        if (event := schedule.get(n)) is not None:
+            strategy._events.request_transition(event)
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=last_correcting + 10, on_tick=on_tick)
+    ctx.hardware.teleop.get_action.return_value = {"m.pos": 0.0}
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._episode_duration_s = 1e9
+
+    strategy._run_continuous(ctx)
+
+    autonomous = [
+        call.args[0]["action"][0]
+        for call in dataset.add_frame.call_args_list
+        if not call.args[0]["intervention"].item()
+    ]
+    assert autonomous, "expected autonomous frames before and after the correction"
+    assert all(float(a).is_integer() for a in autonomous), autonomous
+
+
+def test_dagger_resume_does_not_warn_about_the_reprimed_interpolator(caplog, clock):
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # Returning to AUTONOMOUS resets the interpolator, which re-primes over two
+    # ticks exactly like loop start-up.  On a healthy loop that must not be
+    # reported as a slow cycle.
+    fps, multiplier = 20.0, 2
+    policy_work = 1.0 / (fps * multiplier) * 1.5  # overruns its slot, fits the cycle
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
+    )
+
+    def on_tick(n):
+        if n == 6:
+            strategy._events.request_transition("pause_resume")  # -> PAUSED
+        elif n == 8:
+            strategy._events.request_transition("correction")  # -> CORRECTING
+        elif n == 12:
+            strategy._events.request_transition("correction")  # -> PAUSED
+        elif n == 14:
+            strategy._events.request_transition("pause_resume")  # -> AUTONOMOUS
+
+    ctx, dataset = _make_loop_ctx(fps=fps, multiplier=multiplier, num_ticks=22, on_tick=on_tick)
+    ctx.hardware.teleop.get_action.return_value = {"m.pos": 42.0}
+    ctx.policy.inference.get_action.side_effect = lambda _f: (clock.advance(policy_work), torch.zeros(1))[1]
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=multiplier)
+    strategy._episode_duration_s = 1e9
+
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        strategy._run_continuous(ctx)
+
+    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
+
+
+def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
+    )
+
+    # Transitions are consumed at the top of the tick after they are requested,
+    # so the loop is AUTONOMOUS for ticks 1-2, PAUSED on tick 3, then CORRECTING.
+    def on_tick(n):
+        if n == 2:
+            strategy._events.request_transition("pause_resume")
+        elif n == 3:
+            strategy._events.request_transition("correction")
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8, on_tick=on_tick)
+    ctx.hardware.teleop.get_action.return_value = {"m.pos": 42.0}
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=2)
+    strategy._episode_duration_s = 1e9
+
+    strategy._run_continuous(ctx)
+
+    # Human-driven frames are recorded on the same one-per-cycle cadence as
+    # autonomous ones, carry the teleop action, and are tagged as interventions.
+    tags = [call.args[0]["intervention"].item() for call in dataset.add_frame.call_args_list]
+    assert tags == [False, True, True, True]
+    assert _recorded_actions(dataset) == [1.0, 42.0, 42.0, 42.0]
+
+
+def test_dagger_handover_ramp_is_not_reported_as_a_slow_loop(caplog, clock, monkeypatch):
+    import lerobot.rollout.strategies.dagger as dagger_mod
+    from lerobot.rollout import DAggerStrategyConfig
+    from lerobot.rollout.strategies import CycleTimer, DAggerPhase, DAggerStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    # The smooth-handover ramps block for a good fraction of a second *inside*
+    # the timed loop body.  That is a one-off operator event, not the steady-state
+    # cadence, so the group carrying it must be dropped rather than reported —
+    # otherwise every takeover warns that the loop is slow.
+    monkeypatch.setattr(dagger_mod, "teleop_smooth_move_to", lambda *_: clock.advance(0.5))
+    monkeypatch.setattr(dagger_mod, "teleop_supports_feedback", lambda _: True)
+
+    fps, multiplier = 20.0, 2  # 50 ms cycle budget
+    strategy = DAggerStrategy(
+        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=True)
+    )
+    ctx, _ = _make_loop_ctx(fps=fps, multiplier=multiplier, num_ticks=1)
+    interpolator = ActionInterpolator(multiplier=multiplier)
+    timer = CycleTimer(fps, multiplier)
+
+    def healthy_ticks(count):
+        for _ in range(count):
+            timer.tick(new_cycle=True)
+            clock.advance(0.001)
+            timer.wait()
+
+    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+        healthy_ticks(4)  # spend the start-up exemption
+        timer.tick(new_cycle=True)
+        strategy._apply_transition(
+            DAggerPhase.AUTONOMOUS,
+            DAggerPhase.PAUSED,
+            ctx.policy.inference,
+            interpolator,
+            ctx,
+            {"m.pos": 1.0},
+            timer,
+        )
+        timer.wait()
+        healthy_ticks(4)
+
+    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]

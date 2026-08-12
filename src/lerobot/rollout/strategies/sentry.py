@@ -26,12 +26,17 @@ from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 from ..configs import SentryStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
+from .core import (
+    CycleTimer,
+    RolloutStrategy,
+    estimate_max_episode_seconds,
+    safe_push_to_hub,
+    send_next_action,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +94,7 @@ class SentryStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        control_interval = interpolator.get_control_interval(cfg.fps)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
 
         engine.resume()
         play_sounds = cfg.play_sounds
@@ -104,7 +109,7 @@ class SentryStrategy(RolloutStrategy):
         with VideoEncodingManager(dataset):
             try:
                 while not ctx.runtime.shutdown_event.is_set():
-                    loop_start = time.perf_counter()
+                    timer.tick(new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -113,21 +118,25 @@ class SentryStrategy(RolloutStrategy):
                     obs = robot.get_observation()
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-                    if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
+                    if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
                     action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
 
                     if action_dict is not None:
                         self._log_telemetry(obs_processed, action_dict, ctx.runtime)
-                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        frame = {**obs_frame, **action_frame, "task": task_str}
-                        # ``add_frame`` writes to the in-progress episode buffer; the
-                        # background pusher only ever touches *finalised* episode
-                        # artifacts on disk.  The two operate on disjoint state, so
-                        # ``add_frame`` does not need ``_episode_lock``.
-                        dataset.add_frame(frame)
+                        # Record once per interpolation cycle so the dataset cadence
+                        # matches its declared fps; interpolated ticks only send
+                        # commands to the robot.
+                        if interpolator.emitted_policy_action:
+                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                            action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                            frame = {**obs_frame, **action_frame, "task": task_str}
+                            # ``add_frame`` writes to the in-progress episode buffer; the
+                            # background pusher only ever touches *finalised* episode
+                            # artifacts on disk.  The two operate on disjoint state, so
+                            # ``add_frame`` does not need ``_episode_lock``.
+                            dataset.add_frame(frame)
 
                     # Episode rotation derived from video file-size target.
                     # The duration is a conservative estimate so the actual
@@ -156,13 +165,7 @@ class SentryStrategy(RolloutStrategy):
 
                         episode_start = time.perf_counter()
 
-                    dt = time.perf_counter() - loop_start
-                    if (sleep_t := control_interval - dt) > 0:
-                        precise_sleep(sleep_t)
-                    else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                    timer.wait()
 
             finally:
                 logger.info("Sentry control loop ended — saving final episode")

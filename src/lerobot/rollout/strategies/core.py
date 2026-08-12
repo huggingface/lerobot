@@ -37,6 +37,204 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class CycleTimer:
+    """Paces control-loop ticks and reports timing against the policy/dataset cadence.
+
+    With ``interpolation_multiplier == N`` the control loop runs ``N`` ticks per
+    policy cycle: robot commands go out every tick at ``fps × N`` Hz, while
+    policy inference and dataset recording advance once per cycle at ``fps`` Hz.
+    Inference runs on the tick that refills the interpolator; strategies record
+    their frame on the tick that emits the policy's own end-point action (the
+    last tick of the cycle), pairing it with the observation that produced it.
+    That tick is identified by
+    :attr:`~lerobot.utils.action_interpolator.ActionInterpolator.emitted_policy_action`,
+    so recording carries no phase state of its own.
+
+    The timer keeps two independent notions of time, because pacing and
+    reporting want different anchors:
+
+    **Pacing** uses ``_cycle_start``, re-anchored whenever the caller reports a
+    new cycle, so each tick's deadline is an absolute offset from the tick that
+    produced the current policy action.  A slow tick therefore borrows budget
+    from the ticks that follow it instead of pushing the whole cycle back.  At
+    30 FPS with multiplier 2, a 25 ms policy tick followed by a 5 ms
+    interpolated tick still fits the 33.3 ms cycle.
+
+    **Reporting** sums the *work* of ``N`` consecutive ticks — the time the loop
+    body actually spends, excluding the pacing sleeps — and warns when that sum
+    exceeds the ``1/fps`` budget, which is what makes the loop unable to hold
+    the frame rate.  The 25 ms + 5 ms cycle above sums to 30 ms and stays
+    silent.
+
+    Two properties make this measure the right one, and both are load-bearing:
+
+    - It is **phase-invariant**.  Groups are counted per tick and never
+      re-anchored, so they drift out of step with cycles: the interpolator's
+      first buffer holds a single action, which permanently offsets the two by
+      one tick.  Summed work is the same whichever tick a group starts on,
+      whereas a wall-clock span over an offset group would swallow a full
+      pacing sleep and report a healthy loop as slow.
+    - It stays meaningful when the interpolator is **starved or frozen** (an
+      async backend yielding no action, or DAgger's paused and correcting
+      phases), where every tick reports ``new_cycle=True``.  Tying the
+      measurement to cycle completion would make the warning unreachable
+      exactly when the loop is slow.
+
+    Time lost to the OS *during* a pacing sleep is deliberately outside the
+    warning, matching the pre-interpolation behaviour of these loops, which also
+    measured only the work between the top of the loop body and its sleep: it is
+    not something the caller can act on, and on a loaded machine it would fire
+    constantly.  It is not invisible, though — the achieved start-of-group to
+    start-of-group cadence, sleeps included, is logged at DEBUG whenever it
+    misses the budget that the work sum met.  An individual tick overrun only
+    costs interpolation smoothness, and is likewise a DEBUG note.
+
+    Usage::
+
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        while ...:
+            timer.tick(new_cycle=interpolator.needs_new_action())
+            ...  # observe / infer / actuate / record
+            timer.wait()
+
+    ``new_cycle=True`` marks the ticks where the interpolator requests a fresh
+    policy action, keeping the pacing anchor aligned with the actual inference
+    cadence (the interpolator's first, single-action buffer would otherwise
+    phase-shift every later cycle by one tick).
+    """
+
+    def __init__(self, fps: float, multiplier: int = 1, records_data: bool = True) -> None:
+        if fps <= 0:
+            raise ValueError(f"fps must be > 0, got {fps}")
+        if multiplier < 1:
+            raise ValueError(f"multiplier must be >= 1, got {multiplier}")
+        self.fps = fps
+        self.multiplier = multiplier
+        self.tick_interval = 1.0 / (fps * multiplier)
+        self.cycle_interval = 1.0 / fps
+        self.records_data = records_data
+        # Pacing anchor — re-anchored by ``new_cycle``.
+        self._cycle_start: float | None = None
+        self._tick_start: float | None = None
+        self._ticks_done = 0
+        # Reporting accumulator — advanced strictly per tick, never re-anchored.
+        self._group_ticks = 0
+        self._group_work = 0.0
+        self._groups_closed = 0
+        # Wall-clock anchor + last closed group's work, for the achieved-cadence
+        # telemetry that covers what the work sum cannot see.
+        self._group_start: float | None = None
+        self._last_group_work = 0.0
+
+    def restart(self) -> None:
+        """Re-arm the start-up exemption after control state was reset mid-run.
+
+        Call wherever the interpolator is reset while the loop keeps running
+        (the warm-up flush, DAgger returning to autonomous): it re-primes with a
+        single-action buffer, so inference runs on two consecutive ticks again
+        and the group spanning them legitimately exceeds budget.  Also call it
+        after any other one-off blocking work inside the loop body (DAgger's
+        smooth-handover ramps), whose cost is not the steady-state cadence.
+        Only the reporting accumulator is cleared — pacing state is left alone so
+        a restart between ``tick()`` and ``wait()`` cannot skip a pacing sleep.
+        """
+        self._group_ticks = 0
+        self._group_work = 0.0
+        self._groups_closed = 0
+        self._group_start = None
+        self._last_group_work = 0.0
+
+    def _report_achieved_cadence(self, group_start: float) -> None:
+        """Log the cadence a closed group actually achieved, sleeps included.
+
+        Measured start-of-group to start-of-group, so unlike the work sum this
+        span covers the pacing sleeps.  When it misses the budget but the work
+        did not, the time went missing *outside* the loop body — an oversleeping
+        timer, or the OS descheduling the process mid-sleep — which is the one
+        shortfall :meth:`wait`'s warning cannot see.  It is not the loop's own
+        fault and not actionable in the same way, so it stays at DEBUG.
+        """
+        if self._group_start is None:
+            return
+        span = group_start - self._group_start
+        if span <= self.cycle_interval or self._last_group_work > self.cycle_interval:
+            return
+        logger.debug(
+            "Control loop held only %.1f Hz against a %g Hz target, though its loop-body work "
+            "(%.1f ms) fit the %.1f ms budget: %.1f ms went missing outside the loop body "
+            "(sleep overshoot or CPU starvation while pacing).",
+            1.0 / span,
+            self.fps,
+            self._last_group_work * 1000,
+            self.cycle_interval * 1000,
+            (span - self.cycle_interval) * 1000,
+        )
+
+    def tick(self, new_cycle: bool = False) -> None:
+        """Mark the start of a control tick.  Call at the top of the loop body."""
+        self._tick_start = time.perf_counter()
+        if new_cycle or self._cycle_start is None:
+            self._cycle_start = self._tick_start
+            self._ticks_done = 0
+
+    def wait(self) -> None:
+        """Sleep until this tick's deadline.  Call at the bottom of the loop body.
+
+        A group of ``multiplier`` ticks whose work exceeds the ``1/fps`` budget
+        means the policy/recording cadence cannot be held — the only case that
+        warns.
+        """
+        now = time.perf_counter()
+        if self._cycle_start is None or self._tick_start is None:
+            return
+        tick_dt = now - self._tick_start
+        if self._group_ticks == 0:
+            self._report_achieved_cadence(self._tick_start)
+            self._group_start = self._tick_start
+        self._tick_start = None
+        self._ticks_done += 1
+        self._group_ticks += 1
+        self._group_work += tick_dt
+        deadline = self._cycle_start + self._ticks_done * self.tick_interval
+        if self._ticks_done >= self.multiplier:
+            self._cycle_start = None
+
+        if self._group_ticks >= self.multiplier:
+            group_work = self._group_work
+            self._group_ticks = 0
+            self._group_work = 0.0
+            self._last_group_work = group_work
+            self._groups_closed += 1
+            # The first group is start-up, not steady state: the interpolator
+            # primes its buffer with a single action, so inference runs on two
+            # consecutive ticks, and one-off costs (lazy device init, camera
+            # ramp-up) land here too.  Reporting it would warn on every healthy
+            # launch.
+            if self._groups_closed > 1 and group_work > self.cycle_interval:
+                consequence = (
+                    "Dataset frames might be dropped and robot control might be unstable."
+                    if self.records_data
+                    else "Robot control might be unstable."
+                )
+                logger.warning(
+                    f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
+                    f"({self.fps:g} Hz). {consequence} Common causes are: 1) Camera FPS not keeping up "
+                    "2) Policy inference taking too long 3) CPU starvation"
+                )
+        elif now > deadline and tick_dt > self.tick_interval:
+            logger.debug(
+                "Control tick overran its %.1f ms slot (took %.1f ms). Interpolated commands are sent "
+                "less smoothly; the %g Hz %s cadence is judged per group of %d ticks.",
+                self.tick_interval * 1000,
+                tick_dt * 1000,
+                self.fps,
+                "policy/recording" if self.records_data else "policy",
+                self.multiplier,
+            )
+        if (sleep_t := deadline - now) > 0:
+            precise_sleep(sleep_t)
+
+
 class RolloutStrategy(abc.ABC):
     """Abstract base for rollout execution strategies.
 
@@ -92,11 +290,12 @@ class RolloutStrategy(abc.ABC):
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
 
-    def _handle_warmup(self, use_torch_compile: bool, loop_start: float, control_interval: float) -> bool:
+    def _handle_warmup(self, use_torch_compile: bool, timer: CycleTimer) -> bool:
         """Handle torch.compile warmup phase.
 
         Returns ``True`` if the caller should ``continue`` (still warming
-        up).  On the first post-warmup iteration the engine and
+        up).  Warmup ticks are paced through *timer* so the loop cadence
+        stays anchored.  On the first post-warmup iteration the engine and
         interpolator are reset so stale warmup state is discarded.
         """
         engine = self._engine
@@ -104,14 +303,13 @@ class RolloutStrategy(abc.ABC):
         if not use_torch_compile:
             return False
         if not engine.ready:
-            dt = time.perf_counter() - loop_start
-            if (sleep_t := control_interval - dt) > 0:
-                precise_sleep(sleep_t)
+            timer.wait()
             return True
         if not self._warmup_flushed:
             logger.info("Warmup complete — flushing stale state and resuming engine")
             engine.reset()
             interpolator.reset()
+            timer.restart()
             self._warmup_flushed = True
             engine.resume()
         return False

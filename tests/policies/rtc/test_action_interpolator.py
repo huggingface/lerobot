@@ -106,6 +106,92 @@ def test_needs_new_action_true_after_all_interpolated_consumed(interp2):
     assert interp2.needs_new_action()
 
 
+# ====================== emitted_policy_action Tests ======================
+
+
+def test_emitted_policy_action_false_before_any_get(interp2):
+    """Test emitted_policy_action() is False before anything has been dispatched."""
+    assert not interp2.emitted_policy_action
+    interp2.add(torch.tensor([1.0, 2.0]))
+    assert not interp2.emitted_policy_action
+
+
+def test_emitted_policy_action_true_on_the_priming_action(interp2):
+    """Test the single-action priming buffer is reported as a policy action."""
+    interp2.add(torch.tensor([1.0, 2.0]))
+    interp2.get()
+    assert interp2.emitted_policy_action
+
+
+@pytest.mark.parametrize("multiplier", [1, 2, 3, 4])
+def test_emitted_policy_action_marks_only_the_cycle_end(multiplier):
+    """Test exactly one tick per cycle emits the policy's own action, for any multiplier."""
+    interp = ActionInterpolator(multiplier=multiplier)
+    ticks = 6 * multiplier
+    dispatched, recorded = [], []
+    step = 0
+
+    # The engine yields the integers 0, 1, 2, ... so a value that is not a whole
+    # number is an interpolated intermediate rather than a policy action.
+    for _ in range(ticks):
+        if interp.needs_new_action():
+            interp.add(torch.tensor([float(step)]))
+            step += 1
+        action = interp.get()
+        dispatched.append(action.item())
+        if interp.emitted_policy_action:
+            recorded.append(action.item())
+
+    assert all(v == int(v) for v in recorded), recorded
+    assert recorded == [float(v) for v in range(len(recorded))]
+    # Commands go out every tick; frames land once per cycle.
+    assert len(dispatched) == ticks
+    assert len(recorded) == ticks // multiplier
+
+
+def test_emitted_policy_action_false_when_the_buffer_is_starved(interp2):
+    """Test a get() that yields nothing does not report a policy action."""
+    interp2.add(torch.tensor([0.0]))
+    interp2.get()
+    assert interp2.emitted_policy_action
+
+    # Engine yielded no new action: the buffer is exhausted, get() returns None.
+    assert interp2.get() is None
+    assert not interp2.emitted_policy_action
+
+
+def test_emitted_policy_action_survives_an_odd_starvation_gap(interp2):
+    """Test the cycle-end marker realigns itself after a dropped action.
+
+    A free-running ``tick % multiplier`` counter would have its parity flipped by
+    a gap of odd length and record interpolated midpoints from then on.
+    """
+    values = [0.0, 1.0, 2.0, 3.0, 4.0]
+    supply = iter(values)
+    recorded = []
+
+    for tick in range(12):
+        if interp2.needs_new_action() and tick != 3:  # tick 3: engine yields nothing
+            nxt = next(supply, None)
+            if nxt is not None:
+                interp2.add(torch.tensor([nxt]))
+        action = interp2.get()
+        if action is not None and interp2.emitted_policy_action:
+            recorded.append(action.item())
+
+    assert recorded == pytest.approx(values[: len(recorded)])
+
+
+def test_emitted_policy_action_cleared_by_reset(interp2):
+    """Test reset() clears the marker so a re-primed interpolator starts clean."""
+    interp2.add(torch.tensor([1.0]))
+    interp2.get()
+    assert interp2.emitted_policy_action
+
+    interp2.reset()
+    assert not interp2.emitted_policy_action
+
+
 # ====================== Passthrough Tests (multiplier=1) ======================
 
 

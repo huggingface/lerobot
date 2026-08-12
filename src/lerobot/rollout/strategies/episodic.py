@@ -48,7 +48,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import CycleTimer, RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,9 @@ class EpisodicStrategy(RolloutStrategy):
     """Policy-driven multi-episode recording, mirrors the behavior of ``lerobot-record``.
 
     Each recording episode runs the policy for maximum ``dataset.episode_time_s``
-    seconds, recording every frame.  A reset phase of ``dataset.reset_time_s``
+    seconds, recording one frame per policy action (``1/fps`` cadence — with
+    ``interpolation_multiplier > 1`` the interpolated ticks only send commands
+    to the robot).  A reset phase of ``dataset.reset_time_s``
     follows every episode (except the last) so the operator can manually
     reset the environment.  During the reset phase, an optional teleoperator
     drives the robot; if none is present the robot returns to its initial joint positions captured at startup.
@@ -214,13 +216,13 @@ class EpisodicStrategy(RolloutStrategy):
     ) -> None:
         """Policy-driven recording loop for a single episode."""
         interpolator = self._interpolator
-        control_interval = interpolator.get_control_interval(fps)
+        timer = CycleTimer(fps, interpolator.multiplier)
 
         timestamp = 0.0
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
-            loop_start = time.perf_counter()
+            timer.tick(new_cycle=interpolator.needs_new_action())
 
             if events["exit_early"]:
                 events["exit_early"] = False
@@ -232,27 +234,22 @@ class EpisodicStrategy(RolloutStrategy):
             obs = robot.get_observation()
             obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-            if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, loop_start, control_interval):
+            if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
             action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
 
             if action_dict is not None:
-                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
                 self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                # Record once per interpolation cycle so the dataset cadence
+                # matches its declared fps; interpolated ticks only send
+                # commands to the robot.
+                if interpolator.emitted_policy_action:
+                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                    dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
-            dt = time.perf_counter() - loop_start
-            sleep_t = control_interval - dt
-            if sleep_t < 0:
-                logger.warning(
-                    f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({fps} Hz). "
-                    "Dataset frames might be dropped and robot control might be unstable. "
-                    "Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long "
-                    "3) CPU starvation"
-                )
-            precise_sleep(max(sleep_t, 0.0))
+            timer.wait()
             timestamp = time.perf_counter() - start_t
 
     def _reset_loop(

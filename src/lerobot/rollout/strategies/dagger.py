@@ -65,12 +65,17 @@ from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.pedal import start_pedal_listener
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
-from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
+from .core import (
+    CycleTimer,
+    RolloutStrategy,
+    estimate_max_episode_seconds,
+    safe_push_to_hub,
+    send_next_action,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -334,8 +339,8 @@ class DAggerStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        control_interval = interpolator.get_control_interval(cfg.fps)
-        record_stride = max(1, cfg.interpolation_multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
@@ -345,7 +350,7 @@ class DAggerStrategy(RolloutStrategy):
         engine.resume()
 
         last_action: dict[str, Any] | None = None
-        record_tick = 0
+        correction_tick = 0
         start_time = time.perf_counter()
         episode_start = time.perf_counter()
         episodes_since_push = 0
@@ -355,7 +360,7 @@ class DAggerStrategy(RolloutStrategy):
         with VideoEncodingManager(dataset):
             try:
                 while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set():
-                    loop_start = time.perf_counter()
+                    timer.tick(new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -372,9 +377,18 @@ class DAggerStrategy(RolloutStrategy):
                             interpolator,
                             ctx,
                             last_action,
+                            timer,
                         )
                         if new_phase == DAggerPhase.AUTONOMOUS:
                             last_action = None
+                        elif new_phase == DAggerPhase.CORRECTING:
+                            # Corrections carry their own recording phase: each
+                            # intervention opens with a recorded frame and then
+                            # records every ``multiplier``-th tick.  Autonomous
+                            # frames are gated by the interpolator instead, so
+                            # the two cadences never share a counter whose parity
+                            # one could shift under the other.
+                            correction_tick = 0
 
                     phase = events.phase
                     obs = robot.get_observation()
@@ -391,7 +405,7 @@ class DAggerStrategy(RolloutStrategy):
                         robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
-                        if record_tick % record_stride == 0:
+                        if correction_tick % correction_stride == 0:
                             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                             action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                             frame = {
@@ -401,7 +415,7 @@ class DAggerStrategy(RolloutStrategy):
                                 "intervention": np.array([True], dtype=bool),
                             }
                             dataset.add_frame(frame)
-                        record_tick += 1
+                        correction_tick += 1
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
@@ -412,14 +426,14 @@ class DAggerStrategy(RolloutStrategy):
                     else:
                         obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-                        if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
+                        if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
                         action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
                         if action_dict is not None:
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
-                            if record_tick % record_stride == 0:
+                            if interpolator.emitted_policy_action:
                                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                                 action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
                                 frame = {
@@ -429,7 +443,6 @@ class DAggerStrategy(RolloutStrategy):
                                     "intervention": np.array([False], dtype=bool),
                                 }
                                 dataset.add_frame(frame)
-                            record_tick += 1
 
                     # Episode rotation derived from the video file-size target.
                     # Saving is deferred while a correction is ongoing so the
@@ -453,13 +466,7 @@ class DAggerStrategy(RolloutStrategy):
 
                         episode_start = time.perf_counter()
 
-                    dt = time.perf_counter() - loop_start
-                    if (sleep_t := control_interval - dt) > 0:
-                        precise_sleep(sleep_t)
-                    else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                    timer.wait()
 
             finally:
                 logger.info("DAgger continuous control loop ended — pausing engine")
@@ -491,8 +498,8 @@ class DAggerStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        control_interval = interpolator.get_control_interval(cfg.fps)
-        record_stride = max(1, cfg.interpolation_multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
@@ -503,7 +510,7 @@ class DAggerStrategy(RolloutStrategy):
 
         last_action: dict[str, Any] | None = None
         start_time = time.perf_counter()
-        record_tick = 0
+        correction_tick = 0
         recorded = 0
         logger.info(
             "DAgger corrections-only recording started (target: %d episodes)", self.config.num_episodes
@@ -516,7 +523,7 @@ class DAggerStrategy(RolloutStrategy):
                     and not events.stop_recording.is_set()
                     and not ctx.runtime.shutdown_event.is_set()
                 ):
-                    loop_start = time.perf_counter()
+                    timer.tick(new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
@@ -533,9 +540,16 @@ class DAggerStrategy(RolloutStrategy):
                             interpolator,
                             ctx,
                             last_action,
+                            timer,
                         )
                         if new_phase == DAggerPhase.AUTONOMOUS:
                             last_action = None
+                        elif new_phase == DAggerPhase.CORRECTING:
+                            # Every intervention opens with a recorded frame and
+                            # then records every ``multiplier``-th tick, so each
+                            # correction episode holds ``fps`` frames per second
+                            # whatever the phase the autonomous run left behind.
+                            correction_tick = 0
 
                         # Correction ended -> save episode (blocking if not streaming)
                         if old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
@@ -572,7 +586,7 @@ class DAggerStrategy(RolloutStrategy):
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 
-                        if record_tick % record_stride == 0:
+                        if correction_tick % correction_stride == 0:
                             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                             action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
                             dataset.add_frame(
@@ -583,7 +597,7 @@ class DAggerStrategy(RolloutStrategy):
                                     "intervention": np.array([True], dtype=bool),
                                 }
                             )
-                        record_tick += 1
+                        correction_tick += 1
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
@@ -594,7 +608,7 @@ class DAggerStrategy(RolloutStrategy):
                     else:
                         obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-                        if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
+                        if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
                         action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
@@ -602,13 +616,7 @@ class DAggerStrategy(RolloutStrategy):
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
 
-                    dt = time.perf_counter() - loop_start
-                    if (sleep_t := control_interval - dt) > 0:
-                        precise_sleep(sleep_t)
-                    else:
-                        logger.warning(
-                            f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({cfg.fps} Hz). Dataset frames might be dropped and robot control might be unstable. Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long 3) CPU starvation"
-                        )
+                    timer.wait()
 
             finally:
                 logger.info("DAgger corrections-only loop ended — pausing engine")
@@ -631,6 +639,7 @@ class DAggerStrategy(RolloutStrategy):
         interpolator,
         ctx: RolloutContext,
         prev_action: dict | None,
+        timer: CycleTimer | None = None,
     ) -> None:
         """Execute side-effects for a validated phase transition, including smooth handovers.
 
@@ -701,6 +710,17 @@ class DAggerStrategy(RolloutStrategy):
             # release teleop before resuming the policy
             if teleop_supports_feedback(teleop):
                 teleop.disable_torque()
+
+        # Transitions are one-off operator events that run inside the control
+        # loop's timed body, and the smooth-handover ramps above block for a
+        # good fraction of a second.  Left in the timer's accumulator they would
+        # blow the group's budget and report a healthy loop as slow, so drop the
+        # partial group that contains the transition.  This also re-arms the
+        # start-up exemption, which returning to AUTONOMOUS needs anyway: the
+        # reset interpolator re-primes over two ticks, exactly like loop
+        # start-up, so the group spanning them legitimately runs over.
+        if timer is not None:
+            timer.restart()
 
     # ------------------------------------------------------------------
     # Background push (shared by both modes)
