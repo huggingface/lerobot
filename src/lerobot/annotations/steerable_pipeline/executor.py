@@ -90,6 +90,18 @@ class Executor:
     validator: StagingValidator
 
     def run(self, root: Path) -> PipelineRunSummary:
+        """Run all six annotation phases over the dataset at `root`.
+
+        Args:
+            root (`Path`): Dataset root directory.
+
+        Returns:
+            `PipelineRunSummary`: Per-phase results, written shard paths, and the validation report.
+
+        Raises:
+            ValueError: If no episodes are found under `root/data/`.
+            RuntimeError: If validation fails and `self.config.skip_validation` is `False`.
+        """
         records = list(iter_episodes(root, only_episodes=self.config.only_episodes))
         n = len(records)
         if n == 0:
@@ -179,6 +191,19 @@ class Executor:
         staging_dir: Path,
         module: Any,
     ) -> PhaseResult:
+        """Run `module.run_episode` over every record, in parallel up to `episode_parallelism`.
+
+        Args:
+            name (`str`): Phase name, used in progress logging and the returned `PhaseResult`.
+            records (`list[EpisodeRecord]`): Episodes to process.
+            staging_dir (`Path`): Directory holding per-episode staged annotation rows.
+            module (`Any`): Annotation module to run (`PlanSubtasksMemoryModule`,
+                `InterjectionsAndSpeechModule`, or `GeneralVqaModule`); skipped entirely when
+                `module.enabled` is `False`.
+
+        Returns:
+            `PhaseResult`: Summary of episodes processed vs. skipped for this phase.
+        """
         if not module.enabled:
             print(f"[annotate] phase={name} skipped (module disabled)", flush=True)
             return PhaseResult(name=name, episodes_processed=0, episodes_skipped=len(records))
@@ -191,6 +216,11 @@ class Executor:
         t0 = time.time()
 
         def _do(idx_record: tuple[int, EpisodeRecord]) -> tuple[int, int, float]:
+            """Run `module.run_episode` on one `(submission_order, record)` pair, timing it.
+
+            Returns:
+                `tuple[int, int, float]`: `(submission_order, episode_index, elapsed_seconds)`.
+            """
             i, record = idx_record
             ep_start = time.time()
             staging = EpisodeStaging(staging_dir, record.episode_index)

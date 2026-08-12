@@ -57,9 +57,17 @@ class InterjectionsAndSpeechModule:
 
     @property
     def enabled(self) -> bool:
+        """Whether `self.config.enabled` is set."""
         return self.config.enabled
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
+        """Emit the initial speech atom and mid-episode interjection/speech pairs for one episode.
+
+        Args:
+            record (`EpisodeRecord`): Episode to annotate.
+            staging (`EpisodeStaging`): Staging area; reads the `"plan"` module's subtask spans and
+                writes the `"interjections"` rows.
+        """
         rows: list[dict[str, Any]] = []
         if record.frame_timestamps:
             t0 = float(record.frame_timestamps[0])
@@ -76,6 +84,16 @@ class InterjectionsAndSpeechModule:
 
     @staticmethod
     def _subtask_at(spans: Sequence[dict[str, Any]], t: float) -> str | None:
+        """Return the text of the subtask span active at time `t`.
+
+        Args:
+            spans (`Sequence[dict[str, Any]]`): Subtask spans, each with `"start"` and `"text"`,
+                in chronological order.
+            t (`float`): Episode-relative timestamp to look up.
+
+        Returns:
+            `str | None`: The active span's text, or `None` if `t` precedes every span.
+        """
         current: str | None = None
         for span in spans:
             if float(span["start"]) <= t:
@@ -85,6 +103,14 @@ class InterjectionsAndSpeechModule:
         return current
 
     def _initial_speech(self, record: EpisodeRecord) -> str | None:
+        """Generate the task-start speech acknowledgement text for `record`.
+
+        Args:
+            record (`EpisodeRecord`): Episode to generate the acknowledgement for.
+
+        Returns:
+            `str | None`: The acknowledgement text, or `None` if the VLM returned no usable text.
+        """
         prompt = load_prompt("interjections_initial_speech").format(
             episode_task=record.episode_task,
         )

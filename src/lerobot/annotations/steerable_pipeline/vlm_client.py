@@ -81,10 +81,33 @@ class StubVlmClient:
         max_new_tokens: int | None = None,
         temperature: float | None = None,
     ) -> list[Any]:
+        """Call `self.responder` on each messages list in `messages_batch`.
+
+        Args:
+            messages_batch (`Sequence[Sequence[dict[str, Any]]]`): Batch of chat message lists.
+            max_new_tokens (`int | None`, *optional*): Unused; accepted for protocol compatibility.
+            temperature (`float | None`, *optional*): Unused; accepted for protocol compatibility.
+
+        Returns:
+            `list[Any]`: One response per messages list, from `self.responder`.
+        """
         return [self.responder(list(messages)) for messages in messages_batch]
 
 
 def _strip_to_json(text: str) -> Any:
+    """Parse `text` as JSON, stripping `<think>` blocks and ```` ```json ```` fences first.
+
+    Falls back to extracting the first balanced `{...}` substring if direct parsing fails.
+
+    Args:
+        text (`str`): Raw VLM completion text.
+
+    Returns:
+        `Any`: The parsed JSON value.
+
+    Raises:
+        json.JSONDecodeError: If no valid JSON object can be found or parsed.
+    """
     text = text.strip()
     # Strip <think>...</think> blocks (Qwen3 Thinking style)
     while "<think>" in text and "</think>" in text:
@@ -109,8 +132,10 @@ def _strip_to_json(text: str) -> Any:
 
 
 def _extract_first_json_object(text: str) -> str | None:
-    """Return the first balanced ``{...}`` substring, ignoring braces in
-    string literals. Returns ``None`` if no balanced block is found."""
+    """Return the first balanced ``{...}`` substring, ignoring braces in string literals.
+
+    Returns ``None`` if no balanced block is found.
+    """
     start = text.find("{")
     if start < 0:
         return None
@@ -155,6 +180,17 @@ class _GenericTextClient:
         max_new_tokens: int | None = None,
         temperature: float | None = None,
     ) -> list[Any]:
+        """Generate text for each messages list and parse it as JSON, retrying once on failure.
+
+        Args:
+            messages_batch (`Sequence[Sequence[dict[str, Any]]]`): Batch of chat message lists.
+            max_new_tokens (`int | None`, *optional*): Overrides `self.config.max_new_tokens`.
+            temperature (`float | None`, *optional*): Overrides `self.config.temperature`.
+
+        Returns:
+            `list[Any]`: One parsed JSON value per input, or `None` for entries that still fail to
+                parse after the retry.
+        """
         max_tok = max_new_tokens if max_new_tokens is not None else self.config.max_new_tokens
         temp = temperature if temperature is not None else self.config.temperature
         raw = self.generate_text(messages_batch, max_tok, temp)
@@ -279,6 +315,11 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     rr_lock = threading.Lock()
 
     def _one_call(messages: Sequence[dict[str, Any]], max_tok: int, temp: float) -> str:
+        """Send one chat-completion request (round-robined across `clients`) and return its text.
+
+        Returns:
+            `str`: The completion's text content, or `""` if the server returned no message.
+        """
         api_messages, mm_kwargs = _to_openai_messages(messages)
         kwargs: dict[str, Any] = {
             "model": config.model_id,
@@ -308,6 +349,11 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         return (message.content if message is not None else None) or ""
 
     def _gen(batch: Sequence[Sequence[dict[str, Any]]], max_tok: int, temp: float) -> list[str]:
+        """Run `_one_call` over `batch`, fanning out concurrently when `client_concurrency > 1`.
+
+        Returns:
+            `list[str]`: One completion text per entry in `batch`.
+        """
         if len(batch) <= 1 or config.client_concurrency <= 1:
             return [_one_call(messages, max_tok, temp) for messages in batch]
         # Parallel fan-out — vllm batches these on the server side.
@@ -320,11 +366,12 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
 
 
 def _bind_serve_port(cmd: str, port: int) -> str:
-    """Bind a serve command to ``port``: substitute a ``{port}`` placeholder
-    if present, else append ``--port`` when the command omits it (leaving an
-    explicit ``--port`` untouched). Shared by the single- and parallel-server
-    paths so a serve_command never reaches the server with a literal
-    ``{port}``."""
+    """Bind a serve command to ``port``.
+
+    Substitutes a ``{port}`` placeholder if present, else appends ``--port`` when the command
+    omits it (leaving an explicit ``--port`` untouched). Shared by the single- and parallel-server
+    paths so a serve_command never reaches the server with a literal ``{port}``.
+    """
     if "{port}" in cmd:
         return cmd.replace("{port}", str(port))
     if "--port" not in cmd:
@@ -391,6 +438,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         ready_events.append(ready)
 
         def _stream(idx: int, p: subprocess.Popen, ev: threading.Event) -> None:
+            """Stream server `idx`'s stdout to the console and set `ev` on a readiness marker."""
             # Read whole lines and emit each line atomically under the
             # shared print_lock so output from N servers stays readable.
             assert p.stdout is not None
@@ -406,6 +454,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         threading.Thread(target=_stream, args=(i, proc, ready), daemon=True).start()
 
         def _probe(idx: int, base: str, ev: threading.Event, p: subprocess.Popen) -> None:
+            """Poll server `idx` at `base` until it answers, setting `ev` when it's up."""
             while not ev.is_set() and p.poll() is None:
                 if _server_is_up(base):
                     print(f"[server-{idx}] ready (http probe)", flush=True)
@@ -416,6 +465,7 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         threading.Thread(target=_probe, args=(i, api_base, ready, proc), daemon=True).start()
 
     def _shutdown() -> None:
+        """Send SIGINT to every server replica and wait for it to exit (killing after 15s)."""
         for i, p in enumerate(procs):
             if p.poll() is None:
                 print(f"[server-{i}] stopping pid={p.pid}", flush=True)
@@ -458,12 +508,11 @@ def _server_is_up(api_base: str) -> bool:
 
 
 def _spawn_inference_server(config: VlmConfig) -> str:
-    """Spawn ``transformers serve`` (or ``serve_command``), wait until it
-    accepts ``/v1/models``, and register a shutdown hook.
+    """Spawn ``transformers serve`` (or ``serve_command``) and register a shutdown hook.
 
-    Streams the server's stdout/stderr to the parent terminal in
-    real-time on a background thread so users can see model-load
-    progress and errors as they happen.
+    Waits until the server accepts ``/v1/models``. Streams the server's stdout/stderr to the
+    parent terminal in real-time on a background thread so users can see model-load progress and
+    errors as they happen.
 
     Returns the full ``api_base`` URL the OpenAI client should use.
     """
@@ -502,6 +551,7 @@ def _spawn_inference_server(config: VlmConfig) -> str:
     )
 
     def _probe() -> None:
+        """Poll the server until it answers, setting `ready_event` when it's up."""
         while not ready_event.is_set() and proc.poll() is None:
             if _server_is_up(api_base):
                 print("[server] ready (http probe)", flush=True)
@@ -512,6 +562,7 @@ def _spawn_inference_server(config: VlmConfig) -> str:
     threading.Thread(target=_probe, daemon=True).start()
 
     def _stream_output() -> None:
+        """Stream the server's stdout to the console char-by-char, setting `ready_event` on a marker."""
         # Read raw chunks instead of iterating lines so tqdm progress
         # bars (which overwrite using \r) flush in real time.
         assert proc.stdout is not None
@@ -540,6 +591,7 @@ def _spawn_inference_server(config: VlmConfig) -> str:
     threading.Thread(target=_stream_output, daemon=True).start()
 
     def _shutdown() -> None:
+        """Send SIGINT to the server and wait for it to exit (killing after 15s)."""
         if proc.poll() is None:
             print(f"[server] stopping pid={proc.pid}", flush=True)
             proc.send_signal(signal.SIGINT)

@@ -91,6 +91,7 @@ class _NullProvider:
 
     @property
     def camera_keys(self) -> list[str]:
+        """Always empty: this provider has no cameras."""
         return []
 
     def frames_at(
@@ -99,6 +100,7 @@ class _NullProvider:
         timestamps: list[float],
         camera_key: str | None = None,
     ) -> list[Any]:
+        """Always returns `[]`."""
         return []
 
     def video_for_episode(
@@ -107,10 +109,12 @@ class _NullProvider:
         max_frames: int,
         camera_key: str | None = None,
     ) -> list[Any]:
+        """Always returns `[]`."""
         return []
 
 
 def null_provider() -> FrameProvider:
+    """Return a `_NullProvider`, for datasets with no video keys (or in tests)."""
     return _NullProvider()
 
 
@@ -156,6 +160,13 @@ class VideoFrameProvider:
     _warned_decode_fail: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Resolve the dataset's decodable camera keys and default `camera_key`.
+
+        Raises:
+            Exception: Propagates whatever `LeRobotDatasetMetadata` raises if the dataset at
+                `self.root` can't be loaded; `make_frame_provider` catches this and falls back to
+                a `_NullProvider`.
+        """
         from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
 
         self._meta = LeRobotDatasetMetadata(repo_id="local", root=self.root)
@@ -187,6 +198,17 @@ class VideoFrameProvider:
         timestamps: list[float],
         camera_key: str | None = None,
     ) -> list[Any]:
+        """Return one decoded frame per timestamp, snapped to the nearest real frame and cached.
+
+        Args:
+            record (`EpisodeRecord`): Episode to decode from.
+            timestamps (`list[float]`): Episode-relative timestamps, in seconds, to decode.
+            camera_key (`str | None`, *optional*): Camera to decode from. Defaults to `self.camera_key`.
+
+        Returns:
+            `list[Any]`: One `torch.Tensor` (`C, H, W` uint8) per successfully decoded timestamp;
+                shorter than `timestamps` when some decodes fail.
+        """
         target = camera_key if camera_key is not None else self.camera_key
         if not timestamps or target is None:
             return []

@@ -13,8 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Steerable annotation pipeline producing ``language_persistent`` and
-``language_events`` columns for LeRobot datasets.
+"""Steerable annotation pipeline producing ``language_persistent`` and ``language_events`` columns.
 
 The pipeline is decomposed into three independently runnable modules whose
 outputs are staged per-episode before a final parquet rewrite:

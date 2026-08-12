@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 # timestamped contact-sheet grids, not a single video, and reads the burned-in
 # per-tile timestamp when choosing boundaries.
 def _contact_sheet_preamble(columns: int) -> str:
+    """Return the prompt preamble explaining how to read timestamped contact-sheet grids.
+
+    Args:
+        columns (`int`): Number of frames per row in the contact sheet.
+
+    Returns:
+        `str`: Preamble text to prepend to a describe/segment prompt.
+    """
     return (
         "CONTACT SHEETS — how to read the images below:\n"
         f"- Each image is a grid of sampled video frames, {columns} per row, "
@@ -95,9 +103,16 @@ class PlanSubtasksMemoryModule:
 
     @property
     def enabled(self) -> bool:
+        """Whether `self.config.enabled` is set."""
         return self.config.enabled
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
+        """Generate task-aug, subtask, plan, and memory rows for one episode.
+
+        Args:
+            record (`EpisodeRecord`): Episode to annotate.
+            staging (`EpisodeStaging`): Staging area to write the `"plan"` rows to.
+        """
         rows: list[dict[str, Any]] = []
         # Task driving every plan-module prompt: canonical episode_task, or a
         # video-derived one when it's empty/placeholder (see derive_task_*).
@@ -211,6 +226,7 @@ class PlanSubtasksMemoryModule:
         return canonical
 
     def _task_seems_bad(self, task: str) -> bool:
+        """Whether `task` is too short or a known placeholder, and should be re-derived from video."""
         if not task:
             return True
         if len(task.split()) < int(self.config.derive_task_min_words):
@@ -817,6 +833,19 @@ class PlanSubtasksMemoryModule:
         *,
         task: str | None = None,
     ) -> str:
+        """Generate the memory text summarizing progress at one subtask boundary.
+
+        Args:
+            record (`EpisodeRecord`): Episode being annotated.
+            prior_memory (`str`): Previous memory text, or `""` at the first boundary.
+            completed (`str`): Text of the just-completed subtask.
+            remaining (`Sequence[str]`): Texts of the still-todo subtasks.
+            task (`str | None`, *optional*): Task string to use in the prompt. Defaults to
+                `record.episode_task` when unset.
+
+        Returns:
+            `str`: The generated memory text, or `""` if the VLM returned nothing usable.
+        """
         prompt = load_prompt("plan_memory").format(
             episode_task=(task if task is not None else record.episode_task),
             prior_memory=prior_memory or "(none)",

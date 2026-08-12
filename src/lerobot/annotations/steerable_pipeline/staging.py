@@ -51,14 +51,35 @@ class EpisodeStaging:
 
     @property
     def episode_dir(self) -> Path:
+        """This episode's staging directory: `<root>/episode_<index:06d>/`."""
         return self.root / f"episode_{self.episode_index:06d}"
 
     def path_for(self, module: ModuleName) -> Path:
+        """Return the JSONL path for one module's staged output.
+
+        Args:
+            module (`ModuleName`): Module name (`"plan"`, `"interjections"`, or `"vqa"`).
+
+        Returns:
+            `Path`: The module's `<episode_dir>/<module>.jsonl` path.
+
+        Raises:
+            ValueError: If `module` isn't a known module name.
+        """
         if module not in _MODULES:
             raise ValueError(f"Unknown module {module!r}; expected one of {_MODULES}")
         return self.episode_dir / f"{module}.jsonl"
 
     def write(self, module: ModuleName, rows: Iterable[dict[str, Any]]) -> Path:
+        """Atomically write `rows` as JSONL to `module`'s staging file.
+
+        Args:
+            module (`ModuleName`): Module name to write output for.
+            rows (`Iterable[dict[str, Any]]`): Rows to write, one JSON object per line.
+
+        Returns:
+            `Path`: The written file's path.
+        """
         path = self.path_for(module)
         path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic replace: a crash mid-write would otherwise leave a
@@ -74,6 +95,14 @@ class EpisodeStaging:
         return path
 
     def read(self, module: ModuleName) -> list[dict[str, Any]]:
+        """Read `module`'s staged JSONL rows.
+
+        Args:
+            module (`ModuleName`): Module name to read output for.
+
+        Returns:
+            `list[dict[str, Any]]`: Staged rows, or `[]` if the module hasn't written yet.
+        """
         path = self.path_for(module)
         if not path.exists():
             return []
@@ -86,7 +115,13 @@ class EpisodeStaging:
         return out
 
     def read_all(self) -> dict[ModuleName, list[dict[str, Any]]]:
+        """Read every module's staged rows.
+
+        Returns:
+            `dict[ModuleName, list[dict[str, Any]]]`: Staged rows keyed by module name.
+        """
         return {m: self.read(m) for m in _MODULES}
 
     def has(self, module: ModuleName) -> bool:
+        """Whether `module` has already written its staging file."""
         return self.path_for(module).exists()

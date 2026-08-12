@@ -440,7 +440,6 @@ ignore = [
 # Vendored from transformers; keeps its upstream docstring style so syncs stay clean.
 "src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
 # Awaiting conversion, one PR per module.
-"src/lerobot/annotations/**" = ["D"]
 "src/lerobot/async_inference/**" = ["D"]
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
@@ -520,7 +519,7 @@ ignore-private = false
 ignore-property-decorators = false
 ignore-module = false
 ignore-setters = false
-fail-under = 55
+fail-under = 56.2
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]

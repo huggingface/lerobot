@@ -149,6 +149,16 @@ def iter_episodes(root: Path, *, only_episodes: tuple[int, ...] | None = None) -
 
 
 def _iter_one_path(path: Path, tasks: dict[int, str], only_set: set[int] | None) -> Iterator[EpisodeRecord]:
+    """Yield an `EpisodeRecord` per episode found in one parquet shard, in row order.
+
+    Args:
+        path (`Path`): Parquet shard to scan.
+        tasks (`dict[int, str]`): `task_index -> task` lookup, as returned by `_load_tasks_lookup`.
+        only_set (`set[int] | None`): When set, only yield episodes whose index is in this set.
+
+    Yields:
+        `EpisodeRecord` for each qualifying episode in `path`.
+    """
     table = pq.read_table(path)
     names = table.column_names
     if "episode_index" not in names:
@@ -170,6 +180,19 @@ def _iter_one_path(path: Path, tasks: dict[int, str], only_set: set[int] | None)
         ts_buf: list[float],
         fi_buf: list[int],
     ) -> EpisodeRecord | None:
+        """Build an `EpisodeRecord` for one accumulated episode's row range, or `None` if filtered out.
+
+        Args:
+            ep (`int`): Episode index.
+            start (`int`): Row offset within `path` where the episode starts.
+            end (`int`): Row offset (exclusive) where the episode ends.
+            task_idx (`int | None`): Task index for the episode, or `None` if absent.
+            ts_buf (`list[float]`): Accumulated frame timestamps for the episode.
+            fi_buf (`list[int]`): Accumulated frame indices for the episode.
+
+        Returns:
+            `EpisodeRecord | None`: The record, or `None` when `ep` isn't in `only_set`.
+        """
         if only_set is not None and ep not in only_set:
             return None
         task = tasks.get(task_idx, "") if task_idx is not None else ""

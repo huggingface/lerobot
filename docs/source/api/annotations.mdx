@@ -1,0 +1,93 @@
+# Annotations
+
+`src/lerobot/annotations/` implements the steerable annotation pipeline invoked by `lerobot-annotate`:
+a local or remote VLM watches each episode's video and writes `language_persistent` (subtasks, plan,
+memory, task augmentation) and `language_events` (interjections, speech, VQA) columns onto the
+dataset's parquet shards.
+
+The pipeline runs three independent modules (`plan`, `interjections`, `vqa`) over per-episode staged
+JSONL, then validates and rewrites the parquet shards.
+
+## Configuration
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.AnnotationPipelineConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.PlanConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.TaskAugAxesConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.InterjectionsConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.VqaConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.VlmConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.ExecutorConfig
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.AnnotationJobConfig
+
+## Executor
+
+Runs the six annotation phases (plan → interjections → plan-update → vqa → validate → write)
+in-process, with episode-level concurrency.
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.executor.Executor
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.executor.PhaseResult
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.executor.PipelineRunSummary
+
+## Modules
+
+Each module reads/writes per-episode staged JSONL via `EpisodeStaging` and implements the same
+`enabled` / `run_episode` contract.
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.modules.plan_subtasks_memory.PlanSubtasksMemoryModule
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.modules.interjections_and_speech.InterjectionsAndSpeechModule
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.modules.general_vqa.GeneralVqaModule
+    - all
+
+## Frame providers
+
+Decode keyframes from a dataset's `observation.images.*` streams, shared across modules within one
+episode.
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.frames.FrameProvider
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.frames.VideoFrameProvider
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.frames.make_frame_provider
+
+## VLM client
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.vlm_client.VlmClient
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.vlm_client.StubVlmClient
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.vlm_client.make_vlm_client
+
+## Staging, validation, and writing
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.staging.EpisodeStaging
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.validator.StagingValidator
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.validator.ValidationReport
+    - all
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.writer.LanguageColumnsWriter
+    - all
+
+## Reader
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.reader.EpisodeRecord
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.reader.iter_episodes
