@@ -22,8 +22,21 @@ or asynchronously in a background thread (RTC).
 from __future__ import annotations
 
 import abc
+from contextlib import AbstractContextManager
+from typing import Protocol
 
 import torch
+
+
+class SectionProfiler(Protocol):
+    """Anything that can time named code sections.
+
+    Structural stand-in for ``CycleTimer`` (which lives in the strategies
+    module — importing it here would be a dependency cycle), so engines can
+    report per-stage timings into the caller's run summary.
+    """
+
+    def section(self, name: str) -> AbstractContextManager[None]: ...
 
 
 class InferenceEngine(abc.ABC):
@@ -66,8 +79,16 @@ class InferenceEngine(abc.ABC):
         """Clear episode-scoped state."""
 
     @abc.abstractmethod
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Return the next action tensor, or ``None`` if unavailable."""
+    def get_action(
+        self, obs_frame: dict | None, profiler: SectionProfiler | None = None
+    ) -> torch.Tensor | None:
+        """Return the next action tensor, or ``None`` if unavailable.
+
+        Backends that do meaningful work on the calling thread report
+        per-stage timings to *profiler* (when given) as ``get_action.*``
+        sections; backends that only relay results computed in a
+        background thread ignore it.
+        """
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
         """Publish the latest processed observation.  Default: no-op."""

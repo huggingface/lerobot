@@ -595,10 +595,13 @@ def send_next_action(
     sync and async backends — the rollout strategy never needs to branch.
 
     When *timer* is given, the engine pull and the robot send are timed as
-    ``get_action`` / ``send_action`` sections in its run summary.  Note that
-    on async backends ``get_action`` is only a queue pull — inference runs
-    off-thread, so its latency shows up as ``None`` returns here (a starved
-    interpolator), not as loop-body time.
+    ``get_action`` / ``send_action`` sections in its run summary, and the
+    engine may break the pull down further into ``get_action.*`` stages (the
+    sync engine does; those overlap the ``get_action`` total, so section
+    shares can sum past 100%).  Note that on async backends ``get_action``
+    is only a queue pull — inference runs off-thread, so its latency shows
+    up as ``None`` returns here (a starved interpolator), not as loop-body
+    time.
 
     Returns the action dict that was sent, or ``None`` if no action was
     ready (e.g. empty async queue, interpolator not yet primed).
@@ -610,7 +613,7 @@ def send_next_action(
     if interpolator.needs_new_action():
         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
         with timer.section("get_action") if timer else contextlib.nullcontext():
-            action_tensor = engine.get_action(obs_frame)
+            action_tensor = engine.get_action(obs_frame, profiler=timer)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
 

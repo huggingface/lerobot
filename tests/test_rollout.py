@@ -359,6 +359,36 @@ def test_create_strategy_unknown_raises():
 # ---------------------------------------------------------------------------
 
 
+def test_sync_engine_get_action_profiles_pipeline_stages():
+    import numpy as np
+
+    from lerobot.rollout import SyncInferenceEngine
+    from lerobot.rollout.strategies import CycleTimer
+
+    engine = SyncInferenceEngine(
+        policy=MagicMock(select_action=MagicMock(return_value=torch.tensor([[0.5, 0.25]]))),
+        preprocessor=MagicMock(side_effect=lambda obs: obs),
+        postprocessor=MagicMock(side_effect=lambda action: action),
+        dataset_features={"action": {"names": ["a", "b"]}},
+        ordered_action_keys=["a", "b"],
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+    timer = CycleTimer(30.0)
+
+    action = engine.get_action({"observation.state": np.array([1.0], dtype=np.float32)}, profiler=timer)
+
+    assert torch.allclose(action, torch.tensor([0.5, 0.25]))
+    assert list(timer._stat_sections) == [
+        "get_action.prepare",
+        "get_action.preprocess",
+        "get_action.select",
+        "get_action.postprocess",
+        "get_action.emit",
+    ]
+
+
 def test_create_inference_engine_sync():
     from lerobot.rollout import SyncInferenceConfig, SyncInferenceEngine, create_inference_engine
 
@@ -988,7 +1018,7 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
     engine = MagicMock()
     actions = {"n": 0}
 
-    def _get_action(_obs_frame):
+    def _get_action(_obs_frame, profiler=None):
         actions["n"] += 1
         return torch.tensor([float(actions["n"])])
 
@@ -1252,7 +1282,10 @@ def test_dagger_resume_does_not_warn_about_the_reprimed_interpolator(caplog, clo
 
     ctx, dataset = _make_loop_ctx(fps=fps, multiplier=multiplier, num_ticks=22, on_tick=on_tick)
     ctx.hardware.teleop.get_action.return_value = {"m.pos": 42.0}
-    ctx.policy.inference.get_action.side_effect = lambda _f: (clock.advance(policy_work), torch.zeros(1))[1]
+    ctx.policy.inference.get_action.side_effect = lambda _f, profiler=None: (
+        clock.advance(policy_work),
+        torch.zeros(1),
+    )[1]
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)
     strategy._episode_duration_s = 1e9

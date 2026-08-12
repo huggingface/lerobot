@@ -26,9 +26,14 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
 
-from .base import InferenceEngine
+from .base import InferenceEngine, SectionProfiler
 
 logger = logging.getLogger(__name__)
+
+
+def _null_section(_name: str) -> nullcontext:
+    """Stand-in for ``SectionProfiler.section`` when no profiler is given."""
+    return nullcontext()
 
 
 # TODO(Steven): support relative-action policies.  The per-tick flow refreshes
@@ -94,10 +99,20 @@ class SyncInferenceEngine(InferenceEngine):
         self._preprocessor.reset()
         self._postprocessor.reset()
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
+    def get_action(
+        self, obs_frame: dict | None, profiler: SectionProfiler | None = None
+    ) -> torch.Tensor | None:
+        """Run the full inference pipeline on ``obs_frame`` and return an action tensor.
+
+        When *profiler* is given, each pipeline stage is timed as a
+        ``get_action.*`` section.  Caveat for accelerator devices: kernels
+        launch asynchronously, so queued device work is billed to the first
+        stage that synchronizes with the device (the ``.cpu()`` transfer in
+        ``postprocess``), not necessarily the stage that launched it.
+        """
         if obs_frame is None:
             return None
+        sec = profiler.section if profiler is not None else _null_section
         # Shallow copy is intentional: the caller (`send_next_action`) builds
         # ``obs_frame`` fresh per tick via ``build_dataset_frame``, so the
         # tensor/array values are not shared with any other reader.
@@ -108,15 +123,20 @@ class SyncInferenceEngine(InferenceEngine):
             else nullcontext()
         )
         with torch.inference_mode(), autocast_ctx:
-            observation = prepare_observation_for_inference(
-                observation, self._device, self._task, self._robot_type
-            )
-            observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
-            action = self._postprocessor(action)
-        action_tensor = action.squeeze(0).cpu()
+            with sec("get_action.prepare"):
+                observation = prepare_observation_for_inference(
+                    observation, self._device, self._task, self._robot_type
+                )
+            with sec("get_action.preprocess"):
+                observation = self._preprocessor(observation)
+            with sec("get_action.select"):
+                action = self._policy.select_action(observation)
+            with sec("get_action.postprocess"):
+                action = self._postprocessor(action)
+                action_tensor = action.squeeze(0).cpu()
 
-        # Reorder to match dataset action ordering so the caller can treat
-        # the returned tensor uniformly across backends.
-        action_dict = make_robot_action(action_tensor, self._dataset_features)
-        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+        with sec("get_action.emit"):
+            # Reorder to match dataset action ordering so the caller can treat
+            # the returned tensor uniformly across backends.
+            action_dict = make_robot_action(action_tensor, self._dataset_features)
+            return torch.tensor([action_dict[k] for k in self._ordered_action_keys])

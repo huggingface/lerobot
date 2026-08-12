@@ -44,7 +44,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from ..robot_wrapper import ThreadSafeRobot
-from .base import InferenceEngine
+from .base import InferenceEngine, SectionProfiler
 
 logger = logging.getLogger(__name__)
 
@@ -247,8 +247,14 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+    def get_action(
+        self, obs_frame: dict | None, profiler: SectionProfiler | None = None
+    ) -> torch.Tensor | None:
+        """Pop the next action from the RTC queue (ignores ``obs_frame``).
+
+        *profiler* is ignored: inference runs in the background thread, so
+        there is nothing meaningful to time on the calling thread.
+        """
         if self._action_queue is None:
             return None
         return self._action_queue.get()
