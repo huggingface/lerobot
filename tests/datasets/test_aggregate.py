@@ -29,9 +29,10 @@ import torch
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.compute_stats import aggregate_stats
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import EPISODES_DIR
+from lerobot.datasets.utils import EPISODES_DIR, STATS_PATH
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_REPO_ID,
@@ -922,3 +923,161 @@ def test_aggregate_updates_per_episode_stats(tmp_path):
             else:
                 expected = base
             assert np.allclose(got, expected), f"ep{ep} {col}: {got} != {expected}"
+
+
+def test_aggregate_rebuilds_top_level_bookkeeping_stats(tmp_path):
+    """Top-level bookkeeping stats describe the transformed merged dataset."""
+    features = {"observation.state": {"dtype": "float32", "shape": (2,), "names": None}}
+
+    def _make_dataset(suffix, episode_tasks, value_offset):
+        ds = LeRobotDataset.create(
+            f"{DUMMY_REPO_ID}_{suffix}",
+            fps=10,
+            features=features,
+            root=tmp_path / suffix,
+            use_videos=False,
+        )
+        for episode_index, tasks in enumerate(episode_tasks):
+            for frame_index, task in enumerate(tasks):
+                ds.add_frame(
+                    {
+                        "observation.state": torch.tensor(
+                            [value_offset + episode_index, frame_index], dtype=torch.float32
+                        ),
+                        "task": task,
+                    }
+                )
+            ds.save_episode()
+        ds.finalize()
+        return ds
+
+    sources = [
+        _make_dataset("s0", [["s0-task-0"] * 2, ["s0-task-1"] * 2], 0),
+        _make_dataset(
+            "s1",
+            [["s1-task-0"], ["s1-task-1"] * 2, ["s1-task-2", "s1-task-1", "s1-task-1"]],
+            10,
+        ),
+    ]
+    expected_observation_stats = aggregate_stats([d.meta.stats for d in sources])["observation.state"]
+
+    aggr_root = tmp_path / "aggr_top_level_stats"
+    aggregate_datasets(
+        repo_ids=[d.repo_id for d in sources],
+        roots=[d.root for d in sources],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_aggr_top_level_stats",
+        aggr_root=aggr_root,
+    )
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(aggr_root)),
+    ):
+        aggr = LeRobotDataset(f"{DUMMY_REPO_ID}_aggr_top_level_stats", root=aggr_root, download_videos=False)
+
+    assert aggr.meta.total_episodes == 5
+    assert aggr.meta.total_frames == 10
+    assert aggr.meta.total_tasks == 5
+
+    shards = sorted((aggr_root / EPISODES_DIR).rglob("*.parquet"))
+    merged_episodes = pd.concat([pd.read_parquet(shard) for shard in shards], ignore_index=True)
+    merged_episodes = merged_episodes.sort_values("episode_index")
+
+    expected_per_episode_maxima = {
+        "episode_index": [0, 1, 2, 3, 4],
+        "index": [1, 3, 4, 6, 9],
+        "task_index": [0, 1, 2, 3, 4],
+    }
+    raw_dataset = aggr.hf_dataset.with_format("numpy")
+    for feature, per_episode_maxima in expected_per_episode_maxima.items():
+        raw_values = np.asarray(raw_dataset[feature], dtype=np.float64).reshape(-1)
+        assert int(raw_values.max()) == per_episode_maxima[-1]
+
+        metadata_maxima = [
+            int(np.asarray(value).reshape(-1)[0]) for value in merged_episodes[f"stats/{feature}/max"]
+        ]
+        assert metadata_maxima == per_episode_maxima
+
+        top_level = aggr.meta.stats[feature]
+        expected_basic_stats = {
+            "min": raw_values.min(),
+            "max": raw_values.max(),
+            "mean": raw_values.mean(),
+            "std": raw_values.std(),
+            "count": len(raw_values),
+        }
+        for stat, expected in expected_basic_stats.items():
+            np.testing.assert_allclose(top_level[stat], np.array([expected]))
+
+        for quantile in ("q01", "q10", "q50", "q90", "q99"):
+            if feature == "task_index":
+                expected = np.array([np.quantile(raw_values, int(quantile[1:]) / 100)])
+            else:
+                episode_values = np.stack(
+                    [np.asarray(value) for value in merged_episodes[f"stats/{feature}/{quantile}"]]
+                )
+                expected = (
+                    episode_values.min(axis=0) if int(quantile[1:]) <= 50 else episode_values.max(axis=0)
+                )
+            np.testing.assert_allclose(top_level[quantile], expected)
+
+    for stat, expected in expected_observation_stats.items():
+        np.testing.assert_allclose(aggr.meta.stats["observation.state"][stat], expected)
+
+
+def test_aggregate_handles_incomplete_stats_schema(tmp_path):
+    """Incomplete optional episode and dataset-level stats remain compatible."""
+    features = {"observation.state": {"dtype": "float32", "shape": (1,), "names": None}}
+
+    def _make_dataset(suffix):
+        ds = LeRobotDataset.create(
+            f"{DUMMY_REPO_ID}_{suffix}",
+            fps=10,
+            features=features,
+            root=tmp_path / suffix,
+            use_videos=False,
+        )
+        for value in range(2):
+            ds.add_frame(
+                {
+                    "observation.state": torch.tensor([value], dtype=torch.float32),
+                    "task": f"{suffix}-task",
+                }
+            )
+        ds.save_episode()
+        ds.finalize()
+        return ds
+
+    sources = [_make_dataset("missing_q_s0"), _make_dataset("missing_q_s1")]
+    episode_shard = next((sources[1].root / EPISODES_DIR).rglob("*.parquet"))
+    episode_metadata = pd.read_parquet(episode_shard).drop(columns="stats/index/q90")
+    episode_metadata.to_parquet(episode_shard, index=False)
+    for source in sources:
+        stats_path = source.root / STATS_PATH
+        source_stats = json.loads(stats_path.read_text())
+        source_stats.pop("task_index")
+        stats_path.write_text(json.dumps(source_stats))
+
+    aggr_root = tmp_path / "aggr_missing_q"
+    aggregate_datasets(
+        repo_ids=[d.repo_id for d in sources],
+        roots=[d.root for d in sources],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_aggr_missing_q",
+        aggr_root=aggr_root,
+    )
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(aggr_root)),
+    ):
+        aggr = LeRobotDataset(f"{DUMMY_REPO_ID}_aggr_missing_q", root=aggr_root, download_videos=False)
+
+    raw_indices = np.asarray(aggr.hf_dataset.with_format("numpy")["index"], dtype=np.float64)
+    for stat, expected in {
+        "min": raw_indices.min(),
+        "max": raw_indices.max(),
+        "mean": raw_indices.mean(),
+        "std": raw_indices.std(),
+        "count": len(raw_indices),
+    }.items():
+        np.testing.assert_allclose(aggr.meta.stats["index"][stat], np.array([expected]))
+    np.testing.assert_allclose(aggr.meta.stats["index"]["q90"], np.array([raw_indices.max()]))
+    assert "task_index" not in aggr.meta.stats
