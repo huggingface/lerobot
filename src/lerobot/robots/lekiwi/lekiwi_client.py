@@ -21,6 +21,7 @@ from functools import cached_property
 import cv2
 import numpy as np
 
+from lerobot.cameras import CameraConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -98,6 +99,16 @@ class LeKiwiClient(Robot):
     @cached_property
     def _state_order(self) -> tuple[str, ...]:
         return tuple(self._state_ft.keys())
+
+    @property
+    def cameras(self) -> dict[str, CameraConfig]:
+        """The cameras this robot observes, keyed by name.
+
+        LeKiwi's cameras are attached to the host and streamed over ZMQ, so unlike a robot
+        wired to this machine there are no local camera objects to hand out. The configured
+        specs are returned instead, so callers can still enumerate the cameras.
+        """
+        return self.config.cameras
 
     @cached_property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
