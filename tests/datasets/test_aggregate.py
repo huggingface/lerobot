@@ -317,6 +317,7 @@ def test_depth_marker_legacy_names(legacy_info, legacy_video_info):
     merged = merge_video_feature_info_for_aggregate([meta_legacy, meta_recent])
     assert merged[key]["info"]["is_depth_map"] is True
     assert "video.is_depth_map" not in merged[key]["info"]
+    assert "video_info" not in merged[key]
 
 
 def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
