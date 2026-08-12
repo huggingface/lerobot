@@ -238,6 +238,7 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
+        self.precision = precision
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
@@ -286,11 +287,20 @@ class PaliGemmaWithExpertModel(
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-        image_outputs = self.paligemma.model.get_image_features(image)
+        # That float32 pin exists so training never toggles a parameter dtype. Inference has no
+        # optimizer state to protect, so run the matmuls on tensor cores while the stored weights
+        # stay float32. Autocast accumulates in float32, which lands closer to the float32 result
+        # than casting the weights would.
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._vision_autocast(image)):
+            image_outputs = self.paligemma.model.get_image_features(image)
         features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
+
+    def _vision_autocast(self, image: torch.Tensor) -> bool:
+        """Whether to run the vision tower in bfloat16 for this call."""
+        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
@@ -480,6 +490,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             offset=self.config.time_sampling_offset,
         )
 
+    def _embed_images(self, images: list[torch.Tensor]) -> list[torch.Tensor]:
+        """Embed every camera, as a single batched vision-tower call where that is safe.
+
+        One 224x224 image underfills the GPU, so the tower spends most of a per-camera call on
+        launch and memory latency rather than arithmetic. Training keeps one call per camera:
+        ``_apply_checkpoint`` recomputes each camera separately during the backward pass, and
+        fusing them would multiply peak activation memory by the number of cameras.
+        """
+        if self.training or len(images) < 2:
+            return [self._apply_checkpoint(self.paligemma_with_expert.embed_image, img) for img in images]
+        batched = self.paligemma_with_expert.embed_image(torch.cat(images, dim=0))
+        return list(torch.chunk(batched, len(images), dim=0))
+
     def embed_prefix(
         self, images, img_masks, tokens, masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -489,12 +512,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_masks = []
 
         # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
-
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+        for img_emb, img_mask in zip(self._embed_images(images), img_masks, strict=True):
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
