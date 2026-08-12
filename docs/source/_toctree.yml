@@ -215,4 +215,6 @@
     title: Environments
   - local: api/configs
     title: Configuration
+  - local: api/transport
+    title: Transport
   title: "API Reference"
