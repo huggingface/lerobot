@@ -347,6 +347,7 @@ class DAggerStrategy(RolloutStrategy):
         last_action: dict[str, Any] | None = None
         record_tick = 0
         start_time = time.perf_counter()
+        actions_sent = 0
         episode_start = time.perf_counter()
         episodes_since_push = 0
         episode_duration_s = self._episode_duration_s
@@ -359,6 +360,9 @@ class DAggerStrategy(RolloutStrategy):
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                        break
+                    elif cfg.action_horizon > 0 and actions_sent >= cfg.action_horizon:
+                        logger.info("Action horizon reached (%d)", cfg.action_horizon)
                         break
 
                     # Process transitions
@@ -389,6 +393,7 @@ class DAggerStrategy(RolloutStrategy):
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
                         robot.send_action(robot_action_to_send)
+                        actions_sent += 1
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
                         if record_tick % record_stride == 0:
@@ -407,6 +412,7 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             robot.send_action(last_action)
+                            actions_sent += 1
 
                     # --- AUTONOMOUS: policy control ---
                     else:
@@ -417,6 +423,7 @@ class DAggerStrategy(RolloutStrategy):
 
                         action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
                         if action_dict is not None:
+                            actions_sent += 1
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
                             if record_tick % record_stride == 0:
@@ -503,6 +510,7 @@ class DAggerStrategy(RolloutStrategy):
 
         last_action: dict[str, Any] | None = None
         start_time = time.perf_counter()
+        actions_sent = 0
         record_tick = 0
         recorded = 0
         logger.info(
@@ -520,6 +528,9 @@ class DAggerStrategy(RolloutStrategy):
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                        break
+                    elif cfg.action_horizon > 0 and actions_sent >= cfg.action_horizon:
+                        logger.info("Action horizon reached (%d)", cfg.action_horizon)
                         break
 
                     # Process transitions
@@ -569,6 +580,7 @@ class DAggerStrategy(RolloutStrategy):
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
                         robot.send_action(robot_action_to_send)
+                        actions_sent += 1
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 
@@ -589,6 +601,7 @@ class DAggerStrategy(RolloutStrategy):
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
                             robot.send_action(last_action)
+                            actions_sent += 1
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
@@ -599,6 +612,7 @@ class DAggerStrategy(RolloutStrategy):
 
                         action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
                         if action_dict is not None:
+                            actions_sent += 1
                             self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
 

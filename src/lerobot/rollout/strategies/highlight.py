@@ -105,6 +105,7 @@ class HighlightStrategy(RolloutStrategy):
         play_sounds = cfg.play_sounds
 
         start_time = time.perf_counter()
+        actions_sent = 0
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Highlight strategy recording started (press '%s' to save)", self.config.save_key)
 
@@ -116,6 +117,9 @@ class HighlightStrategy(RolloutStrategy):
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
                         break
+                    elif cfg.action_horizon > 0 and actions_sent >= cfg.action_horizon:
+                        logger.info("Action horizon reached (%d)", cfg.action_horizon)
+                        break
 
                     obs = robot.get_observation()
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
@@ -126,6 +130,7 @@ class HighlightStrategy(RolloutStrategy):
                     action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
 
                     if action_dict is not None:
+                        actions_sent += 1
                         self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)

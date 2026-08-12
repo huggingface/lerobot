@@ -89,6 +89,59 @@ def test_dagger_config_defaults():
     assert cfg.input_device == "keyboard"
 
 
+def test_base_strategy_stops_at_action_horizon(monkeypatch):
+    import lerobot.rollout.strategies.base as base_module
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    action_horizon = 3
+    # side_next_action may return None
+    side_next_action_returns = [{"action": 1.0}, None, {"action": 1.0}, None, {"action": 1.0}]
+    send_next_action = MagicMock(
+        side_effect=side_next_action_returns,
+    )
+    monkeypatch.setattr(base_module, "send_next_action", send_next_action)
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = MagicMock()
+    strategy._interpolator = MagicMock()
+    strategy._interpolator.get_control_interval.return_value = 0
+    strategy._process_observation_and_notify = MagicMock(return_value={})
+    strategy._log_telemetry = MagicMock()
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                fps=30,
+                duration=0,
+                action_horizon=action_horizon,
+                use_torch_compile=False,
+            ),
+            shutdown_event=SimpleNamespace(is_set=lambda: False),
+        ),
+        hardware=SimpleNamespace(robot_wrapper=MagicMock()),
+        processors=MagicMock(),
+    )
+
+    strategy.run(ctx)
+
+    assert send_next_action.call_count == len(side_next_action_returns)
+
+
+def test_rollout_config_rejects_duration_and_action_horizon(monkeypatch):
+    from lerobot.configs import parser
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    monkeypatch.setattr(parser, "get_path_arg", lambda _: None)
+
+    with pytest.raises(ValueError, match="Cannot specify both --duration and --action_horizon"):
+        RolloutConfig(
+            robot=MockRobotConfig(),
+            policy=SimpleNamespace(device="cpu"),
+            duration=1,
+            action_horizon=1,
+        )
+
+
 def test_inference_config_types():
     from lerobot.rollout import RTCInferenceConfig, SyncInferenceConfig
 
