@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
 
-from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig
+from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
@@ -400,16 +400,7 @@ class LeRobotDatasetMetadata:
         (or the legacy ``"video.is_depth_map"`` inside ``info`` or ``video_info``).
         """
 
-        def _is_depth(ft: dict) -> bool:
-            info = ft.get("info") or {}
-            video_info = ft.get("video_info") or {}
-            return (
-                info.get("is_depth_map", False)
-                or info.get("video.is_depth_map", False)
-                or video_info.get("video.is_depth_map", False)
-            )
-
-        return [key for key, ft in self.features.items() if _is_depth(ft)]
+        return [key for key, ft in self.features.items() if is_depth_map(ft)]
 
     def rescale_depth_stats(self, output_unit: str) -> None:
         """Rescale depth feature stats in place from their recorded unit to ``output_unit``.

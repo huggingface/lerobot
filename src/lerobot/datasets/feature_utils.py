@@ -21,7 +21,7 @@ import datasets
 import numpy as np
 from PIL import Image as PILImage
 
-from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
+from lerobot.configs import VIDEO_ENCODER_INFO_KEYS, is_depth_map
 from lerobot.utils.constants import DEFAULT_FEATURES
 from lerobot.utils.utils import is_valid_numpy_dtype_string
 
@@ -134,10 +134,11 @@ def canonicalize_depth_marker(feature: dict) -> None:
     info = feature.get("info") or {}
     feature["info"] = info
     video_info = feature.get("video_info")
-    legacy = info.pop("video.is_depth_map", None)
+    depth = is_depth_map(feature)
+    info.pop("video.is_depth_map", None)
     if isinstance(video_info, dict):
-        legacy = video_info.pop("video.is_depth_map", None) or legacy
-    if info.get("is_depth_map") or legacy:
+        video_info.pop("video.is_depth_map", None)
+    if depth:
         info["is_depth_map"] = True
 
 
