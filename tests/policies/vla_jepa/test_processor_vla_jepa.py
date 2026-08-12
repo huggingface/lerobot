@@ -43,7 +43,6 @@ from conftest import (  # noqa: E402
     make_inference_batch,
     make_train_batch,
 )
-
 from lerobot.configs.types import (  # noqa: E402
     FeatureType,
     NormalizationMode,
