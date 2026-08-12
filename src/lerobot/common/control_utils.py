@@ -50,8 +50,7 @@ def predict_action(
     task: str | None = None,
     robot_type: str | None = None,
 ):
-    """
-    Performs a single-step inference to predict a robot action from an observation.
+    """Performs a single-step inference to predict a robot action from an observation.
 
     This function encapsulates the full inference pipeline:
     1. Prepares the observation by converting it to PyTorch tensors and adding a batch dimension.
@@ -61,14 +60,16 @@ def predict_action(
     5. Formats the final action by removing the batch dimension and moving it to the CPU.
 
     Args:
-        observation: A dictionary of NumPy arrays representing the robot's current observation.
-        policy: The `PreTrainedPolicy` model to use for action prediction.
-        device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
-        preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
-        postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
-        use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
-        task: An optional string identifier for the task.
-        robot_type: An optional string identifier for the robot type.
+        observation (`dict[str, np.ndarray]`): Raw observation from the robot.
+        policy (`PreTrainedPolicy`): Policy to run inference with.
+        device (`torch.device`): Device to run inference on.
+        preprocessor (`PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]`): Pipeline applied to
+            the prepared observation before it reaches the policy.
+        postprocessor (`PolicyProcessorPipeline[PolicyAction, PolicyAction]`): Pipeline applied to the
+            policy's raw action output.
+        use_amp (`bool`): Whether to run inference under automatic mixed precision (CUDA only).
+        task (`str | None`, *optional*): Task description to attach to the observation.
+        robot_type (`str | None`, *optional*): Robot type, used when preparing the observation.
 
     Returns:
         A `torch.Tensor` containing the predicted action, ready for the robot.
@@ -92,15 +93,14 @@ def predict_action(
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
-    """
-    Validates the dataset repository name against the presence of a policy configuration.
+    """Validates the dataset repository name against the presence of a policy configuration.
 
     This function enforces a naming convention: a dataset repository ID should start with "eval_"
     if and only if a policy configuration is provided for evaluation purposes.
 
     Args:
-        repo_id: The Hugging Face Hub repository ID of the dataset.
-        policy_cfg: The configuration object for the policy, or `None`.
+        repo_id (`str`): Dataset repo id, formatted `"<user>/<name>"`.
+        policy_cfg (`PreTrainedConfig | None`): Policy configuration, if recording an evaluation.
 
     Raises:
         ValueError: If the naming convention is violated.
@@ -125,17 +125,16 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 def sanity_check_dataset_robot_compatibility(
     dataset: LeRobotDataset, robot: Robot, fps: int, features: dict
 ) -> None:
-    """
-    Checks if a dataset's metadata is compatible with the current robot and recording setup.
+    """Checks if a dataset's metadata is compatible with the current robot and recording setup.
 
     This function compares key metadata fields (`robot_type`, `fps`, and `features`) from the
     dataset against the current configuration to ensure that appended data will be consistent.
 
     Args:
-        dataset: The `LeRobotDataset` instance to check.
-        robot: The `Robot` instance representing the current hardware setup.
-        fps: The current recording frequency (frames per second).
-        features: The dictionary of features for the current recording session.
+        dataset (`LeRobotDataset`): Existing dataset being appended to.
+        robot (`Robot`): Robot the new episodes will be recorded from.
+        fps (`int`): Recording frequency to compare against the dataset's.
+        features (`dict`): Feature schema to compare against the dataset's.
 
     Raises:
         ValueError: If any of the checked metadata fields do not match.

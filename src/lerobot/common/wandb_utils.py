@@ -59,6 +59,17 @@ def cfg_to_group(
 
 
 def get_wandb_run_id_from_filesystem(log_dir: Path) -> str:
+    """Recover the WandB run id of a previous run from its local log directory, for resumption.
+
+    Args:
+        log_dir (`Path`): Training output directory containing the `wandb/` log folder.
+
+    Returns:
+        `str`: The recovered WandB run id.
+
+    Raises:
+        RuntimeError: If the run id can't be found (no or ambiguous `wandb/latest-run/run-*` file).
+    """
     # Get the WandB run ID.
     paths = glob(str(log_dir / "wandb/latest-run/run-*"))
     if len(paths) != 1:
@@ -79,6 +90,12 @@ class WandBLogger:
     """A helper class to log object using wandb."""
 
     def __init__(self, cfg: TrainPipelineConfig):
+        """Initialize a WandB run for `cfg`, resuming a previous run when `cfg.resume` is set.
+
+        Args:
+            cfg (`TrainPipelineConfig`): Training configuration. `cfg.wandb.run_id` is set to the
+                created (or resumed) run's id as a side effect.
+        """
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
@@ -162,6 +179,20 @@ class WandBLogger:
     def log_dict(
         self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None
     ):
+        """Log a dict of scalar metrics to WandB under the `{mode}/` prefix.
+
+        Args:
+            d (`dict`): Metrics to log. Non-`int`/`float`/`str` values are skipped with a warning.
+            step (`int | None`, *optional*): WandB step to log at. Required unless `custom_step_key`
+                is set.
+            mode (`str`, *optional*, defaults to `"train"`): Either `"train"` or `"eval"`.
+            custom_step_key (`str | None`, *optional*): Alternate step key to log under, for metrics
+                that advance on a different cadence than the default WandB step (e.g. async RL).
+
+        Raises:
+            ValueError: If `mode` isn't `"train"`/`"eval"`, or neither `step` nor `custom_step_key`
+                is provided.
+        """
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
         if step is None and custom_step_key is None:
@@ -202,6 +233,16 @@ class WandBLogger:
                 self._wandb.log(data=batch_data, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
+        """Log a video file to WandB under the `{mode}/video` key.
+
+        Args:
+            video_path (`str`): Path to the video file to upload.
+            step (`int`): WandB step to log at.
+            mode (`str`, *optional*, defaults to `"train"`): Either `"train"` or `"eval"`.
+
+        Raises:
+            ValueError: If `mode` isn't `"train"`/`"eval"`.
+        """
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
 
