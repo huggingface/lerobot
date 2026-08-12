@@ -126,6 +126,24 @@ class VLABenchEnv(gym.Env):
         max_episode_steps: int = DEFAULT_MAX_EPISODE_STEPS,
         action_mode: str = "eef",
     ):
+        """Build the env wrapper (the dm_control simulator itself is created lazily on first use).
+
+        Args:
+            task (`str`, *optional*, defaults to `"select_fruit"`): VLABench task name.
+            obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`): Observation type:
+                `"pixels"` or `"pixels_agent_pos"` (`"state"` is not implemented).
+            render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+            render_resolution (`tuple[int, int]`, *optional*, defaults to `(480, 480)`):
+                `(height, width)` of the rendered camera observations.
+            robot (`str`, *optional*, defaults to `"franka"`): Robot embodiment to simulate.
+            max_episode_steps (`int`, *optional*): Maximum number of steps per episode.
+            action_mode (`str`, *optional*, defaults to `"eef"`): Action space: end-effector
+                (`"eef"`) or joint-space control.
+
+        Raises:
+            NotImplementedError: If `obs_type` is `"state"`.
+            ValueError: If `obs_type` is otherwise unsupported.
+        """
         super().__init__()
         self.task = task
         self.obs_type = obs_type
@@ -422,6 +440,15 @@ class VLABenchEnv(gym.Env):
         return ctrl
 
     def reset(self, seed=None, **kwargs) -> tuple[RobotObservation, dict[str, Any]]:
+        """Reset the episode, re-seeding the inner dm_control RNGs when `seed` is given.
+
+        Args:
+            seed (`int | None`, *optional*): Random seed for the episode.
+            **kwargs: Unused; accepted for Gymnasium interface compatibility.
+
+        Returns:
+            tuple: `(observation, info)`, matching the Gymnasium `reset` contract.
+        """
         self._ensure_env()
         assert self._env is not None
         super().reset(seed=seed)
@@ -436,10 +463,11 @@ class VLABenchEnv(gym.Env):
         return observation, info
 
     def _seed_inner_env(self, seed: int) -> None:
-        """Propagate `seed` to the inner dm_control env. `Environment.reset()`
-        doesn't accept a seed, so we re-seed the task and environment
-        `RandomState`s directly. Best-effort: silently skipped when the
-        expected attributes are absent on a given VLABench version.
+        """Propagate `seed` to the inner dm_control env.
+
+        `Environment.reset()` doesn't accept a seed, so we re-seed the task and environment
+        `RandomState`s directly. Best-effort: silently skipped when the expected attributes are
+        absent on a given VLABench version.
         """
         for owner_attr, rng_attr in (("task", "random"), (None, "_random_state")):
             owner = getattr(self._env, owner_attr) if owner_attr else self._env
@@ -449,6 +477,20 @@ class VLABenchEnv(gym.Env):
                 rng_seed(seed)
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        """Apply `action` and advance the simulation by one step.
+
+        Args:
+            action (`np.ndarray`): 1-D action array of shape `(action_dim,)`.
+
+        Returns:
+            tuple: `(observation, reward, terminated, truncated, info)`, matching the Gymnasium
+            `step` contract. A `PhysicsError` (diverged MuJoCo integrator) is treated as a graceful
+            termination rather than a hard crash, dropping the stale env so the next `reset()`
+            rebuilds it. Auto-resets on termination.
+
+        Raises:
+            ValueError: If `action` is not 1-D, or `action_mode` is unknown.
+        """
         from dm_control.rl.control import PhysicsError  # type: ignore[import-untyped]
 
         self._ensure_env()
@@ -510,11 +552,13 @@ class VLABenchEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def render(self) -> np.ndarray:
+        """Return the main camera's current frame."""
         self._ensure_env()
         obs = self._get_obs()
         return obs["pixels"]["image"]
 
     def close(self):
+        """Close the underlying dm_control environment, if one was created."""
         if self._env is not None:
             self._env.close()
             self._env = None
@@ -529,8 +573,7 @@ def create_vlabench_envs(
     gym_kwargs: dict[str, Any] | None = None,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
-    """
-    Create vectorized VLABench environments with a consistent return shape.
+    """Create vectorized VLABench environments with a consistent return shape.
 
     Returns:
         dict[suite_name][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)

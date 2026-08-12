@@ -76,6 +76,12 @@ OBS_DIM = 4
 
 
 class MetaworldEnv(gym.Env):
+    """Gymnasium wrapper around a single Meta-World MT1 task.
+
+    The underlying simulator is deferred and created lazily on the first use inside the worker
+    subprocess, so each worker gets its own clean rendering context.
+    """
+
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
 
     def __init__(
@@ -89,6 +95,25 @@ class MetaworldEnv(gym.Env):
         visualization_width=640,
         visualization_height=480,
     ):
+        """Build the env wrapper (the simulator itself is created lazily on first use).
+
+        Args:
+            task: Meta-World task name, with or without a `"metaworld-"` prefix.
+            camera_name (*optional*, defaults to `"corner2"`): Meta-World camera name to render.
+            obs_type (*optional*, defaults to `"pixels"`): Observation type: `"pixels"` or
+                `"pixels_agent_pos"` (`"state"` is not implemented).
+            render_mode (*optional*, defaults to `"rgb_array"`): Gym render mode.
+            observation_width (*optional*, defaults to 480): Width of rendered camera observations.
+            observation_height (*optional*, defaults to 480): Height of rendered camera
+                observations.
+            visualization_width (*optional*, defaults to 640): Width of the rendered visualization
+                frame.
+            visualization_height (*optional*, defaults to 480): Height of the rendered
+                visualization frame.
+
+        Raises:
+            NotImplementedError: If `obs_type` is `"state"`.
+        """
         super().__init__()
         self.task = task.replace("metaworld-", "")
         self.obs_type = obs_type
@@ -159,8 +184,7 @@ class MetaworldEnv(gym.Env):
         self._env = env
 
     def render(self) -> np.ndarray:
-        """
-        Render the current environment frame.
+        """Render the current environment frame.
 
         Returns:
             np.ndarray: The rendered RGB image from the environment.
@@ -208,11 +232,11 @@ class MetaworldEnv(gym.Env):
         seed: int | None = None,
         **kwargs,
     ) -> tuple[RobotObservation, dict[str, Any]]:
-        """
-        Reset the environment to its initial state.
+        """Reset the environment to its initial state.
 
         Args:
-            seed (Optional[int]): Random seed for environment initialization.
+            seed (`int | None`, *optional*): Random seed for environment initialization.
+            kwargs (`Any`, *optional*): Unused; accepted for Gymnasium interface compatibility.
 
         Returns:
             observation (RobotObservation): The initial formatted observation.
@@ -231,8 +255,7 @@ class MetaworldEnv(gym.Env):
         return observation, info
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
-        """
-        Perform one environment step.
+        """Perform one environment step.
 
         Args:
             action (np.ndarray): The action to execute, must be 1-D with shape (action_dim,).
@@ -276,6 +299,7 @@ class MetaworldEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def close(self):
+        """Close the underlying Meta-World simulator, if one was created."""
         if self._env is not None:
             self._env.close()
 
@@ -289,11 +313,11 @@ def create_metaworld_envs(
     gym_kwargs: dict[str, Any] | None = None,
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
-    """
-    Create vectorized Meta-World environments with a consistent return shape.
+    """Create vectorized Meta-World environments with a consistent return shape.
 
     Returns:
         dict[task_group][task_id] -> vec_env (env_cls([...]) with exactly n_envs factories)
+
     Notes:
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - `task` can be a single difficulty group (e.g., "easy", "medium", "hard") or a comma-separated list.

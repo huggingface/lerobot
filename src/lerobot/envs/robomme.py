@@ -59,6 +59,18 @@ class RoboMMEGymEnv(gym.Env):
         episode_idx: int = 0,
         max_steps: int = 300,
     ):
+        """Build the env wrapper and its `BenchmarkEnvBuilder`.
+
+        Args:
+            task (`str`, *optional*, defaults to `"PickXtimes"`): RoboMME task name.
+            action_space_type (`str`, *optional*, defaults to `"joint_angle"`): `"joint_angle"`
+                (8-d) or `"ee_pose"` (7-d).
+            dataset (`str`, *optional*, defaults to `"test"`): Dataset split: `"train"`, `"val"`, or
+                `"test"`.
+            episode_idx (`int`, *optional*, defaults to 0): Episode index within the dataset split,
+                used to build the per-episode env in `reset`.
+            max_steps (`int`, *optional*, defaults to 300): Maximum steps per episode.
+        """
         super().__init__()
         from robomme.env_record_wrapper import BenchmarkEnvBuilder
 
@@ -98,6 +110,16 @@ class RoboMMEGymEnv(gym.Env):
         )
 
     def reset(self, *, seed=None, options=None):
+        """Build the per-episode env (via `BenchmarkEnvBuilder`) and reset it.
+
+        Args:
+            seed (`int | None`, *optional*): Random seed for the episode.
+            options (`dict | None`, *optional*): Unused; accepted for Gymnasium interface
+                compatibility.
+
+        Returns:
+            tuple: `(observation, info)`, matching the Gymnasium `reset` contract.
+        """
         super().reset(seed=seed)
         self._env = self._builder.make_env_for_episode(
             episode_idx=self._episode_idx,
@@ -108,6 +130,15 @@ class RoboMMEGymEnv(gym.Env):
         return self._convert_obs(obs), self._convert_info(info)
 
     def step(self, action):
+        """Apply `action` and advance the simulation by one step.
+
+        Args:
+            action (`np.ndarray`): Action array of shape `(action_dim,)`.
+
+        Returns:
+            tuple: `(observation, reward, terminated, truncated, info)`, matching the Gymnasium
+            `step` contract. `info["is_success"]` is set from the underlying env's `"status"`.
+        """
         obs, reward, terminated, truncated, info = self._env.step(action)
         self._last_raw_obs = obs
 

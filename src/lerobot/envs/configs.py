@@ -54,6 +54,27 @@ def _make_vec_env_cls(use_async: bool, n_envs: int):
 
 @dataclass
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
+    """Base configuration for simulation/evaluation environments.
+
+    Use ``--env.type=<name>`` on the CLI to select an environment.
+
+    Args:
+        task (`str | None`, *optional*):
+            Task name or id passed through to `gym.make()` (via `gym_id`) or to benchmark-specific
+            env-creation code.
+        fps (`int`, *optional*, defaults to 30):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+    """
+
     task: str | None = None
     fps: int = 30
     features: dict[str, PolicyFeature] = field(default_factory=dict)
@@ -63,21 +84,23 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def type(self) -> str:
+        """The registered name of this environment (e.g. `"aloha"`, `"pusht"`)."""
         return self.get_choice_name(self.__class__)
 
     @property
     def package_name(self) -> str:
-        """Package name to import if environment not found in gym registry"""
+        """Package name to import if environment not found in gym registry."""
         return f"gym_{self.type}"
 
     @property
     def gym_id(self) -> str:
-        """ID string used in gym.make() to instantiate the environment"""
+        """ID string used in gym.make() to instantiate the environment."""
         return f"{self.package_name}/{self.task}"
 
     @property
     @abc.abstractmethod
     def gym_kwargs(self) -> dict:
+        """Keyword arguments passed to `gym.make()` when constructing the environment."""
         raise NotImplementedError()
 
     def create_envs(
@@ -134,19 +157,66 @@ class HubEnvConfig(EnvConfig):
 
     Hub environments download and execute remote code from the HF Hub.
     The hub_path points to a repository containing an env.py with a make_env function.
+
+    Args:
+        task (`str | None`, *optional*):
+            Task name or id, forwarded to the hub-hosted `make_env`.
+        fps (`int`, *optional*, defaults to 30):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        hub_path (`str | None`, *optional*):
+            Required: Hub repository to load the environment from, e.g. `"username/repo"` or
+            `"username/repo@branch:file.py"`.
     """
 
-    hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
+    hub_path: str | None = None
 
     @property
     def gym_kwargs(self) -> dict:
-        # Not used for hub environments - the hub's make_env handles everything
+        """See [`~envs.EnvConfig.gym_kwargs`]. Unused: the hub's `make_env` handles everything."""
         return {}
 
 
 @EnvConfig.register_subclass("aloha")
 @dataclass
 class AlohaEnv(EnvConfig):
+    """Configuration for the ALOHA bimanual manipulation simulation environment.
+
+    Args:
+        task (`str | None`, *optional*, defaults to `"AlohaInsertion-v0"`):
+            gym-aloha task id.
+        fps (`int`, *optional*, defaults to 50):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `obs_type`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 400):
+            Maximum number of steps per episode, passed to `gym.make()` as `max_episode_steps`.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (image only) or `"pixels_agent_pos"` (image + joint state).
+        observation_height (`int`, *optional*, defaults to 480):
+            Height of the rendered camera observation.
+        observation_width (`int`, *optional*, defaults to 640):
+            Width of the rendered camera observation.
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+    """
+
     task: str | None = "AlohaInsertion-v0"
     fps: int = 50
     episode_length: int = 400
@@ -169,6 +239,7 @@ class AlohaEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        """Extend `features` with the image and/or state features implied by `obs_type`."""
         if self.obs_type == "pixels":
             self.features["top"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
@@ -181,6 +252,7 @@ class AlohaEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
@@ -191,6 +263,40 @@ class AlohaEnv(EnvConfig):
 @EnvConfig.register_subclass("pusht")
 @dataclass
 class PushtEnv(EnvConfig):
+    """Configuration for the PushT block-pushing simulation environment.
+
+    Args:
+        task (`str | None`, *optional*, defaults to `"PushT-v0"`):
+            gym-pusht task id.
+        fps (`int`, *optional*, defaults to 10):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `obs_type`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 300):
+            Maximum number of steps per episode, passed to `gym.make()` as `max_episode_steps`.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels_agent_pos"` (image + agent position) or
+            `"environment_state_agent_pos"` (environment state + agent position).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        visualization_width (`int`, *optional*, defaults to 384):
+            Width of the rendered visualization frame.
+        visualization_height (`int`, *optional*, defaults to 384):
+            Height of the rendered visualization frame.
+        observation_height (`int`, *optional*, defaults to 384):
+            Height of the rendered camera observation.
+        observation_width (`int`, *optional*, defaults to 384):
+            Width of the rendered camera observation.
+    """
+
     task: str | None = "PushT-v0"
     fps: int = 10
     episode_length: int = 300
@@ -216,6 +322,7 @@ class PushtEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        """Extend `features` with the image or environment-state feature implied by `obs_type`."""
         if self.obs_type == "pixels_agent_pos":
             self.features["pixels"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
@@ -225,6 +332,7 @@ class PushtEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
@@ -236,6 +344,15 @@ class PushtEnv(EnvConfig):
 
 @dataclass
 class ImagePreprocessingConfig:
+    """Configuration for cropping and resizing observation images.
+
+    Args:
+        crop_params_dict (`dict[str, tuple[int, int, int, int]] | None`, *optional*):
+            Maps observation keys to crop parameters `(top, left, height, width)`.
+        resize_size (`tuple[int, int] | None`, *optional*):
+            Target `(height, width)` to resize cropped images to.
+    """
+
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None
     resize_size: tuple[int, int] | None = None
 
@@ -304,7 +421,31 @@ class HILSerlProcessorConfig:
 @EnvConfig.register_subclass(name="gym_manipulator")
 @dataclass
 class HILSerlRobotEnvConfig(EnvConfig):
-    """Configuration for the HILSerlRobotEnv environment."""
+    """Configuration for the HILSerlRobotEnv environment.
+
+    Args:
+        task (`str | None`, *optional*):
+            Task name or id.
+        fps (`int`, *optional*, defaults to 30):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        robot (`RobotConfig | None`, *optional*):
+            Robot hardware configuration.
+        teleop (`TeleoperatorConfig | None`, *optional*):
+            Teleoperator hardware configuration, for human-in-the-loop intervention.
+        processor (`HILSerlProcessorConfig`, *optional*):
+            Observation/action processing pipeline configuration.
+        name (`str`, *optional*, defaults to `"real_robot"`):
+            Environment name.
+    """
 
     robot: RobotConfig | None = None
     teleop: TeleoperatorConfig | None = None
@@ -314,15 +455,62 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]. Unused: this env drives real hardware, not `gym.make()`."""
         return {}
 
 
 @EnvConfig.register_subclass("libero")
 @dataclass
 class LiberoEnv(EnvConfig):
-    task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
+    """Configuration for the LIBERO manipulation benchmark.
+
+    Args:
+        task (`str`, *optional*, defaults to `"libero_10"`):
+            LIBERO task suite (e.g. `"libero_10"`, `"libero_spatial"`, `"libero_object"`).
+        fps (`int`, *optional*, defaults to 20):
+            Control frequency, in Hz. Must match robosuite's default `control_freq`.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `obs_type`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        task_ids (`list[int] | None`, *optional*):
+            Subset of task ids within the suite to evaluate. `None` evaluates all tasks.
+        episode_length (`int | None`, *optional*):
+            Maximum number of steps per episode. `None` uses the benchmark's default.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (images only) or `"pixels_agent_pos"` (images + robot
+            state).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        camera_name (`str`, *optional*, defaults to `"agentview_image,robot0_eye_in_hand_image"`):
+            Comma-separated robosuite camera names to render.
+        init_states (`bool`, *optional*, defaults to `True`):
+            Whether to reset episodes from LIBERO's precomputed initial states.
+        hard_reset (`bool`, *optional*, defaults to `True`):
+            Whether to fully reset the simulator between episodes. Requires `init_states=True` when
+            `False`.
+        camera_name_mapping (`dict[str, str] | None`, *optional*):
+            Maps LIBERO's raw camera names to the short names used in `features_map`.
+        observation_height (`int`, *optional*, defaults to 360):
+            Height of the rendered camera observation.
+        observation_width (`int`, *optional*, defaults to 360):
+            Width of the rendered camera observation.
+        is_libero_plus (`bool`, *optional*, defaults to `False`):
+            Whether this is a LIBERO-plus robustness-benchmark evaluation (set automatically by
+            `LiberoPlusEnv`).
+        control_mode (`str`, *optional*, defaults to `"relative"`):
+            Action control mode: `"relative"` or `"absolute"`.
+    """
+
+    task: str = "libero_10"
     task_ids: list[int] | None = None
-    fps: int = 20  # Must match robosuite's default control_freq (20 Hz)
+    fps: int = 20
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
@@ -355,6 +543,12 @@ class LiberoEnv(EnvConfig):
     control_mode: str = "relative"  # or "absolute"
 
     def __post_init__(self):
+        """Validate field combinations and extend `features`/`features_map` based on `obs_type`.
+
+        Raises:
+            ValueError: If `fps` is non-positive, `hard_reset=False` without `init_states=True`, or
+                `obs_type` is unsupported.
+        """
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
         if not self.hard_reset and not self.init_states:
@@ -413,6 +607,7 @@ class LiberoEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         kwargs: dict[str, Any] = {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
@@ -426,6 +621,11 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """See [`~envs.EnvConfig.create_envs`].
+
+        Raises:
+            ValueError: If `task` is unset.
+        """
         from .libero import create_libero_envs
 
         if self.task is None:
@@ -445,6 +645,7 @@ class LiberoEnv(EnvConfig):
         )
 
     def get_env_processors(self):
+        """See [`~envs.EnvConfig.get_env_processors`]."""
         return (
             PolicyProcessorPipeline(steps=[LiberoProcessorStep()]),
             PolicyProcessorPipeline(steps=[]),
@@ -454,7 +655,35 @@ class LiberoEnv(EnvConfig):
 @EnvConfig.register_subclass("metaworld")
 @dataclass
 class MetaworldEnv(EnvConfig):
-    task: str = "metaworld-push-v2"  # add all tasks
+    """Configuration for the Meta-World manipulation benchmark.
+
+    Args:
+        task (`str`, *optional*, defaults to `"metaworld-push-v2"`):
+            Meta-World task id.
+        fps (`int`, *optional*, defaults to 80):
+            Control frequency, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `obs_type`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 400):
+            Maximum number of steps per episode.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (image only) or `"pixels_agent_pos"` (image + agent
+            position).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        multitask_eval (`bool`, *optional*, defaults to `True`):
+            Whether to evaluate across the full multi-task benchmark suite.
+    """
+
+    task: str = "metaworld-push-v2"
     fps: int = 80
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
@@ -475,6 +704,11 @@ class MetaworldEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        """Extend `features` with the image and/or state features implied by `obs_type`.
+
+        Raises:
+            ValueError: If `obs_type` is unsupported.
+        """
         if self.obs_type == "pixels":
             self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
 
@@ -487,12 +721,18 @@ class MetaworldEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """See [`~envs.EnvConfig.create_envs`].
+
+        Raises:
+            ValueError: If `task` is unset.
+        """
         from .metaworld import create_metaworld_envs
 
         if self.task is None:
@@ -509,6 +749,49 @@ class MetaworldEnv(EnvConfig):
 @EnvConfig.register_subclass("robocasa")
 @dataclass
 class RoboCasaEnv(EnvConfig):
+    """Configuration for the RoboCasa365 kitchen manipulation benchmark.
+
+    Args:
+        task (`str`, *optional*, defaults to `"CloseFridge"`):
+            RoboCasa task name.
+        fps (`int`, *optional*, defaults to 20):
+            Control frequency, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` with one visual feature per camera in `camera_name`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int | None`, *optional*):
+            Maximum number of steps per episode. `None` uses the benchmark's default.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (images only) or `"pixels_agent_pos"` (images + robot
+            state).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        camera_name (`str`, *optional*, defaults to `"robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"`):
+            Comma-separated RoboCasa camera names to render.
+        observation_height (`int`, *optional*, defaults to 256):
+            Height of the rendered camera observation.
+        observation_width (`int`, *optional*, defaults to 256):
+            Width of the rendered camera observation.
+        visualization_height (`int`, *optional*, defaults to 512):
+            Height of the rendered visualization frame.
+        visualization_width (`int`, *optional*, defaults to 512):
+            Width of the rendered visualization frame.
+        split (`str | None`, *optional*):
+            Dataset split to evaluate on. `None` uses the benchmark's default.
+        obj_registries (`list[str]`, *optional*, defaults to `["lightwheel"]`):
+            Object-mesh registries to sample from. Upstream default is `("objaverse", "lightwheel")`,
+            but objaverse is ~30GB and the CI image only ships the lightwheel pack. Override to
+            include objaverse once you've run
+            `python -m robocasa.scripts.download_kitchen_assets --type objaverse` locally.
+    """
+
     task: str = "CloseFridge"
     fps: int = 20
     episode_length: int | None = None
@@ -520,11 +803,6 @@ class RoboCasaEnv(EnvConfig):
     visualization_height: int = 512
     visualization_width: int = 512
     split: str | None = None
-    # Object-mesh registries to sample from. Upstream default is
-    # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
-    # only ships the lightwheel pack. Override to include objaverse once
-    # you've run `python -m robocasa.scripts.download_kitchen_assets
-    # --type objaverse` locally.
     obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
@@ -532,6 +810,11 @@ class RoboCasaEnv(EnvConfig):
     features_map: dict[str, str] = field(default_factory=lambda: {ACTION: ACTION, "agent_pos": OBS_STATE})
 
     def __post_init__(self):
+        """Extend `features`/`features_map` with one visual feature per camera in `camera_name`.
+
+        Raises:
+            ValueError: If `obs_type` is unsupported.
+        """
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
@@ -552,6 +835,7 @@ class RoboCasaEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         kwargs: dict[str, Any] = {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
@@ -565,6 +849,11 @@ class RoboCasaEnv(EnvConfig):
         return kwargs
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """See [`~envs.EnvConfig.create_envs`].
+
+        Raises:
+            ValueError: If `task` is unset.
+        """
         from .robocasa import create_robocasa_envs
 
         if self.task is None:
@@ -584,6 +873,38 @@ class RoboCasaEnv(EnvConfig):
 @EnvConfig.register_subclass("vlabench")
 @dataclass
 class VLABenchEnv(EnvConfig):
+    """Configuration for the VLABench manipulation benchmark.
+
+    Args:
+        task (`str`, *optional*, defaults to `"select_fruit"`):
+            VLABench task name.
+        fps (`int`, *optional*, defaults to 10):
+            Control frequency, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `obs_type`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 500):
+            Maximum number of steps per episode, passed to `gym.make()` as `max_episode_steps`.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (images only) or `"pixels_agent_pos"` (images + robot
+            state).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        render_resolution (`tuple[int, int]`, *optional*, defaults to `(480, 480)`):
+            `(height, width)` of the rendered camera observations.
+        robot (`str`, *optional*, defaults to `"franka"`):
+            Robot embodiment to simulate.
+        action_mode (`str`, *optional*, defaults to `"eef"`):
+            Action space: end-effector (`"eef"`) or joint-space control.
+    """
+
     task: str = "select_fruit"
     fps: int = 10
     episode_length: int = 500
@@ -608,6 +929,11 @@ class VLABenchEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        """Extend `features` with the image and/or state features implied by `obs_type`.
+
+        Raises:
+            ValueError: If `obs_type` is unsupported.
+        """
         h, w = self.render_resolution
         if self.obs_type == "pixels":
             self.features["pixels/image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(h, w, 3))
@@ -623,6 +949,7 @@ class VLABenchEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]."""
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
@@ -633,6 +960,11 @@ class VLABenchEnv(EnvConfig):
         }
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """See [`~envs.EnvConfig.create_envs`].
+
+        Raises:
+            ValueError: If `task` is unset.
+        """
         from .vlabench import create_vlabench_envs
 
         if self.task is None:
@@ -649,6 +981,75 @@ class VLABenchEnv(EnvConfig):
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):
+    """Configuration for NVIDIA Isaac Lab Arena hub-hosted environments.
+
+    Args:
+        hub_path (`str`, *optional*, defaults to `"nvidia/isaaclab-arena-envs"`):
+            Hugging Face Hub repository containing the `env.py` with a `make_env` function.
+        task (`str | None`, *optional*, defaults to `"Reach out to the microwave and open it."`):
+            Task/instruction string.
+        fps (`int`, *optional*, defaults to 30):
+            Control frequency of the environment, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Populated in `__post_init__` from `action_dim`/`state_dim`/`camera_keys`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names. Populated alongside `features`.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 300):
+            Maximum number of steps per episode.
+        num_envs (`int`, *optional*, defaults to 1):
+            Number of parallel simulation environments.
+        embodiment (`str | None`, *optional*, defaults to `"gr1_pink"`):
+            Robot embodiment to simulate.
+        object (`str | None`, *optional*, defaults to `"power_drill"`):
+            Manipulated object identifier.
+        mimic (`bool`, *optional*, defaults to `False`):
+            Whether to enable Isaac Lab Mimic data-generation mode.
+        teleop_device (`str | None`, *optional*):
+            Teleoperation device identifier, when driving the environment interactively.
+        seed (`int | None`, *optional*, defaults to 42):
+            Random seed for the simulation.
+        device (`str | None`, *optional*, defaults to `"cuda:0"`):
+            Torch/Isaac Lab device to run the simulation on.
+        disable_fabric (`bool`, *optional*, defaults to `False`):
+            Whether to disable Isaac Sim's Fabric interface.
+        enable_cameras (`bool`, *optional*, defaults to `False`):
+            Whether to enable camera rendering. Required for `camera_keys` to populate features.
+        headless (`bool`, *optional*, defaults to `False`):
+            Whether to run the simulator without a GUI window.
+        enable_pinocchio (`bool`, *optional*, defaults to `True`):
+            Whether to enable Pinocchio-based inverse kinematics.
+        environment (`str | None`, *optional*, defaults to `"gr1_microwave"`):
+            Isaac Lab Arena environment/scene identifier.
+        state_dim (`int`, *optional*, defaults to 54):
+            Dimension of the proprioceptive state feature.
+        action_dim (`int`, *optional*, defaults to 36):
+            Dimension of the action feature.
+        camera_height (`int`, *optional*, defaults to 512):
+            Height of rendered camera observations.
+        camera_width (`int`, *optional*, defaults to 512):
+            Width of rendered camera observations.
+        video (`bool`, *optional*, defaults to `False`):
+            Whether to record video during rollouts.
+        video_length (`int`, *optional*, defaults to 100):
+            Number of frames per recorded video.
+        video_interval (`int`, *optional*, defaults to 200):
+            Number of steps between recorded videos.
+        state_keys (`str`, *optional*, defaults to `"robot_joint_pos"`):
+            Comma-separated state observation keys, e.g. `"robot_joint_pos,left_eef_pos"`.
+        camera_keys (`str | None`, *optional*):
+            Comma-separated camera observation keys, e.g. `"robot_pov_cam_rgb,front_cam_rgb"`. `None`
+            or `""` for environments without cameras.
+        kwargs (`dict | None`, *optional*):
+            Extra keyword arguments dynamically set as fields on this config in `__post_init__` (for
+            fields not otherwise declared here), then cleared.
+    """
+
     hub_path: str = "nvidia/isaaclab-arena-envs"
     episode_length: int = 300
     num_envs: int = 1
@@ -671,16 +1072,14 @@ class IsaaclabArenaEnv(HubEnvConfig):
     video: bool = False
     video_length: int = 100
     video_interval: int = 200
-    # Comma-separated keys, e.g., "robot_joint_pos,left_eef_pos"
     state_keys: str = "robot_joint_pos"
-    # Comma-separated keys, e.g., "robot_pov_cam_rgb,front_cam_rgb"
-    # Set to None or "" for environments without cameras
     camera_keys: str | None = None
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     kwargs: dict | None = None
 
     def __post_init__(self):
+        """Apply `kwargs` overrides, then populate `features`/`features_map`."""
         if self.kwargs:
             # dynamically convert kwargs to fields in the dataclass
             # NOTE! the new fields will not bee seen by the dataclass repr
@@ -711,9 +1110,15 @@ class IsaaclabArenaEnv(HubEnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]. Unused: the hub's `make_env` handles everything."""
         return {}
 
     def get_env_processors(self):
+        """See [`~envs.EnvConfig.get_env_processors`].
+
+        Raises:
+            ValueError: If neither `state_keys` nor `camera_keys` resolves to any key.
+        """
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
         camera_keys = tuple(k.strip() for k in (self.camera_keys or "").split(",") if k.strip())
         if not state_keys and not camera_keys:
@@ -761,23 +1166,52 @@ class RoboTwinEnvConfig(EnvConfig):
 
     See: https://robotwin-platform.github.io
     Dataset: https://huggingface.co/datasets/lerobot/robotwin_unified
+
+    Args:
+        task (`str`, *optional*, defaults to `"beat_block_hammer"`):
+            Single task name, or a comma-separated list of tasks.
+        fps (`int`, *optional*, defaults to 25):
+            Control frequency, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Extended in `__post_init__` based on `action_mode`/`obs_type`/`camera_names`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 1200):
+            Maximum number of steps per episode.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`):
+            Observation type: `"pixels"` (images only) or `"pixels_agent_pos"` (images + robot
+            state).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`):
+            Gym render mode.
+        camera_names (`str`, *optional*, defaults to `"head_camera,left_camera,right_camera"`):
+            Comma-separated camera names from RoboTwin's aloha-agilex embodiment: `head_camera`
+            (torso-mounted) plus `left_camera`/`right_camera` (wrists).
+        observation_height (`int`, *optional*, defaults to 240):
+            Height of the rendered camera observation. Must match the D435 dims in
+            `task_config/demo_clean.yml`, since gym's vector-env concatenate pre-allocates buffers
+            of this shape.
+        observation_width (`int`, *optional*, defaults to 320):
+            Width of the rendered camera observation. See `observation_height`.
+        action_mode (`str`, *optional*, defaults to `"joint"`):
+            `"joint"` for 14-d joint-space control, or `"ee"` for 16-d end-effector-pose deltas
+            executed via CuRobo IK (for world-model policies like LingBot-VA that predict per-arm
+            xyz+quaternion+gripper poses).
     """
 
-    task: str = "beat_block_hammer"  # single task or comma-separated list
+    task: str = "beat_block_hammer"
     fps: int = 25
     episode_length: int = 1200
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
-    # Available cameras from RoboTwin's aloha-agilex embodiment: head_camera
-    # (torso-mounted) + left_camera / right_camera (wrists).
     camera_names: str = "head_camera,left_camera,right_camera"
-    # Match the D435 dims in task_config/demo_clean.yml (_camera_config.yml).
-    # Gym's vector-env concatenate pre-allocates buffers of this shape, so it
-    # must equal what SAPIEN actually renders.
     observation_height: int = 240
     observation_width: int = 320
-    # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
-    # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
     action_mode: str = "joint"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
@@ -795,6 +1229,11 @@ class RoboTwinEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
+        """Extend `features`/`features_map` based on `action_mode`, `camera_names`, and `obs_type`.
+
+        Raises:
+            ValueError: If `obs_type` is unsupported.
+        """
         if self.action_mode == "ee":
             self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(16,))
         cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
@@ -821,9 +1260,15 @@ class RoboTwinEnvConfig(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]. Unused: RoboTwin envs are built directly, not via `gym.make()`."""
         return {}
 
     def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        """See [`~envs.EnvConfig.create_envs`].
+
+        Raises:
+            ValueError: If `task` is unset.
+        """
         from lerobot.envs.robotwin import create_robotwin_envs
 
         if not self.task:
@@ -854,13 +1299,37 @@ class RoboMMEEnv(EnvConfig):
 
     Requires the `robomme` git package installed separately (Linux only);
     see docker/Dockerfile.benchmark.robomme for the canonical install.
+
+    Args:
+        task (`str`, *optional*, defaults to `"PickXtimes"`):
+            RoboMME task name.
+        fps (`int`, *optional*, defaults to 10):
+            Control frequency, in Hz.
+        features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the environment's observation/action data.
+            Fully populated in `__post_init__` based on `action_space`.
+        features_map (`dict[str, str]`, *optional*):
+            Maps the environment's native observation/action keys to LeRobot's standard feature
+            names.
+        max_parallel_tasks (`int`, *optional*, defaults to 1):
+            Maximum number of distinct tasks evaluated in parallel, for multi-task benchmarks.
+        disable_env_checker (`bool`, *optional*, defaults to `True`):
+            Whether to disable Gymnasium's environment checker wrapper.
+        episode_length (`int`, *optional*, defaults to 300):
+            Maximum number of steps per episode.
+        action_space (`str`, *optional*, defaults to `"joint_angle"`):
+            Action space: `"joint_angle"` (8-d) or `"ee_pose"` (7-d).
+        dataset_split (`str`, *optional*, defaults to `"test"`):
+            Dataset split to evaluate on: `"train"`, `"val"`, or `"test"`.
+        task_ids (`list[int] | None`, *optional*):
+            Subset of task ids to evaluate. `None` evaluates all tasks.
     """
 
     task: str = "PickXtimes"
     fps: int = 10
     episode_length: int = 300
-    action_space: str = "joint_angle"  # or "ee_pose" (7-D)
-    dataset_split: str = "test"  # "train" | "val" | "test"
+    action_space: str = "joint_angle"
+    dataset_split: str = "test"
     task_ids: list[int] | None = None
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(
@@ -873,6 +1342,7 @@ class RoboMMEEnv(EnvConfig):
     )
 
     def __post_init__(self):
+        """Fully populate `features` based on `action_space`."""
         action_dim = 8 if self.action_space == "joint_angle" else 7
         self.features = {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
@@ -883,9 +1353,11 @@ class RoboMMEEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
+        """See [`~envs.EnvConfig.gym_kwargs`]. Unused: RoboMME envs are built directly, not via `gym.make()`."""
         return {}
 
     def create_envs(self, n_envs: int, use_async_envs: bool = True):
+        """See [`~envs.EnvConfig.create_envs`]."""
         from lerobot.envs.robomme import create_robomme_envs
 
         env_cls = _make_vec_env_cls(use_async_envs, n_envs)

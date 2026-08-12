@@ -24,6 +24,18 @@ from .utils import _call_make_env, _download_hub_file, _import_hub_module, _norm
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
+    """Instantiate an `EnvConfig` from its registered type name.
+
+    Args:
+        env_type (`str`): Registry key of the environment (e.g. `"aloha"`, `"pusht"`).
+        kwargs (`Any`, *optional*): Keyword arguments forwarded to the config class constructor.
+
+    Returns:
+        EnvConfig: An instance of the matching `EnvConfig` subclass.
+
+    Raises:
+        ValueError: If `env_type` is not registered.
+    """
     try:
         cls = EnvConfig.get_choice_class(env_type)
     except KeyError as err:
@@ -38,8 +50,7 @@ def make_env_pre_post_processors(
     env_cfg: EnvConfig,
     policy_cfg: Any,
 ) -> tuple[Any, Any]:
-    """
-    Create preprocessor and postprocessor pipelines for environment observations.
+    """Create preprocessor and postprocessor pipelines for environment observations.
 
     Returns a tuple of (preprocessor, postprocessor). By default, delegates to
     ``env_cfg.get_env_processors()``.  The XVLAConfig policy-specific override
@@ -68,12 +79,13 @@ def make_env(
         cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment to build locally,
             or a Hugging Face Hub repository identifier (e.g. `"username/repo"`). In the latter case,
             the repo must include a Python file (usually `env.py`).
-        n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
+        n_envs (int, optional, *optional*, defaults to 1): The number of parallelized env to return. Defaults to 1.
+        use_async_envs (bool, optional, *optional*, defaults to `False`): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
-        hub_cache_dir (str | None): Optional cache path for downloaded hub files.
-        trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
+        hub_cache_dir (str | None, *optional*): Optional cache path for downloaded hub files.
+        trust_remote_code (bool, *optional*, defaults to `False`): **Explicit consent** to execute remote code from the Hub.
             Default False — must be set to True to import/exec hub `env.py`.
+
     Raises:
         ValueError: if n_envs < 1
         ModuleNotFoundError: If the requested env package is not installed

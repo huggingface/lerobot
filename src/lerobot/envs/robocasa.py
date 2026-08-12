@@ -150,6 +150,34 @@ class RoboCasaEnv(gym.Env):
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
         episode_index: int = 0,
     ):
+        """Build the env wrapper (the simulator itself is created lazily on first use).
+
+        Args:
+            task (`str`): RoboCasa task name.
+            camera_name (`str | Sequence[str]`, *optional*): Camera name(s) to render.
+            obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`): Observation type:
+                `"pixels"` or `"pixels_agent_pos"`.
+            render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+            observation_width (`int`, *optional*, defaults to 256): Width of rendered camera
+                observations.
+            observation_height (`int`, *optional*, defaults to 256): Height of rendered camera
+                observations.
+            visualization_width (`int`, *optional*, defaults to 512): Width of the rendered
+                visualization frame.
+            visualization_height (`int`, *optional*, defaults to 512): Height of the rendered
+                visualization frame.
+            split (`str | None`, *optional*): Dataset split to evaluate on. `None` resolves to
+                `"all"` when the simulator is created.
+            episode_length (`int | None`, *optional*): Maximum steps per episode. `None` derives it
+                from the task via `_get_task_horizon`.
+            obj_registries (`Sequence[str]`, *optional*): Object-mesh registries to sample from.
+            episode_index (`int`, *optional*, defaults to 0): Per-worker index used to spread the
+                user-provided seed across factories so each sub-env explores a distinct layout even
+                when the same seed is passed to `reset()`.
+
+        Raises:
+            ValueError: If `obs_type` is not `"pixels"` or `"pixels_agent_pos"`.
+        """
         super().__init__()
         self.task = task
         self.obs_type = obs_type
@@ -257,11 +285,22 @@ class RoboCasaEnv(gym.Env):
         return {"pixels": images, "agent_pos": agent_pos}
 
     def render(self) -> np.ndarray:
+        """Return the current rendered frame from the underlying `RoboCasaGymEnv`."""
         self._ensure_env()
         assert self._env is not None
         return self._env.render()
 
     def reset(self, seed=None, **kwargs):
+        """Reset the episode, spreading `seed` across workers via `episode_index`.
+
+        Args:
+            seed (`int | None`, *optional*): Random seed for the episode. Offset by `episode_index`
+                so parallel workers don't all roll the same scene.
+            **kwargs: Unused; accepted for Gymnasium interface compatibility.
+
+        Returns:
+            tuple: `(observation, info)`, matching the Gymnasium `reset` contract.
+        """
         self._ensure_env()
         assert self._env is not None
         super().reset(seed=seed)
@@ -281,6 +320,18 @@ class RoboCasaEnv(gym.Env):
         return observation, info
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        """Apply `action` and advance the simulation by one step.
+
+        Args:
+            action (`np.ndarray`): 1-D action array of shape `(action_dim,)`.
+
+        Returns:
+            tuple: `(observation, reward, terminated, truncated, info)`, matching the Gymnasium
+            `step` contract. Auto-resets on termination.
+
+        Raises:
+            ValueError: If `action` is not 1-D.
+        """
         self._ensure_env()
         assert self._env is not None
         if action.ndim != 1:
@@ -308,6 +359,7 @@ class RoboCasaEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def close(self):
+        """Close the underlying `RoboCasaGymEnv`, if one was created."""
         if self._env is not None:
             self._env.close()
 
