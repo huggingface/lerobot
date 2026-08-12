@@ -312,6 +312,13 @@ def test_depth_marker_legacy_names(legacy_info, legacy_video_info):
     assert features_equal_for_merge({key: canonical}, {key: legacy})
     assert not features_equal_for_merge({key: canonical}, {key: _feature({})})
 
+    # Non-depth features must stay mergeable regardless of how "not depth" is spelled:
+    # legacy ``video.is_depth_map: False``, explicit ``is_depth_map: False``, or no marker.
+    assert features_equal_for_merge(
+        {key: _feature({"video.is_depth_map": False})}, {key: _feature({"is_depth_map": False})}
+    )
+    assert features_equal_for_merge({key: _feature({"is_depth_map": False})}, {key: _feature({})})
+
     meta_legacy = SimpleNamespace(features={key: legacy})
     meta_recent = SimpleNamespace(features={key: canonical})
     merged = merge_video_feature_info_for_aggregate([meta_legacy, meta_recent])

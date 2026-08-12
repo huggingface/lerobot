@@ -140,8 +140,7 @@ def canonicalize_depth_marker(feature: dict) -> None:
         video_info.pop("video.is_depth_map", None)
     if not video_info:
         feature.pop("video_info", None)
-    if depth:
-        info["is_depth_map"] = True
+    info["is_depth_map"] = depth
 
 
 def features_equal_for_merge(features_a: dict[str, dict], features_b: dict[str, dict]) -> bool:
