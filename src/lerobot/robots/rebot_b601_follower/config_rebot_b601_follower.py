@@ -100,6 +100,31 @@ class RebotB601FollowerConfig:
         }
     )
 
+    # --- Gripper multi-turn wrap handling -------------------------------------
+    # The Damiao multi-turn counter is volatile across power cycles: the single-turn
+    # absolute zero survives, but the turn count does not. The B601 gripper travel
+    # (~380 deg) exceeds one turn, so after a repower the gripper can report a
+    # position on a different 2*pi branch (e.g. +356.8 deg while physically closed
+    # in a [-270, 0] frame). Absolute gripper targets are then meaningless and any
+    # command drives the mechanism into its stop through the gear reduction.
+    #
+    # Policy applied at connect() when the gripper reads outside its joint limits
+    # (plus `gripper_wrap_margin_deg`):
+    #   "rehome" - close the gripper until it stalls against the mechanical stop and
+    #              re-zero there (matches the calibration convention closed == 0).
+    #   "abort"  - raise instead of connecting (operator must recalibrate).
+    #   "ignore" - log a warning and continue (NOT recommended).
+    gripper_wrap_policy: str = "rehome"
+    # Tolerance added around the gripper joint limits before a reading is considered
+    # wrapped, in degrees.
+    gripper_wrap_margin_deg: float = 30.0
+    # Re-homing sweep parameters: per-step increment [rad], velocity limit [rad/s],
+    # sustained-torque stall threshold [Nm], and max travel guard [rad].
+    gripper_rehome_step_rad: float = 0.05
+    gripper_rehome_vlim_rad_s: float = 0.5
+    gripper_rehome_stall_torque_nm: float = 0.8
+    gripper_rehome_max_travel_rad: float = 8.0
+
 
 @RobotConfig.register_subclass("rebot_b601_follower")
 @dataclass
