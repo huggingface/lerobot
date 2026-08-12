@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-frame Robometer progress and success curves for a LeRobot dataset.
+r"""Compute per-frame Robometer progress and success curves for a LeRobot dataset.
 
 For each episode, builds per-frame sub-samples using the frame-steps
 strategy from the Robometer eval server: for each original frame ``t``,
@@ -213,6 +213,7 @@ def compute_robometer_progress(
 
 
 def main():
+    """CLI entry point: compute per-frame Robometer progress/success curves and write a parquet file."""
     parser = argparse.ArgumentParser(
         description="Compute per-frame Robometer progress curves for RA-BC weighting.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

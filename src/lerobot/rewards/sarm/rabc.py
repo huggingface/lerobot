@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-RA-BC (Reward-Aligned Behavior Cloning) sample weighting implementation.
+"""RA-BC (Reward-Aligned Behavior Cloning) sample weighting implementation.
 
 This module implements the SampleWeighter protocol for RA-BC training,
 which weights training samples based on their task progress as measured
@@ -57,8 +56,7 @@ def resolve_hf_path(path: str | Path) -> Path:
 
 
 class RABCWeights(SampleWeighter):
-    """
-    Load precomputed SARM progress values and compute RA-BC weights during training.
+    """Load precomputed SARM progress values and compute RA-BC weights during training.
 
     This class implements the SampleWeighter ABC for use with the generic
     sample weighting infrastructure in lerobot.
@@ -69,14 +67,17 @@ class RABCWeights(SampleWeighter):
         - rabc_weight based on the delta (paper Eq. 8-9)
 
     Args:
-        progress_path: Path to parquet file with precomputed progress values.
-                      Supports HuggingFace URLs (hf://datasets/...).
-        chunk_size: Number of frames ahead for computing progress delta.
-        head_mode: Which SARM head to use ("sparse" or "dense").
-        kappa: Hard threshold for high-quality samples (default: 0.01).
-        epsilon: Small constant for numerical stability (default: 1e-6).
-        fallback_weight: Weight to use for frames without valid delta (default: 1.0).
-        device: Device to return tensors on.
+        progress_path (`str | pathlib.Path`): Path to parquet file with precomputed progress values.
+            Supports Hugging Face URLs (`hf://datasets/...`).
+        chunk_size (`int`, *optional*, defaults to 50): Number of frames ahead for computing progress
+            delta.
+        head_mode (`str`, *optional*, defaults to `"sparse"`): Which SARM head to use ("sparse" or
+            "dense").
+        kappa (`float`, *optional*, defaults to 0.01): Hard threshold for high-quality samples.
+        epsilon (`float`, *optional*, defaults to 1e-06): Small constant for numerical stability.
+        fallback_weight (`float`, *optional*, defaults to 1.0): Weight to use for frames without a
+            valid delta.
+        device (`torch.device | None`, *optional*): Device to return tensors on.
     """
 
     def __init__(
@@ -89,6 +90,10 @@ class RABCWeights(SampleWeighter):
         fallback_weight: float = 1.0,
         device: torch.device | None = None,
     ):
+        """Load the precomputed progress parquet and compute global delta statistics.
+
+        See the class docstring for argument descriptions.
+        """
         self.progress_path = resolve_hf_path(progress_path)
         self.chunk_size = chunk_size
         self.head_mode = head_mode
@@ -173,8 +178,7 @@ class RABCWeights(SampleWeighter):
             logging.warning("No valid progress deltas found, using default stats")
 
     def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
-        """
-        Compute RA-BC weights for a batch.
+        """Compute RA-BC weights for a batch.
 
         For each sample:
         1. Get progress at current frame
@@ -260,8 +264,7 @@ class RABCWeights(SampleWeighter):
         return future_progress - current_progress
 
     def _compute_weights(self, deltas: np.ndarray) -> np.ndarray:
-        """
-        Compute RA-BC weights from progress deltas.
+        """Compute RA-BC weights from progress deltas.
 
         Following paper Eq. 8-9:
         - Soft weight: ˜wi = clip((ri − (µ − 2σ)) / (4σ + ε), 0, 1)

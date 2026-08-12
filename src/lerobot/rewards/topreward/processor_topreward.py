@@ -139,10 +139,23 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
     _processor: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Load the Qwen-VL processor matching `vlm_name`."""
         require_package("transformers", extra="topreward")
         self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Encode `transition`'s frames and task into Qwen-VL tensors under `TOPREWARD_FEATURE_PREFIX`.
+
+        Args:
+            transition (`EnvTransition`): Must contain an observation dict with `image_key`, and
+                optionally a `task_key` entry in `complementary_data`.
+
+        Returns:
+            EnvTransition: `transition` with the encoded TOPReward tensors added to the observation.
+
+        Raises:
+            KeyError: If `image_key` is missing from the observation.
+        """
         observation = transition.get(TransitionKey.OBSERVATION)
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         if self.image_key not in observation:
@@ -175,7 +188,6 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
         The loop only builds per-sample chat strings. Tokenisation, padding,
         video preprocessing, and label construction are batched.
         """
-
         texts: list[str] = []
         video_metadata = [
             {
@@ -248,9 +260,11 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Return `features` unchanged; this step only transforms values, not the feature spec."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's constructor arguments, for serialization."""
         return {
             "vlm_name": self.vlm_name,
             "image_key": self.image_key,

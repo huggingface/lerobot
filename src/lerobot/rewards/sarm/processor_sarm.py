@@ -83,6 +83,15 @@ class SARMEncodingProcessorStep(ProcessorStep):
         dataset_meta=None,
         dataset_stats: dict | None = None,
     ):
+        """Build the step, resolving temporal-proportion lookups from `config`.
+
+        Args:
+            config (`SARMConfig`): Reward model configuration.
+            image_key (`str | None`, *optional*): Observation key of the camera view to encode.
+                Defaults to `config.image_key`.
+            dataset_meta (*optional*): Dataset metadata, used to resolve per-episode task/stage info.
+            dataset_stats (`dict | None`, *optional*): Dataset statistics for normalization.
+        """
         require_package("transformers", extra="sarm")
         require_package("faker", extra="sarm")
         require_package("pandas", extra="dataset")
@@ -93,8 +102,8 @@ class SARMEncodingProcessorStep(ProcessorStep):
         self.dataset_stats = dataset_stats
         self.annotation_mode = config.annotation_mode
 
-        # Helper to create temporal proportions dict
         def make_props_dict(names, props):
+            """Zip `names`/`props` into a `{name: proportion}` dict, or `None` if either is empty."""
             return dict(zip(names, props, strict=True)) if names and props else None
 
         # Sparse annotations (always needed)
@@ -258,8 +267,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         return annotations
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Encode images, text, and normalize states in the transition.
+        """Encode images, text, and normalize states in the transition.
 
         Implements SARM training data preparation:
         - Applies language perturbation (20% probability)
@@ -475,6 +483,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
 
     @property
     def training(self) -> bool:
+        """Whether this step is in training mode (enables rewind/language augmentations)."""
         return getattr(self, "_training_mode", True)
 
     def train(self, mode: bool = True):
@@ -496,7 +505,6 @@ class SARMEncodingProcessorStep(ProcessorStep):
         Returns:
             Encoded feature vectors with shape (B, T, 512)
         """
-
         batch_size, seq_length = images.shape[0], images.shape[1]
         images = images.reshape(batch_size * seq_length, *images.shape[2:])
 

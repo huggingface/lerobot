@@ -36,8 +36,7 @@ def make_classifier_processor(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for the reward classifier.
+    """Constructs pre-processor and post-processor pipelines for the reward classifier.
 
     The pre-processing pipeline prepares input data for the classifier by:
     1. Normalizing both input and output features based on dataset statistics.
@@ -48,13 +47,14 @@ def make_classifier_processor(
     2. Applying an identity step, as no unnormalization is needed for the output logits.
 
     Args:
-        config: The configuration object for the RewardClassifier.
-        dataset_stats: A dictionary of statistics for normalization.
+        config (`RewardClassifierConfig`): The reward classifier configuration to build the
+            processors for.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Per-feature
+            normalization statistics.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-
     input_steps = [
         NormalizerProcessorStep(
             features=config.input_features, norm_map=config.normalization_mapping, stats=dataset_stats

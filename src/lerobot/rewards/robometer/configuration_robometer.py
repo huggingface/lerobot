@@ -48,7 +48,71 @@ ROBOMETER_SPECIAL_TOKENS = (
 @RewardModelConfig.register_subclass("robometer")
 @dataclass
 class RobometerConfig(RewardModelConfig):
-    """Configuration for the Robometer reward model."""
+    """Configuration for the Robometer reward model.
+
+    Args:
+        input_features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the input data. The key represents the input
+            data name, and the value is the `PolicyFeature`.
+        output_features (`dict[str, PolicyFeature]`, *optional*):
+            A dictionary defining the `PolicyFeature` of the output data, analogous to
+            `input_features`.
+        device (`str | None`, *optional*):
+            Torch device to run the model on. Auto-resolved in `__post_init__` when unset or
+            unavailable.
+        pretrained_path (`str | None`, *optional*, defaults to `"lerobot/Robometer-4B"`):
+            Hub repo id or local path of the pretrained Robometer checkpoint.
+        pretrained_revision (`str | None`, *optional*):
+            Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
+        push_to_hub (`bool`, *optional*, defaults to `False`):
+            Whether to push this model to the Hugging Face Hub.
+        repo_id (`str | None`, *optional*):
+            Hub repository id to push to when `push_to_hub` is `True`.
+        license (`str | None`, *optional*, defaults to `"apache-2.0"`):
+            License tag for the Hub model card.
+        tags (`list[str] | None`, *optional*):
+            Hub model card tags.
+        private (`bool | None`, *optional*):
+            Whether the pushed Hub repository is private.
+        image_key (`str`, *optional*, defaults to `"observation.images.top"`):
+            Observation key of the camera view fed to the model.
+        task_key (`str`, *optional*, defaults to `"task"`):
+            Batch key holding the task description string.
+        default_task (`str | None`, *optional*):
+            Fallback task description used when `task_key` is absent from the batch.
+        max_frames (`int | None`, *optional*, defaults to 8):
+            Maximum number of video frames sampled per episode.
+        reward_output (`str`, *optional*, defaults to `"progress"`):
+            Which head's output `compute_reward` returns: `"progress"` or `"success"`.
+        success_threshold (`float`, *optional*, defaults to 0.5):
+            Threshold on the success head's probability above which an episode is considered
+            successful.
+        base_model_id (`str`, *optional*, defaults to `"Qwen/Qwen3-VL-4B-Instruct"`):
+            Hub id of the underlying Qwen-VL backbone.
+        torch_dtype (`str`, *optional*, defaults to `"bfloat16"`):
+            Torch dtype used to load the backbone.
+        use_multi_image (`bool`, *optional*, defaults to `True`):
+            Whether multiple sampled frames are passed to the model as separate images.
+        use_per_frame_progress_token (`bool`, *optional*, defaults to `True`):
+            Whether a dedicated progress token is inserted after every frame. Requires
+            `use_multi_image=True`.
+        average_temporal_patches (`bool`, *optional*, defaults to `True`):
+            Whether temporal patches are averaged before being fed to the backbone.
+        frame_pooling (`str`, *optional*, defaults to `"mean"`):
+            How per-frame progress-token features are pooled: `"mean"`, `"boundary"`, or
+            `"attention"`.
+        frame_pooling_attn_temperature (`float`, *optional*, defaults to 1.0):
+            Softmax temperature used when `frame_pooling="attention"`. Must be `> 0`.
+        progress_loss_type (`str`, *optional*, defaults to `"discrete"`):
+            Loss/output type for the progress head: `"l1"`, `"l2"`, or `"discrete"`.
+        progress_discrete_bins (`int`, *optional*, defaults to 10):
+            Number of bins used when `progress_loss_type="discrete"`.
+        vlm_config (`dict[str, Any]`, *optional*):
+            Serialized, post-vocab-resize Qwen backbone config. Populated automatically by
+            `__post_init__` from `base_model_id` when empty; saved into `config.json`.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps feature types to their normalization mode.
+    """
 
     pretrained_path: str | None = "lerobot/Robometer-4B"
     image_key: str = OBS_IMAGES + ".top"
@@ -56,7 +120,7 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
-    reward_output: str = "progress"  # "progress" or "success"
+    reward_output: str = "progress"
     success_threshold: float = 0.5
 
     license: str | None = "apache-2.0"
@@ -90,6 +154,13 @@ class RobometerConfig(RewardModelConfig):
     )
 
     def __post_init__(self) -> None:
+        """Validate field combinations, default in/out features, and populate `vlm_config`.
+
+        Raises:
+            ValueError: If `reward_output`/`max_frames`/`frame_pooling`/`frame_pooling_attn_temperature`/
+                `progress_loss_type`/`use_per_frame_progress_token` hold an invalid combination, or if
+                `base_model_id`'s backbone config has no nested `text_config`.
+        """
         super().__post_init__()
         if self.reward_output not in {"progress", "success"}:
             raise ValueError(f"reward_output must be 'progress' or 'success', got {self.reward_output!r}")
@@ -143,16 +214,24 @@ class RobometerConfig(RewardModelConfig):
 
     @property
     def observation_delta_indices(self) -> list[int] | None:
+        """`None`: Robometer samples its own frame window internally rather than via delta indices."""
         return None
 
     @property
     def action_delta_indices(self) -> None:
+        """`None`: Robometer does not consume actions."""
         return None
 
     @property
     def reward_delta_indices(self) -> None:
+        """`None`: Robometer does not consume past rewards."""
         return None
 
     def validate_features(self) -> None:
+        """Validate that `image_key` is present in `input_features`.
+
+        Raises:
+            ValueError: If `image_key` is missing from `input_features`.
+        """
         if self.image_key not in self.input_features:
             raise ValueError(f"Robometer requires image input feature {self.image_key!r}")

@@ -101,6 +101,11 @@ class TOPRewardModel(PreTrainedRewardModel):
     config_class = TOPRewardConfig
 
     def __init__(self, config: TOPRewardConfig) -> None:
+        """Load the underlying Qwen3-VL backbone specified by `config.vlm_name`.
+
+        Args:
+            config (`TOPRewardConfig`): Reward model configuration.
+        """
         require_package("transformers", extra="topreward")
         super().__init__(config)
         self.config = config
