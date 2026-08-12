@@ -39,6 +39,7 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
@@ -110,6 +111,92 @@ class G05BBoxImageSizeStep(ProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         return {"camera_key": self.camera_key}
+
+
+@dataclass
+class _G05JointFrameMixin:
+    """Per-joint affine between the physical-arm frame and the checkpoint frame.
+
+    ``value -> sign * value + offset``; the inverse is ``(value - offset) / sign``.
+    """
+
+    joint_signs: tuple[float, ...] = ()
+    joint_offsets: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Pipelines restored from JSON hand these back as lists.
+        self.joint_signs = tuple(float(value) for value in self.joint_signs)
+        self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
+        if len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
+        if any(sign == 0.0 for sign in self.joint_signs):
+            raise ValueError("joint_signs entries must be non-zero so the transform is invertible.")
+
+    def _reframe(self, values: torch.Tensor, *, inverse: bool) -> torch.Tensor:
+        width = len(self.joint_signs)
+        if values.shape[-1] < width:
+            raise ValueError(f"G0.5 joint frame covers {width} joints but the tensor has {values.shape[-1]}.")
+        result = values if torch.is_floating_point(values) else values.float()
+        result = result.clone()
+        signs = result.new_tensor(self.joint_signs)
+        offsets = result.new_tensor(self.joint_offsets)
+        if inverse:
+            result[..., :width] = (result[..., :width] - offsets) / signs
+        else:
+            result[..., :width] = signs * result[..., :width] + offsets
+        return result
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "joint_signs": list(self.joint_signs),
+            "joint_offsets": list(self.joint_offsets),
+        }
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_state_frame_transform")
+class G05StateFrameTransformStep(_G05JointFrameMixin, ObservationProcessorStep):
+    """Move proprioception into the coordinate frame the checkpoint was trained in."""
+
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        if not self.joint_signs or OBS_STATE not in observation:
+            return observation
+        state = torch.as_tensor(observation[OBS_STATE])
+        observation[OBS_STATE] = self._reframe(state, inverse=False)
+        return observation
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="g05_action_frame_transform")
+class G05ActionFrameTransformStep(_G05JointFrameMixin, ProcessorStep):
+    """Move actions between the physical-arm frame and the checkpoint frame.
+
+    ``inverse=True`` undoes :class:`G05StateFrameTransformStep` on a predicted
+    action; ``inverse=False`` applies the same forward transform to a dataset
+    action before the relative-action step differences it.
+
+    Subclasses ``ProcessorStep`` rather than ``ActionProcessorStep``: that base
+    rejects a transition without an action, but the forward instance sits in the
+    preprocessor, where inference transitions legitimately carry none.
+    """
+
+    inverse: bool = True
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition.get(TransitionKey.ACTION)
+        if not self.joint_signs or not isinstance(action, torch.Tensor):
+            return transition
+        transition = transition.copy()
+        transition[TransitionKey.ACTION] = self._reframe(action, inverse=self.inverse)
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {**super().get_config(), "inverse": self.inverse}
 
 
 @dataclass
@@ -723,13 +810,17 @@ def reconcile_g05_processors(
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Fill bbox camera_key on Hub pipelines that saved an empty step config."""
+    """Fill bbox camera_key on Hub pipelines that saved an empty step config, and
+    re-apply the live `runtime_system` override to a pipeline loaded from a saved
+    checkpoint, since that pipeline's `G05TokenizerStep` otherwise keeps whatever
+    system mode was active when the checkpoint's pipeline JSON was exported.
+    """
     camera_key = config.cot_bbox_camera or (config.camera_order[0] if config.camera_order else None)
-    if camera_key is None:
-        return preprocessor, postprocessor
     for step in preprocessor.steps:
-        if isinstance(step, G05BBoxImageSizeStep):
+        if camera_key is not None and isinstance(step, G05BBoxImageSizeStep):
             step.camera_key = camera_key
+        if isinstance(step, G05TokenizerStep):
+            step.policy_config["runtime_system"] = config.runtime_system
     return preprocessor, postprocessor
 
 
@@ -808,6 +899,7 @@ def make_g05_pre_post_processors(
         )
     steps.extend(
         [
+            *_joint_frame_input_steps(config),
             relative_step,
             G05EmbodimentProjectionStep(
                 embodiment=config.embodiment,
@@ -895,6 +987,7 @@ def make_g05_pre_post_processors(
         [
             DeviceProcessorStep(device="cpu"),
             AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+            _joint_frame_output_step(config),
             G05ActionHistoryCropStep(num_obs_steps=config.n_obs_steps),
         ]
     )
@@ -904,6 +997,63 @@ def make_g05_pre_post_processors(
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
     )
+    return preprocessor, postprocessor
+
+
+def _joint_frame_input_steps(config: G05Config) -> list[ProcessorStep]:
+    """Preprocessor half: both go ahead of the relative-action step, which
+    differences deltas in the checkpoint's joint frame."""
+
+    return [
+        G05StateFrameTransformStep(joint_signs=config.joint_signs, joint_offsets=config.joint_offsets),
+        G05ActionFrameTransformStep(
+            joint_signs=config.joint_signs,
+            joint_offsets=config.joint_offsets,
+            inverse=False,
+        ),
+    ]
+
+
+def _joint_frame_output_step(config: G05Config) -> ProcessorStep:
+    """Postprocessor half: back to the arm frame once the action is absolute."""
+
+    return G05ActionFrameTransformStep(
+        joint_signs=config.joint_signs,
+        joint_offsets=config.joint_offsets,
+        inverse=True,
+    )
+
+
+def insert_g05_joint_frame_steps(
+    config: G05Config,
+    preprocessor: PolicyProcessorPipeline,
+    postprocessor: PolicyProcessorPipeline,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """One-time structural fix for a checkpoint published before the joint frame
+    was identified, run via ``update_checkpoint_joint_frame.py``. Rebuilds any
+    step already present rather than duplicating it, so it's safe to re-run.
+    """
+
+    input_steps = [step for step in preprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
+    anchor = next(
+        (idx for idx, step in enumerate(input_steps) if isinstance(step, RelativeActionsProcessorStep)),
+        None,
+    )
+    if anchor is None:
+        raise ValueError("G0.5 preprocessor has no relative-actions step to anchor the joint frame against.")
+    input_steps[anchor:anchor] = _joint_frame_input_steps(config)
+    preprocessor.steps = input_steps
+
+    output_steps = [step for step in postprocessor.steps if not isinstance(step, _G05JointFrameMixin)]
+    absolute = next(
+        (idx + 1 for idx, step in enumerate(output_steps) if isinstance(step, AbsoluteActionsProcessorStep)),
+        None,
+    )
+    if absolute is None:
+        raise ValueError("G0.5 postprocessor has no absolute-actions step to anchor the joint frame against.")
+    output_steps.insert(absolute, _joint_frame_output_step(config))
+    postprocessor.steps = output_steps
+
     return preprocessor, postprocessor
 
 

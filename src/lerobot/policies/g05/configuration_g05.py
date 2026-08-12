@@ -236,6 +236,8 @@ class G05Config(PreTrainedConfig):
     action_feature_names: tuple[str, ...] = ()
     use_stepwise_action_norm: bool = False
     gripper_indices: tuple[int, ...] = (6,)
+    joint_signs: tuple[float, ...] = ()
+    joint_offsets: tuple[float, ...] = ()
     libero_gripper_binarize: bool = False
     camera_order: tuple[str, ...] = field(default_factory=lambda: G05_CAMERA_PROFILES["libero"])
     camera_sizes: dict[str, tuple[int, int]] = field(default_factory=dict)
@@ -284,6 +286,14 @@ class G05Config(PreTrainedConfig):
                 raise ValueError("normalization_clip must be an increasing (minimum, maximum) pair.")
         self.relative_exclude_joints = tuple(self.relative_exclude_joints)
         self.action_feature_names = tuple(self.action_feature_names)
+        self.joint_signs = tuple(float(value) for value in self.joint_signs)
+        self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
+        if len(self.joint_signs) != len(self.joint_offsets):
+            raise ValueError("joint_signs and joint_offsets must have the same length.")
+        if self.joint_signs and len(self.joint_signs) != self.raw_state_dim:
+            raise ValueError("joint_signs must cover exactly the raw state dimensions.")
+        if self.joint_signs and len(self.joint_signs) != self.raw_action_dim:
+            raise ValueError("joint_signs must cover exactly the raw action dimensions.")
         if self.embodiment in G05_CAMERA_SIZE_PROFILES and set(self.camera_sizes) != set(self.camera_order):
             # Switching embodiment on a packaged checkpoint keeps the previous
             # embodiment's camera entries (config-file/CLI dict values merge

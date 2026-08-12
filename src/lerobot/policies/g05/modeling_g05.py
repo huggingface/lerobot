@@ -3338,6 +3338,7 @@ class G05Policy(PreTrainedPolicy):
         metadata = {key: result[key] for key in metadata_keys if key in result}
         return action, metadata
 
+    @torch.no_grad()
     def predict_action_chunk_with_runtime(
         self,
         batch: dict[str, Any],
