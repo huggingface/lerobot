@@ -820,6 +820,60 @@ def test_cycle_timer_new_cycle_reanchors_pacing(clock):
     assert clock.now - reanchor == pytest.approx(0.05)
 
 
+def test_cycle_timer_summary_reports_budget_share_and_sections(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle work budget
+    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+        for group in range(4):  # the first group is start-up; the rest are judged
+            work = 0.06 if group == 3 else 0.01  # last group: 120 ms > budget
+            for tick in range(2):
+                timer.tick(new_cycle=tick == 0)
+                with timer.section("observe"):
+                    clock.advance(work)
+                timer.wait()
+        timer.log_summary()
+
+    (summary,) = (r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert "8 ticks, 3 groups judged" in summary
+    assert "groups over the work budget: 1/3 (33.3%)" in summary
+    assert "group work mean 53.3 ms, worst 120.0 ms" in summary
+    assert "ticks over their 50.0 ms slot: 2/8" in summary
+    assert "vs 20 Hz target" in summary
+    # All measured loop-body work belongs to the one wrapped section.
+    assert "observe  mean 22.5 ms · worst 60.0 ms · 100.0% · 8 calls" in summary
+
+
+def test_cycle_timer_summary_is_silent_before_any_tick(caplog):
+    from lerobot.rollout.strategies import CycleTimer
+
+    timer = CycleTimer(10.0, 2)
+    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+        timer.log_summary()
+    assert not caplog.records
+
+
+def test_cycle_timer_summary_spans_restart_but_skips_exempt_groups(caplog, clock):
+    from lerobot.rollout.strategies import CycleTimer
+
+    # ``restart()`` re-arms the warning exemption mid-run; run statistics keep
+    # accumulating across it, and the exempted groups are not judged.
+    timer = CycleTimer(10.0, 2)
+    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+        for _ in range(4):  # start-up group + one judged group
+            timer.tick(new_cycle=True)
+            timer.wait()
+        timer.restart()
+        for _ in range(4):  # exempt re-primed group + one judged group
+            timer.tick(new_cycle=True)
+            timer.wait()
+        timer.log_summary()
+
+    (summary,) = (r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert "8 ticks, 2 groups judged" in summary
+    assert "groups over the work budget: 0/2 (0.0%)" in summary
+
+
 def test_handle_warmup_is_a_noop_without_torch_compile():
     from lerobot.rollout import BaseStrategyConfig
     from lerobot.rollout.strategies import BaseStrategy, CycleTimer

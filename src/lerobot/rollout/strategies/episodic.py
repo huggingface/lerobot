@@ -231,13 +231,15 @@ class EpisodicStrategy(RolloutStrategy):
             if ctx.runtime.shutdown_event.is_set():
                 break
 
-            obs = robot.get_observation()
-            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+            with timer.section("observe"):
+                obs = robot.get_observation()
+            with timer.section("process_obs"):
+                obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
             if action_dict is not None:
                 self._log_telemetry(obs_processed, action_dict, ctx.runtime)
@@ -245,12 +247,15 @@ class EpisodicStrategy(RolloutStrategy):
                 # matches its declared fps; interpolated ticks only send
                 # commands to the robot.
                 if interpolator.emitted_policy_action:
-                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                    dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
+                    with timer.section("record"):
+                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
             timer.wait()
             timestamp = time.perf_counter() - start_t
+
+        timer.log_summary()
 
     def _reset_loop(
         self,

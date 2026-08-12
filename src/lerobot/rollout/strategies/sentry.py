@@ -115,13 +115,15 @@ class SentryStrategy(RolloutStrategy):
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
                         break
 
-                    obs = robot.get_observation()
-                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                    with timer.section("observe"):
+                        obs = robot.get_observation()
+                    with timer.section("process_obs"):
+                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                     if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
                     if action_dict is not None:
                         self._log_telemetry(obs_processed, action_dict, ctx.runtime)
@@ -129,14 +131,15 @@ class SentryStrategy(RolloutStrategy):
                         # matches its declared fps; interpolated ticks only send
                         # commands to the robot.
                         if interpolator.emitted_policy_action:
-                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                            action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                            frame = {**obs_frame, **action_frame, "task": task_str}
-                            # ``add_frame`` writes to the in-progress episode buffer; the
-                            # background pusher only ever touches *finalised* episode
-                            # artifacts on disk.  The two operate on disjoint state, so
-                            # ``add_frame`` does not need ``_episode_lock``.
-                            dataset.add_frame(frame)
+                            with timer.section("record"):
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                                frame = {**obs_frame, **action_frame, "task": task_str}
+                                # ``add_frame`` writes to the in-progress episode buffer; the
+                                # background pusher only ever touches *finalised* episode
+                                # artifacts on disk.  The two operate on disjoint state, so
+                                # ``add_frame`` does not need ``_episode_lock``.
+                                dataset.add_frame(frame)
 
                     # Episode rotation derived from video file-size target.
                     # The duration is a conservative estimate so the actual
@@ -168,6 +171,7 @@ class SentryStrategy(RolloutStrategy):
                     timer.wait()
 
             finally:
+                timer.log_summary()
                 logger.info("Sentry control loop ended — saving final episode")
                 with contextlib.suppress(Exception):
                     with self._episode_lock:

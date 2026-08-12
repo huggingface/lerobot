@@ -17,8 +17,10 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import logging
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
@@ -94,13 +96,19 @@ class CycleTimer:
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
         while ...:
             timer.tick(new_cycle=interpolator.needs_new_action())
-            ...  # observe / infer / actuate / record
+            with timer.section("observe"):
+                ...  # one block per big loop-body step
             timer.wait()
+        timer.log_summary()
 
     ``new_cycle=True`` marks the ticks where the interpolator requests a fresh
     policy action, keeping the pacing anchor aligned with the actual inference
     cadence (the interpolator's first, single-action buffer would otherwise
     phase-shift every later cycle by one tick).
+
+    Alongside the per-tick telemetry above, the timer accumulates run-level
+    statistics — budget hit-rate, per-:meth:`section` timings, pacing slack —
+    that :meth:`log_summary` reports once when the loop ends.
     """
 
     def __init__(self, fps: float, multiplier: int = 1, records_data: bool = True) -> None:
@@ -125,6 +133,23 @@ class CycleTimer:
         # telemetry that covers what the work sum cannot see.
         self._group_start: float | None = None
         self._last_group_work = 0.0
+        # Run-level statistics for ``log_summary``.  They describe the whole
+        # run, so unlike the reporting accumulator they survive ``restart()``.
+        self._stat_ticks = 0
+        self._stat_work_total = 0.0
+        self._stat_slot_overruns = 0
+        self._stat_groups_judged = 0
+        self._stat_groups_over = 0
+        self._stat_group_work_sum = 0.0
+        self._stat_group_work_max = 0.0
+        self._stat_span_misses = 0
+        self._stat_sleep_total = 0.0
+        self._stat_sleep_max = 0.0
+        self._stat_first_tick_start: float | None = None
+        self._stat_last_tick_start = 0.0
+        # Section name -> (calls, total seconds, worst seconds), in first-use
+        # order, which follows the loop-body order.
+        self._stat_sections: dict[str, tuple[int, float, float]] = {}
 
     def restart(self) -> None:
         """Re-arm the start-up exemption after control state was reset mid-run.
@@ -144,6 +169,23 @@ class CycleTimer:
         self._group_start = None
         self._last_group_work = 0.0
 
+    @contextlib.contextmanager
+    def section(self, name: str) -> Iterator[None]:
+        """Time one named step of the loop body for :meth:`log_summary`.
+
+        Wrap each big step between :meth:`tick` and :meth:`wait` (observe,
+        process, actuate, record) so the run summary can attribute the
+        loop-body work to it.  Steps that only run on some ticks (recording,
+        the engine pull) simply report fewer calls.
+        """
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - start
+            calls, total, worst = self._stat_sections.get(name, (0, 0.0, 0.0))
+            self._stat_sections[name] = (calls + 1, total + elapsed, max(worst, elapsed))
+
     def _report_achieved_cadence(self, group_start: float) -> None:
         """Log the cadence a closed group actually achieved, sleeps included.
 
@@ -159,6 +201,7 @@ class CycleTimer:
         span = group_start - self._group_start
         if span <= self.cycle_interval or self._last_group_work > self.cycle_interval:
             return
+        self._stat_span_misses += 1
         logger.debug(
             "Control loop held only %.1f Hz against a %g Hz target, though its loop-body work "
             "(%.1f ms) fit the %.1f ms budget: %.1f ms went missing outside the loop body "
@@ -191,10 +234,17 @@ class CycleTimer:
         if self._group_ticks == 0:
             self._report_achieved_cadence(self._tick_start)
             self._group_start = self._tick_start
+        if self._stat_first_tick_start is None:
+            self._stat_first_tick_start = self._tick_start
+        self._stat_last_tick_start = self._tick_start
         self._tick_start = None
         self._ticks_done += 1
         self._group_ticks += 1
         self._group_work += tick_dt
+        self._stat_ticks += 1
+        self._stat_work_total += tick_dt
+        if tick_dt > self.tick_interval:
+            self._stat_slot_overruns += 1
         deadline = self._cycle_start + self._ticks_done * self.tick_interval
         if self._ticks_done >= self.multiplier:
             self._cycle_start = None
@@ -210,17 +260,22 @@ class CycleTimer:
             # consecutive ticks, and one-off costs (lazy device init, camera
             # ramp-up) land here too.  Reporting it would warn on every healthy
             # launch.
-            if self._groups_closed > 1 and group_work > self.cycle_interval:
-                consequence = (
-                    "Dataset frames might be dropped and robot control might be unstable."
-                    if self.records_data
-                    else "Robot control might be unstable."
-                )
-                logger.warning(
-                    f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
-                    f"({self.fps:g} Hz). {consequence} Common causes are: 1) Camera FPS not keeping up "
-                    "2) Policy inference taking too long 3) CPU starvation"
-                )
+            if self._groups_closed > 1:
+                self._stat_groups_judged += 1
+                self._stat_group_work_sum += group_work
+                self._stat_group_work_max = max(self._stat_group_work_max, group_work)
+                if group_work > self.cycle_interval:
+                    self._stat_groups_over += 1
+                    consequence = (
+                        "Dataset frames might be dropped and robot control might be unstable."
+                        if self.records_data
+                        else "Robot control might be unstable."
+                    )
+                    logger.warning(
+                        f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
+                        f"({self.fps:g} Hz). {consequence} Common causes are: 1) Camera FPS not keeping up "
+                        "2) Policy inference taking too long 3) CPU starvation"
+                    )
         elif now > deadline and tick_dt > self.tick_interval:
             logger.debug(
                 "Control tick overran its %.1f ms slot (took %.1f ms). Interpolated commands are sent "
@@ -232,7 +287,67 @@ class CycleTimer:
                 self.multiplier,
             )
         if (sleep_t := deadline - now) > 0:
+            sleep_start = time.perf_counter()
             precise_sleep(sleep_t)
+            slept = time.perf_counter() - sleep_start
+            self._stat_sleep_total += slept
+            self._stat_sleep_max = max(self._stat_sleep_max, slept)
+
+    def log_summary(self) -> None:
+        """Log run-level cadence statistics at INFO.  Call once when a loop ends.
+
+        Reports the achieved tick cadence, how often the loop blew the
+        ``1/fps`` work budget, how the loop-body work splits across the steps
+        wrapped in :meth:`section`, and how much pacing slack was left per
+        tick — enough to spot the bottleneck and to sanity-check the timer
+        itself.  Groups exempted at start-up or by :meth:`restart` are not
+        judged; everything else spans the whole run.
+        """
+        if self._stat_ticks == 0:
+            return
+        ms = 1000.0
+        lines = [
+            f"Cadence summary — {self.fps:g} Hz × {self.multiplier} "
+            f"({self.tick_interval * ms:.1f} ms tick slot, {self.cycle_interval * ms:.1f} ms cycle "
+            f"work budget): {self._stat_ticks} ticks, {self._stat_groups_judged} groups judged"
+        ]
+        span = self._stat_last_tick_start - (self._stat_first_tick_start or 0.0)
+        if self._stat_ticks > 1 and span > 0:
+            lines.append(
+                f"  achieved tick cadence: {(self._stat_ticks - 1) / span:.2f} Hz "
+                f"vs {self.fps * self.multiplier:g} Hz target"
+            )
+        if self._stat_groups_judged:
+            lines.append(
+                f"  groups over the work budget: {self._stat_groups_over}/{self._stat_groups_judged} "
+                f"({100 * self._stat_groups_over / self._stat_groups_judged:.1f}%) — "
+                f"group work mean {self._stat_group_work_sum / self._stat_groups_judged * ms:.1f} ms, "
+                f"worst {self._stat_group_work_max * ms:.1f} ms"
+            )
+        if self.multiplier > 1:
+            lines.append(
+                f"  ticks over their {self.tick_interval * ms:.1f} ms slot: "
+                f"{self._stat_slot_overruns}/{self._stat_ticks} (interpolation smoothness only)"
+            )
+        if self._stat_span_misses:
+            lines.append(
+                "  groups whose cadence slipped outside the loop body (sleep overshoot / OS): "
+                f"{self._stat_span_misses}"
+            )
+        if self._stat_sections:
+            lines.append("  loop-body steps (share of measured work):")
+            width = max(len(name) for name in self._stat_sections)
+            for name, (calls, total, worst) in self._stat_sections.items():
+                share = 100 * total / self._stat_work_total if self._stat_work_total else 0.0
+                lines.append(
+                    f"    {name:<{width}}  mean {total / calls * ms:.1f} ms · worst {worst * ms:.1f} ms · "
+                    f"{share:.1f}% · {calls} calls"
+                )
+        lines.append(
+            f"  pacing sleep per tick: mean {self._stat_sleep_total / self._stat_ticks * ms:.1f} ms, "
+            f"max {self._stat_sleep_max * ms:.1f} ms (headroom — near zero means the loop is saturated)"
+        )
+        logger.info("\n".join(lines))
 
 
 class RolloutStrategy(abc.ABC):
@@ -470,6 +585,7 @@ def send_next_action(
     obs_raw: dict,
     ctx: RolloutContext,
     interpolator: ActionInterpolator,
+    timer: CycleTimer | None = None,
 ) -> dict | None:
     """Dispatch the next action to the robot.
 
@@ -477,6 +593,12 @@ def send_next_action(
     interpolator, and sends the interpolated action through the
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
+
+    When *timer* is given, the engine pull and the robot send are timed as
+    ``get_action`` / ``send_action`` sections in its run summary.  Note that
+    on async backends ``get_action`` is only a queue pull — inference runs
+    off-thread, so its latency shows up as ``None`` returns here (a starved
+    interpolator), not as loop-body time.
 
     Returns the action dict that was sent, or ``None`` if no action was
     ready (e.g. empty async queue, interpolator not yet primed).
@@ -487,7 +609,8 @@ def send_next_action(
 
     if interpolator.needs_new_action():
         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-        action_tensor = engine.get_action(obs_frame)
+        with timer.section("get_action") if timer else contextlib.nullcontext():
+            action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
 
@@ -498,6 +621,7 @@ def send_next_action(
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
-    processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-    ctx.hardware.robot_wrapper.send_action(processed)
+    with timer.section("send_action") if timer else contextlib.nullcontext():
+        processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
+        ctx.hardware.robot_wrapper.send_action(processed)
     return action_dict
