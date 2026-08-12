@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy deployment engine with pluggable rollout strategies.
+r"""Policy deployment engine with pluggable rollout strategies.
 
 ``lerobot-rollout`` is the single CLI for running trained policies on
 real robots.

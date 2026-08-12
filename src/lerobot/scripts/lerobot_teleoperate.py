@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Simple script to control a robot from teleoperation.
+"""Simple script to control a robot from teleoperation.
 
 Requires: pip install 'lerobot[hardware]'
 
 Example:
-
 ```shell
 lerobot-teleoperate \
     --robot.type=so101_follower \
@@ -133,22 +131,35 @@ from lerobot.utils.visualization_utils import (
 
 @dataclass
 class TeleoperateConfig:
+    """Configuration for the `lerobot-teleoperate` CLI.
+
+    Args:
+        teleop (`TeleoperatorConfig`): Teleoperator device providing control actions.
+        robot (`RobotConfig`): Robot being controlled.
+        fps (`int`, *optional*, defaults to 60): Maximum control loop frequency, in Hz.
+        teleop_time_s (`float | None`, *optional*): Duration, in seconds, to run the teleoperation
+            loop for. Runs indefinitely when unset.
+        display_data (`bool`, *optional*, defaults to `False`): Whether to display all cameras on screen.
+        display_mode (`str`, *optional*, defaults to `"rerun"`): Visualization backend used when
+            `display_data` is `True`: `"rerun"` or `"foxglove"`.
+        display_ip (`str | None`, *optional*): For `"rerun"`, the IP of a remote server to send to.
+            For `"foxglove"`, the interface to bind the WebSocket server to (`127.0.0.1` for local
+            only, `0.0.0.0` for all interfaces).
+        display_port (`int | None`, *optional*): For `"rerun"`, the port of the remote server. For
+            `"foxglove"`, the port to bind the WebSocket server to.
+        display_compressed_images (`bool`, *optional*, defaults to `False`): Whether to display
+            compressed (JPEG) images instead of raw frames.
+    """
+
     # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
     teleop: TeleoperatorConfig
     robot: RobotConfig
-    # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
-    # Display all cameras on screen
     display_data: bool = False
-    # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"
-    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
-    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
 
 
@@ -164,25 +175,31 @@ def teleop_loop(
     duration: float | None = None,
     display_compressed_images: bool = False,
 ):
-    """
-    This function continuously reads actions from a teleoperation device, processes them through optional
-    pipelines, sends them to a robot, and optionally displays the robot's state. The loop runs at a
-    specified frequency until a set duration is reached or it is manually interrupted.
+    """Continuously read actions from a teleoperation device and apply them to a robot.
+
+    Reads actions from `teleop`, processes them through optional pipelines, sends them to `robot`, and
+    optionally displays the robot's state. The loop runs at a specified frequency until a set duration
+    is reached or it is manually interrupted.
 
     Args:
-        teleop: The teleoperator device instance providing control actions.
-        robot: The robot instance being controlled.
-        fps: The target frequency for the control loop in frames per second.
-        display_data: If True, fetches robot observations and displays them in the console and the
-            visualization backend.
-        display_mode: Visualization backend to use when display_data is True ("rerun" or "foxglove").
-        display_compressed_images: If True, compresses images before sending them to the backend for display.
-        duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
-        teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
-        robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
-        robot_observation_processor: An optional pipeline to process raw observations from the robot.
+        teleop (`Teleoperator`): The teleoperator device instance providing control actions.
+        robot (`Robot`): The robot instance being controlled.
+        fps (`int`): The target frequency for the control loop in frames per second.
+        teleop_action_processor (`DataProcessorPipeline`): Pipeline to process raw actions from the
+            teleoperator.
+        robot_action_processor (`DataProcessorPipeline`): Pipeline to process actions before they are
+            sent to the robot.
+        robot_observation_processor (`DataProcessorPipeline`): Pipeline to process raw observations
+            from the robot.
+        display_data (`bool`, *optional*, defaults to `False`): If `True`, fetches robot observations
+            and displays them in the console and the visualization backend.
+        display_mode (`str`, *optional*, defaults to `"rerun"`): Visualization backend to use when
+            `display_data` is `True` (`"rerun"` or `"foxglove"`).
+        duration (`float | None`, *optional*): The maximum duration of the teleoperation loop in
+            seconds. If `None`, the loop runs indefinitely.
+        display_compressed_images (`bool`, *optional*, defaults to `False`): If `True`, compresses
+            images before sending them to the backend for display.
     """
-
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     while True:
@@ -239,6 +256,11 @@ def teleop_loop(
 
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
+    """Connect `cfg.teleop` and `cfg.robot`, then run the teleoperation loop until stopped.
+
+    Args:
+        cfg (`TeleoperateConfig`): Parsed from the CLI.
+    """
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -281,6 +303,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-teleoperate`."""
     register_third_party_plugins()
     teleoperate()
 

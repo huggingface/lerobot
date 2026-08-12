@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This script augments existing LeRobot datasets with quantile statistics.
+"""This script augments existing LeRobot datasets with quantile statistics.
 
 Most datasets created before the quantile feature was added do not contain
 quantile statistics (q01, q10, q50, q90, q99) in their metadata. This script:
@@ -63,7 +62,9 @@ def has_quantile_stats(stats: dict[str, dict] | None, quantile_list_keys: list[s
     """Check if dataset statistics already contain quantile information.
 
     Args:
-        stats: Dataset statistics dictionary
+        stats (`dict[str, dict] | None`): Dataset statistics, keyed by feature name.
+        quantile_list_keys (`list[str] | None`, *optional*): Quantile stat keys to check for (e.g.
+            `["q01", "q99"]`). Defaults to keys derived from `DEFAULT_QUANTILES` when unset.
 
     Returns:
         True if quantile statistics are present, False otherwise
@@ -90,11 +91,12 @@ def collect_episode_arrays(
     """Collect one episode's frames per feature, flattened to (num_samples, dim).
 
     Args:
-        dataset: The LeRobot dataset
-        episode_idx: Index of the episode to read
-        use_sampling: If True, sub-sample image/video frames to bound memory.
-            If False, use every frame (higher memory).
-        skip_images: If True, skip image/video features entirely.
+        dataset (`LeRobotDataset`): Dataset the episode belongs to.
+        episode_idx (`int`): Index of the episode to read.
+        use_sampling (`bool`, *optional*, defaults to `True`): Whether to sub-sample image/video frames
+            per episode (cheaper) instead of reading every frame (exact).
+        skip_images (`bool`, *optional*, defaults to `False`): Whether to skip image/video features
+            entirely.
 
     Returns:
         Mapping of feature name to that episode's values and the number of frames
@@ -155,10 +157,11 @@ def compute_quantile_stats_for_dataset(
     """Compute whole-dataset statistics with one running histogram per feature.
 
     Args:
-        dataset: The LeRobot dataset to compute statistics for
-        use_sampling: If True, sub-sample image/video frames per episode to bound
-            memory. If False, use every frame (higher memory).
-        skip_images: If True, skip image/video features and leave their stats untouched.
+        dataset (`LeRobotDataset`): Dataset to compute statistics for.
+        use_sampling (`bool`, *optional*, defaults to `True`): Whether to sub-sample image/video frames
+            per episode (cheaper) instead of reading every frame (exact).
+        skip_images (`bool`, *optional*, defaults to `False`): Whether to skip image/video features,
+            leaving their existing stats untouched.
 
     Returns:
         Dictionary containing statistics with histogram-based global quantile estimates
@@ -219,12 +222,15 @@ def augment_dataset_with_quantile_stats(
     """Augment a dataset with quantile statistics if they are missing.
 
     Args:
-        repo_id: Repository ID of the dataset
-        root: Local root directory for the dataset
-        overwrite: Overwrite existing quantile statistics if they already exist
-        use_sampling: If True, sub-sample image/video frames per episode to bound
-            memory. If False, use every frame (higher memory).
-        skip_images: If True, skip image/video features and keep their existing stats
+        repo_id (`str`): Dataset identifier on the Hugging Face Hub.
+        root (`str | pathlib.Path | None`, *optional*): Local root directory for the dataset. Defaults
+            to `$HF_LEROBOT_HOME/repo_id` when unset.
+        overwrite (`bool`, *optional*, defaults to `False`): Whether to recompute and overwrite quantile
+            statistics even if they already exist.
+        use_sampling (`bool`, *optional*, defaults to `True`): Whether to sub-sample image/video frames
+            per episode (cheaper) instead of reading every frame (exact).
+        skip_images (`bool`, *optional*, defaults to `False`): Whether to skip image/video features,
+            keeping their existing stats.
     """
     logging.info(f"Loading dataset: {repo_id}")
     dataset = LeRobotDataset(

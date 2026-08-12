@@ -135,29 +135,27 @@ def update_policy(
     lock=None,
     sample_weighter=None,
 ) -> tuple[MetricsTracker, dict | None]:
-    """
-    Performs a single training step to update the policy's weights.
+    """Performs a single training step to update the policy's weights.
 
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
     learning rate scheduler. Accelerator handles mixed-precision training automatically, and — under
     gradient accumulation — suppresses gradient sync on non-final micro-batches and rescales the loss.
 
     Args:
-        train_metrics (MetricsTracker): A MetricsTracker instance to record training statistics.
-        policy (PreTrainedPolicy): The policy model to be trained (as returned by `accelerator.prepare`).
-        batch (Any): A batch of training data.
-        optimizer (Optimizer): The optimizer used to update the policy's parameters.
-        grad_clip_norm (float): The maximum norm for gradient clipping (no clipping when <= 0).
-        accelerator (Accelerator): The Accelerator instance for distributed training and mixed precision.
-        lr_scheduler (LRScheduler | None, optional): An optional learning rate scheduler, stepped once
-            per micro-batch. Defaults to None.
-        lock (Lock | None, optional): An optional lock for thread-safe optimizer updates.
-            Defaults to None.
-        sample_weighter (SampleWeighter | None, optional): Optional SampleWeighter instance for
-            per-sample loss weighting. Defaults to None.
+        train_metrics (`MetricsTracker`): A MetricsTracker instance to record training statistics.
+        policy (`PreTrainedPolicy`): The policy model to be trained (as returned by `accelerator.prepare`).
+        batch (`Any`): A batch of training data.
+        optimizer (`Optimizer`): The optimizer used to update the policy's parameters.
+        grad_clip_norm (`float`): The maximum norm for gradient clipping (no clipping when <= 0).
+        accelerator (`Accelerator`): The Accelerator instance for distributed training and mixed precision.
+        lr_scheduler (`LRScheduler | None`, *optional*): An optional learning rate scheduler, stepped
+            once per micro-batch.
+        lock (`Lock | None`, *optional*): An optional lock for thread-safe optimizer updates.
+        sample_weighter (`SampleWeighter | None`, *optional*): Optional SampleWeighter instance for
+            per-sample loss weighting.
 
     Returns:
-        tuple[MetricsTracker, dict | None]: The updated MetricsTracker with new statistics for this
+        `tuple[MetricsTracker, dict | None]`: The updated MetricsTracker with new statistics for this
         step, and the dictionary of outputs from the policy's forward pass, for logging purposes.
     """
     start_time = time.perf_counter()
@@ -368,8 +366,7 @@ def make_dataloaders(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-    """
-    Main function to train a policy.
+    """Main function to train a policy.
 
     This function orchestrates the entire training pipeline, including:
     - Setting up logging, seeding, and the distributed engine.
@@ -380,7 +377,7 @@ def train(cfg: TrainPipelineConfig):
     - Publishing the trained model to the Hugging Face Hub if configured.
 
     Args:
-        cfg (TrainPipelineConfig): A `TrainPipelineConfig` object containing all training
+        cfg (`TrainPipelineConfig`): A `TrainPipelineConfig` object containing all training
             configurations, parsed from the CLI by `parser.wrap()`. On `--resume`, it is the config
             recorded in the checkpoint's `train_config.json`; when `cfg.job.is_remote`, the run is
             dispatched to HF Jobs instead of executing locally.
@@ -947,6 +944,7 @@ def _remote_target_in_argv() -> bool:
 
 
 def main():
+    """CLI entry point for `lerobot-train`."""
     register_third_party_plugins()
     if _remote_target_in_argv():
         # The policy device is resolved on the remote pod, not here, so silence the

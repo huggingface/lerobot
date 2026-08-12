@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Helper to recalibrate your device (robot or teleoperator).
+"""Helper to recalibrate your device (robot or teleoperator).
 
 Requires: pip install 'lerobot[hardware]'
 
 Example:
-
 ```shell
 lerobot-calibrate \
     --teleop.type=so100_leader \
@@ -73,10 +71,24 @@ from lerobot.utils.utils import init_logging
 
 @dataclass
 class CalibrateConfig:
+    """Configuration for the `lerobot-calibrate` CLI.
+
+    Args:
+        teleop (`TeleoperatorConfig | None`, *optional*): Teleoperator to calibrate. Exactly one of
+            `teleop`/`robot` must be set.
+        robot (`RobotConfig | None`, *optional*): Robot to calibrate. Exactly one of `teleop`/`robot`
+            must be set.
+    """
+
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
     def __post_init__(self):
+        """Resolve `device` from whichever of `teleop`/`robot` is set.
+
+        Raises:
+            ValueError: If both or neither of `teleop`/`robot` are set.
+        """
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
 
@@ -85,6 +97,11 @@ class CalibrateConfig:
 
 @draccus.wrap()
 def calibrate(cfg: CalibrateConfig):
+    """Connect to `cfg.device` (robot or teleoperator) and run its calibration routine.
+
+    Args:
+        cfg (`CalibrateConfig`): Parsed from the CLI.
+    """
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
@@ -102,6 +119,7 @@ def calibrate(cfg: CalibrateConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-calibrate`."""
     register_third_party_plugins()
     calibrate()
 

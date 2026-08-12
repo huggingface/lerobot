@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Visualize effects of image transforms for a given configuration.
+"""Visualize effects of image transforms for a given configuration.
 
 This script will generate examples of transformed images as they are output by LeRobot dataset.
 Additionally, each individual transform can be visualized separately as well as examples of combined transforms
@@ -48,6 +48,14 @@ to_pil = ToPILImage()
 
 
 def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+    """Apply the full combined `cfg` transform pipeline to `original_frame` and save `n_examples` outputs.
+
+    Args:
+        cfg (`ImageTransformsConfig`): Image transforms configuration.
+        original_frame (`torch.Tensor`): Untransformed source frame.
+        output_dir (`Path`): Directory to save examples under (an `all/` subdirectory is created).
+        n_examples (`int`): Number of randomly-sampled combined-transform examples to save.
+    """
     output_dir_all = output_dir / "all"
     output_dir_all.mkdir(parents=True, exist_ok=True)
 
@@ -61,6 +69,14 @@ def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, 
 
 
 def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+    """Save examples of each individual transform in `cfg.tfs`, plus its min/max/average outputs.
+
+    Args:
+        cfg (`ImageTransformsConfig`): Image transforms configuration. No-op if `cfg.enable` is `False`.
+        original_frame (`torch.Tensor`): Untransformed source frame.
+        output_dir (`Path`): Directory to save examples under (one subdirectory per transform name).
+        n_examples (`int`): Number of randomly-sampled examples to save per transform.
+    """
     if not cfg.enable:
         logging.warning(
             "No single transforms will be saved, because `image_transforms.enable=False`. To enable, set `enable` to True in `ImageTransformsConfig` or in the command line with `--image_transforms.enable=True`."
@@ -106,6 +122,14 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
 
 @draccus.wrap()
 def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR, n_examples: int = 5):
+    """Save example outputs of `cfg`'s image transforms, applied to a dataset's first frame.
+
+    Args:
+        cfg (`DatasetConfig`): Dataset and image-transforms configuration.
+        output_dir (`Path`, *optional*, defaults to `outputs/image_transforms`): Base directory
+            examples are saved under, in a subdirectory named after `cfg.repo_id`.
+        n_examples (`int`, *optional*, defaults to 5): Number of example images to save per transform.
+    """
     dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
         episodes=cfg.episodes,
@@ -127,6 +151,7 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
 
 
 def main():
+    """CLI entry point for `lerobot-imgtransform-viz`."""
     visualize_image_transforms()
 
 

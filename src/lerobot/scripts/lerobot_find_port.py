@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Helper to find the USB port associated with your MotorsBus.
+"""Helper to find the USB port associated with your MotorsBus.
 
 Example:
-
 ```shell
 lerobot-find-port
 ```
@@ -28,6 +26,11 @@ from pathlib import Path
 
 
 def find_available_ports():
+    """List currently available serial ports.
+
+    Returns:
+        `list[str]`: COM port names on Windows, or `/dev/tty*` paths on Linux/macOS.
+    """
     from lerobot.utils.import_utils import require_package
 
     require_package("pyserial", extra="hardware", import_name="serial")
@@ -43,6 +46,11 @@ def find_available_ports():
 
 
 def find_port():
+    """Interactively identify a MotorsBus's serial port by diffing ports before/after unplugging it.
+
+    Raises:
+        OSError: If no port disappeared, or more than one did.
+    """
     print("Finding all available ports for the MotorsBus.")
     ports_before = find_available_ports()
     print("Ports before disconnecting:", ports_before)
@@ -65,6 +73,7 @@ def find_port():
 
 
 def main():
+    """CLI entry point for `lerobot-find-port`."""
     find_port()
 
 

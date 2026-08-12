@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Edit LeRobot datasets using various transformation tools.
+"""Edit LeRobot datasets using various transformation tools.
 
 Requires: pip install 'lerobot[dataset]'
 
@@ -272,29 +271,59 @@ from lerobot.utils.utils import init_logging
 
 @dataclass
 class OperationConfig(draccus.ChoiceRegistry, abc.ABC):
+    """Base for all `lerobot-edit-dataset` operations.
+
+    Use ``--operation.type=<name>`` on the CLI to select an operation.
+    """
+
     @property
     def type(self) -> str:
+        """The registered name of this operation (e.g. `"split"`, `"merge"`)."""
         return self.get_choice_name(self.__class__)
 
 
 @OperationConfig.register_subclass("delete_episodes")
 @dataclass
 class DeleteEpisodesConfig(OperationConfig):
+    """Delete a set of episodes from the dataset.
+
+    Args:
+        episode_indices (`list[int] | None`, *optional*): Episode indices to delete.
+    """
+
     episode_indices: list[int] | None = None
 
 
 @OperationConfig.register_subclass("split")
 @dataclass
 class SplitConfig(OperationConfig):
+    """Split the dataset into multiple named sub-datasets.
+
+    Args:
+        splits (`dict[str, float | list[int]] | None`, *optional*): Maps split name to either a
+            fraction of episodes (e.g. `0.8`) or an explicit list of episode indices.
+    """
+
     splits: dict[str, float | list[int]] | None = None
 
 
 @OperationConfig.register_subclass("merge")
 @dataclass
 class MergeConfig(OperationConfig):
+    """Merge multiple datasets into one.
+
+    Args:
+        repo_ids (`list[str] | None`, *optional*): Repo ids of the datasets to merge.
+        roots (`list[str] | None`, *optional*): Local root directories of the datasets to merge,
+            aligned with `repo_ids`. Defaults to `$HF_LEROBOT_HOME/<repo_id>` per entry when unset.
+        concatenate_videos (`bool`, *optional*, defaults to `True`): Whether to pack source video
+            files into size-bounded shards. When `False`, keeps one output file per source file.
+        concatenate_data (`bool`, *optional*, defaults to `True`): Whether to pack source data files
+            into size-bounded shards. When `False`, keeps one output file per source file.
+    """
+
     repo_ids: list[str] | None = None
     roots: list[str] | None = None
-    # When False, keep one file per source file instead of packing into shards.
     concatenate_videos: bool = True
     concatenate_data: bool = True
 
@@ -302,12 +331,28 @@ class MergeConfig(OperationConfig):
 @OperationConfig.register_subclass("remove_feature")
 @dataclass
 class RemoveFeatureConfig(OperationConfig):
+    """Remove one or more features from the dataset.
+
+    Args:
+        feature_names (`list[str] | None`, *optional*): Feature keys to remove.
+    """
+
     feature_names: list[str] | None = None
 
 
 @OperationConfig.register_subclass("modify_tasks")
 @dataclass
 class ModifyTasksConfig(OperationConfig):
+    """Modify task descriptions on the dataset.
+
+    Args:
+        new_task (`str | None`, *optional*): Replace every episode's task with this single string.
+        episode_tasks (`dict[str, str] | None`, *optional*): Maps episode index (as a string) to a
+            new task string.
+        task_replacements (`dict[str, str] | None`, *optional*): Maps an existing task string to its
+            replacement, applied wherever it occurs.
+    """
+
     new_task: str | None = None
     episode_tasks: dict[str, str] | None = None
     task_replacements: dict[str, str] | None = None
@@ -316,6 +361,18 @@ class ModifyTasksConfig(OperationConfig):
 @OperationConfig.register_subclass("convert_image_to_video")
 @dataclass
 class ConvertImageToVideoConfig(OperationConfig):
+    """Convert a dataset's image features into encoded video features.
+
+    Args:
+        output_dir (`str | None`, *optional*): Directory for intermediate encoding artifacts.
+        rgb_encoder (`RGBEncoderConfig`, *optional*): RGB video encoder configuration.
+        depth_encoder (`DepthEncoderConfig`, *optional*): Depth video encoder configuration.
+        episode_indices (`list[int] | None`, *optional*): Episodes to convert. `None` converts all.
+        num_workers (`int`, *optional*, defaults to 4): Number of parallel encoding workers.
+        max_episodes_per_batch (`int | None`, *optional*): Cap on episodes processed per batch.
+        max_frames_per_batch (`int | None`, *optional*): Cap on frames processed per batch.
+    """
+
     output_dir: str | None = None
     rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
     depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
@@ -328,6 +385,20 @@ class ConvertImageToVideoConfig(OperationConfig):
 @OperationConfig.register_subclass("recompute_stats")
 @dataclass
 class RecomputeStatsConfig(OperationConfig):
+    """Recompute per-feature normalization statistics for the dataset.
+
+    Args:
+        skip_image_video (`bool`, *optional*, defaults to `True`): Whether to skip recomputing
+            stats for image/video features (expensive).
+        relative_action (`bool`, *optional*, defaults to `False`): Whether to compute stats over
+            relative (delta) actions instead of absolute ones.
+        relative_exclude_joints (`list[str] | None`, *optional*): Joint feature names excluded from
+            the relative-action transform.
+        chunk_size (`int`, *optional*, defaults to 50): Number of episodes processed per chunk.
+        num_workers (`int`, *optional*, defaults to 0): Number of parallel worker processes.
+        overwrite (`bool`, *optional*, defaults to `False`): Whether to overwrite existing stats.
+    """
+
     skip_image_video: bool = True
     relative_action: bool = False
     relative_exclude_joints: list[str] | None = None
@@ -339,6 +410,18 @@ class RecomputeStatsConfig(OperationConfig):
 @OperationConfig.register_subclass("reencode_videos")
 @dataclass
 class ReencodeVideosConfig(OperationConfig):
+    """Re-encode the dataset's video files, e.g. with a different codec or bitrate.
+
+    Args:
+        rgb_encoder (`RGBEncoderConfig`, *optional*): RGB video encoder configuration.
+        depth_encoder (`DepthEncoderConfig`, *optional*): Depth video encoder configuration.
+        num_workers (`int`, *optional*, defaults to 0): Number of parallel re-encoding workers.
+        encoder_threads (`int | None`, *optional*): Threads per encoder process. `None` uses the
+            encoder's default.
+        overwrite (`bool`, *optional*, defaults to `False`): Whether to overwrite existing video
+            files.
+    """
+
     rgb_encoder: RGBEncoderConfig = field(default_factory=rgb_encoder_defaults)
     depth_encoder: DepthEncoderConfig = field(default_factory=depth_encoder_defaults)
     num_workers: int = 0
@@ -349,22 +432,43 @@ class ReencodeVideosConfig(OperationConfig):
 @OperationConfig.register_subclass("info")
 @dataclass
 class InfoConfig(OperationConfig):
+    """Print dataset metadata without modifying it.
+
+    Args:
+        show_features (`bool`, *optional*, defaults to `False`): Whether to also print the
+            per-feature schema.
+    """
+
     show_features: bool = False
 
 
 @dataclass
 class EditDatasetConfig:
-    # Operation configuration.
+    """Top-level configuration for the `lerobot-edit-dataset` CLI.
+
+    Args:
+        operation (`OperationConfig`): The edit operation to perform, selected via
+            `--operation.type=<name>`.
+        repo_id (`str | None`, *optional*): Input dataset identifier. Always required except for
+            the Merge operation.
+        root (`str | None`, *optional*): Root directory where the input dataset is stored. Defaults
+            to `$HF_LEROBOT_HOME/<repo_id>` when unset.
+        new_repo_id (`str | None`, *optional*): Edited dataset identifier. When both `new_repo_id`
+            (resp. `new_root`) and `repo_id` (resp. `root`) are identical, modifications are applied
+            in-place and a backup of the original dataset is created. Required for the Merge
+            operation.
+        new_root (`str | None`, *optional*): Root directory where the edited dataset will be
+            stored. Defaults to `$HF_LEROBOT_HOME/<new_repo_id>` when unset. For the Split
+            operation, this is the base directory for the split datasets.
+        push_to_hub (`bool`, *optional*, defaults to `False`): Whether to upload the edited dataset
+            to the Hugging Face Hub.
+    """
+
     operation: OperationConfig
-    # Input dataset identifier. Always required unless for Merge operation.
     repo_id: str | None = None
-    # Root directory where the input dataset is stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | None = None
-    # Edited dataset identifier. When both new_repo_id (resp. new_root) and repo_id (resp. root) are identical, modifications are applied in-place and a backup of the original dataset is created. Required for Merge operation.
     new_repo_id: str | None = None
-    # Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/new_repo_id. For Split operation, this is the base directory for the split datasets.
     new_root: str | None = None
-    # Upload dataset to Hugging Face hub.
     push_to_hub: bool = False
 
 
@@ -403,6 +507,18 @@ def get_output_path(
     root: Path | str | None,
     new_root: Path | str | None,
 ) -> tuple[str, Path, Path | None]:
+    """Resolve the output location for an edit, backing up the input dir if the edit is in-place.
+
+    Args:
+        repo_id (`str`): Input dataset identifier.
+        new_repo_id (`str | None`): Output dataset identifier, if different from `repo_id`.
+        root (`Path | str | None`): Local root directory of the input dataset.
+        new_root (`Path | str | None`): Local root directory for the output dataset.
+
+    Returns:
+        `tuple[str, Path, Path | None]`: The resolved output repo id, output path, and the backup
+            path the input directory was moved to (`None` unless the edit is in-place).
+    """
     output_repo_id, input_path, output_path = _resolve_io_paths(repo_id, new_repo_id, root, new_root)
 
     # In case of in-place modification, create a backup of the original dataset (if it exists).
@@ -417,6 +533,14 @@ def get_output_path(
 
 
 def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
+    """Run the `delete_episodes` operation described by `cfg`.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `DeleteEpisodesConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `DeleteEpisodesConfig`, or `episode_indices` is unset.
+    """
     if not isinstance(cfg.operation, DeleteEpisodesConfig):
         raise ValueError("Operation config must be DeleteEpisodesConfig")
 
@@ -452,6 +576,15 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
 
 
 def handle_split(cfg: EditDatasetConfig) -> None:
+    """Run the `split` operation described by `cfg`.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `SplitConfig`. Split names/output
+            paths are derived from `cfg.repo_id`; `cfg.new_repo_id` is ignored.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `SplitConfig`, or `splits` is unset.
+    """
     if not isinstance(cfg.operation, SplitConfig):
         raise ValueError("Operation config must be SplitConfig")
 
@@ -485,6 +618,16 @@ def handle_split(cfg: EditDatasetConfig) -> None:
 
 
 def handle_merge(cfg: EditDatasetConfig) -> None:
+    """Run the `merge` operation described by `cfg`.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `MergeConfig`. Output location
+            comes from `cfg.new_repo_id`/`cfg.new_root`; `cfg.repo_id`/`cfg.root` are ignored.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `MergeConfig`, `repo_ids` is unset, or `roots` is set
+            with a different length than `repo_ids`.
+    """
     if not isinstance(cfg.operation, MergeConfig):
         raise ValueError("Operation config must be MergeConfig")
 
@@ -530,6 +673,14 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
 
 
 def handle_remove_feature(cfg: EditDatasetConfig) -> None:
+    """Run the `remove_feature` operation described by `cfg`.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `RemoveFeatureConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `RemoveFeatureConfig`, or `feature_names` is unset.
+    """
     if not isinstance(cfg.operation, RemoveFeatureConfig):
         raise ValueError("Operation config must be RemoveFeatureConfig")
 
@@ -565,6 +716,17 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
 
 
 def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
+    """Run the `modify_tasks` operation described by `cfg`.
+
+    Always edits the dataset in-place; `cfg.new_repo_id`/`cfg.new_root` are ignored.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `ModifyTasksConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `ModifyTasksConfig`, or none of `new_task`,
+            `episode_tasks`, `task_replacements` is set.
+    """
     if not isinstance(cfg.operation, ModifyTasksConfig):
         raise ValueError("Operation config must be ModifyTasksConfig")
 
@@ -614,6 +776,14 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
 
 
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
+    """Run the `convert_image_to_video` operation described by `cfg`.
+
+    Output location is resolved with priority: `cfg.new_root` > `cfg.new_repo_id` >
+    `cfg.operation.output_dir` (deprecated) > an auto-generated `<repo_id>_video` name.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `ConvertImageToVideoConfig`.
+    """
     # Note: Parser may create any config type with the right fields, so we access fields directly
     # instead of checking isinstance()
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
@@ -672,6 +842,18 @@ def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
 
 
 def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
+    """Run the `recompute_stats` operation described by `cfg`.
+
+    Recomputes in-place if the resolved output path matches the input, otherwise copies the dataset
+    to the output location first.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `RecomputeStatsConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `RecomputeStatsConfig`, or the operation would modify
+            the dataset in-place without `cfg.operation.overwrite` set.
+    """
     if not isinstance(cfg.operation, RecomputeStatsConfig):
         raise ValueError("Operation config must be RecomputeStatsConfig")
 
@@ -733,6 +915,18 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
 
 
 def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
+    """Run the `reencode_videos` operation described by `cfg`.
+
+    Re-encodes in-place if the resolved output path matches the input, otherwise copies the dataset
+    to the output location first.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to a `ReencodeVideosConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't a `ReencodeVideosConfig`, or the operation would modify
+            the dataset in-place without `cfg.operation.overwrite` set.
+    """
     if not isinstance(cfg.operation, ReencodeVideosConfig):
         raise ValueError("Operation config must be ReencodeVideosConfig")
 
@@ -789,6 +983,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
 
 
 def _get_dataset_size(repo_path):
+    """Recursively sum the size, in bytes, of every file under `repo_path`."""
     import os
 
     total = 0
@@ -802,6 +997,14 @@ def _get_dataset_size(repo_path):
 
 
 def handle_info(cfg: EditDatasetConfig):
+    """Run the `info` operation described by `cfg`, printing dataset metadata to stdout.
+
+    Args:
+        cfg (`EditDatasetConfig`): Must have `cfg.operation` set to an `InfoConfig`.
+
+    Raises:
+        ValueError: If `cfg.operation` isn't an `InfoConfig`.
+    """
     if not isinstance(cfg.operation, InfoConfig):
         raise ValueError("Operation config must be InfoConfig")
 
@@ -832,6 +1035,15 @@ def handle_info(cfg: EditDatasetConfig):
 
 
 def _validate_config(cfg: EditDatasetConfig) -> None:
+    """Validate that `cfg` carries the identifiers its operation needs.
+
+    Args:
+        cfg (`EditDatasetConfig`): Parsed CLI configuration.
+
+    Raises:
+        ValueError: If `cfg.new_repo_id` is unset for a `merge` operation, or `cfg.repo_id` is unset
+            for any other operation.
+    """
     if isinstance(cfg.operation, MergeConfig):
         if not cfg.new_repo_id:
             raise ValueError("--new_repo_id is required for merge operation (the merged dataset identifier)")
@@ -844,6 +1056,14 @@ def _validate_config(cfg: EditDatasetConfig) -> None:
 
 @parser.wrap()
 def edit_dataset(cfg: EditDatasetConfig) -> None:
+    """Dispatch `cfg` to the handler for its selected `--operation.type`.
+
+    Args:
+        cfg (`EditDatasetConfig`): Parsed from the CLI.
+
+    Raises:
+        ValueError: If `cfg.operation.type` doesn't match a registered operation.
+    """
     _validate_config(cfg)
     operation_type = cfg.operation.type
 
@@ -871,6 +1091,7 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
 
 
 def main() -> None:
+    """CLI entry point for `lerobot-edit-dataset`."""
     init_logging()
     edit_dataset()
 
