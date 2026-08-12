@@ -20,8 +20,7 @@ import numpy as np
 
 
 class Rotation:
-    """
-    Custom rotation class that provides a subset of scipy.spatial.transform.Rotation functionality.
+    """Custom rotation class that provides a subset of scipy.spatial.transform.Rotation functionality.
 
     Supports conversions between rotation vectors, rotation matrices, and quaternions.
     """
@@ -39,8 +38,7 @@ class Rotation:
 
     @classmethod
     def from_rotvec(cls, rotvec: np.ndarray) -> "Rotation":
-        """
-        Create rotation from rotation vector using Rodrigues' formula.
+        """Create rotation from rotation vector using Rodrigues' formula.
 
         Args:
             rotvec: Rotation vector [x, y, z] where magnitude is angle in radians
@@ -67,8 +65,7 @@ class Rotation:
 
     @classmethod
     def from_matrix(cls, matrix: np.ndarray) -> "Rotation":
-        """
-        Create rotation from 3x3 rotation matrix.
+        """Create rotation from 3x3 rotation matrix.
 
         Args:
             matrix: 3x3 rotation matrix
@@ -111,8 +108,7 @@ class Rotation:
 
     @classmethod
     def from_quat(cls, quat: np.ndarray) -> "Rotation":
-        """
-        Create rotation from quaternion.
+        """Create rotation from quaternion.
 
         Args:
             quat: Quaternion [x, y, z, w] or [w, x, y, z] (specify convention in docstring)
@@ -124,8 +120,7 @@ class Rotation:
         return cls(quat)
 
     def as_matrix(self) -> np.ndarray:
-        """
-        Convert rotation to 3x3 rotation matrix.
+        """Convert rotation to 3x3 rotation matrix.
 
         Returns:
             3x3 rotation matrix
@@ -143,8 +138,7 @@ class Rotation:
         )
 
     def as_rotvec(self) -> np.ndarray:
-        """
-        Convert rotation to rotation vector.
+        """Convert rotation to rotation vector.
 
         Returns:
             Rotation vector [x, y, z] where magnitude is angle in radians
@@ -168,8 +162,7 @@ class Rotation:
         return angle * axis
 
     def as_quat(self) -> np.ndarray:
-        """
-        Get quaternion representation.
+        """Get quaternion representation.
 
         Returns:
             Quaternion [x, y, z, w]
@@ -177,8 +170,7 @@ class Rotation:
         return self._quat.copy()
 
     def apply(self, vectors: np.ndarray, inverse: bool = False) -> np.ndarray:
-        """
-        Apply this rotation to a set of vectors.
+        """Apply this rotation to a set of vectors.
 
         This is equivalent to applying the rotation matrix to the vectors:
         self.as_matrix() @ vectors (or self.as_matrix().T @ vectors if inverse=True).
@@ -225,8 +217,7 @@ class Rotation:
         return rotated_vectors
 
     def inv(self) -> "Rotation":
-        """
-        Invert this rotation.
+        """Invert this rotation.
 
         Composition of a rotation with its inverse results in an identity transformation.
 
@@ -241,8 +232,7 @@ class Rotation:
         return Rotation(inverse_quat)
 
     def __mul__(self, other: "Rotation") -> "Rotation":
-        """
-        Compose this rotation with another rotation using the * operator.
+        """Compose this rotation with another rotation using the * operator.
 
         The composition `r2 * r1` means "apply r1 first, then r2".
         This is equivalent to applying rotation matrices: r2.as_matrix() @ r1.as_matrix()

@@ -167,6 +167,7 @@ class LeRobotDoctestModule(DoctestModule):
             # property-heavy (`observation_features`, `is_connected`, ...), so a wrong line number here
             # would point every failure at the decorator. https://github.com/python/cpython/issues/61648
             def _find_lineno(self, obj, source_lines):
+                """Unwrap `property`/`functools.wraps` objects before locating their source line."""
                 if isinstance(obj, property):
                     obj = getattr(obj, "fget", obj)
                 if hasattr(obj, "__wrapped__"):
@@ -177,6 +178,7 @@ class LeRobotDoctestModule(DoctestModule):
                 # `cached_property` is otherwise never considered part of the current module and its
                 # examples are silently skipped. https://github.com/python/cpython/issues/107995
                 def _from_module(self, module, object):
+                    """Treat a `cached_property` as belonging to `module` via its underlying function."""
                     if isinstance(object, functools.cached_property):
                         object = object.func
                     return super()._from_module(module, object)

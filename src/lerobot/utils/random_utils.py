@@ -28,10 +28,7 @@ from .utils import flatten_dict, unflatten_dict
 
 
 def serialize_python_rng_state() -> dict[str, torch.Tensor]:
-    """
-    Returns the rng state for `random` in the form of a flat dict[str, torch.Tensor] to be saved using
-    `safetensors.save_file()` or `torch.save()`.
-    """
+    """Return `random`'s rng state as a flat `dict[str, torch.Tensor]`, saveable via safetensors."""
     py_state = random.getstate()
     return {
         "py_rng_version": torch.tensor([py_state[0]], dtype=torch.int64),
@@ -40,18 +37,13 @@ def serialize_python_rng_state() -> dict[str, torch.Tensor]:
 
 
 def deserialize_python_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
-    """
-    Restores the rng state for `random` from a dictionary produced by `serialize_python_rng_state()`.
-    """
+    """Restore `random`'s rng state from a dict produced by `serialize_python_rng_state`."""
     py_state = (rng_state_dict["py_rng_version"].item(), tuple(rng_state_dict["py_rng_state"].tolist()), None)
     random.setstate(py_state)
 
 
 def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
-    """
-    Returns the rng state for `numpy` in the form of a flat dict[str, torch.Tensor] to be saved using
-    `safetensors.save_file()` or `torch.save()`.
-    """
+    """Return `numpy`'s rng state as a flat `dict[str, torch.Tensor]`, saveable via safetensors."""
     np_state = np.random.get_state()
     # Ensure no breaking changes from numpy
     assert np_state[0] == "MT19937"
@@ -64,9 +56,7 @@ def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
 
 
 def deserialize_numpy_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
-    """
-    Restores the rng state for `numpy` from a dictionary produced by `serialize_numpy_rng_state()`.
-    """
+    """Restore `numpy`'s rng state from a dict produced by `serialize_numpy_rng_state`."""
     np_state = (
         "MT19937",
         rng_state_dict["np_rng_state_values"].numpy(),
@@ -78,10 +68,7 @@ def deserialize_numpy_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None
 
 
 def serialize_torch_rng_state() -> dict[str, torch.Tensor]:
-    """
-    Returns the rng state for `torch` in the form of a flat dict[str, torch.Tensor] to be saved using
-    `safetensors.save_file()` or `torch.save()`.
-    """
+    """Return `torch`'s rng state as a flat `dict[str, torch.Tensor]`, saveable via safetensors."""
     torch_rng_state_dict = {"torch_rng_state": torch.get_rng_state()}
     if torch.cuda.is_available():
         torch_rng_state_dict["torch_cuda_rng_state"] = torch.cuda.get_rng_state()
@@ -91,9 +78,7 @@ def serialize_torch_rng_state() -> dict[str, torch.Tensor]:
 
 
 def deserialize_torch_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
-    """
-    Restores the rng state for `torch` from a dictionary produced by `serialize_torch_rng_state()`.
-    """
+    """Restore `torch`'s rng state from a dict produced by `serialize_torch_rng_state`."""
     torch.set_rng_state(rng_state_dict["torch_rng_state"])
     if torch.cuda.is_available() and "torch_cuda_rng_state" in rng_state_dict:
         torch.cuda.set_rng_state(rng_state_dict["torch_cuda_rng_state"])
@@ -102,9 +87,9 @@ def deserialize_torch_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None
 
 
 def serialize_rng_state() -> dict[str, torch.Tensor]:
-    """
-    Returns the rng state for `random`, `numpy`, and `torch`, in the form of a flat
-    dict[str, torch.Tensor] to be saved using `safetensors.save_file()` `torch.save()`.
+    """Return `random`/`numpy`/`torch`'s rng state as a flat `dict[str, torch.Tensor]`.
+
+    Saveable via safetensors.
     """
     py_rng_state_dict = serialize_python_rng_state()
     np_rng_state_dict = serialize_numpy_rng_state()
@@ -118,10 +103,7 @@ def serialize_rng_state() -> dict[str, torch.Tensor]:
 
 
 def deserialize_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
-    """
-    Restores the rng state for `random`, `numpy`, and `torch` from a dictionary produced by
-    `serialize_rng_state()`.
-    """
+    """Restore `random`/`numpy`/`torch`'s rng state from a dict produced by `serialize_rng_state`."""
     py_rng_state_dict = {k: v for k, v in rng_state_dict.items() if k.startswith("py")}
     np_rng_state_dict = {k: v for k, v in rng_state_dict.items() if k.startswith("np")}
     torch_rng_state_dict = {k: v for k, v in rng_state_dict.items() if k.startswith("torch")}
@@ -132,12 +114,22 @@ def deserialize_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None:
 
 
 def save_rng_state(save_dir: Path) -> None:
+    """Serialize and save `random`/`numpy`/`torch` RNG state to `save_dir`.
+
+    Args:
+        save_dir (`Path`): Directory to write the RNG state safetensors file to.
+    """
     rng_state_dict = serialize_rng_state()
     flat_rng_state_dict = flatten_dict(rng_state_dict)
     save_file(flat_rng_state_dict, save_dir / RNG_STATE)
 
 
 def load_rng_state(save_dir: Path) -> None:
+    """Restore `random`/`numpy`/`torch` RNG state from `save_dir`, as saved by `save_rng_state`.
+
+    Args:
+        save_dir (`Path`): Directory the RNG state safetensors file was saved to.
+    """
     flat_rng_state_dict = load_file(save_dir / RNG_STATE)
     rng_state_dict = unflatten_dict(flat_rng_state_dict)
     deserialize_rng_state(rng_state_dict)
@@ -159,7 +151,7 @@ def set_rng_state(random_state_dict: dict[str, Any]):
     """Set the random state for `random`, `numpy`, and `torch`.
 
     Args:
-        random_state_dict: A dictionary of the form returned by `get_rng_state`.
+        random_state_dict (`dict[str, Any]`): A dictionary of the form returned by `get_rng_state`.
     """
     random.setstate(random_state_dict["random_state"])
     np.random.set_state(random_state_dict["numpy_random_state"])

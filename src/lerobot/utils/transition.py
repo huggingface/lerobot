@@ -22,6 +22,19 @@ from .constants import ACTION
 
 
 class Transition(TypedDict):
+    """One RL environment transition.
+
+    Args:
+        state (`dict[str, torch.Tensor]`): Observation before the action.
+        action (`torch.Tensor`): Action taken.
+        reward (`float`): Reward received.
+        next_state (`dict[str, torch.Tensor]`): Observation after the action.
+        done (`bool`): Whether the episode terminated.
+        truncated (`bool`): Whether the episode was truncated (time limit).
+        complementary_info (`dict[str, torch.Tensor | float | int] | None`, *optional*): Extra
+            per-transition metadata (e.g. for reward shaping or debugging).
+    """
+
     state: dict[str, torch.Tensor]
     action: torch.Tensor
     reward: float
@@ -32,6 +45,18 @@ class Transition(TypedDict):
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
+    """Move every tensor field of `transition` (in place) to `device`.
+
+    Args:
+        transition (`Transition`): Transition to move.
+        device (`str`, *optional*, defaults to `"cpu"`): Target device.
+
+    Returns:
+        `Transition`: The same `transition` dict, mutated in place.
+
+    Raises:
+        ValueError: If a `complementary_info` value isn't a tensor, `int`, `float`, or `bool`.
+    """
     device = torch.device(device)
     non_blocking = device.type == "cuda"
 
@@ -71,9 +96,14 @@ def move_transition_to_device(transition: Transition, device: str = "cpu") -> Tr
 
 
 def move_state_dict_to_device(state_dict, device="cpu"):
-    """
-    Recursively move all tensors in a (potentially) nested
-    dict/list/tuple structure to the CPU.
+    """Recursively move all tensors in a (potentially) nested dict/list/tuple structure to `device`.
+
+    Args:
+        state_dict (`Any`): A tensor, or a nested dict/list/tuple structure containing tensors.
+        device (`str`, *optional*, defaults to `"cpu"`): Target device.
+
+    Returns:
+        `Any`: The same structure, with every tensor moved to `device`.
     """
     if isinstance(state_dict, torch.Tensor):
         return state_dict.to(device)

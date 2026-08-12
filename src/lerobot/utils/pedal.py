@@ -37,19 +37,16 @@ def start_pedal_listener(
 ) -> threading.Thread | None:
     """Spawn a daemon thread that forwards pedal key-press codes to ``on_press``.
 
-    Parameters
-    ----------
-    on_press:
-        Callback invoked with the pressed key code string (e.g. ``"KEY_A"``)
-        on each pedal press event.  The callback runs in the listener thread
-        and must be thread-safe.
-    device_path:
-        Linux input device path (e.g. ``/dev/input/by-id/...``).
+    Args:
+        on_press (`Callable[[str], None]`): Callback invoked with the pressed key code string
+            (e.g. `"KEY_A"`) on each pedal press event. Runs in the listener thread and must be
+            thread-safe.
+        device_path (`str`, *optional*, defaults to `"/dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd"`): Linux input device
+            path (e.g. `/dev/input/by-id/...`).
 
-    Returns
-    -------
-    The started daemon :class:`threading.Thread`, or ``None`` when
-    :mod:`evdev` is not installed (optional dependency; silent no-op).
+    Returns:
+        `threading.Thread | None`: The started daemon thread, or `None` when `evdev` is not
+            installed (optional dependency; silent no-op).
     """
     try:
         from evdev import InputDevice, categorize, ecodes
@@ -57,6 +54,7 @@ def start_pedal_listener(
         return None
 
     def pedal_reader() -> None:
+        """Read pedal key events from `device_path` in a loop, forwarding presses to `on_press`."""
         try:
             dev = InputDevice(device_path)
             logger.info("Pedal connected: %s", dev.name)

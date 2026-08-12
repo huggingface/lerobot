@@ -60,6 +60,14 @@ class ProcessSignalHandler:
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
     def __init__(self, use_threads: bool, display_pid: bool = False):
+        """Register shutdown signal handlers.
+
+        Args:
+            use_threads (`bool`): Whether `shutdown_event` should be a `threading.Event` (`True`)
+                or a `multiprocessing.Event` (`False`).
+            display_pid (`bool`, *optional*, defaults to `False`): Whether to prefix shutdown log
+                messages with the process's PID.
+        """
         # TODO: Check if we can use Event from threading since Event from
         # multiprocessing is the a clone of threading.Event.
         # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Event
@@ -83,6 +91,7 @@ class ProcessSignalHandler:
         """Attach the internal _signal_handler to a subset of POSIX signals."""
 
         def _signal_handler(signum, frame):
+            """Set `self.shutdown_event`, and force-exit on a second signal."""
             pid_str = ""
             if self._display_pid:
                 pid_str = f"[PID: {os.getpid()}]"

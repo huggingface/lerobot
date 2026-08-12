@@ -201,6 +201,12 @@ class TerminalKeyListener:
     """
 
     def __init__(self, on_key: Callable[[str], None]):
+        """Initialize the listener.
+
+        Args:
+            on_key (`Callable[[str], None]`): Called with each decoded key name once `start()`
+                begins reading. Runs on the reader thread.
+        """
         self._on_key = on_key
         self._running = False
         self._thread: threading.Thread | None = None
@@ -248,6 +254,7 @@ class TerminalKeyListener:
         return None
 
     def _run(self) -> None:
+        """Read and decode key bytes from the TTY in a loop, dispatching to `self._on_key`."""
         while self._running:
             ch = self._read_char(timeout=0.05)
             if ch is None:
@@ -361,6 +368,7 @@ def create_key_listener(dispatch: Callable[[str], None], *, controls_help: str =
     if pynput_can_capture() and keyboard is not None:
 
         def on_press(key):
+            """Resolve a pynput key event to its canonical name and forward it to `dispatch`."""
             with contextlib.suppress(Exception):
                 name = _resolve_pynput_key(key)
                 if name is not None:
@@ -427,6 +435,7 @@ def init_keyboard_listener():
     # letters are immune to the escape-sequence split/delay/interception that affects arrows
     # over laggy SSH/VNC links. Case-insensitive so Shift+letter still works.
     def on_key(name: str) -> None:
+        """Map a decoded key name (arrow or letter equivalent) to a recording control."""
         key = name.lower()
         if key in ("right", "n"):
             apply_recording_control("right", events)

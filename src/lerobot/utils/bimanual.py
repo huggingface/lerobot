@@ -38,26 +38,45 @@ class BimanualMixin:
 
     @property
     def is_connected(self) -> bool:
+        """Whether both `left_arm` and `right_arm` are connected.
+
+        Returns:
+            `bool`: `True` only if both arms report connected.
+        """
         return self.left_arm.is_connected and self.right_arm.is_connected
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether both `left_arm` and `right_arm` are calibrated.
+
+        Returns:
+            `bool`: `True` only if both arms report calibrated.
+        """
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect both arms.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`): Whether to automatically calibrate
+                each arm after connecting, if it is not calibrated or needs recalibration.
+        """
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
     def calibrate(self) -> None:
+        """Calibrate both arms."""
         self.left_arm.calibrate()
         self.right_arm.calibrate()
 
     def configure(self) -> None:
+        """Apply configuration to both arms."""
         self.left_arm.configure()
         self.right_arm.configure()
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Disconnect both arms."""
         self.left_arm.disconnect()
         self.right_arm.disconnect()

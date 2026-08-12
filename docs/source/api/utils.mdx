@@ -1,0 +1,114 @@
+# Utils
+
+`src/lerobot/utils/` holds shared infrastructure used across the codebase: errors, device/RNG
+helpers, logging and timing, Hub upload/download, visualization, keyboard input, and small
+math/data helpers.
+
+## Errors and connection decorators
+
+[[autodoc]] lerobot.utils.errors.DeviceNotConnectedError
+
+[[autodoc]] lerobot.utils.errors.DeviceAlreadyConnectedError
+
+[[autodoc]] lerobot.utils.decorators.check_if_not_connected
+
+[[autodoc]] lerobot.utils.decorators.check_if_already_connected
+
+## Devices and reproducibility
+
+[[autodoc]] lerobot.utils.device_utils.is_torch_device_available
+
+[[autodoc]] lerobot.utils.device_utils.is_amp_available
+
+[[autodoc]] lerobot.utils.device_utils.get_safe_dtype
+
+[[autodoc]] lerobot.utils.random_utils.set_seed
+
+[[autodoc]] lerobot.utils.random_utils.get_rng_state
+
+[[autodoc]] lerobot.utils.random_utils.set_rng_state
+
+[[autodoc]] lerobot.utils.random_utils.seeded_context
+
+## Logging and metrics
+
+[[autodoc]] lerobot.utils.utils.init_logging
+
+[[autodoc]] lerobot.utils.utils.log_say
+
+[[autodoc]] lerobot.utils.utils.TimerManager
+    - all
+
+[[autodoc]] lerobot.utils.logging_utils.AverageMeter
+    - all
+
+[[autodoc]] lerobot.utils.logging_utils.MetricsTracker
+    - all
+
+## Hugging Face Hub
+
+[[autodoc]] lerobot.utils.hub.HubMixin
+    - all
+
+[[autodoc]] lerobot.utils.hub.find_latest_hub_checkpoint
+
+## Sample weighting
+
+[[autodoc]] lerobot.utils.sample_weighting.SampleWeighter
+    - all
+
+[[autodoc]] lerobot.utils.sample_weighting.SampleWeightingConfig
+
+[[autodoc]] lerobot.utils.sample_weighting.make_sample_weighter
+
+## Visualization
+
+Backend-agnostic entry points that dispatch to Rerun or Foxglove based on `display_mode`.
+
+[[autodoc]] lerobot.utils.visualization_utils.init_visualization
+
+[[autodoc]] lerobot.utils.visualization_utils.log_visualization_data
+
+[[autodoc]] lerobot.utils.visualization_utils.shutdown_visualization
+
+## Keyboard and pedal input
+
+[[autodoc]] lerobot.utils.keyboard_input.create_key_listener
+
+[[autodoc]] lerobot.utils.keyboard_input.init_keyboard_listener
+
+[[autodoc]] lerobot.utils.keyboard_input.TerminalKeyListener
+    - all
+
+[[autodoc]] lerobot.utils.pedal.start_pedal_listener
+
+## Bimanual robots and teleoperators
+
+[[autodoc]] lerobot.utils.bimanual.BimanualMixin
+    - all
+
+## Data and math helpers
+
+[[autodoc]] lerobot.utils.transition.Transition
+
+[[autodoc]] lerobot.utils.transition.move_transition_to_device
+
+[[autodoc]] lerobot.utils.collate.lerobot_collate_fn
+
+[[autodoc]] lerobot.utils.action_interpolator.ActionInterpolator
+    - all
+
+[[autodoc]] lerobot.utils.rotation.Rotation
+    - all
+
+## I/O
+
+[[autodoc]] lerobot.utils.io_utils.load_json
+
+[[autodoc]] lerobot.utils.io_utils.write_json
+
+[[autodoc]] lerobot.utils.io_utils.write_video
+
+## Robot timing
+
+[[autodoc]] lerobot.utils.robot_utils.precise_sleep

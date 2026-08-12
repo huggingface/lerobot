@@ -43,7 +43,6 @@ def init_visualization(
     ``ip`` is the interface to bind the WebSocket server to (``127.0.0.1`` for local only, ``0.0.0.0``
     for all interfaces) and ``port`` is its port.
     """
-
     if display_mode == "rerun":
         init_rerun(session_name=session_name, ip=ip, port=port)
     elif display_mode == "foxglove":
@@ -59,7 +58,6 @@ def log_visualization_data(
     compress_images: bool = False,
 ) -> None:
     """Logs observation/action data to the backend selected by ``display_mode``."""
-
     if display_mode == "rerun":
         log_rerun_data(observation=observation, action=action, compress_images=compress_images)
     elif display_mode == "foxglove":
@@ -70,7 +68,6 @@ def log_visualization_data(
 
 def shutdown_visualization(display_mode: str) -> None:
     """Shuts down the backend selected by ``display_mode``."""
-
     if display_mode == "rerun":
         shutdown_rerun()
     elif display_mode == "foxglove":
