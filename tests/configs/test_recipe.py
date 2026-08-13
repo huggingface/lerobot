@@ -5,7 +5,13 @@ from textwrap import dedent
 
 import pytest
 
-from lerobot.configs.recipe import MessageTurn, TrainingRecipe, load_recipe
+from lerobot.configs.recipe import (
+    MessageTurn,
+    TrainingRecipe,
+    language_recipe_enabled,
+    load_recipe,
+    resolve_recipe_override,
+)
 
 
 def _minimal_message_turn(content: str = "${task}") -> MessageTurn:
@@ -27,13 +33,6 @@ def test_message_recipe_validates_unknown_binding():
                 _minimal_target_turn(),
             ]
         )
-
-
-def test_canonical_recipe_loads():
-    """The canonical PI052 blend YAML loads + validates."""
-    recipe = TrainingRecipe.from_yaml(Path("src/lerobot/configs/recipes/subtask_mem_vqa_speech.yaml"))
-    assert recipe.blend is not None
-    assert sum(c.weight for c in recipe.blend.values()) == pytest.approx(1.0)
 
 
 def test_message_turn_requires_a_stream():
@@ -181,8 +180,98 @@ def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):
     assert len(via_helper.messages) == len(via_classmethod.messages)
 
 
+def test_recipe_override_helpers_load_explicit_paths_and_keep_inline_checkpoint_recipe(
+    tmp_path: Path,
+):
+    inline = TrainingRecipe(messages=[_minimal_message_turn(), _minimal_target_turn()])
+    override_path = tmp_path / "override.yaml"
+    override_path.write_text("messages:\n  - {role: user, content: external, stream: low_level}\n")
+
+    resolved = resolve_recipe_override(inline, override_path)
+
+    assert resolved is not None
+    assert resolved.messages[0].content == "external"
+    assert resolve_recipe_override(inline, tmp_path / "stale.yaml") is inline
+    with pytest.raises(FileNotFoundError):
+        resolve_recipe_override(None, tmp_path / "missing.yaml")
+    assert language_recipe_enabled(use_language_recipe=True)
+    assert language_recipe_enabled(recipe_path=override_path)
+    assert not language_recipe_enabled()
+
+
 def test_from_yaml_rejects_non_mapping(tmp_path: Path):
     path = tmp_path / "bad.yaml"
     path.write_text("- just\n- a\n- list\n")
     with pytest.raises(ValueError, match="mapping at the top level"):
         TrainingRecipe.from_yaml(path)
+
+
+# ── Prompt-turn extraction ───────────────────────────────────────────
+
+
+def _subtask_blend() -> TrainingRecipe:
+    return TrainingRecipe(
+        blend={
+            "high_level_subtask": TrainingRecipe(
+                weight=0.3,
+                messages=[
+                    _minimal_message_turn("${task}\nPredict the next action in language."),
+                    MessageTurn(
+                        role="assistant",
+                        content="${subtask}",
+                        stream="high_level",
+                        target=True,
+                        if_present="subtask",
+                    ),
+                ],
+            ),
+            "low_level_execution": TrainingRecipe(
+                weight=0.7,
+                messages=[
+                    MessageTurn(role="user", content="${subtask}", stream="low_level", if_present="subtask")
+                ],
+            ),
+        }
+    )
+
+
+def test_prompt_turns_returns_turns_before_the_matching_target():
+    turns = _subtask_blend().prompt_turns("subtask")
+    assert len(turns) == 1
+    assert turns[0].role == "user"
+    assert turns[0].content == "${task}\nPredict the next action in language."
+
+
+def test_prompt_turns_on_a_plain_message_recipe():
+    recipe = TrainingRecipe(
+        messages=[
+            _minimal_message_turn(),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ],
+        bindings={"subtask": "active_at(t, style=subtask)"},
+    )
+    assert [turn.content for turn in recipe.prompt_turns("subtask")] == ["${task}"]
+
+
+def test_prompt_turns_picks_the_first_matching_component_in_declaration_order():
+    first = TrainingRecipe(
+        weight=0.5,
+        messages=[
+            _minimal_message_turn("first: ${task}"),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ],
+    )
+    second = TrainingRecipe(
+        weight=0.5,
+        messages=[
+            _minimal_message_turn("second: ${task}"),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ],
+    )
+    recipe = TrainingRecipe(blend={"first": first, "second": second})
+    assert recipe.prompt_turns("subtask")[0].content == "first: ${task}"
+
+
+def test_prompt_turns_unknown_kind_lists_supervised_kinds():
+    with pytest.raises(ValueError, match=r"no assistant target turn supervising \$\{memory\}.*subtask"):
+        _subtask_blend().prompt_turns("memory")

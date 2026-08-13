@@ -26,6 +26,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
+from lerobot.configs.recipe import TrainingRecipe
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
@@ -67,6 +68,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
+    # The training recipe this checkpoint's language supervision was rendered with.
+    # Its message turns are the single source of recipe-backed inference prompt
+    # wording. ``None`` is valid for policies/checkpoints that do not support the
+    # runtime ``query_kind="next_subtask"`` contract.
+    recipe: TrainingRecipe | dict[str, Any] | None = None
+
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
@@ -83,6 +90,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        # JSON and CLI decoding may leave this nested dataclass as a plain dict.
+        # Normalize it at config construction time so prompt generation never
+        # reparses a recipe file or rebuilds the recipe on every call.
+        if isinstance(self.recipe, dict):
+            self.recipe = TrainingRecipe.from_dict(self.recipe)
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")

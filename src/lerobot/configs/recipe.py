@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import copy
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, get_args
@@ -199,6 +201,38 @@ class TrainingRecipe:
             names |= self._referenced_bindings(turn)
         return names
 
+    def prompt_turns(self, kind: str) -> list[MessageTurn]:
+        """The turns preceding the target turn that supervises the ``kind`` binding.
+
+        Searches this recipe's messages — or each blend component in declaration
+        order — for the first assistant ``target: true`` turn whose content
+        references the ``kind`` binding, and returns every turn before it. This is
+        a lower-level recipe utility; the policy API maps its constrained public
+        templates to target bindings internally.
+        """
+        components = [self] if self.messages is not None else list((self.blend or {}).values())
+        for component in components:
+            turns = component.messages or []
+            for index, turn in enumerate(turns):
+                if (
+                    turn.target
+                    and turn.role == "assistant"
+                    and kind in _placeholders_in_content(turn.content)
+                ):
+                    return turns[:index]
+        supervised = sorted(
+            {
+                name
+                for component in components
+                for turn in component.messages or []
+                if turn.target and turn.role == "assistant"
+                for name in _placeholders_in_content(turn.content)
+            }
+        )
+        raise ValueError(
+            f"Recipe has no assistant target turn supervising ${{{kind}}}. Supervised bindings: {supervised}."
+        )
+
     def _referenced_bindings(self, turn: MessageTurn) -> set[str]:
         """Return the binding names that ``turn`` references via placeholders or attributes."""
         names: set[str] = set()
@@ -225,6 +259,109 @@ def _placeholders_in_content(content: str | list[dict[str, Any]] | None) -> set[
     return names
 
 
+def render_message_turns(
+    turns: Sequence[MessageTurn],
+    bindings: dict[str, Any],
+) -> dict[str, list[Any]]:
+    """Render recipe turns with substitution shared by training and inference.
+
+    This lightweight primitive intentionally has no dataset dependency. Training
+    renders complete recipes and validates supervision afterwards; the policy
+    input processor uses it for the prefix before a text-generation target.
+    """
+    messages: list[dict[str, Any]] = []
+    streams: list[str | None] = []
+    target_indices: list[int] = []
+
+    for turn in turns:
+        if turn.if_present is not None and bindings.get(turn.if_present) is None:
+            continue
+
+        message = {"role": turn.role}
+        if turn.content is not None:
+            message["content"] = _render_content(turn.content, bindings)
+
+        if turn.tool_calls_from is not None:
+            row = bindings.get(turn.tool_calls_from)
+            tool_calls = row.get("tool_calls") if isinstance(row, dict) else None
+            if tool_calls:
+                message["tool_calls"] = copy.deepcopy(tool_calls)
+
+        message_idx = len(messages)
+        messages.append(message)
+        streams.append(turn.stream)
+        if turn.target:
+            target_indices.append(message_idx)
+
+    return {
+        "messages": messages,
+        "message_streams": streams,
+        "target_message_indices": target_indices,
+    }
+
+
+def _render_content(content: str | list[dict[str, Any]], bindings: dict[str, Any]) -> Any:
+    """Substitute bindings into text or each string field of multimodal blocks."""
+    if isinstance(content, str):
+        return _substitute(content, bindings)
+
+    rendered_blocks = []
+    for block in content:
+        rendered_block = copy.deepcopy(block)
+        for key, value in rendered_block.items():
+            if isinstance(value, str):
+                rendered_block[key] = _substitute(value, bindings)
+        rendered_blocks.append(rendered_block)
+    return rendered_blocks
+
+
+def _substitute(template: str, bindings: dict[str, Any]) -> str:
+    """Replace ``${name}`` placeholders with string or language-row values."""
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in bindings:
+            raise ValueError(f"Unknown template binding: {name!r}")
+        value = bindings[name]
+        if value is None:
+            return ""
+        if isinstance(value, dict):
+            content = value.get("content")
+            return "" if content is None else str(content)
+        return str(value)
+
+    return PLACEHOLDER_RE.sub(replace, template)
+
+
 def load_recipe(path: str | Path) -> TrainingRecipe:
     """Load a :class:`TrainingRecipe` from a YAML file at ``path``."""
     return TrainingRecipe.from_yaml(path)
+
+
+def resolve_recipe_override(
+    recipe: TrainingRecipe | None,
+    recipe_path: str | Path | None,
+) -> TrainingRecipe | None:
+    """Resolve an external recipe while keeping checkpoint-inline recipes portable.
+
+    Fresh configurations fail when their requested override does not exist. A
+    reloaded checkpoint may retain the original training-machine path alongside
+    its serialized recipe; in that case the inline recipe remains authoritative.
+    """
+    if recipe_path is None:
+        return recipe
+    try:
+        return load_recipe(recipe_path)
+    except FileNotFoundError:
+        if recipe is None:
+            raise
+        return recipe
+
+
+def language_recipe_enabled(
+    *,
+    use_language_recipe: bool = False,
+    recipe_path: str | Path | None = None,
+) -> bool:
+    """Whether training requested a built-in recipe or an external override."""
+    return use_language_recipe or recipe_path is not None

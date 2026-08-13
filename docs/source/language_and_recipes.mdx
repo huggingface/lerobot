@@ -14,14 +14,14 @@ The design splits cleanly into three layers:
    `data/chunk-*/file-*.parquet` as two optional columns (`language_persistent`
    and `language_events`). Datasets without these columns keep their existing
    behavior.
-2. **Recipe** — a YAML file that declares which annotation rows to bind and
-   how to lay them out as chat turns (`role`, `content`, optional images,
-   optional tool calls). Recipes are pure config; no Python required to add a
-   new one.
-3. **Training format** — at sample time, `RenderMessagesStep` resolves the
-   recipe against the per-frame annotations and emits HF-style `messages` plus
-   LeRobot-specific sidecars (`message_streams`, `target_message_indices`)
-   that policy processors consume.
+2. **Recipe** — a `TrainingRecipe` stored in the policy config that declares
+   which annotation rows to bind and how to lay them out as chat turns
+   (`role`, `content`, optional images, optional tool calls). The checkpoint
+   therefore carries the exact recipe used by that policy.
+3. **Semantic-message format** — one dependency-light `RenderMessagesStep`
+   handles runtime `query_kind`/`query_text`, existing semantic messages, and recipe
+   training annotations. Training emits HF-style `messages` plus LeRobot-specific
+   sidecars (`message_streams`, `target_message_indices`) for policy processors.
 
 This page describes each layer in turn.
 
@@ -66,20 +66,121 @@ The language stack itself has three internal modules backing layer 1:
 
 ## Layer 2 — recipe anatomy
 
-Recipes are YAML files backed by `TrainingRecipe` and `MessageTurn`. They
-declare which annotation rows to pull (via `bindings`) and how to compose them
-into chat turns (`messages`).
+Recipes are `TrainingRecipe` and `MessageTurn` values owned by policy configs.
+They declare which annotation rows to pull (via `bindings`) and how to compose
+them into chat turns (`messages`). A policy should construct its built-in
+recipe in `configuration_<policy>.py`, so training and inference share it and
+the resolved value is serialized in `config.json`.
 
-```yaml
-messages:
-  - { role: user, content: "${task}", stream: high_level }
-  - { role: assistant, content: "${subtask}", stream: low_level, target: true }
+```python
+recipe = TrainingRecipe(
+    messages=[
+        MessageTurn(role="user", content="${task}", stream="high_level"),
+        MessageTurn(
+            role="assistant",
+            content="${subtask}",
+            stream="low_level",
+            target=True,
+        ),
+    ]
+)
 ```
+
+`TrainingRecipe.from_yaml(path)` remains available for an explicit external
+fine-tuning override. LeRobot does not ship a global recipe catalog: prompt
+wording and supervision layout are policy contracts, not cross-policy
+defaults.
 
 A recipe can also branch into a weighted **blend** of sub-recipes. At sample
 time, exactly one branch is selected deterministically from the sample index,
 so different frames train different objectives (e.g. memory updates vs.
 low-level execution vs. VQA) without any Python wiring.
+
+### Memory-update example
+
+A memory recipe can bind the previous memory, the subtask that just completed,
+and the memory active at the current frame. The assistant target teaches the
+policy to emit the updated memory:
+
+```python
+memory_update = TrainingRecipe(
+    weight=0.2,
+    bindings={
+        "prior_memory": "nth_prev(style=memory, offset=1)",
+        "completed_subtask": "nth_prev(style=subtask, offset=1)",
+        "current_memory": "active_at(t, style=memory)",
+    },
+    messages=[
+        MessageTurn(role="user", content="${task}", stream="high_level"),
+        MessageTurn(
+            role="assistant",
+            content="Previous memory: ${prior_memory}",
+            stream="high_level",
+            if_present="prior_memory",
+        ),
+        MessageTurn(
+            role="user",
+            content="Completed subtask: ${completed_subtask}",
+            stream="high_level",
+            if_present="completed_subtask",
+        ),
+        MessageTurn(
+            role="assistant",
+            content="${current_memory}",
+            stream="high_level",
+            target=True,
+            if_present="current_memory",
+        ),
+    ],
+)
+```
+
+`active_at` densifies sparse persistent memory annotations across frames,
+while `nth_prev` retrieves earlier entries from the same episode.
+
+### Camera-grounded VQA example
+
+VQA is event-like and view-dependent, so bind both the question and answer at
+the current timestamp and require their camera key to match the image block:
+
+```python
+vqa_front = TrainingRecipe(
+    weight=0.1,
+    route="vqa",
+    bindings={
+        "vqa_query": (
+            "emitted_at(t, style=vqa, role=user, "
+            "camera=observation.images.front)"
+        ),
+        "vqa_answer": (
+            "emitted_at(t, style=vqa, role=assistant, "
+            "camera=observation.images.front)"
+        ),
+    },
+    messages=[
+        MessageTurn(
+            role="user",
+            stream="high_level",
+            if_present="vqa_query",
+            content=[
+                {"type": "image", "feature": "observation.images.front"},
+                {"type": "text", "text": "${vqa_query}"},
+            ],
+        ),
+        MessageTurn(
+            role="assistant",
+            content="${vqa_answer}",
+            stream="high_level",
+            target=True,
+            if_present="vqa_answer",
+        ),
+    ],
+)
+```
+
+Place these components beside low-level action or subtask components in the
+policy config's `TrainingRecipe(blend={...})`. Blend weights are policy choices
+and must sum to the intended sampling distribution.
 
 ### Temporal semantics
 
@@ -146,14 +247,13 @@ The renderer does not apply a tokenizer chat template. Policy processors decide 
 
 ## Blends
 
-Blend recipes select one weighted sub-recipe deterministically from the sample index.
-`recipes/subtask_mem.yaml` trains the compact core blend — high-level subtask prediction, low-level execution, and memory. `recipes/subtask_mem_vqa_speech.yaml` is the fuller variant that also adds VQA and spoken interjection responses.
-
-`recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
-weighted blend. For the same sample, its assistant subtask is supervised with
-text cross-entropy on the `low_level` stream while action prediction remains
-active, matching the joint setup from the π0.5 paper. Enable
-`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+Blend recipes select one weighted sub-recipe deterministically from the sample
+index. A policy config can combine high-level subtask prediction, low-level
+execution, memory, VQA, and speech branches with weights appropriate for that
+checkpoint. A joint message recipe can instead supervise an assistant subtask
+with text cross-entropy on the `low_level` stream while action prediction
+remains active on the same sample. Consult the selected policy config for its
+exact built-in recipe and prompt wording.
 
 ## Graceful absence
 
