@@ -2024,7 +2024,7 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
     policy._apply_compile()
     policy._apply_compile()
 
-    dynamic_targets = [*backbone.action_expert.blocks]
+    compile_targets = [*backbone.action_expert.blocks]
     non_targets = [
         *backbone.transformer.blocks,
         *backbone.vision_backbone.image_vit.transformer.resblocks,
@@ -2045,8 +2045,8 @@ def test_molmoact2_compile_applies_precision_safe_action_partition(monkeypatch):
     assert lru_cache_calls == [False]
     assert ddp_optimizer_disable_calls == [True]
     assert tuple(policy.state_dict()) == state_dict_keys
-    for module in dynamic_targets:
-        assert module.compile_calls == [((), {**common_kwargs, "dynamic": True})]
+    for module in compile_targets:
+        assert module.compile_calls == [((), {**common_kwargs, "dynamic": None})]
     for module in non_targets:
         assert module.compile_calls == []
 
@@ -2075,6 +2075,26 @@ def test_molmoact2_compile_uses_automatic_shapes_without_gradient_checkpointing(
         assert module.compile_calls[0][1]["dynamic"] is None
     assert lru_cache_calls == []
     assert ddp_optimizer_disable_calls == []
+
+
+def test_molmoact2_compile_marks_only_context_sequence_dynamic(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        torch._dynamo,
+        "mark_dynamic",
+        lambda tensor, dim: calls.append((tensor, dim)),
+    )
+    key_states = torch.zeros(2, 17, 4, 8)
+    value_states = torch.zeros(2, 17, 4, 8)
+    attention_mask = torch.zeros(2, 1, 1, 17)
+
+    molmoact2_modeling._mark_action_context_dynamic(key_states, value_states, attention_mask)
+
+    assert calls == [
+        (key_states, 1),
+        (value_states, 1),
+        (attention_mask, 3),
+    ]
 
 
 @pytest.mark.parametrize("train_mode_vlm", ["fft", "lora", "freeze"])

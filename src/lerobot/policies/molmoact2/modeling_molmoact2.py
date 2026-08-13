@@ -185,6 +185,33 @@ def _disable_dynamo_ddp_optimizer() -> None:
     dynamo_config.optimize_ddp = False
 
 
+def _mark_action_context_dynamic(
+    key_states: Tensor,
+    value_states: Tensor,
+    attention_mask: Tensor | None,
+) -> None:
+    """Mark only the variable cross-attention sequence dimensions dynamic.
+
+    MolmoAct2 training fixes the per-rank batch size, flow-timestep count, and
+    action horizon. The encoder context length is the only action-block input
+    dimension that changes between batches. Marking that dimension explicitly
+    lets Dynamo build one reusable graph without making every otherwise-static
+    action dimension symbolic.
+    """
+    dynamo = getattr(torch, "_dynamo", None)
+    mark_dynamic = getattr(dynamo, "mark_dynamic", None)
+    if not callable(mark_dynamic):
+        raise RuntimeError(
+            "MolmoAct2 compile_model=true with gradient_checkpointing=true requires "
+            "a PyTorch build that exposes torch._dynamo.mark_dynamic. "
+            "Disable compile_model or upgrade PyTorch."
+        )
+    mark_dynamic(key_states, 1)
+    mark_dynamic(value_states, 1)
+    if attention_mask is not None:
+        mark_dynamic(attention_mask, attention_mask.ndim - 1)
+
+
 if TYPE_CHECKING or _transformers_available:
     from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
 
@@ -1011,12 +1038,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
         backbone = self._backbone()
 
         # Non-reentrant activation checkpointing must replay the same compiled
-        # graph in forward and backward. PyTorch's automatic static-to-dynamic
-        # transition can otherwise select a newer graph during recomputation
-        # (observed under DDP as a saved-tensor-count mismatch). Request fully
-        # dynamic graphs up front only when checkpointing is enabled; without
-        # checkpointing, automatic generalization remains a little faster.
-        sequence_dynamic = True if self.config.gradient_checkpointing else None
+        # graph in forward and backward. The variable encoder-context dimensions
+        # are marked explicitly immediately before each block call, so Dynamo
+        # sees them as symbolic in the first trace. Leave the remaining fixed
+        # batch/action dimensions static instead of requesting a fully dynamic
+        # graph here.
+        sequence_dynamic = None
         action_expert = getattr(backbone, "action_expert", None)
         for index, block in enumerate(getattr(action_expert, "blocks", ())):
             yield f"action_expert.blocks.{index}", block, sequence_dynamic
@@ -1472,6 +1499,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if num_flow_timesteps != 1:
                 k_ctx = _expand_mask(k_ctx, num_flow_timesteps)
                 v_ctx = _expand_mask(v_ctx, num_flow_timesteps)
+
+            if self.config.compile_model and use_gradient_checkpointing:
+                _mark_action_context_dynamic(k_ctx, v_ctx, cross_mask)
 
             next_action_hidden = action_block(
                 layer_action_hidden,
