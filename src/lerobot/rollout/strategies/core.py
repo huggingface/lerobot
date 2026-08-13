@@ -44,6 +44,22 @@ class RolloutStrategy(abc.ABC):
     Each concrete strategy implements a self-contained control loop with
     its own recording/interaction semantics.  Strategies are mutually
     exclusive — only one runs per session.
+
+    Lifecycle: ``setup()`` once, then ``run()``, then ``teardown()`` once.
+    A strategy whose config declares ``supports_interactive = True`` is also
+    driven by ``--interactive=true``, which calls ``run()`` once per
+    start/stop segment.  Such a strategy must keep ``run()`` restartable:
+
+    - never finalize the dataset in ``run()`` — that belongs in ``teardown()``;
+      at most save a partial tail episode when a segment ends;
+    - keep state that must survive a segment on the instance, not in ``run()``
+      locals (the ``CycleTimer`` is deliberately the other way round, see ``run()``);
+    - never bind keyboard/terminal listeners — stdin belongs to the command prompt;
+    - call ``engine.pump_query(obs_processed)`` once at the end of every tick, see
+      ``run()``.
+
+    One-shot strategies (``supports_interactive = False``, the default) are
+    free to finalize on ``run()`` exit, e.g. via ``VideoEncodingManager``.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -64,11 +80,26 @@ class RolloutStrategy(abc.ABC):
         self._interpolator = ActionInterpolator(multiplier=ctx.runtime.cfg.interpolation_multiplier)
         self._engine = ctx.policy.inference
         logger.info("Starting inference engine...")
-        self._engine.reset()
+        self.reset_control_state()
         self._engine.start()
         self._warmup_flushed = False
-        self._cached_obs_processed = None
         logger.info("Inference engine started")
+
+    def reset_control_state(self) -> None:
+        """Clear episode-scoped control state so a paused session can restart cleanly.
+
+        Resets the inference engine (policy hidden state, action queues), the action
+        interpolator and the cached processed observation; pacing state is untouched.
+        ``RolloutController`` calls it on its serve thread before each run segment.
+        Only call while the control loop is not running: these resets are not synchronized
+        against a live loop.  A caller that resets control state while a loop runs — or a
+        strategy that hoists its timer onto the instance — must also call ``timer.restart()``.
+        """
+        if self._engine is not None:
+            self._engine.reset()
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
 
     def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
         """Run the observation processor and notify the engine — throttled to policy ticks.
@@ -126,7 +157,7 @@ class RolloutStrategy(abc.ABC):
         if robot.is_connected:
             if return_to_initial_position and hw.initial_position:
                 logger.info("Returning robot to initial position before shutdown...")
-                self._return_to_initial_position(hw)
+                self.return_to_initial_position(hw)
             elif not return_to_initial_position:
                 logger.info(
                     "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
@@ -139,8 +170,13 @@ class RolloutStrategy(abc.ABC):
             teleop.disconnect()
 
     @staticmethod
-    def _return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
-        """Smoothly interpolate the robot back to its initial position."""
+    def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
+        """Smoothly interpolate the robot back to its initial position.
+
+        Returns ``True`` when the interpolation completed, ``False`` when it failed
+        partway — the robot is then at an arbitrary pose, so callers must not report
+        a completed reset on ``False``.
+        """
         robot = hw.robot_wrapper
         target = hw.initial_position
         try:
@@ -156,6 +192,8 @@ class RolloutStrategy(abc.ABC):
                 precise_sleep(1 / fps)
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
+            return False
+        return True
 
     @staticmethod
     def _log_telemetry(
@@ -180,11 +218,23 @@ class RolloutStrategy(abc.ABC):
 
     @abc.abstractmethod
     def run(self, ctx: RolloutContext) -> None:
-        """Main rollout loop.  Returns when shutdown is requested or duration expires."""
+        """Main rollout loop.  Returns when shutdown is requested or duration expires.
+
+        Implementations must call ``engine.resume()`` before entering their loop
+        (async backends start paused, and the interactive controller pauses again at
+        the end of every segment), and ``engine.pump_query(obs_processed)`` at the end
+        of every tick — the text-query channel only advances through it, and a
+        multi-second generation must not sit inside the action path.
+
+        Each ``run()`` call builds its own ``CycleTimer`` and reports it through
+        ``timer.log_run_summary()`` from its ``finally``: a fresh timer's start-up
+        exemption is what absorbs the interpolator that ``reset_control_state()``
+        re-primes at every ``/start``, and each segment gets its own cadence report.
+        """
 
     @abc.abstractmethod
     def teardown(self, ctx: RolloutContext) -> None:
-        """Cleanup: save dataset, stop threads, disconnect hardware."""
+        """Cleanup: finalize dataset, stop threads, disconnect hardware."""
 
 
 # ---------------------------------------------------------------------------

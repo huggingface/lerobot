@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import draccus
 
@@ -45,6 +46,10 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     Use ``--strategy.type=<name>`` on the CLI to select a strategy.
     """
 
+    # Whether the strategy honours the restartable-run() contract that
+    # ``--interactive=true`` requires (see ``RolloutStrategy``).
+    supports_interactive: ClassVar[bool] = False
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
@@ -55,7 +60,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
 class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
-    pass
+    supports_interactive: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -70,6 +75,8 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     ``push_to_hub`` call uploads complete video files rather than
     re-uploading a growing file that hasn't crossed the chunk boundary.
     """
+
+    supports_interactive: ClassVar[bool] = True
 
     upload_every_n_episodes: int = 5
     # Target video file size in MB for episode rotation.  Episodes are
@@ -227,7 +234,7 @@ class RolloutConfig:
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
 
-    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger)
+    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
@@ -238,7 +245,18 @@ class RolloutConfig:
 
     # Runtime
     fps: float = 30.0
-    duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode this
+    # bounds each /start segment, not the whole session.
+    duration: float = 0.0
+    # Control the rollout from stdin with chat-style commands (/start, /subtask,
+    # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
+    # robot does not move until /start, and logs below ERROR are muted for the
+    # session's duration.
+    interactive: bool = False
+    # /autosteer: seconds of robot motion between two "what is the next subtask?"
+    # queries, measured from the moment a subtask is applied.  Lower values
+    # re-plan sooner but spend more of the loop generating text instead of acting.
+    autosteer_interval_s: float = 10.0
     # Robot commands sent per policy action.  Values > 1 linearly interpolate
     # between consecutive policy actions for smoother motion: commands go to
     # the robot at ``fps × multiplier`` Hz while policy inference and dataset
@@ -300,6 +318,23 @@ class RolloutConfig:
             raise ValueError(
                 "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
             )
+
+        # Interactive mode calls strategy.run() once per segment, so only strategies
+        # declaring ``supports_interactive`` may be driven by it.
+        if self.interactive and not self.strategy.supports_interactive:
+            supported = " or ".join(
+                sorted(
+                    name
+                    for name, choice_cls in RolloutStrategyConfig.get_known_choices().items()
+                    if choice_cls.supports_interactive
+                )
+            )
+            raise ValueError(
+                f"--interactive=true supports --strategy.type={supported} (got '{self.strategy.type}')."
+            )
+
+        if self.autosteer_interval_s < 0:
+            raise ValueError(f"--autosteer_interval_s must be >= 0 (got {self.autosteer_interval_s}).")
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop
         if (

@@ -87,6 +87,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     world_model_loss_weight: float = 0.1
     jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
+    # If True, encode the world-model context causally instead of slicing it from the leaky shared pass (#4153).
+    causal_world_model_context: bool = False
 
     resize_images_to: tuple[int, int] | None = None
     binarize_gripper_action: bool = True
