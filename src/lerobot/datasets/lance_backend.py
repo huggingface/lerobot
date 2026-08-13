@@ -712,7 +712,7 @@ class LanceBackend:
                 indices = [round(ts * fps) for ts in shifted_ts]
                 batch = decoder.get_frames_at(indices=indices)
                 distance = (torch.tensor(shifted_ts, dtype=torch.float64) - batch.pts_seconds).abs()
-                if (distance >= self.tolerance_s).any():
+                if (distance > self.tolerance_s).any():
                     raise FrameTimestampError(
                         f"Query timestamps violate tolerance_s={self.tolerance_s} for video "
                         f"'{key}' (chunk {chunk_idx}, file {file_idx}): queried {shifted_ts}, "
