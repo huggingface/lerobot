@@ -126,7 +126,7 @@ class SentryStrategy(RolloutStrategy):
         # hoisted onto the instance would warn on every /start, bill the idle time
         # between segments to the effective cadence, and re-report segment N-1's
         # ticks in segment N's summary.
-        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
         engine.resume()
         episode_duration_s = self._episode_duration_s

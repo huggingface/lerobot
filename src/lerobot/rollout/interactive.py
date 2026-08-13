@@ -51,6 +51,11 @@ fatal inference-engine error is additionally reported with its captured
 traceback.  Normal logging resumes when the session ends (so teardown logs
 are visible).  Run without ``--interactive`` to see the full live log output.
 
+The control loop's cadence summaries are the exception: they arrive only at
+episode and segment boundaries, so instead of being lost to the mute they are
+printed on the chat stream (see
+:meth:`InteractiveSession._route_cadence_reports`).
+
 The command table is intentionally a name → (handler, argument hint, help)
 mapping so further commands can be registered without restructuring the
 parser, the help output, or the session loop.
@@ -91,9 +96,8 @@ def _mute_system_output() -> Iterator[None]:
     ``datasets``) and loggers created mid-session alike; WARNING and above
     still get through, so control-loop overruns (``CycleTimer``'s slow-loop
     warning) and failures stay visible.  The cadence *summaries* that same
-    timer emits per episode and per segment are INFO, so they are withheld
-    for the duration of the session — run without ``--interactive`` to read
-    them.
+    timer emits are INFO, so the session routes them past logging entirely
+    (see :meth:`InteractiveSession._route_cadence_reports`).
     The gate applies to every handler — including file handlers, which
     therefore also miss INFO/DEBUG records for the duration.  Python warnings
     bypass logging entirely and are silenced separately: they are dominated
@@ -176,6 +180,7 @@ class InteractiveSession:
         input_stream: IO[str] | None = None,
     ) -> None:
         self.controller = RolloutController(strategy, ctx, on_event=self._on_event)
+        self._runtime = ctx.runtime
         self._play_sounds = ctx.runtime.cfg.play_sounds
         self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
 
@@ -195,10 +200,26 @@ class InteractiveSession:
             "help": (self._cmd_help, "", "show this help"),
         }
 
+    @contextlib.contextmanager
+    def _route_cadence_reports(self) -> Iterator[None]:
+        """Send the control loop's cadence summaries to the chat stream, not the log.
+
+        Boundary-only output (one line per recorded episode, one block per run
+        segment), printed on the serve thread like the controller events.
+        Scoped like :func:`_mute_system_output`: a strategy run after the
+        session logs its summaries as usual.
+        """
+        previous = self._runtime.cadence_report
+        self._runtime.cadence_report = self._print
+        try:
+            yield
+        finally:
+            self._runtime.cadence_report = previous
+
     def run(self) -> None:
         """Run the session until ``/stop``, EOF, engine failure, or a shutdown signal."""
         try:
-            with _mute_system_output():
+            with _mute_system_output(), self._route_cadence_reports():
                 self._print(self._render_banner())
                 self._listener.start()
                 try:
@@ -405,8 +426,8 @@ class InteractiveSession:
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"Task: {_format_task(self.controller.initial_task)}\n"
             f"{self._render_help()}\n"
-            "Routine system logs and cadence summaries are muted during the session "
-            "(warnings and errors still show).\n"
+            "Routine system logs are muted during the session (warnings, errors and the "
+            "cadence summary of each run still show).\n"
             f"{_BANNER_RULE}"
         )
 

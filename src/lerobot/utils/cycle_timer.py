@@ -27,7 +27,7 @@ import contextlib
 import dataclasses
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from lerobot.utils.robot_utils import precise_sleep
 
@@ -166,7 +166,10 @@ class CycleTimer:
     work went — and reports them twice: a one-line summary per episode
     (:meth:`log_episode_summary`) and a full block for the whole run
     (:meth:`log_run_summary`, called from the loop's ``finally`` so a
-    ``KeyboardInterrupt`` still produces it).
+    ``KeyboardInterrupt`` still produces it).  Both go to ``logger.info``, or to
+    the ``report`` sink when one is given — for callers that mute INFO, such as
+    an interactive rollout session.  Only the summaries are routed; the slow-loop
+    warning and the DEBUG telemetry stay on the logger.
 
     Usage::
 
@@ -198,7 +201,13 @@ class CycleTimer:
     #: logged it for 556 groups out of 576.
     SPAN_TOLERANCE = 0.01
 
-    def __init__(self, fps: float, multiplier: int = 1, records_data: bool = True) -> None:
+    def __init__(
+        self,
+        fps: float,
+        multiplier: int = 1,
+        records_data: bool = True,
+        report: Callable[[str], None] | None = None,
+    ) -> None:
         if fps <= 0:
             raise ValueError(f"fps must be > 0, got {fps}")
         if multiplier < 1:
@@ -208,6 +217,7 @@ class CycleTimer:
         self.tick_interval = 1.0 / (fps * multiplier)
         self.cycle_interval = 1.0 / fps
         self.records_data = records_data
+        self._report = report if report is not None else logger.info
         # Pacing anchor — re-anchored by ``new_cycle``.
         self._cycle_start: float | None = None
         self._tick_start: float | None = None
@@ -541,17 +551,17 @@ class CycleTimer:
         return lines
 
     def _close_window(self, label: str) -> None:
-        """Log the finished window's digest at INFO and fold it into the run total."""
+        """Report the finished window's digest and fold it into the run total."""
         stats = self._window
         if stats.ticks == 0:
             return
         self._windows_closed += 1
-        logger.info("Cadence (%s): %s", label, self._summary_line(stats))
+        self._report(f"Cadence ({label}): {self._summary_line(stats)}")
         self._run.fold(stats)
         self._window = _CadenceStats()
 
     def log_episode_summary(self, label: str | None = None) -> None:
-        """Mark an episode boundary; its one-line cadence digest is logged at INFO.
+        """Mark an episode boundary; its one-line cadence digest goes to the report sink.
 
         Call at each episode boundary, right after ``save_episode``.  The digest is
         emitted when the *next* tick starts — or by :meth:`log_run_summary` if the
@@ -572,7 +582,7 @@ class CycleTimer:
         self._pending_close = label or f"episode {self._windows_closed + 1}"
 
     def log_run_summary(self) -> None:
-        """Log the whole-run cadence summary at INFO.  Call once, from the loop's ``finally``.
+        """Report the whole-run cadence summary.  Call once, from the loop's ``finally``.
 
         Being in ``finally`` is the point: a duration limit, a ``KeyboardInterrupt``
         and a crash all still produce the summary.  A boundary still pending, and any
@@ -593,4 +603,4 @@ class CycleTimer:
             return
         closed = self._windows_closed
         heading = f"whole run, {closed} episode{'s' if closed != 1 else ''}" if closed else "whole run"
-        logger.info("\n".join(self._summary_lines(self._run, heading)))
+        self._report("\n".join(self._summary_lines(self._run, heading)))

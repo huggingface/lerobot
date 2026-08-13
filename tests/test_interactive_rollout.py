@@ -232,6 +232,7 @@ def _make_ctx(run_behavior=None):
         runtime=SimpleNamespace(
             cfg=SimpleNamespace(play_sounds=False, autosteer_interval_s=0.0),
             shutdown_event=stop_event,
+            cadence_report=None,
         ),
         policy=SimpleNamespace(inference=engine),
         hardware=SimpleNamespace(initial_position={"joint.pos": 0.0}),
@@ -865,7 +866,31 @@ def test_session_restores_preexisting_disable_level():
         logging.disable(logging.NOTSET)
 
 
-def test_session_drives_real_base_strategy():
+def test_session_prints_cadence_summaries_and_restores_the_sink(capsys):
+    """Cadence summaries reach the operator despite the muted INFO logs."""
+    sinks: list = []
+
+    def run(ctx):
+        # What BaseStrategy and SentryStrategy do with their per-segment timer.
+        sink = ctx.runtime.cadence_report
+        sinks.append(sink)
+        sink("Cadence summary — whole run · target 30 Hz: 900 ticks")
+
+    with _pipe_stream() as (reader, _writer):
+        session, _strategy, _engine, _parent, _run_started = _make_session(reader, run_behavior=run)
+        thread = _start_session_thread(session)
+
+        session._handle_line("/start")
+        assert _wait_for(lambda: bool(sinks))
+        session._handle_line("/stop")
+        _join_session(thread)
+
+    assert "Cadence summary — whole run · target 30 Hz: 900 ticks" in capsys.readouterr().out
+    # Scoped to the session, like the muting itself.
+    assert session._runtime.cadence_report is None
+
+
+def test_session_drives_real_base_strategy(capsys):
     """End-to-end with a real BaseStrategy control loop (only hardware/engine mocked)."""
     from lerobot.rollout import BaseStrategy, BaseStrategyConfig
 
@@ -892,6 +917,7 @@ def test_session_drives_real_base_strategy():
                 autosteer_interval_s=0.0,
             ),
             shutdown_event=stop_event,
+            cadence_report=None,
         ),
         policy=SimpleNamespace(inference=engine),
         hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
@@ -919,6 +945,8 @@ def test_session_drives_real_base_strategy():
         assert _wait_for(lambda: strategy.return_to_initial_position.called)
         assert engine.pause.called
         assert thread.is_alive()
+        # The strategy hands its per-segment timer the session's sink.
+        assert "Cadence summary — whole run" in capsys.readouterr().out
 
         session._handle_line("/start")
         assert _wait_for(lambda: engine.resume.call_count >= 2)
@@ -1048,6 +1076,7 @@ def test_query_tick_overrun_is_reported_like_any_other(caplog):
                 autosteer_interval_s=0.0,
             ),
             shutdown_event=stop_event,
+            cadence_report=None,
         ),
         policy=SimpleNamespace(inference=engine),
         hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
@@ -1289,6 +1318,7 @@ def _make_sentry(monkeypatch, interpolation_multiplier=1):
                 dataset=SimpleNamespace(push_to_hub=False, tags=None, private=False),
             ),
             shutdown_event=stop_event,
+            cadence_report=None,
         ),
         policy=SimpleNamespace(inference=engine),
         hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
@@ -1859,6 +1889,7 @@ def test_session_vqa_answers_from_a_real_base_strategy_loop(capsys):
                 autosteer_interval_s=0.0,
             ),
             shutdown_event=stop_event,
+            cadence_report=None,
         ),
         policy=SimpleNamespace(inference=engine),
         hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),

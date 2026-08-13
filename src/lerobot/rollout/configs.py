@@ -257,9 +257,9 @@ class RolloutConfig:
     # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
     # /reset, /stop) while hardware and policy stay warm.  The robot does not
     # move until /start is received, and logs below WARNING are muted while
-    # the session runs so they don't interleave with the prompt — which also
-    # withholds the cadence summaries ``CycleTimer`` logs at INFO; run without
-    # --interactive to read them.  Supported with --strategy.type=base (no
+    # the session runs so they don't interleave with the prompt — the cadence
+    # summaries are printed on the chat stream instead of being lost to the
+    # mute.  Supported with --strategy.type=base (no
     # recording) and sentry (continuous recording; frames carry
     # dispatched-action task provenance).
     interactive: bool = False

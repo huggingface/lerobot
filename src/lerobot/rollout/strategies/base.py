@@ -46,7 +46,12 @@ class BaseStrategy(RolloutStrategy):
         robot = ctx.hardware.robot_wrapper
         interpolator = self._interpolator
 
-        timer = CycleTimer(cfg.fps, interpolator.multiplier, records_data=False)
+        timer = CycleTimer(
+            cfg.fps,
+            interpolator.multiplier,
+            records_data=False,
+            report=ctx.runtime.cadence_report,
+        )
 
         start_time = time.perf_counter()
         engine.resume()
