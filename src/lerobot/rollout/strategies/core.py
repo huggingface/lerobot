@@ -70,17 +70,8 @@ class RolloutStrategy(abc.ABC):
       queries: on sync backends a queued question is never answered during
       the run, on async backends computed answers only surface at segment
       end.  Do not fold it into the action path: text generation is far
-      slower than a control tick;
-    - when ``pump_query`` returns ``True`` it generated inline, so call
-      ``timer.restart()`` — still before ``timer.wait()``.  Such a tick is
-      *expected* to overrun, and warning on it would teach operators to
-      dismiss the one signal the session's log muting lets through.
-      ``restart()`` zeroes the closed-group counter, so the group
-      ``wait()`` is about to close is treated as a start-up group and
-      exempted from judging — the same idiom already used after
-      ``save_episode`` and after DAgger's handover ramps.  Keep it
-      conditional on the return value: restarting unconditionally exempts
-      *every* group and disables the slow-loop warning for the whole run.
+      slower than a control tick, so a generating tick overruns the cadence
+      budget and is reported for it like any other.
 
     One-shot strategies (``supports_interactive = False``, the default)
     are free to finalize on ``run()`` exit, e.g. via

@@ -268,10 +268,7 @@ class RolloutConfig:
     # applied, so a slow text generation cannot compound into back-to-back
     # queries.  Each query is a full generation pass, so this is a
     # cost/responsiveness knob: lower values re-plan sooner but spend a larger
-    # share of the loop generating text instead of acting.  A tick that
-    # generates inline re-arms the cadence timer's start-up exemption, so an
-    # interval near 0 also silences the slow-loop warning and empties the
-    # cadence summary for as long as an /autosteer goal is active.
+    # share of the loop generating text instead of acting.
     autosteer_interval_s: float = 10.0
     # Robot commands sent per policy action.  Values > 1 linearly interpolate
     # between consecutive policy actions for smoother motion: commands go to

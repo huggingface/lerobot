@@ -652,12 +652,6 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
 
     robot.get_observation.side_effect = _get_observation
     engine = MagicMock()
-    # The two interactive strategies pump the text-query channel once per tick and
-    # call ``timer.restart()`` when it served something.  A bare MagicMock returns a
-    # truthy Mock, which would restart the timer on every tick and silently switch
-    # off both group judging (no overrun could ever warn) and the effective-cadence
-    # measurement — with every assertion in this file still passing.
-    engine.pump_query.return_value = False
     engine.dispatched_task = "task"
     actions = {"n": 0}
 

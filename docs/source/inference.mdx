@@ -413,7 +413,7 @@ Read it top-down: **effective cadence** is what you got against `--fps`, **cycle
 
 A _cycle_ here is one policy action's worth of ticks (`--interpolation_multiplier` of them). Only whole cycles over the `1/fps` budget can cost you frames; a single tick overrunning its slot only makes the interpolated motion less smooth, which is why the two are counted separately. Without interpolation a cycle is a single tick, so the report drops the distinction and counts ticks throughout.
 
-Two notes for [interactive sessions](#interactive-sessions). Each `/start` segment owns its own timer, so a session reports once per segment rather than once per process — and because these summaries are logged at INFO while the session mutes everything below WARNING, none of them reach the console. Run without `--interactive` to read them. The slow-loop warning still shows, except on a tick that answered a `/vqa` or `/autosteer` query: inline text generation is far slower than a control tick and is _expected_ to overrun, so that tick is exempted rather than warned about.
+Two notes for [interactive sessions](#interactive-sessions). Each `/start` segment owns its own timer, so a session reports once per segment rather than once per process — and because these summaries are logged at INFO while the session mutes everything below WARNING, none of them reach the console. Run without `--interactive` to read them. The slow-loop warning still shows, including on the tick that answered a `/vqa` or `/autosteer` query — no control tick is long enough to hold a text generation.
 
 ---
 

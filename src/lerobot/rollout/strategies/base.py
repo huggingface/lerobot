@@ -79,18 +79,7 @@ class BaseStrategy(RolloutStrategy):
                 # every backend hands ready answers over here so observers fire on
                 # this thread.  No-op when nothing is queued.
                 with timer.section("query"):
-                    served_query = engine.pump_query(obs_processed)
-                if served_query:
-                    # A tick that generated text inline is *expected* to overrun;
-                    # warning on it would teach operators to dismiss the one signal
-                    # the interactive session's log muting lets through.  restart()
-                    # zeroes the closed-group counter, so the group wait() is about
-                    # to close is treated as a start-up group and exempted from
-                    # judging — the same idiom used after save_episode and after
-                    # DAgger's handover ramps.  Keep this conditional: an
-                    # unconditional restart() would exempt *every* group and
-                    # silently disable the slow-loop warning for the whole run.
-                    timer.restart()
+                    engine.pump_query(obs_processed)
 
                 timer.wait()
         finally:

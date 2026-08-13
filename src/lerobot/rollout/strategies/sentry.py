@@ -211,14 +211,7 @@ class SentryStrategy(RolloutStrategy):
                 # observation and its ``add_frame``.  Outside the
                 # ``action_dict is not None`` guard so starved ticks pump too.
                 with timer.section("query"):
-                    served_query = engine.pump_query(obs_processed)
-                if served_query:
-                    # An inline text generation is one-off work inside the timed
-                    # body, exactly like save_episode above: re-arm the start-up
-                    # exemption so the group wait() closes is not judged.  Keep
-                    # this conditional — an unconditional restart() would exempt
-                    # every group and disable the slow-loop warning outright.
-                    timer.restart()
+                    engine.pump_query(obs_processed)
 
                 timer.wait()
 

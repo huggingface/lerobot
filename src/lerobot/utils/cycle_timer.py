@@ -397,7 +397,7 @@ class CycleTimer:
                     logger.warning(
                         f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
                         f"({self.fps:g} Hz). {consequence} Common causes are: 1) Camera FPS not keeping up "
-                        "2) Policy inference taking too long 3) CPU starvation"
+                        "2) Policy inference (action or text) taking too long 3) CPU starvation"
                     )
         # A late tick that did not blow the cycle budget costs only interpolation
         # smoothness, so it is a DEBUG note — and at multiplier 1 there is no
