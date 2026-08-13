@@ -50,6 +50,7 @@ if TYPE_CHECKING or _datasets_available:
 else:
     LeRobotDataset = None
 
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -66,7 +67,6 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGE,
@@ -475,6 +475,7 @@ def make_groot_pre_post_processors_from_pretrained(
     config: GrootConfig,
     pretrained_path: str,
     *,
+    revision: str | None = None,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta: Any | None = None,
     preprocessor_overrides: dict[str, Any] | None = None,
@@ -511,6 +512,7 @@ def make_groot_pre_post_processors_from_pretrained(
 
     preprocessor, postprocessor = _load_groot_processor_pipelines(
         pretrained_path,
+        revision=revision,
         preprocessor_overrides=preprocessor_overrides,
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
@@ -526,6 +528,7 @@ def make_groot_pre_post_processors_from_pretrained(
 def _load_groot_processor_pipelines(
     pretrained_path: str,
     *,
+    revision: str | None,
     preprocessor_overrides: dict[str, Any],
     postprocessor_overrides: dict[str, Any],
     preprocessor_config_filename: str,
@@ -540,6 +543,7 @@ def _load_groot_processor_pipelines(
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
+        revision=revision,
         overrides=preprocessor_overrides,
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
@@ -547,6 +551,7 @@ def _load_groot_processor_pipelines(
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=postprocessor_config_filename,
+        revision=revision,
         overrides=postprocessor_overrides,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,

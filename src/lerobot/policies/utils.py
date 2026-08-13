@@ -22,7 +22,7 @@ import torch
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
-from lerobot.types import PolicyAction, RobotAction, RobotObservation
+from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -105,10 +105,14 @@ def prepare_observation_for_inference(
     This function takes a dictionary of NumPy arrays, performs necessary
     preprocessing, and prepares it for model inference. The steps include:
     1. Converting NumPy arrays to PyTorch tensors.
-    2. Normalizing and permuting image data (if any).
-    3. Adding a batch dimension to each tensor.
-    4. Moving all tensors to the specified compute device.
+    2. Moving each tensor to the specified compute device.
+    3. Normalizing and permuting image data (if any) on that device.
+    4. Adding a batch dimension to each tensor.
     5. Adding task and robot type information to the dictionary.
+
+    Images travel to the device as compact ``uint8`` frames — a 4× smaller
+    copy than their float32 counterpart — and the ``/255`` + permute run on
+    the device, keeping the per-tick CPU cost of the control loop low.
 
     Args:
         observation: A dictionary mapping observation names (str) to NumPy
@@ -124,13 +128,12 @@ def prepare_observation_for_inference(
         to (C, H, W) and normalized to a [0, 1] range.
     """
     for name in observation:
-        observation[name] = torch.from_numpy(observation[name])
+        tensor = torch.from_numpy(observation[name]).to(device)
         if "image" in name:
-            if observation[name].dtype == torch.uint8:
-                observation[name] = observation[name].type(torch.float32) / 255
-            observation[name] = observation[name].permute(2, 0, 1).contiguous()
-        observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].to(device)
+            if tensor.dtype == torch.uint8:
+                tensor = tensor.type(torch.float32) / 255
+            tensor = tensor.permute(2, 0, 1).contiguous()
+        observation[name] = tensor.unsqueeze(0)
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""

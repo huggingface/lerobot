@@ -22,12 +22,14 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+from copy import copy
 from dataclasses import dataclass, field
 from threading import Event
+from typing import TYPE_CHECKING
 
 import torch
 
-from lerobot.configs import FeatureType
+from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.datasets import (
     LeRobotDataset,
     aggregate_pipeline_dataset_features,
@@ -47,6 +49,7 @@ from lerobot.processor.relative_action_processor import RelativeActionsProcessor
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
 from .inference import (
@@ -55,9 +58,45 @@ from .inference import (
     SyncInferenceConfig,
     create_inference_engine,
 )
+from .inference.rtc import supports_rtc_inference
 from .robot_wrapper import ThreadSafeRobot
 
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
+else:
+    PeftConfig = None
+    PeftModel = None
+
 logger = logging.getLogger(__name__)
+
+
+def _wrap_predict_action_chunk_with_torch_compile(
+    policy: PreTrainedPolicy,
+    *,
+    backend: str,
+    mode: str,
+) -> bool:
+    """Install the JIT wrapper and report whether it was configured successfully.
+
+    ``torch.compile`` compiles lazily on the first invocation, so success here
+    does not guarantee that backend compilation will succeed during warm-up.
+    """
+    if not hasattr(torch, "compile"):
+        logger.warning("torch.compile is not available in this PyTorch build")
+        return False
+
+    try:
+        policy.predict_action_chunk = torch.compile(
+            policy.predict_action_chunk,
+            backend=backend,
+            mode=mode,
+        )
+    except Exception as exc:
+        logger.warning("Failed to configure torch.compile: %s", exc)
+        return False
+
+    logger.info("torch.compile configured for predict_action_chunk")
+    return True
 
 
 def _resolve_action_key_order(
@@ -78,6 +117,31 @@ def _resolve_action_key_order(
         logger.warning("policy.action_feature_names keys don't match dataset; using dataset order")
         return dataset_action_names
     return policy_action_names
+
+
+def _align_state_feature_order(
+    observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
+) -> dict[str, type | tuple]:
+    """Order scalar state features to match the checkpoint's joint order."""
+    if not policy_action_names:
+        return observation_features_hw
+
+    scalar_names = [
+        name for name, feature in observation_features_hw.items() if not isinstance(feature, tuple)
+    ]
+    if set(scalar_names) != set(policy_action_names) or scalar_names == policy_action_names:
+        return observation_features_hw
+
+    reordered = {name: observation_features_hw[name] for name in policy_action_names}
+    reordered.update(
+        {name: feature for name, feature in observation_features_hw.items() if name not in reordered}
+    )
+    logger.warning(
+        "Robot state order %s differs from checkpoint joint order %s; reordering state",
+        scalar_names,
+        policy_action_names,
+    )
+    return reordered
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +223,35 @@ class RolloutContext:
 # ---------------------------------------------------------------------------
 
 
+def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
+    """Load policy weights, keeping adapter and base-model revisions independent."""
+    pretrained_revision = policy_config.pretrained_revision
+    policy_class = get_policy_class(policy_config.type)
+
+    if not policy_config.use_peft:
+        return policy_class.from_pretrained(
+            policy_config.pretrained_path,
+            config=policy_config,
+            revision=pretrained_revision,
+        )
+
+    require_package("peft", extra="peft")
+
+    peft_path = policy_config.pretrained_path
+    peft_config = PeftConfig.from_pretrained(peft_path, revision=pretrained_revision)
+    policy = policy_class.from_pretrained(
+        pretrained_name_or_path=peft_config.base_model_name_or_path,
+        config=policy_config,
+        revision=peft_config.revision,
+    )
+    return PeftModel.from_pretrained(
+        policy,
+        peft_path,
+        config=peft_config,
+        revision=pretrained_revision,
+    )
+
+
 def build_rollout_context(
     cfg: RolloutConfig,
     shutdown_event: Event,
@@ -176,7 +269,6 @@ def build_rollout_context(
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
     logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
-    policy_class = get_policy_class(policy_config.type)
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
@@ -187,19 +279,15 @@ def build_rollout_context(
             "Please use `cpu` or `cuda` backend."
         )
 
-    if policy_config.use_peft:
-        from peft import PeftConfig, PeftModel
-
-        peft_path = policy_config.pretrained_path
-        peft_config = PeftConfig.from_pretrained(peft_path)
-        policy = policy_class.from_pretrained(
-            pretrained_name_or_path=peft_config.base_model_name_or_path, config=policy_config
-        )
-        policy = PeftModel.from_pretrained(policy, peft_path, config=peft_config)
-    else:
-        policy = policy_class.from_pretrained(policy_config.pretrained_path, config=policy_config)
+    policy = _load_pretrained_policy(policy_config)
 
     if is_rtc:
+        if not supports_rtc_inference(policy):
+            raise ValueError(
+                f"RTC inference is not supported by policy type '{policy_config.type}': "
+                "the policy must implement RTC semantics and predict_action_chunk must accept "
+                "inference_delay and prev_chunk_left_over. Use '--inference.type=sync' instead."
+            )
         policy.config.rtc_config = cfg.inference.rtc
         if hasattr(policy, "init_rtc_processor"):
             policy.init_rtc_processor()
@@ -208,18 +296,19 @@ def build_rollout_context(
     policy.eval()
     logger.info("Policy loaded: type=%s, device=%s", policy_config.type, cfg.device)
 
+    torch_compile_active = cfg.use_torch_compile
     if cfg.use_torch_compile and policy.type not in ("pi0", "pi05"):
-        try:
-            if hasattr(torch, "compile"):
-                compile_kwargs = {
-                    "backend": cfg.torch_compile_backend,
-                    "mode": cfg.torch_compile_mode,
-                    "options": {"triton.cudagraphs": False},
-                }
-                policy.predict_action_chunk = torch.compile(policy.predict_action_chunk, **compile_kwargs)
-                logger.info("torch.compile applied to predict_action_chunk")
-        except Exception as e:
-            logger.warning("Failed to apply torch.compile: %s", e)
+        torch_compile_active = _wrap_predict_action_chunk_with_torch_compile(
+            policy,
+            backend=cfg.torch_compile_backend,
+            mode=cfg.torch_compile_mode,
+        )
+
+    if cfg.use_torch_compile and not torch_compile_active:
+        # RolloutConfig.__post_init__ reloads the policy configuration, so avoid
+        # dataclasses.replace when carrying the effective state downstream.
+        cfg = copy(cfg)
+        cfg.use_torch_compile = False
 
     # --- 2. Robot-side processors (user-supplied or defaults) --------
     if (
@@ -276,12 +365,27 @@ def build_rollout_context(
     # ``observation_features`` values are either a tuple (camera shape) or the
     # ``float`` type itself used as a sentinel for scalar motor features —
     # see ``dict[str, type | tuple]`` annotation on ``Robot.observation_features``.
+    # Keep cameras (tuple) plus both joint-position (.pos) and base-velocity (.vel)
+    # scalar state features. LeKiwi's observation.state is 9-dim (6 arm .pos +
+    # x/y/theta.vel) and the policy was trained/normalized on all 9; the old .pos-only
+    # filter fed a 6-dim state into a 9-dim normalizer → RuntimeError (size 6 vs 9).
+    # Pure-arm robots have no .vel state keys, so this is a no-op for them.
     observation_features_hw = {
         k: v
         for k, v in all_obs_features.items()
-        if isinstance(v, tuple) or (v is float and k.endswith(".pos"))
+        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith(".pos")}
+    policy_action_names = getattr(policy_config, "action_feature_names", None)
+    observation_features_hw = _align_state_feature_order(
+        observation_features_hw,
+        list(policy_action_names) if policy_action_names else None,
+    )
+    # Keep both joint-position (.pos) and base-velocity (.vel) action features so
+    # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
+    # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
+    # a no-op for them. Without the .vel keys the base velocities are silently
+    # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
+    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
@@ -299,7 +403,6 @@ def build_rollout_context(
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
     raw_action_keys = list(action_features_hw.keys())
-    policy_action_names = getattr(policy_config, "action_feature_names", None)
     ordered_action_keys = _resolve_action_key_order(
         list(policy_action_names) if policy_action_names else None,
         raw_action_keys,
@@ -392,6 +495,7 @@ def build_rollout_context(
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=policy_config.pretrained_revision,
         dataset_stats=dataset_stats,
         preprocessor_overrides={
             "device_processor": {"device": cfg.device},
@@ -426,7 +530,7 @@ def build_rollout_context(
         task=task_str,
         fps=cfg.fps,
         device=cfg.device,
-        use_torch_compile=cfg.use_torch_compile,
+        use_torch_compile=torch_compile_active,
         compile_warmup_inferences=cfg.compile_warmup_inferences,
         shutdown_event=shutdown_event,
     )

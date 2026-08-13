@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
@@ -57,7 +58,9 @@ class EpisodicStrategy(RolloutStrategy):
     """Policy-driven multi-episode recording, mirrors the behavior of ``lerobot-record``.
 
     Each recording episode runs the policy for maximum ``dataset.episode_time_s``
-    seconds, recording every frame.  A reset phase of ``dataset.reset_time_s``
+    seconds, recording one frame per policy action (``1/fps`` cadence — with
+    ``interpolation_multiplier > 1`` the interpolated ticks only send commands
+    to the robot).  A reset phase of ``dataset.reset_time_s``
     follows every episode (except the last) so the operator can manually
     reset the environment.  During the reset phase, an optional teleoperator
     drives the robot; if none is present the robot returns to its initial joint positions captured at startup.
@@ -107,6 +110,10 @@ class EpisodicStrategy(RolloutStrategy):
             else cfg.display_compressed_images
         )
 
+        # One timer for the whole session: episodes get their own cadence line, and
+        # the run summary averages across them without the untimed reset phases.
+        timer = CycleTimer(fps, self._interpolator.multiplier)
+
         with VideoEncodingManager(dataset):
             try:
                 recorded_episodes = 0
@@ -117,6 +124,10 @@ class EpisodicStrategy(RolloutStrategy):
                     # Reset policy state at episode start (discard leftover hidden state / queue)
                     self._engine.reset()
                     self._interpolator.reset()
+                    # A reset interpolator re-primes over two consecutive inference
+                    # ticks, exactly like loop start-up, so exempt the group that
+                    # spans them instead of reporting a healthy episode as slow.
+                    timer.restart()
                     self._engine.resume()
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
@@ -125,7 +136,7 @@ class EpisodicStrategy(RolloutStrategy):
                         robot=robot,
                         events=events,
                         features=features,
-                        fps=fps,
+                        timer=timer,
                         control_time_s=episode_time_s,
                         dataset=dataset,
                         single_task=single_task,
@@ -143,21 +154,25 @@ class EpisodicStrategy(RolloutStrategy):
                             # position so the operator takes over without fighting the arm.
                             # For non-actuated teleops: slide the follower to the teleop's current
                             # pose instead, since the leader cannot be driven.
-                            obs = robot.get_observation()
-                            current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
-                            if (
-                                teleop_supports_feedback(teleop)
-                                and self.config.smooth_leader_to_follower_handover
-                            ):
-                                logger.info("Smooth handover: moving leader arm to follower position")
-                                teleop_smooth_move_to(teleop, current_pos, duration_s=2)
-                                teleop.disable_torque()
-                            else:
-                                logger.info("Smooth handover: sliding follower to teleop position")
-                                teleop_action = teleop.get_action()
-                                processed = ctx.processors.teleop_action_processor((teleop_action, obs))
-                                target = ctx.processors.robot_action_processor((processed, obs))
-                                follower_smooth_move_to(robot, current_pos, target, duration_s=1)
+                            # Disabled entirely with --strategy.smooth_handover=false (useful for
+                            # clutch-style teleops that re-reference at the current robot pose on
+                            # engage).
+                            if self.config.smooth_handover:
+                                obs = robot.get_observation()
+                                current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+                                if (
+                                    teleop_supports_feedback(teleop)
+                                    and self.config.smooth_leader_to_follower_handover
+                                ):
+                                    logger.info("Smooth handover: moving leader arm to follower position")
+                                    teleop_smooth_move_to(teleop, current_pos, duration_s=2)
+                                    teleop.disable_torque()
+                                else:
+                                    logger.info("Smooth handover: sliding follower to teleop position")
+                                    teleop_action = teleop.get_action()
+                                    processed = ctx.processors.teleop_action_processor((teleop_action, obs))
+                                    target = ctx.processors.robot_action_processor((processed, obs))
+                                    follower_smooth_move_to(robot, current_pos, target, duration_s=1)
 
                         elif self.config.reset_to_initial_position:
                             # No teleop: return the robot to its startup position.
@@ -180,6 +195,7 @@ class EpisodicStrategy(RolloutStrategy):
                         events["rerecord_episode"] = False
                         events["exit_early"] = False
                         dataset.clear_episode_buffer()
+                        timer.log_episode_summary("discarded episode")
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
@@ -189,11 +205,13 @@ class EpisodicStrategy(RolloutStrategy):
 
                     dataset.save_episode()
                     recorded_episodes += 1
+                    timer.log_episode_summary(f"episode {dataset.num_episodes}")
             finally:
                 # Save any frames buffered in the current episode so an unexpected
                 # exception or KeyboardInterrupt does not silently drop recorded data.
                 # suppress: save_episode raises if the buffer is empty (nothing to lose).
                 logger.info("Episodic control loop ended — saving any in-progress episode")
+                timer.log_run_summary()
                 with contextlib.suppress(Exception):
                     dataset.save_episode()
 
@@ -203,20 +221,23 @@ class EpisodicStrategy(RolloutStrategy):
         robot,
         events: dict,
         features: dict,
-        fps: float,
+        timer: CycleTimer,
         control_time_s: float,
         dataset,
         single_task: str,
     ) -> None:
-        """Policy-driven recording loop for a single episode."""
+        """Policy-driven recording loop for a single episode.
+
+        *timer* is owned by :meth:`run` and shared across episodes so its run
+        summary spans the session; the caller re-arms it between episodes.
+        """
         interpolator = self._interpolator
-        control_interval = interpolator.get_control_interval(fps)
 
         timestamp = 0.0
         start_t = time.perf_counter()
 
         while timestamp < control_time_s:
-            loop_start = time.perf_counter()
+            timer.tick(new_cycle=interpolator.needs_new_action())
 
             if events["exit_early"]:
                 events["exit_early"] = False
@@ -225,30 +246,29 @@ class EpisodicStrategy(RolloutStrategy):
             if ctx.runtime.shutdown_event.is_set():
                 break
 
-            obs = robot.get_observation()
-            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+            with timer.section("observe"):
+                obs = robot.get_observation()
+            with timer.section("process_obs"):
+                obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-            if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, loop_start, control_interval):
+            if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
             if action_dict is not None:
-                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
-                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                with timer.section("telemetry"):
+                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                # Record once per interpolation cycle so the dataset cadence
+                # matches its declared fps; interpolated ticks only send
+                # commands to the robot.
+                if interpolator.emitted_policy_action:
+                    with timer.section("record"):
+                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
-            dt = time.perf_counter() - loop_start
-            sleep_t = control_interval - dt
-            if sleep_t < 0:
-                logger.warning(
-                    f"Record loop is running slower ({1 / dt:.1f} Hz) than the target FPS ({fps} Hz). "
-                    "Dataset frames might be dropped and robot control might be unstable. "
-                    "Common causes are: 1) Camera FPS not keeping up 2) Policy inference taking too long "
-                    "3) CPU starvation"
-                )
-            precise_sleep(max(sleep_t, 0.0))
+            timer.wait()
             timestamp = time.perf_counter() - start_t
 
     def _reset_loop(

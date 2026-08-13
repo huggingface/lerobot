@@ -149,6 +149,15 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
     smooth_leader_to_follower_handover: bool = True
 
+    # Whether to turn on or off the smooth handover behavior at the start of the
+    # reset phase: the leader is driven to the follower position (actuated
+    # teleops, see `smooth_leader_to_follower_handover`), or the follower is
+    # slid to the teleop pose (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the reset phase.
+    smooth_handover: bool = True
+
 
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
@@ -180,6 +189,14 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     # Target video file size in MB for episode rotation (record_autonomous
     # mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when None.
     target_video_file_size_mb: int | None = None
+    # Whether to turn on or off the smooth handover behavior at phase transitions:
+    # the leader is driven to the follower position on pause (teleops with
+    # `send_feedback` capability), and the follower is slid to the teleop pose when
+    # a correction starts (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the correction.
+    smooth_handover: bool = True
     input_device: str = "keyboard"
     keyboard: DAggerKeyboardConfig = field(default_factory=DAggerKeyboardConfig)
     pedal: DAggerPedalConfig = field(default_factory=DAggerPedalConfig)
@@ -222,6 +239,10 @@ class RolloutConfig:
     # Runtime
     fps: float = 30.0
     duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Robot commands sent per policy action.  Values > 1 linearly interpolate
+    # between consecutive policy actions for smoother motion: commands go to
+    # the robot at ``fps × multiplier`` Hz while policy inference and dataset
+    # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -255,6 +276,9 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.interpolation_multiplier < 1:
+            raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")
@@ -326,8 +350,17 @@ class RolloutConfig:
 
         policy_path = parser.get_path_arg("policy")
         if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            yaml_overrides = parser.get_yaml_overrides("policy")
+            cli_overrides = parser.get_cli_overrides("policy") or []
+            policy_overrides = yaml_overrides + cli_overrides
+            pretrained_revision = parser.parse_arg("pretrained_revision", cli_overrides)
+            if pretrained_revision is None:
+                pretrained_revision = parser.parse_arg("pretrained_revision", yaml_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path,
+                revision=pretrained_revision,
+                cli_overrides=policy_overrides,
+            )
             self.policy.pretrained_path = policy_path
         if self.policy is None:
             raise ValueError("--policy.path is required for rollout")

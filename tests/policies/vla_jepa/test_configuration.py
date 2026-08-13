@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from conftest import ACTION_DIM, ACTION_HORIZON, IMAGE_SIZE, NUM_VIDEO_FRAMES, STATE_DIM, make_config
 
+from conftest import ACTION_DIM, ACTION_HORIZON, IMAGE_SIZE, NUM_VIDEO_FRAMES, STATE_DIM, make_config
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -29,6 +29,17 @@ def test_too_few_video_frames_raises() -> None:
             num_video_frames=2,
             jepa_tubelet_size=2,  # needs >= 4 frames (2 for current, 2 for future) to have a window of size > 0
         )
+
+
+def test_freeze_qwen_warns_about_fixed_embodied_action_readouts(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="lerobot.policies.vla_jepa.configuration_vla_jepa"):
+        config = VLAJEPAConfig(freeze_qwen=True)
+
+    assert not config.enable_world_model
+    assert "freeze_qwen=True" in caplog.text
+    assert "<|embodied_action|>" in caplog.text
+    assert "source checkpoint" in caplog.text
+    assert "domain shift" in caplog.text
 
 
 def test_validate_features_no_image_raises() -> None:

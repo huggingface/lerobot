@@ -21,8 +21,8 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 from lerobot.cameras import make_cameras_from_configs
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
-from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _motorbridge_available, require_package
 

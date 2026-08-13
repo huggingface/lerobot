@@ -322,12 +322,13 @@ class HILSerlRobotEnvConfig(EnvConfig):
 class LiberoEnv(EnvConfig):
     task: str = "libero_10"  # can also choose libero_spatial, libero_object, etc.
     task_ids: list[int] | None = None
-    fps: int = 30
+    fps: int = 20  # Must match robosuite's default control_freq (20 Hz)
     episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
+    hard_reset: bool = True
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
@@ -354,6 +355,11 @@ class LiberoEnv(EnvConfig):
     control_mode: str = "relative"  # or "absolute"
 
     def __post_init__(self):
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
+        if not self.hard_reset and not self.init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
+
         if self.obs_type == "pixels":
             self.features[LIBERO_KEY_PIXELS_AGENTVIEW] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
@@ -412,6 +418,8 @@ class LiberoEnv(EnvConfig):
             "render_mode": self.render_mode,
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
+            "control_freq": self.fps,
+            "hard_reset": self.hard_reset,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
@@ -503,7 +511,7 @@ class MetaworldEnv(EnvConfig):
 class RoboCasaEnv(EnvConfig):
     task: str = "CloseFridge"
     fps: int = 20
-    episode_length: int = 1000
+    episode_length: int | None = None
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
@@ -854,24 +862,31 @@ class RoboMMEEnv(EnvConfig):
     action_space: str = "joint_angle"  # or "ee_pose" (7-D)
     dataset_split: str = "test"  # "train" | "val" | "test"
     task_ids: list[int] | None = None
+    front_camera_name: str = "camera1"
+    wrist_camera_name: str = "camera2"
     features: dict[str, PolicyFeature] = field(default_factory=dict)
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            ACTION: ACTION,
-            "pixels/image": f"{OBS_IMAGES}.image",
-            "pixels/wrist_image": f"{OBS_IMAGES}.wrist_image",
-            "agent_pos": OBS_STATE,
-        }
-    )
+    features_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         action_dim = 8 if self.action_space == "joint_angle" else 7
+        if self.front_camera_name == self.wrist_camera_name:
+            raise ValueError("RoboMME front and wrist camera names must be distinct.")
+        front_camera_key = f"pixels/{self.front_camera_name}"
+        wrist_camera_key = f"pixels/{self.wrist_camera_name}"
         self.features = {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,)),
-            "pixels/image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
-            "pixels/wrist_image": PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            front_camera_key: PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
+            wrist_camera_key: PolicyFeature(type=FeatureType.VISUAL, shape=(256, 256, 3)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(8,)),
         }
+        default_features_map = {
+            ACTION: ACTION,
+            front_camera_key: f"{OBS_IMAGES}.{self.front_camera_name}",
+            wrist_camera_key: f"{OBS_IMAGES}.{self.wrist_camera_name}",
+            "agent_pos": OBS_STATE,
+        }
+        # Preserve explicit mappings while filling in the RoboMME defaults.
+        self.features_map = {**default_features_map, **self.features_map}
 
     @property
     def gym_kwargs(self) -> dict:
@@ -888,5 +903,7 @@ class RoboMMEEnv(EnvConfig):
             dataset=self.dataset_split,
             episode_length=self.episode_length,
             task_ids=self.task_ids,
+            front_camera_name=self.front_camera_name,
+            wrist_camera_name=self.wrist_camera_name,
             env_cls=env_cls,
         )
