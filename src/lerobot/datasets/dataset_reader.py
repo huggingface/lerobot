@@ -158,6 +158,7 @@ class DatasetReader(BaseDatasetReader):
         self._absolute_to_relative_idx: dict[int, int] | None = None
         self._column_views: dict[str, datasets.Dataset] = {}
         self._column_views_source: datasets.Dataset | None = None
+        self._column_views_transform: Callable | None = None
 
         # Setup delta_indices (doesn't depend on hf_dataset)
         self.delta_indices = None
@@ -348,10 +349,12 @@ class DatasetReader(BaseDatasetReader):
         transform, which is column-wise, so outputs are identical to a plain
         row query.
         """
-        if self._column_views_source is not self.hf_dataset:
-            # hf_dataset was (re)loaded: drop views built from the previous one
+        transform = self.hf_dataset.format["format_kwargs"].get("transform")
+        if self._column_views_source is not self.hf_dataset or self._column_views_transform is not transform:
+            # hf_dataset was (re)loaded or its transform changed: drop stale views
             self._column_views = {}
             self._column_views_source = self.hf_dataset
+            self._column_views_transform = transform
         if key not in self._column_views:
             self._column_views[key] = self.hf_dataset.select_columns(key)
         return self._column_views[key]
