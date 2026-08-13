@@ -14,6 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Lance storage backend for :class:`~lerobot.datasets.lerobot_dataset.LeRobotDataset`.
+
+Serves datasets whose ``meta/info.json`` declares ``"storage_format": "lance"``:
+tabular features live in a ``frames.lance`` table and mp4 files in a blob-encoded
+``videos.lance`` table, next to the standard ``meta/`` directory. Tables are read
+in place — locally, from the Hub (``hf://``), or from any object store.
+
+Everything here is an implementation detail of the ``"lance"`` storage format;
+the public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage`).
+"""
+
 from __future__ import annotations
 
 import bisect
@@ -26,7 +37,6 @@ import shutil
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,6 +56,7 @@ if TYPE_CHECKING or _lancedb_available:
 from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices
+from .storage import is_remote_uri
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
 FRAMES_TABLE = "frames"
@@ -237,10 +248,6 @@ def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
 
 
-def _is_remote_uri(path) -> bool:
-    return "://" in str(path)
-
-
 def _storage_options(db_uri: str, storage_options: dict | None, revision: str | None) -> dict:
     options = dict(storage_options or {})
     if db_uri.startswith("hf://"):
@@ -254,8 +261,8 @@ def _storage_options(db_uri: str, storage_options: dict | None, revision: str | 
 
 
 def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
-    require_package("lancedb", extra="lancedb")  # earliest common site: also reached via lance_metadata()
-    if _is_remote_uri(db_uri):
+    require_package("lancedb", extra="lancedb")  # earliest common site: also reached via localize_root()
+    if is_remote_uri(db_uri):
         os.environ.setdefault("LANCE_IO_THREADS", "256")
     options = _storage_options(db_uri, storage_options, revision)
     return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
@@ -299,34 +306,24 @@ def lance_mp_context() -> str:
     return "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
 
 
-@lru_cache(maxsize=32)
-def is_lance_dataset(
-    repo_id: str | None = None, root: str | Path | None = None, revision: str | None = None
-) -> bool:
-    if root is None and repo_id is None:
-        return False
-    if root is not None and _is_remote_uri(root):
-        return True
-    local_root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
-    if (local_root / f"{FRAMES_TABLE}.lance").exists():
-        return True
-    if repo_id is None:
-        return False
-    try:
-        paths = huggingface_hub.HfApi().get_paths_info(
-            repo_id, [f"{FRAMES_TABLE}.lance"], repo_type="dataset", revision=revision
-        )
-    except Exception:   # fall back to the parquet loader,
-        return False
-    return len(paths) > 0
+def localize_root(repo_id: str | None, root: str | Path, revision: str | None = None) -> Path:
+    """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
+
+    Hook used by :mod:`lerobot.datasets.storage` for object-store roots; data
+    tables are never downloaded.
+    """
+    _, local_root = resolve_lance_root(repo_id, root, revision=revision)
+    return local_root
 
 
 def resolve_lance_root(
-    repo_id: str | None, root: str | Path | None, storage_options: dict | None = None,
+    repo_id: str | None,
+    root: str | Path | None,
+    storage_options: dict | None = None,
     revision: str | None = None,
 ) -> tuple[str, Path]:
     """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
-    if root is not None and _is_remote_uri(root):
+    if root is not None and is_remote_uri(root):
         db_uri = str(root).rstrip("/")
         # Key the cache by revision too: an hf:// root at a non-default revision must not
         # reuse (or overwrite) another revision's materialized meta.
@@ -343,43 +340,35 @@ def resolve_lance_root(
     raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")
 
 
-def lance_metadata(
-    repo_id: str | None, root: str | Path | None, revision: str | None = None,
-    storage_options: dict | None = None,
-) -> LeRobotDatasetMetadata:
-    _, local_root = resolve_lance_root(repo_id, root, storage_options, revision)
-    return LeRobotDatasetMetadata(
-        repo_id if repo_id is not None else str(local_root), root=local_root, revision=revision
-    )
+class LanceBackend:
+    """Storage backend serving Lance-formatted LeRobot datasets.
 
-
-class LanceDBDataset(torch.utils.data.Dataset):
-    """Map-style dataset over a Lance-backed LeRobot dataset.
-
-    Returns the same item dict as :class:`LeRobotDataset` and satisfies the same
-    duck-typed contract.
+    Instantiated by :class:`LeRobotDataset` through the storage-backend registry
+    (see :mod:`lerobot.datasets.storage`); returns the same item dicts as the
+    default parquet/mp4 pipeline.
 
     Args:
-        repo_id: Hub dataset repo; tables stream over ``hf://``, only ``meta/`` downloads.
+        meta: Already-loaded dataset metadata (never rebuilt or mutated here).
         root: Local dir with ``meta/`` and ``.lance`` tables, or an object-store
-            URI (``s3://...``) with the same layout. Local tables win when both given.
+            URI with the same layout. ``None`` streams the tables from the Hub
+            repo ``meta.repo_id`` over ``hf://``.
         episodes: Episode indices to select. ``None`` means all.
         image_transforms: Optional torchvision v2 transform for camera frames.
         delta_timestamps: Feature key -> relative timestamp offsets (seconds), as
             in :class:`LeRobotDataset`.
         tolerance_s: Timestamp synchronization tolerance in seconds.
-        revision: Hub revision for the ``meta/`` download.
+        revision: Hub revision, as passed to :class:`LeRobotDataset`.
         return_uint8: Return RGB frames as raw uint8 instead of normalized float32.
+        depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
+            Depth decodes through pyav (16-bit planes torchcodec cannot emit).
         storage_options: Extra options forwarded to ``lancedb.connect``.
         video_decoder_cache_size: Max decoders per worker (default 16, also
             bounded by a 2 GiB per-worker byte budget).
-        depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
-            Depth decodes through pyav (16-bit planes torchcodec cannot emit).
     """
 
     def __init__(
         self,
-        repo_id: str | None = None,
+        meta: LeRobotDatasetMetadata,
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
@@ -387,42 +376,31 @@ class LanceDBDataset(torch.utils.data.Dataset):
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         return_uint8: bool = False,
+        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         storage_options: dict | None = None,
         video_decoder_cache_size: int | None = None,
-        depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
-        super().__init__()
         require_package("lancedb", extra="lancedb")
-        if repo_id is None and root is None:
-            raise ValueError("Provide `repo_id`, `root`, or both.")
-
-        self.repo_id = repo_id
+        self.meta = meta
+        self.repo_id = meta.repo_id
         self.tolerance_s = tolerance_s
         self._storage_options = storage_options
 
-        self._db_uri, self.root = resolve_lance_root(repo_id, root, self._storage_options, revision)
-
-        self.meta = LeRobotDatasetMetadata(
-            repo_id if repo_id is not None else str(self.root), root=self.root, revision=revision
-        )
-        self._hub_revision = self.meta.revision if self._db_uri == f"hf://datasets/{repo_id}" else None
+        self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision)
+        self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
 
         if self.meta.image_keys:
             raise NotImplementedError(
-                f"Image-backed features are not supported by LanceDBDataset: {self.meta.image_keys}. "
+                f"Image-backed features are not supported by the lance backend: {self.meta.image_keys}. "
                 "Re-encode them as video."
             )
         # Depth videos decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
-        if self.meta.depth_keys:
-            self.meta.rescale_depth_stats(self._depth_output_unit)
         self._depth_encoder_configs = {
             key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
             for key in self.meta.depth_keys
         }
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self.image_transforms = image_transforms
+        self.set_image_transforms(image_transforms)
         self.return_uint8 = return_uint8
 
         self.episodes = sorted(episodes) if episodes is not None else None
@@ -494,7 +472,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
         self._decode_pool: ThreadPoolExecutor | None = None
         if video_decoder_cache_size is None:
             video_decoder_cache_size = 16
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30) # 2GB cap
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
 
     def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
         # Read straight from the underlying Arrow column, not HF Dataset __getitem__
@@ -569,21 +547,18 @@ class LanceDBDataset(torch.utils.data.Dataset):
     def absolute_to_relative_idx(self) -> dict[int, int] | None:
         return self._absolute_to_relative_idx
 
-    @property
-    def features(self) -> dict[str, dict]:
-        return self.meta.features
-
-    @property
-    def fps(self) -> int:
-        return self.meta.fps
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self.image_transforms = image_transforms
 
     def __len__(self) -> int:
         return self.num_frames
 
-    def __getitem__(self, idx: int) -> dict:
-        return self.__getitems__([idx])[0]
+    def get_item(self, idx: int) -> dict:
+        return self.get_items([idx])[0]
 
-    def __getitems__(self, indices: list[int]) -> list[dict]:
+    def get_items(self, indices: list[int]) -> list[dict]:
         """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
         self._ensure_open()
         plans = self._plan_batch(indices)
@@ -952,3 +927,7 @@ class LanceDBDataset(torch.utils.data.Dataset):
             f"  frames={self.num_frames},\n"
             f")"
         )
+
+
+# The class lerobot.datasets.storage instantiates for storage_format "lance".
+STORAGE_BACKEND = LanceBackend

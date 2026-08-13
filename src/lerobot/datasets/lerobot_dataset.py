@@ -30,6 +30,13 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import DatasetReader
 from .dataset_writer import DatasetWriter
+from .storage import (
+    DEFAULT_STORAGE_FORMAT,
+    StorageBackend,
+    is_remote_uri,
+    localize_remote_root,
+    make_storage_backend,
+)
 from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
@@ -155,7 +162,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 into. If set, all dataset files are materialized directly under this path. If not set,
                 existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
                 downloads use a revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
+                ``$HF_LEROBOT_HOME/hub``. May also be an object-store URI (e.g. ``hf://datasets/{repo_id}``)
+                for storage formats that read data in place; only ``meta/`` is then materialized locally.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
             episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
@@ -212,6 +220,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
+        self._storage_backend: StorageBackend | None = None
+        # Datasets can live at an object-store root (e.g. ``hf://datasets/...``): a
+        # storage backend reads the data in place and only ``meta/`` is localized.
+        self._storage_root = root if root is not None and is_remote_uri(root) else None
+        if self._storage_root is not None:
+            root = localize_remote_root(repo_id, self._storage_root, revision)
         self._requested_root = Path(root) if root else None
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
@@ -253,6 +267,27 @@ class LeRobotDataset(torch.utils.data.Dataset):
             logger.info(f"The episode filter matched {len(resolved)} episode(s).")
             episodes = resolved
         self.episodes = episodes
+
+        if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            # Non-default formats delegate all data access to their storage
+            # backend; the parquet/mp4 reader below does not apply to them.
+            self._storage_backend = make_storage_backend(
+                self.meta.storage_format,
+                meta=self.meta,
+                root=self._storage_root or root,
+                episodes=episodes,
+                delta_timestamps=delta_timestamps,
+                image_transforms=image_transforms,
+                tolerance_s=tolerance_s,
+                revision=revision,
+                return_uint8=return_uint8,
+                depth_output_unit=depth_output_unit,
+            )
+            self.image_transforms = image_transforms
+            self.reader = None
+            self.writer = None
+            self._is_finalized = False
+            return
 
         # Create reader (hf_dataset loaded below)
         self.reader = DatasetReader(
@@ -327,6 +362,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _ensure_reader(self) -> DatasetReader:
         """Lazily create the reader on first access."""
+        if self._storage_backend is not None:
+            raise NotImplementedError(
+                f"Direct hf_dataset access is not available for storage_format="
+                f"{self.meta.storage_format!r}: data is read through its storage backend."
+            )
         if self.reader is None:
             self.meta.ensure_readable()
             self.reader = DatasetReader(
@@ -373,6 +413,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
+        if self._storage_backend is not None:
+            return len(self._storage_backend)
         # Check directly instead of using _ensure_reader(): in write-only mode
         # (create/resume) we rely on metadata rather than initializing a reader.
         if self.reader is None:
@@ -385,7 +427,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Check directly instead of using _ensure_reader(): in write-only mode
         # (create/resume) we rely on metadata rather than initializing a reader.
         if self.reader is None:
-            return self.meta.total_episodes
+            return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
         return self.reader.num_episodes
 
     @property
@@ -396,6 +438,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def hf_dataset(self) -> datasets.Dataset:
         """The underlying Hugging Face Dataset object"""
+        if self._storage_backend is not None:
+            raise AttributeError(
+                f"hf_dataset is not available for storage_format={self.meta.storage_format!r}: "
+                "data is read through its storage backend."
+            )
         self.reader = self._ensure_reader()
         if self.reader.hf_dataset is None:
             self.reader.load_and_activate()
@@ -408,6 +455,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Non-None only for episode-filtered datasets where absolute indices
         (from metadata) differ from row positions in the loaded HF dataset.
         """
+        if self._storage_backend is not None:
+            return self._storage_backend.absolute_to_relative_idx
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             reader.load_and_activate()
@@ -517,11 +566,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if isinstance(idx, slice):
             return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
 
+        if self._storage_backend is not None:
+            return self._storage_backend.get_item(idx)
+
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             # One-shot load after finalize()
             reader.load_and_activate()
         return reader.get_item(idx)
+
+    def __getitems__(self, indices: list[int]) -> list[dict]:
+        if self._storage_backend is not None:
+            return self._storage_backend.get_items(list(indices))
+        return [self[idx] for idx in indices]
 
     def select_columns(self, column_names: str | list[str]):
         """Select specific columns from the underlying dataset.
@@ -552,12 +609,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
-        self._ensure_reader().set_image_transforms(image_transforms)
+        if self._storage_backend is not None:
+            self._storage_backend.set_image_transforms(image_transforms)
+        else:
+            self._ensure_reader().set_image_transforms(image_transforms)
         self.image_transforms = image_transforms
 
     def clear_image_transforms(self) -> None:
         """Remove the transform applied to visual observations."""
-        if self.reader is not None:
+        if self._storage_backend is not None:
+            self._storage_backend.set_image_transforms(None)
+        elif self.reader is not None:
             self.reader.set_image_transforms(None)
         self.image_transforms = None
 
@@ -597,6 +659,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             **card_kwargs: Additional keyword arguments forwarded to dataset card
                 creation.
         """
+        if self._storage_backend is not None:
+            raise NotImplementedError(
+                f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
+                "the data files are not managed by LeRobotDataset."
+            )
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
@@ -767,6 +834,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
+        obj._storage_backend = None
+        obj._storage_root = None
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
@@ -883,6 +952,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
 
         obj._encoder_threads = encoder_threads
+        obj._storage_backend = None
+        obj._storage_root = None
         obj.root = obj.meta.root
 
         # Reader is lazily created on first access (write-only mode)
