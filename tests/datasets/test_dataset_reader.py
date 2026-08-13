@@ -250,3 +250,33 @@ def test_delta_query_transform_receives_only_requested_column(tmp_path, lerobot_
 
     assert seen_key_sets, "expected the transform to be invoked"
     assert all(keys == {"action"} for keys in seen_key_sets)
+
+
+def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_factory):
+    """Cached column views must not outlive a set_transform() on hf_dataset.
+
+    set_transform() mutates the dataset in place, so dataset identity alone
+    cannot invalidate the cache: a view built under the previous transform
+    would keep answering delta queries with it.
+    """
+    delta_timestamps = {"action": [i / DEFAULT_FPS for i in range(-1, 2)]}
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=1,
+        total_frames=10,
+        use_videos=False,
+        delta_timestamps=delta_timestamps,
+    )
+    reader = dataset.reader
+
+    query_indices, _ = reader._get_query_indices(5, 0)
+    baseline = reader._query_hf_dataset(query_indices)
+
+    def doubling_transform(items_dict):
+        items = hf_transform_to_torch(items_dict)
+        return {key: [2 * value for value in values] for key, values in items.items()}
+
+    reader.hf_dataset.set_transform(doubling_transform)
+
+    result = reader._query_hf_dataset(query_indices)
+    assert torch.equal(result["action"], 2 * baseline["action"])
