@@ -62,6 +62,7 @@ from lerobot.common.control_utils import (
 from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.pedal import start_pedal_listener
@@ -70,7 +71,6 @@ from lerobot.utils.utils import log_say
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
 from .core import (
-    CycleTimer,
     RolloutStrategy,
     estimate_max_episode_seconds,
     safe_push_to_hub,

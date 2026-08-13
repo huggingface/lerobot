@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.robot_utils import precise_sleep
@@ -48,7 +49,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
-from .core import CycleTimer, RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 

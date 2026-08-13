@@ -24,6 +24,7 @@ from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.utils import log_say
@@ -31,7 +32,7 @@ from lerobot.utils.utils import log_say
 from ..configs import HighlightStrategyConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
-from .core import CycleTimer, RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 

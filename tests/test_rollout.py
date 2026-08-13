@@ -20,7 +20,6 @@ import dataclasses
 import logging
 import sys
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -31,8 +30,8 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Hoisted rather than re-imported inside each test: the module-scoped `importorskip`
-# above already guards it, and the timer tests below reference it ~20 times.
-from lerobot.rollout.strategies import CycleTimer  # noqa: E402
+# above already guards everything below it.
+from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Import smoke tests
@@ -531,511 +530,22 @@ def test_rollout_context_fields():
 
 
 # ---------------------------------------------------------------------------
-# CycleTimer
+# Cadence pacing through the strategies
+#
+# The timer's own contract lives in tests/utils/test_cycle_timer.py; these check
+# how the strategies drive it.  `clock` comes from tests/fixtures/cadence.py.
 # ---------------------------------------------------------------------------
 
-_CORE_LOGGER = "lerobot.rollout.strategies.core"
+_TIMER_LOGGER = "lerobot.utils.cycle_timer"
 
 
 def _timer_warnings(caplog):
     return [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-class _FakeClock:
-    """Virtual clock standing in for ``time.perf_counter`` and ``precise_sleep``.
-
-    ``CycleTimer``'s contract is pure arithmetic over deadlines, so exercising it
-    against the wall clock only adds scheduler noise: every margin has to be wide
-    enough for a loaded CI machine, which makes the assertions loose and the suite
-    slow.  Driving it here instead makes the pacing exact — ``advance`` stands in
-    for loop-body work, and the timer's own sleeps move the same clock forward.
-    """
-
-    def __init__(self) -> None:
-        self.now = 0.0
-        self.overshoot = 0.0
-        self.sleeps: list[float] = []
-
-    def perf_counter(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        """Simulate *seconds* of work inside the loop body."""
-        self.now += seconds
-
-    def precise_sleep(self, seconds: float) -> None:
-        self.sleeps.append(seconds)
-        # `overshoot` models a sleep that returns late — the OS descheduling the
-        # process, or a coarse timer granularity.
-        self.now += seconds + self.overshoot
-
-    def __getattr__(self, name):
-        # Anything else CycleTimer's module reaches for on `time` still works.
-        return getattr(time, name)
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    """Patch the strategies-core clock, scoped to that module's namespace only."""
-    from lerobot.rollout.strategies import core
-
-    fake = _FakeClock()
-    monkeypatch.setattr(core, "time", fake)
-    monkeypatch.setattr(core, "precise_sleep", fake.precise_sleep)
-    return fake
-
-
-def _drive(timer, clock, work=0.0, ticks=1, new_cycle=True):
-    """Run *ticks* iterations of a loop body costing *work* seconds each.
-
-    Stands in for a strategy's loop: ``tick``, burn *work* on the virtual clock,
-    ``wait``.  *new_cycle* is what the interpolator would report — ``True`` models a
-    starved or frozen one (every tick asks for a fresh action), and a callable
-    ``tick_index -> bool`` covers the cadences in between.
-    """
-    for i in range(ticks):
-        timer.tick(new_cycle=new_cycle(i) if callable(new_cycle) else new_cycle)
-        clock.advance(work)
-        timer.wait()
-
-
-def _debug_messages(caplog):
-    return [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
-
-
 def _info_messages(caplog):
-    """INFO messages from the strategies-core logger only (i.e. the cadence reports)."""
-    return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and r.name == _CORE_LOGGER]
-
-
-def test_cycle_timer_validates_arguments():
-    with pytest.raises(ValueError, match="fps"):
-        CycleTimer(0.0)
-    with pytest.raises(ValueError, match="multiplier"):
-        CycleTimer(30.0, 0)
-
-
-def test_cycle_timer_paces_ticks_to_base_fps(caplog, clock):
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        _drive(timer, clock, ticks=4, new_cycle=lambda i: i % 2 == 0)  # two full cycles
-    assert clock.now == pytest.approx(2 * (1 / 10.0))
-    assert not _timer_warnings(caplog)
-
-
-def test_cycle_timer_spaces_interpolated_commands_evenly(clock):
-    # Interpolation exists to smooth motion, so every tick must be spaced by
-    # 1/(fps × multiplier) — not batched at the start of each cycle.
-    timer = CycleTimer(10.0, 2)  # 50 ms slots
-    stamps = []
-    for tick in range(4):
-        timer.tick(new_cycle=tick % 2 == 0)
-        stamps.append(clock.now)
-        timer.wait()
-    gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
-    assert gaps == pytest.approx([0.05, 0.05, 0.05])
-
-
-def test_cycle_timer_slow_policy_tick_borrows_from_interpolated_ticks(caplog, clock):
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        timer.tick(new_cycle=True)
-        clock.advance(0.06)  # policy tick overruns its 50 ms slot
-        timer.wait()
-        _drive(timer, clock, new_cycle=False)  # instant interpolated tick absorbs it
-    # The 60 ms + 0 ms cycle fits the 100 ms budget: no user-facing warning,
-    # only a DEBUG note about the tick that missed its slot.
-    assert not _timer_warnings(caplog)
-    assert any("slot" in m for m in _debug_messages(caplog))
-    # The cycle still ends on its deadline, so the policy cadence is held.
-    assert clock.now == pytest.approx(0.10)
-
-
-@pytest.mark.parametrize(
-    ("fps", "multiplier", "work", "ticks", "expected"),
-    [
-        # Every tick is its own cycle at multiplier 1, so each slow tick past the
-        # exempt start-up one warns: 80 ms of work against a 50 ms budget.
-        (20.0, 1, 0.08, 3, 2),
-        # At multiplier 2 a single 120 ms tick already blows the 100 ms cycle
-        # budget, but it is judged per group of two: 4 ticks, 2 groups, 1 exempt.
-        (10.0, 2, 0.12, 4, 1),
-    ],
-    ids=["multiplier-1", "multiplier-2"],
-)
-def test_cycle_timer_warns_once_per_over_budget_cycle(caplog, clock, fps, multiplier, work, ticks, expected):
-    timer = CycleTimer(fps, multiplier)
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=work, ticks=ticks)
-    warnings = _timer_warnings(caplog)
-    assert len(warnings) == expected
-    assert f"target FPS ({fps:g}" in warnings[0].getMessage()
-    assert "Dataset frames" in warnings[0].getMessage()
-
-
-def test_cycle_timer_does_not_report_the_startup_group(caplog, clock):
-    # The interpolator primes its buffer with a single action, so inference runs
-    # on two consecutive ticks at start-up and the first group legitimately runs
-    # over budget.  Reporting it would warn on every healthy launch.
-    timer = CycleTimer(10.0, 2)
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.12, ticks=2)
-    assert not _timer_warnings(caplog)
-
-
-def test_cycle_timer_control_only_phrasing(caplog, clock):
-    timer = CycleTimer(20.0, 1, records_data=False)
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.08, ticks=2)
-    (warning,) = _timer_warnings(caplog)
-    assert "Dataset frames" not in warning.getMessage()
-    assert "Robot control might be unstable" in warning.getMessage()
-
-
-def test_cycle_timer_debug_message_omits_recording_when_not_recording(caplog, clock):
-    timer = CycleTimer(10.0, 2, records_data=False)
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        # Overruns the 50 ms slot, fits the 100 ms budget.
-        _drive(timer, clock, work=0.06)
-    (debug,) = _debug_messages(caplog)
-    assert "recording" not in debug
-
-
-def test_cycle_timer_reports_a_slot_overrun_on_the_tick_that_closes_a_group(caplog, clock):
-    # Regression: the overrun note used to sit in an `elif` behind the group-close
-    # branch, so every multiplier-th tick's overrun went unreported even when the
-    # group as a whole was healthy.  Here the *closing* tick is the slow one.
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        _drive(timer, clock, ticks=2, new_cycle=lambda i: i == 0)  # start-up group, exempt
-        timer.tick(new_cycle=True)
-        timer.wait()  # instant opening tick
-        timer.tick(new_cycle=False)
-        clock.advance(0.06)  # closing tick overruns its 50 ms slot...
-        timer.wait()
-    assert not _timer_warnings(caplog)  # ...while 60 ms still fits the 100 ms budget
-    assert [m for m in _debug_messages(caplog) if "overran its" in m]
-
-
-def test_cycle_timer_warns_when_every_tick_reports_a_new_cycle(caplog, clock):
-    # Regression: when the interpolator is starved or frozen (async backend
-    # yielding no action, DAgger paused/correcting), every tick reports
-    # new_cycle=True.  Tying the slow-loop warning to cycle completion made it
-    # structurally unreachable in exactly that regime.  Groups of `multiplier`
-    # ticks are measured regardless, so a genuinely slow loop still warns.
-    timer = CycleTimer(10.0, 2)  # 100 ms budget per 2 ticks
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.07, ticks=6)  # 140 ms per 2-tick group, 3 groups
-    warnings = _timer_warnings(caplog)
-    assert len(warnings) == 2  # one per closed group, not one per tick
-    assert "target FPS (10" in warnings[0].getMessage()
-
-
-@pytest.mark.parametrize("multiplier", [2, 3])
-def test_cycle_timer_silent_on_healthy_loop_driven_by_the_real_interpolator(caplog, clock, multiplier):
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    # Regression: the reporting window must not depend on WHERE it starts
-    # relative to the policy cycle.  The real interpolator primes with a
-    # single-action buffer, which permanently offsets groups from cycles, so
-    # hand-aligned `new_cycle` flags (what a naive test supplies) hide the bug.
-    # Drive the flags from the real interpolator instead, with an inference tick
-    # deliberately longer than one 1/(fps × N) slot — the regime interpolation
-    # exists for — while total work per cycle stays well inside the 1/fps budget.
-    fps = 20.0
-    policy_work = 1.0 / (fps * multiplier) * 1.5  # overruns its slot
-    interp_work = 0.002
-    assert policy_work + (multiplier - 1) * interp_work < 1.0 / fps  # healthy loop
-
-    interpolator = ActionInterpolator(multiplier=multiplier)
-    timer = CycleTimer(fps, multiplier)
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        for i in range(4 * multiplier):
-            needs_action = interpolator.needs_new_action()
-            timer.tick(new_cycle=needs_action)
-            if needs_action:
-                interpolator.add(torch.tensor([float(i)]))
-                clock.advance(policy_work)
-            else:
-                clock.advance(interp_work)
-            interpolator.get()
-            timer.wait()
-    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
-
-
-def test_cycle_timer_reports_time_lost_inside_the_pacing_sleep(caplog, clock):
-    # Loop-body work fits the budget comfortably, but every pacing sleep returns
-    # 10 ms late, so the achieved cadence really is below target.  That shortfall
-    # is not the caller's doing and would fire constantly on a loaded machine, so
-    # it is reported at DEBUG rather than as the slow-loop warning.
-    clock.overshoot = 0.01
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.01, ticks=6)
-
-    assert not _timer_warnings(caplog)
-    debugs = _debug_messages(caplog)
-    assert any("went missing outside the loop body" in m for m in debugs), debugs
-
-
-def test_cycle_timer_tolerates_a_sliver_of_sleep_overshoot(caplog, clock):
-    # Sleeps that return a few hundred microseconds late are the ordinary state of
-    # a paced loop, not a cadence problem.  With no tolerance at all this note
-    # fired on nearly every group of a healthy run, which made both the message
-    # and the count in the summary worthless.
-    clock.overshoot = 0.0004  # 0.8 ms per 100 ms cycle: inside the 1% tolerance
-    timer = CycleTimer(10.0, 2)
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.01, ticks=6)
-
-    assert not caplog.records
-
-
-def test_cycle_timer_stays_silent_about_sleeps_on_a_punctual_clock(caplog, clock):
-    # Same loop, sleeps that return on time: nothing to report at all.
-    timer = CycleTimer(10.0, 2)
-    with caplog.at_level(logging.DEBUG, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.01, ticks=6)
-
-    assert not caplog.records
-
-
-def test_cycle_timer_starved_but_fast_loop_stays_silent(caplog, clock):
-    # The same all-new-cycle regime must not warn when the loop is keeping up.
-    timer = CycleTimer(10.0, 2)
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
-        _drive(timer, clock, ticks=4)
-    assert not _timer_warnings(caplog)
-
-
-def test_cycle_timer_new_cycle_reanchors_pacing(clock):
-    # The interpolator's startup buffer holds a single action, so the second
-    # tick requests a fresh action one tick early.  Re-anchoring must restart
-    # the pacing slots from that tick rather than keep the stale anchor.
-    timer = CycleTimer(10.0, 2)  # 50 ms slots
-    timer.tick(new_cycle=True)
-    timer.wait()  # sleeps to the first slot deadline
-    reanchor = clock.now
-    timer.tick(new_cycle=True)
-    timer.wait()
-    # Paced from the re-anchor, so a full slot — not the 0 ms a stale anchor
-    # (already past its second deadline) would have produced.
-    assert clock.now - reanchor == pytest.approx(0.05)
-
-
-# ---------------------------------------------------------------------------
-# Cadence statistics and summaries
-# ---------------------------------------------------------------------------
-
-
-def test_cycle_timer_run_summary_reports_effective_cadence_and_sections(caplog, clock):
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    for i in range(6):
-        timer.tick(new_cycle=i % 2 == 0)
-        with timer.section("observe"):
-            clock.advance(0.01)
-        with timer.section("infer"):
-            clock.advance(0.02 if i % 2 == 0 else 0.0)  # inference on policy ticks only
-        timer.wait()
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    # The sample size is in the heading, so it survives even when the rate below
-    # cannot be computed.
-    assert summary.startswith(
-        "Cadence summary — whole run · target 10 Hz × 2 (50.0 ms tick slot, 100.0 ms cycle budget): "
-        "6 ticks, 2 cycles judged"
-    )
-    # A correctly paced loop holds its target exactly on a virtual clock.
-    # 5 gaps of 50 ms — the span sums gaps, so it is one gap short of 6 ticks' worth.
-    assert "effective cadence: 10.00 Hz policy / 20.00 Hz commands over 0.2 s measured" in summary
-    # Three groups of two, the first exempt as start-up; 40 ms of work each.
-    assert "cycles over the 100.0 ms work budget: 0/2 (0.0%)" in summary
-    assert "work mean 40.0 ms, worst 40.0 ms" in summary
-    # Sections split the measured work; both ran on every tick, 30 ms each cycle.
-    assert "observe" in summary and "infer" in summary
-    assert summary.count("6 calls") == 2
-    # Headroom is the pacing sleep, which is the whole budget minus the work: the
-    # policy ticks sleep 20 ms of their 50 ms slot, the interpolated ticks 40 ms.
-    assert "pacing headroom: 30.0 ms slept per tick on average (max 40.0 ms)" in summary
-
-
-def test_cycle_timer_sections_report_calls_mean_and_worst(caplog, clock):
-    timer = CycleTimer(10.0, 1)
-    for work in (0.01, 0.03, 0.02):
-        timer.tick(new_cycle=True)
-        with timer.section("observe"):
-            clock.advance(work)
-        timer.wait()
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    assert "observe  mean  20.00 ms · worst  30.00 ms · 100.0% of work · 3 calls" in summary
-
-
-def test_cycle_timer_episode_summaries_fold_into_the_run_total(caplog, clock):
-    timer = CycleTimer(10.0, 1)  # every tick is a cycle, 100 ms budget
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.01, ticks=4)
-        timer.log_episode_summary("episode 1")
-        _drive(timer, clock, work=0.01, ticks=4)
-        timer.log_episode_summary("episode 2")
-        _drive(timer, clock, work=0.01, ticks=2)
-        timer.log_run_summary()  # closes the window still open
-
-    messages = _info_messages(caplog)
-    assert len(messages) == 4
-    assert [m.split(":")[0] for m in messages[:3]] == [
-        "Cadence (episode 1)",
-        "Cadence (episode 2)",
-        "Cadence (final episode)",
-    ]
-    assert messages[0].startswith("Cadence (episode 1): 10.00 Hz policy vs 10 Hz target · 4 ticks")
-    # The run total covers every tick of all three windows, and only the run block
-    # carries the full breakdown.
-    assert messages[3].startswith("Cadence summary — whole run, 3 episodes")
-    assert "10 ticks" in messages[3]
-    assert "pacing headroom: 90.0 ms slept per tick on average (max 90.0 ms)" in messages[3]
-
-
-def test_cycle_timer_run_summary_always_states_its_sample_size(caplog, clock):
-    # Every other number in the block is a rate or an average over the ticks, so the
-    # tick count has to be there to judge any of them.  It used to ride on the
-    # effective-cadence line, which is skipped when no rate could be measured — as
-    # here, where each tick is its own episode so every elapsed gap is dropped.
-    timer = CycleTimer(200.0, 1)
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        for i in range(4):
-            timer.tick(new_cycle=True)
-            clock.advance(0.0001)
-            timer.log_episode_summary(f"episode {i}")
-            timer.wait()
-        timer.log_run_summary()
-
-    run = _info_messages(caplog)[-1]
-    assert "4 ticks, 3 cycles judged" in run
-    assert "effective cadence" not in run  # nothing to measure a rate from
-
-
-def test_cycle_timer_empty_window_reports_nothing(clock, caplog):
-    # Boundaries can fall before any tick completes (a rotation on the very first
-    # iteration), and a strategy should not have to guard against that.
-    timer = CycleTimer(10.0, 1)
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_episode_summary("episode 1")
-        timer.log_run_summary()
-    assert not _info_messages(caplog)
-
-
-def test_cycle_timer_restart_inside_a_loop_body_drops_the_stall_it_follows(caplog, clock):
-    # Regression: `restart()` is only ever called from *inside* a loop body — after
-    # the blocking work and before `wait()` (a ring-buffer flush, DAgger's handover
-    # ramp).  Elapsed time is a backward-looking gap, so cutting the link at that
-    # moment discarded the healthy gap already behind the tick and billed the stall
-    # to the next one, understating the achieved cadence instead of excluding it.
-    timer = CycleTimer(10.0, 1)  # 100 ms budget
-    _drive(timer, clock, work=0.005, ticks=4)
-    timer.tick(new_cycle=True)
-    clock.advance(0.005)  # honest work...
-    clock.advance(0.5)  # ...then the blocking one-off, still inside the body
-    timer.restart()
-    timer.wait()
-    _drive(timer, clock, work=0.005, ticks=4)
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    assert "9 ticks" in summary
-    assert "effective cadence: 10.00 Hz policy over 0.7 s measured" in summary
-    assert not _timer_warnings(caplog)  # the stalled group is exempted too
-
-
-def test_cycle_timer_episode_boundary_inside_a_loop_body_belongs_to_the_closing_episode(caplog, clock):
-    # Regression: strategies request a boundary after the blocking `save_episode()`
-    # and before `wait()`, so the tick in progress is the closing episode's last one.
-    # Folding the window there booked that tick — the entire save — against the
-    # episode about to start, whose headline cadence then collapsed while the work
-    # column beside it still read healthy.
-    timer = CycleTimer(10.0, 1)
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        _drive(timer, clock, work=0.005, ticks=4)
-        timer.tick(new_cycle=True)  # the rotation tick
-        clock.advance(0.005)
-        clock.advance(0.5)  # blocking save_episode
-        timer.log_episode_summary("episode 1")
-        timer.restart()
-        timer.wait()
-        _drive(timer, clock, work=0.005, ticks=4)
-        timer.log_run_summary()
-
-    episode_1, episode_2, run = _info_messages(caplog)
-    # The rotation tick counts toward the episode it finalised, and its stalled group
-    # is exempt, so the work column stays honest at 5 ms rather than 505 ms.
-    assert episode_1 == (
-        "Cadence (episode 1): 10.00 Hz policy vs 10 Hz target · 5 ticks, 0.4 s measured · "
-        "0/3 cycles over the 100.0 ms budget (work mean 5.0 ms, worst 5.0 ms)"
-    )
-    # ...and the next episode is not slandered by a stall it never paid for.
-    assert episode_2.startswith(
-        "Cadence (final episode): 10.00 Hz policy vs 10 Hz target · 4 ticks, 0.3 s measured"
-    )
-    assert "9 ticks" in run and "effective cadence: 10.00 Hz policy" in run
-
-
-def test_cycle_timer_summary_counts_ticks_that_overran_their_slot(caplog, clock):
-    # The per-tick slot overrun is only visible in the summary (its log line is
-    # DEBUG), so the counter needs its own assertion — without one, disabling the
-    # increment entirely leaves the suite green.
-    timer = CycleTimer(10.0, 2)  # 50 ms slots, 100 ms cycle budget
-    _drive(timer, clock, ticks=2, new_cycle=lambda i: i == 0)  # start-up group
-    for _ in range(2):
-        timer.tick(new_cycle=True)
-        clock.advance(0.06)  # overruns the slot, still inside the cycle budget
-        timer.wait()
-        _drive(timer, clock, new_cycle=False)  # instant interpolated tick
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    assert "ticks over their 50.0 ms slot: 2/6 (costs interpolation smoothness only)" in summary
-    assert not _timer_warnings(caplog)
-
-
-def test_cycle_timer_statistics_survive_restart_but_drop_the_blocking_gap(caplog, clock):
-    # `restart()` exists for one-off blocking work inside the timed body (DAgger's
-    # handover ramps, a ring-buffer flush).  The statistics still have to describe
-    # the whole run, while the stall itself must not be billed to the cadence.
-    timer = CycleTimer(10.0, 1)
-    _drive(timer, clock, work=0.01, ticks=3)
-    clock.advance(2.0)  # a two-second stall inside the loop body
-    timer.restart()
-    _drive(timer, clock, work=0.01, ticks=3)
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    assert "6 ticks" in summary  # every tick from before the restart is still counted
-    assert "10.00 Hz policy" in summary  # ...but the stall is not counted against it
-
-
-def test_cycle_timer_starved_ticks_are_counted_and_reported(caplog, clock):
-    timer = CycleTimer(10.0, 1)
-    _drive(timer, clock, work=0.01, ticks=2)
-    timer.note_starved_tick()
-    timer.note_starved_tick()
-
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
-        timer.log_run_summary()
-
-    (summary,) = _info_messages(caplog)
-    assert "ticks with no action to send (inference engine starved): 2" in summary
+    """INFO messages from the timer only (i.e. the cadence reports)."""
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and r.name == _TIMER_LOGGER]
 
 
 def test_handle_warmup_is_a_noop_without_torch_compile():
@@ -1052,7 +562,7 @@ def test_handle_warmup_is_a_noop_without_torch_compile():
 
 def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog, clock):
     from lerobot.rollout import BaseStrategyConfig
-    from lerobot.rollout.strategies import BaseStrategy, CycleTimer
+    from lerobot.rollout.strategies import BaseStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator
 
     # Warm-up ticks are paced through the timer, and the flush resets the
@@ -1067,7 +577,7 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)
     timer = CycleTimer(fps, multiplier)
 
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
         # Two slow warm-up ticks close one over-budget group (80 ms > 50 ms).
         for _ in range(2):
             timer.tick(new_cycle=True)
@@ -1095,7 +605,7 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
 
     # A subsequent over-budget group is still reported — the exemption is armed
     # once per restart, not switched off.
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
         for _ in range(2):
             timer.tick(new_cycle=True)
             clock.advance(0.04)
@@ -1295,7 +805,7 @@ def test_highlight_save_toggle_starts_and_ends_live_recording(caplog):
     strategy._interpolator = ActionInterpolator(multiplier=2)
     strategy._ring = RolloutRingBuffer(max_seconds=10.0, max_memory_mb=64, fps=200.0)
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     # Record ticks are 1, 3, 5, 7.  Tick 1 buffers into the ring; tick 3 drains
@@ -1432,7 +942,7 @@ def test_dagger_resume_does_not_warn_about_the_reprimed_interpolator(caplog, clo
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)
     strategy._episode_duration_s = 1e9
 
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
         strategy._run_continuous(ctx)
 
     assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
@@ -1473,7 +983,7 @@ def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
 def test_dagger_handover_ramp_is_not_reported_as_a_slow_loop(caplog, clock, monkeypatch):
     import lerobot.rollout.strategies.dagger as dagger_mod
     from lerobot.rollout import DAggerStrategyConfig
-    from lerobot.rollout.strategies import CycleTimer, DAggerPhase, DAggerStrategy
+    from lerobot.rollout.strategies import DAggerPhase, DAggerStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator
 
     # The smooth-handover ramps block for a good fraction of a second *inside*
@@ -1497,7 +1007,7 @@ def test_dagger_handover_ramp_is_not_reported_as_a_slow_loop(caplog, clock, monk
             clock.advance(0.001)
             timer.wait()
 
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
         healthy_ticks(4)  # spend the start-up exemption
         timer.tick(new_cycle=True)
         strategy._apply_transition(
@@ -1530,7 +1040,7 @@ def test_base_strategy_reports_the_run_summary_when_the_loop_ends(caplog):
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=2)
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     (summary,) = _info_messages(caplog)
@@ -1558,7 +1068,7 @@ def test_base_strategy_reports_the_run_summary_even_when_the_loop_raises(caplog)
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=1)
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER), pytest.raises(RuntimeError, match="camera"):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER), pytest.raises(RuntimeError, match="camera"):
         strategy.run(ctx)
 
     (summary,) = _info_messages(caplog)
@@ -1580,7 +1090,7 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=1)
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     (summary,) = _info_messages(caplog)
@@ -1594,7 +1104,7 @@ def test_sentry_reports_a_cadence_summary_per_episode_and_for_the_run(caplog):
     strategy = _make_sentry(ctx, 1)
     strategy._episode_duration_s = 0.0  # rotate on every tick
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     messages = _info_messages(caplog)
@@ -1631,7 +1141,7 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     strategy._interpolator = ActionInterpolator(multiplier=2)
     strategy._events = {"stop_recording": False, "exit_early": False, "rerecord_episode": False}
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     messages = _info_messages(caplog)
@@ -1680,7 +1190,7 @@ def test_episodic_exempts_each_episode_reprimed_interpolator(caplog, clock):
     strategy._interpolator = ActionInterpolator(multiplier=2)
     strategy._events = events
 
-    with caplog.at_level(logging.WARNING, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
         strategy.run(ctx)
 
     assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
@@ -1697,7 +1207,7 @@ def test_dagger_continuous_reports_a_cadence_summary_per_episode_and_for_the_run
     strategy._interpolator = ActionInterpolator(multiplier=1)
     strategy._episode_duration_s = 0.0  # rotate on every tick
 
-    with caplog.at_level(logging.INFO, logger=_CORE_LOGGER):
+    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
         strategy._run_continuous(ctx)
 
     messages = _info_messages(caplog)

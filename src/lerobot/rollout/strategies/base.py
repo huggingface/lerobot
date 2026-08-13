@@ -19,8 +19,10 @@ from __future__ import annotations
 import logging
 import time
 
+from lerobot.utils.cycle_timer import CycleTimer
+
 from ..context import RolloutContext
-from .core import CycleTimer, RolloutStrategy, send_next_action
+from .core import RolloutStrategy, send_next_action
 
 logger = logging.getLogger(__name__)
 

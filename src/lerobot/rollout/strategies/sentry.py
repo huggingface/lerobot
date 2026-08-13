@@ -25,13 +25,13 @@ from threading import Event, Lock
 from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.utils import log_say
 
 from ..configs import SentryStrategyConfig
 from ..context import RolloutContext
 from .core import (
-    CycleTimer,
     RolloutStrategy,
     estimate_max_episode_seconds,
     safe_push_to_hub,

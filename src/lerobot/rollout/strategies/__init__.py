@@ -16,7 +16,6 @@
 
 from .base import BaseStrategy
 from .core import (
-    CycleTimer,
     RolloutStrategy,
     estimate_max_episode_seconds,
     safe_push_to_hub,
@@ -30,7 +29,6 @@ from .sentry import SentryStrategy
 
 __all__ = [
     "BaseStrategy",
-    "CycleTimer",
     "DAggerEvents",
     "DAggerPhase",
     "DAggerStrategy",
