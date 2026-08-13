@@ -74,6 +74,7 @@ from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
@@ -122,6 +123,20 @@ def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, An
         yield envs
     finally:
         close_envs(envs)
+
+
+def _preprocess_dataset_batch(
+    batch: dict[str, Any],
+    camera_keys: list[str],
+    rename_map: dict[str, str],
+    preprocessor: Any,
+) -> Any:
+    """Prepare a raw dataset batch identically for training and held-out evaluation."""
+    for cam_key in camera_keys:
+        if cam_key in batch and batch[cam_key].dtype == torch.uint8:
+            batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
+    batch = rename_batch_keys(batch, rename_map)
+    return preprocessor(batch)
 
 
 def update_policy(
@@ -482,8 +497,9 @@ def train(cfg: TrainPipelineConfig):
     processor_pretrained_path = active_cfg.pretrained_path
 
     processor_kwargs = ProcessorConfigKwargs()
+    processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = dataset.meta.stats
+        processor_kwargs["dataset_stats"] = processor_dataset_stats
     if cfg.is_reward_model_training:
         processor_kwargs["dataset_meta"] = dataset.meta
     if not cfg.is_reward_model_training and processor_pretrained_path is not None:
@@ -506,8 +522,8 @@ def train(cfg: TrainPipelineConfig):
         # and force-feeding raw dataset stats over them crashes normalization (#4006).
         # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
         if not cfg.resume:
-            preprocessor_overrides["normalizer_processor"]["stats"] = dataset.meta.stats
-            postprocessor_overrides["unnormalizer_processor"]["stats"] = dataset.meta.stats
+            preprocessor_overrides["normalizer_processor"]["stats"] = processor_dataset_stats
+            postprocessor_overrides["unnormalizer_processor"]["stats"] = processor_dataset_stats
         if getattr(active_cfg, "use_relative_actions", False):
             preprocessor_overrides["relative_actions_processor"] = {
                 "enabled": True,
@@ -712,10 +728,7 @@ def train(cfg: TrainPipelineConfig):
         batch = next(dl_iter)
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
-        for cam_key in dataset.meta.camera_keys:
-            if cam_key in batch and batch[cam_key].dtype == torch.uint8:
-                batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-        batch = preprocessor(batch)
+        batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 
         train_tracker, _ = update_policy(
@@ -775,10 +788,9 @@ def train(cfg: TrainPipelineConfig):
             n_eval_batches = 0
             with torch.no_grad(), accelerator.autocast():
                 for eval_batch in eval_dataloader:
-                    for cam_key in dataset.meta.camera_keys:
-                        if cam_key in eval_batch and eval_batch[cam_key].dtype == torch.uint8:
-                            eval_batch[cam_key] = eval_batch[cam_key].to(dtype=torch.float32) / 255.0
-                    eval_batch = preprocessor(eval_batch)
+                    eval_batch = _preprocess_dataset_batch(
+                        eval_batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor
+                    )
                     loss, _ = policy(eval_batch)  # __call__, so FSDP2 forward hooks run
                     eval_loss_sum += loss.item()
                     n_eval_batches += 1
