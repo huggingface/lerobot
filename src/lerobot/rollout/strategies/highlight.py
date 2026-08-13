@@ -32,7 +32,7 @@ from lerobot.utils.utils import log_say
 from ..configs import HighlightStrategyConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action, warn_loop_overrun
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 

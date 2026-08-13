@@ -652,6 +652,13 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
 
     robot.get_observation.side_effect = _get_observation
     engine = MagicMock()
+    # The two interactive strategies pump the text-query channel once per tick and
+    # call ``timer.restart()`` when it served something.  A bare MagicMock returns a
+    # truthy Mock, which would restart the timer on every tick and silently switch
+    # off both group judging (no overrun could ever warn) and the effective-cadence
+    # measurement — with every assertion in this file still passing.
+    engine.pump_query.return_value = False
+    engine.dispatched_task = "task"
     actions = {"n": 0}
 
     def _get_action(_obs_frame):
@@ -662,6 +669,8 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
     dataset = MagicMock()
     dataset.num_episodes = 0
     # A real (non-existent) path so VideoEncodingManager's image-dir cleanup no-ops.
+    # Still needed for episodic/highlight/dagger; sentry no longer runs inside the
+    # manager (its run() is restartable, so it finalizes in teardown() instead).
     dataset.root = Path("/nonexistent-lerobot-rollout-test")
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(cfg=cfg, shutdown_event=shutdown_event),

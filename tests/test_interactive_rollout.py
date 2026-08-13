@@ -1064,17 +1064,85 @@ def test_query_tick_overrun_does_not_fire_fps_warning(caplog):
 
     delivered = []
     engine.set_answer_observer(delivered.append)
-    engine.ask("is the cube in the box?")
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="lerobot.utils.cycle_timer"):
         thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
         thread.start()
+        # Spend CycleTimer's start-up exemption first.  The first group it closes
+        # is never judged, so asking *before* the loop starts would make this test
+        # pass whether or not the query exemption exists.
+        assert _wait_for(lambda: robot.get_observation.call_count >= 4)
+        engine.ask("is the cube in the box?")
         assert _wait_for(lambda: bool(delivered))
         stop_event.set()
         _join_session(thread)
         assert not thread.is_alive()
 
     assert not any("running slower" in record.getMessage() for record in caplog.records)
+
+
+def test_a_slow_tick_without_a_query_still_fires_the_fps_warning(caplog):
+    """The query exemption is one-shot, not a permanent mute.
+
+    Positive control for the test above: an unconditional ``timer.restart()``
+    would also make that one pass, while silently disabling the slow-loop
+    warning for every run.
+    """
+    from lerobot.rollout import BaseStrategy, BaseStrategyConfig
+
+    parent = Event()
+    stop_event = LinkedEvent(parent)
+    engine = _FakeEngine()
+
+    robot = MagicMock()
+    ticks = {"n": 0}
+
+    def slow_observation():
+        ticks["n"] += 1
+        if ticks["n"] >= 4:  # let the start-up group close cheaply first
+            time.sleep(0.08)  # well past the 50 ms budget below
+        return {"joint.pos": 0.0}
+
+    robot.get_observation.side_effect = slow_observation
+
+    def identity(x):
+        return x
+
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(
+                play_sounds=False,
+                fps=20.0,
+                duration=0.0,
+                use_torch_compile=False,
+                interpolation_multiplier=1,
+                display_data=False,
+                autosteer_interval_s=0.0,
+            ),
+            shutdown_event=stop_event,
+        ),
+        policy=SimpleNamespace(inference=engine),
+        hardware=SimpleNamespace(robot_wrapper=robot, teleop=None, initial_position={"joint.pos": 0.0}),
+        processors=SimpleNamespace(
+            teleop_action_processor=identity,
+            robot_action_processor=identity,
+            robot_observation_processor=identity,
+        ),
+        data=SimpleNamespace(dataset=None, dataset_features={}, hw_features={}, ordered_action_keys=[]),
+    )
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(ctx)
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.utils.cycle_timer"):
+        thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+        thread.start()
+        assert _wait_for(lambda: ticks["n"] >= 7)
+        stop_event.set()
+        _join_session(thread)
+        assert not thread.is_alive()
+
+    assert any("running slower" in record.getMessage() for record in caplog.records)
 
 
 def test_session_reset_restores_initial_task():
@@ -1240,15 +1308,25 @@ def test_drop_queued_actions_clears_both_queue_conventions():
 # ---------------------------------------------------------------------------
 
 
-def _make_sentry(monkeypatch):
+def _make_sentry(monkeypatch, interpolation_multiplier=1):
     from lerobot.rollout import SentryStrategy, SentryStrategyConfig
 
     # Keep setup independent of camera features and never rotate episodes
     # mid-test; frame assembly is not under test here.
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.estimate_max_episode_seconds", lambda *a, **k: 1e9)
-    monkeypatch.setattr(
-        "lerobot.rollout.strategies.sentry.send_next_action", lambda *a, **k: {"joint.pos": 0.5}
-    )
+
+    def _fake_send(obs_processed, obs_raw, ctx, interpolator, timer=None):
+        # Recording is gated on ``interpolator.emitted_policy_action``, so the stub
+        # has to push an action through the interpolator rather than just return a
+        # dict — mirroring the real send_next_action's
+        # needs_new_action()/add()/get() shape.  Returning a dict alone leaves the
+        # gate permanently False and nothing is ever recorded.
+        if interpolator.needs_new_action():
+            interpolator.add(torch.zeros(1))
+        interpolator.get()
+        return {"joint.pos": 0.5}
+
+    monkeypatch.setattr("lerobot.rollout.strategies.sentry.send_next_action", _fake_send)
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.build_dataset_frame", lambda *a, **k: {})
 
     engine = _FakeEngine()
@@ -1267,7 +1345,7 @@ def _make_sentry(monkeypatch):
                 fps=200.0,
                 duration=0.0,
                 use_torch_compile=False,
-                interpolation_multiplier=1,
+                interpolation_multiplier=interpolation_multiplier,
                 display_data=False,
                 return_to_initial_position=False,
                 task="pick up the cube",
@@ -1347,6 +1425,46 @@ def test_sentry_labels_frames_with_dispatched_action_task(monkeypatch):
     tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
     assert tasks[0] == "pick up the cube"
     assert tasks[-1] == "fold the towel"
+
+    strategy.teardown(ctx)
+
+
+def test_sentry_labels_frames_with_dispatched_action_task_while_interpolating(monkeypatch):
+    """The task label stays sound when recording is throttled to policy cycles.
+
+    At ``interpolation_multiplier > 1`` the frame is recorded on the tick that
+    emits the policy's own end-point action, which is *not* the tick that ran
+    inference.  ``dispatched_task`` is written on the refill tick and no
+    ``get_action`` runs in between, so observation, action and label still come
+    from one policy cycle — this pins that, since multiplier 1 cannot see it.
+    """
+    strategy, ctx, dataset, engine, stop_event = _make_sentry(monkeypatch, interpolation_multiplier=2)
+
+    thread = Thread(target=strategy.run, args=(ctx,), daemon=True)
+    thread.start()
+    assert _wait_for(lambda: dataset.add_frame.call_count >= 2)
+    frames_before_switch = dataset.add_frame.call_count
+
+    engine.set_task("fold the towel")
+    assert _wait_for(lambda: dataset.add_frame.call_count >= frames_before_switch + 2)
+    tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
+    # A merely *requested* task never reaches a frame.
+    assert tasks[-1] == "pick up the cube"
+
+    engine._set_dispatched_task("fold the towel")
+    assert _wait_for(
+        lambda: any(call.args[0]["task"] == "fold the towel" for call in dataset.add_frame.call_args_list)
+    )
+    stop_event.set()
+    _join_session(thread)
+
+    tasks = [call.args[0]["task"] for call in dataset.add_frame.call_args_list]
+    assert tasks[0] == "pick up the cube"
+    assert tasks[-1] == "fold the towel"
+    # One frame per policy cycle, not per tick: the loop ticked at fps × 2 while
+    # recording advanced at fps, so strictly fewer frames than ticks were written.
+    ticks = ctx.hardware.robot_wrapper.get_observation.call_count
+    assert ticks > len(tasks) > 0
 
     strategy.teardown(ctx)
 

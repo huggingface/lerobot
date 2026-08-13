@@ -56,19 +56,31 @@ class RolloutStrategy(abc.ABC):
       ``teardown()``; at most save a partial tail episode when a segment
       ends (see ``SentryStrategy`` for the reference implementation);
     - state that must survive a segment (upload cadence counters, etc.)
-      lives on the instance (initialised in ``setup()``), not in ``run()``
-      locals;
+      lives on the instance (initialised in ``__init__``/``setup()``), not
+      in ``run()`` locals — note the ``CycleTimer`` is deliberately the
+      other way round, see ``run()``;
     - never bind keyboard/terminal listeners — stdin belongs to the
       interactive command prompt;
     - call ``engine.pump_query(obs_processed)`` once per tick, at the *end*
       of the tick (recording strategies: after ``add_frame``, so a slow
-      generate cannot separate an observation from its recorded frame).
-      Every ``/vqa`` answer and every autosteer turn is served or delivered
-      through that call — skipping it silently degrades text queries: on
-      sync backends a queued question is never answered during the run, on
-      async backends computed answers only surface at segment end.  Do not
-      fold it into the action path: text generation is far slower than a
-      control tick.
+      generate cannot separate an observation from its recorded frame) and
+      before ``timer.wait()``, so the generation is billed to the tick that
+      caused it.  Every ``/vqa`` answer and every autosteer turn is served
+      or delivered through that call — skipping it silently degrades text
+      queries: on sync backends a queued question is never answered during
+      the run, on async backends computed answers only surface at segment
+      end.  Do not fold it into the action path: text generation is far
+      slower than a control tick;
+    - when ``pump_query`` returns ``True`` it generated inline, so call
+      ``timer.restart()`` — still before ``timer.wait()``.  Such a tick is
+      *expected* to overrun, and warning on it would teach operators to
+      dismiss the one signal the session's log muting lets through.
+      ``restart()`` zeroes the closed-group counter, so the group
+      ``wait()`` is about to close is treated as a start-up group and
+      exempted from judging — the same idiom already used after
+      ``save_episode`` and after DAgger's handover ramps.  Keep it
+      conditional on the return value: restarting unconditionally exempts
+      *every* group and disables the slow-loop warning for the whole run.
 
     One-shot strategies (``supports_interactive = False``, the default)
     are free to finalize on ``run()`` exit, e.g. via
@@ -107,6 +119,14 @@ class RolloutStrategy(abc.ABC):
         segment (``_init_engine`` also runs it once during setup).  Only call
         while the control loop is not running: the engine and interpolator
         resets are not synchronized against a live loop.
+
+        Pacing/cadence state is deliberately not touched: each ``run()``
+        segment builds its own ``CycleTimer``, so a fresh segment already
+        starts with the start-up exemption armed — which is what absorbs the
+        re-primed interpolator this method leaves behind.  A caller that ever
+        resets control state *while* a loop is running, or a strategy that
+        hoists its timer onto the instance, must also call
+        ``timer.restart()``, for the same reason ``_handle_warmup`` does.
         """
         if self._engine is not None:
             self._engine.reset()
@@ -247,6 +267,14 @@ class RolloutStrategy(abc.ABC):
         ``engine.pump_query(obs_processed)`` at the end of every tick — the
         text-query channel only advances through it (see the class
         docstring).
+
+        Each ``run()`` call owns its own ``CycleTimer``, built from
+        ``cfg.fps`` and the interpolator's multiplier, and reports through
+        ``timer.log_run_summary()`` from its ``finally``.  In interactive
+        mode that means one cadence report *per segment* rather than per
+        session, and each segment's first group is exempt from judging —
+        which is what absorbs the interpolator that ``reset_control_state()``
+        re-primes at every ``/start``.
         """
 
     @abc.abstractmethod
@@ -259,29 +287,6 @@ class RolloutStrategy(abc.ABC):
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
-
-def warn_loop_overrun(dt: float, target_hz: float, records_data: bool = True) -> None:
-    """Warn that a control-loop tick took longer than its ``1/target_hz`` budget.
-
-    ``dt`` is the measured duration of the tick.  ``target_hz`` is the
-    effective tick rate the loop is paced at — ``1 / control_interval``,
-    i.e. ``fps × interpolation_multiplier`` when interpolating — not the
-    base fps, so the message names the budget that was actually missed.
-    ``records_data`` picks the phrasing: a recording loop drops dataset
-    frames when it misses ticks, while a plain control loop only risks
-    unstable robot control.
-    """
-    loop, consequence = (
-        ("Record loop", "Dataset frames might be dropped and robot control might be unstable.")
-        if records_data
-        else ("Control loop", "Robot control might be unstable.")
-    )
-    logger.warning(
-        f"{loop} is running slower ({1 / dt:.1f} Hz) than the target rate ({target_hz:g} Hz). {consequence} "
-        "Common causes are: 1) Camera FPS not keeping up "
-        "2) Policy inference (action or text) taking too long 3) CPU starvation"
-    )
 
 
 def safe_push_to_hub(dataset, tags=None, private=False) -> bool:

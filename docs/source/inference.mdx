@@ -311,7 +311,7 @@ Each query is a full text-generation pass, so the interval is a real cost knob: 
 
 `/vqa` is only accepted while a run is in progress. Engines are fed observations by the control loop and by nothing else, so an idle engine has no current view to answer from — ask after `/start`, not before. For the same reason a question still unanswered when a segment ends is dropped and reported rather than carried over, so it can never be answered against a scene from before a `/reset`.
 
-**Logs below WARNING are muted while the session runs** so routine output doesn't interleave with what you're typing; warnings (e.g. the control loop missing its FPS target), errors, and fatal inference failures still show, and normal logging resumes when the session ends. The gate is process-wide (it also withholds INFO/DEBUG from any file handler you attached for the duration). Run without `--interactive` to watch the live log.
+**Logs below WARNING are muted while the session runs** so routine output doesn't interleave with what you're typing; warnings (e.g. the control loop missing its FPS target), errors, and fatal inference failures still show — but the [cadence summaries](#cadence-reporting) are logged at INFO and are therefore withheld for the whole session — and normal logging resumes when the session ends. The gate is process-wide (it also withholds INFO/DEBUG from any file handler you attached for the duration). Run without `--interactive` to watch the live log.
 
 Sessions work over SSH and on headless machines — the command reader uses the terminal (or pipe) directly and needs no display server.
 
@@ -369,22 +369,23 @@ Set `play_sounds=False` in the config unless you want the vocal announcements, a
 
 ## Common Flags
 
-| Flag                              | Description                                                       | Default |
-| --------------------------------- | ----------------------------------------------------------------- | ------- |
-| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path            | --      |
-| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`) | --      |
-| `--robot.port`                    | Serial port for the robot                                         | --      |
-| `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
-| `--fps`                           | Policy inference and dataset recording frequency                  | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
-| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
-| `--task`                          | Task description (used when no dataset is provided)               | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
-| `--interpolation_multiplier`      | Robot commands per policy action (control at `fps × N` Hz)        | 1       |
-| `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
-| `--resume`                        | Resume a previous recording session                               | false   |
-| `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+| Flag                              | Description                                                                                                                                   | Default |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                                                        | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                                                             | --      |
+| `--robot.port`                    | Serial port for the robot                                                                                                                     | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                              | --      |
+| `--fps`                           | Policy inference and dataset recording frequency                                                                                              | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite); in interactive mode this bounds each `/start` segment, not the session                                    | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                           | auto    |
+| `--task`                          | Task description (used when no dataset is provided)                                                                                           | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                                                                                                       | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                                                   | --      |
+| `--interpolation_multiplier`      | Robot commands per policy action (control at `fps × N` Hz)                                                                                    | 1       |
+| `--interactive`                   | Chat-style stdin session (see [Interactive Sessions](#interactive-sessions)); the robot stays idle until `/start`. Base and sentry strategies | false   |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                                                          | false   |
+| `--resume`                        | Resume a previous recording session                                                                                                           | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                                                                                                    | true    |
 
 ---
 
@@ -411,6 +412,8 @@ Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slo
 Read it top-down: **effective cadence** is what you got against `--fps`, **cycles over budget** is how often the loop could not hold it, the **step breakdown** says where the time went, and **pacing headroom** near zero means there is nothing left to absorb a slow tick. A high `infer` share points at the policy or the device; a high `observe` share points at the cameras. A step's `worst` far above its `mean` is a one-off — above, `record` is 0.67 ms per frame and the 620 ms outlier is the blocking `save_episode` that closed an episode.
 
 A _cycle_ here is one policy action's worth of ticks (`--interpolation_multiplier` of them). Only whole cycles over the `1/fps` budget can cost you frames; a single tick overrunning its slot only makes the interpolated motion less smooth, which is why the two are counted separately. Without interpolation a cycle is a single tick, so the report drops the distinction and counts ticks throughout.
+
+Two notes for [interactive sessions](#interactive-sessions). Each `/start` segment owns its own timer, so a session reports once per segment rather than once per process — and because these summaries are logged at INFO while the session mutes everything below WARNING, none of them reach the console. Run without `--interactive` to read them. The slow-loop warning still shows, except on a tick that answered a `/vqa` or `/autosteer` query: inline text generation is far slower than a control tick and is _expected_ to overrun, so that tick is exempted rather than warned about.
 
 ---
 

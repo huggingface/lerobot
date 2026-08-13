@@ -22,7 +22,7 @@ import time
 from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext
-from .core import RolloutStrategy, send_next_action, warn_loop_overrun
+from .core import RolloutStrategy, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,26 @@ class BaseStrategy(RolloutStrategy):
                 action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                 with timer.section("telemetry"):
                     self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+
+                # Service the text-query channel at the end of the tick: /vqa
+                # answers and the /autosteer sequencer both advance here.  A sync
+                # backend generates here (text generation is far slower than a
+                # control tick, so it must not sit inside the action path), and
+                # every backend hands ready answers over here so observers fire on
+                # this thread.  No-op when nothing is queued.
+                with timer.section("query"):
+                    served_query = engine.pump_query(obs_processed)
+                if served_query:
+                    # A tick that generated text inline is *expected* to overrun;
+                    # warning on it would teach operators to dismiss the one signal
+                    # the interactive session's log muting lets through.  restart()
+                    # zeroes the closed-group counter, so the group wait() is about
+                    # to close is treated as a start-up group and exempted from
+                    # judging — the same idiom used after save_episode and after
+                    # DAgger's handover ramps.  Keep this conditional: an
+                    # unconditional restart() would exempt *every* group and
+                    # silently disable the slow-loop warning for the whole run.
+                    timer.restart()
 
                 timer.wait()
         finally:

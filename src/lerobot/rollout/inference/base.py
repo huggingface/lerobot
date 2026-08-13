@@ -360,9 +360,10 @@ class InferenceEngine(abc.ABC):
         to overrun its budget.
 
         Returns ``True`` when a query was served inline on this call, so
-        strategies can skip the loop-overrun warning for a tick whose
-        overrun is exactly that expected generation.  Async backends always
-        return ``False`` — they generate on their own thread.
+        strategies can call ``timer.restart()`` and exempt a tick whose
+        overrun is exactly that expected generation from the cadence timer's
+        judging.  Async backends always return ``False`` — they generate on
+        their own thread.
 
         ``obs_processed`` is the processed observation of the current
         control tick; pass ``None`` when none is available (the

@@ -25,8 +25,9 @@ responsibility, lifetime, and thread:
   Lives for the whole session; runs on the control thread (sync) or its own
   background thread (RTC).
 - :class:`RolloutStrategy` — the real-time tick loop (obs -> action ->
-  robot, optionally recording).  One ``run()`` call per segment, on the
-  control thread.
+  robot, optionally recording), paced and reported by a ``CycleTimer`` it
+  creates per ``run()`` call.  One ``run()`` call per segment, on the
+  control thread; each segment therefore reports its own cadence summary.
 - :class:`RolloutController` — the lifecycle state machine: serializes
   commands under one lock, runs segments, emits events.  Whole session;
   commands arrive from any thread, ``serve()`` blocks the control thread.

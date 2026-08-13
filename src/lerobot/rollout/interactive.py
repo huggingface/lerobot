@@ -89,7 +89,11 @@ def _mute_system_output() -> Iterator[None]:
     for the terminal.  ``logging.disable`` gates records before any handler
     dispatch, which covers non-propagating library loggers (``transformers``,
     ``datasets``) and loggers created mid-session alike; WARNING and above
-    still get through, so control-loop overruns and failures stay visible.
+    still get through, so control-loop overruns (``CycleTimer``'s slow-loop
+    warning) and failures stay visible.  The cadence *summaries* that same
+    timer emits per episode and per segment are INFO, so they are withheld
+    for the duration of the session — run without ``--interactive`` to read
+    them.
     The gate applies to every handler — including file handlers, which
     therefore also miss INFO/DEBUG records for the duration.  Python warnings
     bypass logging entirely and are silenced separately: they are dominated
@@ -401,7 +405,8 @@ class InteractiveSession:
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"Task: {_format_task(self.controller.initial_task)}\n"
             f"{self._render_help()}\n"
-            "Routine system logs are muted during the session (warnings and errors still show).\n"
+            "Routine system logs and cadence summaries are muted during the session "
+            "(warnings and errors still show).\n"
             f"{_BANNER_RULE}"
         )
 
