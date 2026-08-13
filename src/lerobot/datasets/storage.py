@@ -30,7 +30,7 @@ DEFAULT_STORAGE_FORMAT = "parquet"
 # Modules are imported lazily so their optional dependencies stay optional;
 # each must expose a ``STORAGE_BACKEND`` class implementing StorageBackend
 # (constructed with the keyword arguments listed on the protocol below) and a
-# ``localize_root(repo_id, root, revision)`` hook for object-store roots.
+# ``localize_root`` hook for object-store roots.
 _STORAGE_BACKEND_MODULES = {"lance": "lerobot.datasets.lance_backend"}
 
 
@@ -44,10 +44,12 @@ class StorageBackend(Protocol):
     ``__getitems__`` to it and keeps everything else (metadata, episode
     selection, the public API). Instances are constructed with the keyword
     arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
-    ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8`` and
-    ``depth_output_unit``, and must be picklable so ``DataLoader`` workers can
+    ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
+    ``depth_output_unit`` and ``token``, and must be picklable so ``DataLoader`` workers can
     reopen their own connections.
     """
+
+    episodes: list[int] | None
 
     def __len__(self) -> int: ...
 
@@ -81,7 +83,13 @@ def make_storage_backend(storage_format: str, **kwargs) -> StorageBackend:
     return _backend_module(storage_format).STORAGE_BACKEND(**kwargs)
 
 
-def localize_remote_root(repo_id: str | None, root: str | Path, revision: str | None = None) -> Path:
+def localize_remote_root(
+    repo_id: str | None,
+    root: str | Path,
+    revision: str | None = None,
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
+) -> Path:
     """Materialize ``meta/`` for an object-store dataset and return the local dir holding it.
 
     The format cannot be read from ``meta/info.json`` before ``meta/`` exists
@@ -91,7 +99,9 @@ def localize_remote_root(repo_id: str | None, root: str | Path, revision: str | 
     errors = []
     for storage_format in _STORAGE_BACKEND_MODULES:
         try:
-            return _backend_module(storage_format).localize_root(repo_id, root, revision)
+            return _backend_module(storage_format).localize_root(
+                repo_id, root, revision, token=token, force_cache_sync=force_cache_sync
+            )
         except FileNotFoundError as error:
             errors.append(f"{storage_format}: {error}")
     raise FileNotFoundError(f"No storage backend found a dataset at {str(root)!r}. Tried {errors}.")

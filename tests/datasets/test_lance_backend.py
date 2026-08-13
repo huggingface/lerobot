@@ -125,6 +125,8 @@ def test_tabular_parity(dataset_roots):
     upstream_m = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[-1, 1])
     lance_m = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[-1, 1])
     assert len(lance_m) == len(upstream_m)
+    assert lance_m.num_episodes == upstream_m.num_episodes
+    assert lance_m.episodes == [1]
     assert_items_equal(lance_m[0], upstream_m[0])
 
     # episode subset: relative/absolute mapping mirrors upstream
@@ -234,6 +236,22 @@ def test_storage_format_routing(video_dataset_roots):
     info_path.write_text(json.dumps(info, indent=4))
     with pytest.raises(ValueError, match="storage_format 'warehouse13'"):
         LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+
+
+def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
+    _, lance_root = video_dataset_roots
+    uri = f"file://{lance_root}"
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=uri)
+
+    # simulate a stale materialized cache from an earlier version of the dataset
+    cached_info = Path(ds.root) / "meta" / "info.json"
+    stale = json.loads(cached_info.read_text())
+    stale["fps"] = 999
+    cached_info.write_text(json.dumps(stale, indent=4))
+
+    assert LeRobotDataset(DUMMY_REPO_ID, root=uri).meta.fps == 999  # cache reused as-is
+    refreshed = LeRobotDataset(DUMMY_REPO_ID, root=uri, force_cache_sync=True)
+    assert refreshed.meta.fps != 999  # re-materialized from the meta table
 
 
 def test_pickle_and_dataloader(dataset_roots):

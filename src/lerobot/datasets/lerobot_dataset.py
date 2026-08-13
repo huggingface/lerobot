@@ -225,7 +225,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # storage backend reads the data in place and only ``meta/`` is localized.
         self._storage_root = root if root is not None and is_remote_uri(root) else None
         if self._storage_root is not None:
-            root = localize_remote_root(repo_id, self._storage_root, revision)
+            root = localize_remote_root(
+                repo_id, self._storage_root, revision, token=token, force_cache_sync=force_cache_sync
+            )
         self._requested_root = Path(root) if root else None
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
@@ -244,7 +246,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.repo_id,
             self._requested_root,
             self.revision,
-            force_cache_sync=force_cache_sync,
+            # an object-store root already refreshed its meta/ at localization
+            force_cache_sync=force_cache_sync and self._storage_root is None,
             token=token,
         )
         self.root = self.meta.root
@@ -282,8 +285,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 revision=revision,
                 return_uint8=return_uint8,
                 depth_output_unit=depth_output_unit,
+                token=token,
             )
             self.image_transforms = image_transforms
+            self.episodes = self._storage_backend.episodes
             self.reader = None
             self.writer = None
             self._is_finalized = False

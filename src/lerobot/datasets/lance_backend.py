@@ -249,23 +249,33 @@ def to_lance_column(key: str) -> str:
     return key.replace(".", "_")
 
 
-def _storage_options(db_uri: str, storage_options: dict | None, revision: str | None) -> dict:
+def _storage_options(
+    db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
+) -> dict:
     options = dict(storage_options or {})
     if db_uri.startswith("hf://"):
         if "token" not in options:
-            token = huggingface_hub.get_token()
-            if token:
+            if isinstance(token, str):
                 options["token"] = token
+            elif token is not False:
+                stored_token = huggingface_hub.get_token()
+                if stored_token:
+                    options["token"] = stored_token
         if revision and "revision" not in options:
             options["revision"] = revision
     return options
 
 
-def _connect(db_uri: str, storage_options: dict | None, revision: str | None = None):
+def _connect(
+    db_uri: str,
+    storage_options: dict | None,
+    revision: str | None = None,
+    token: str | bool | None = None,
+):
     require_package("lancedb", extra="lancedb")  # earliest common site: also reached via localize_root()
     if is_remote_uri(db_uri):
         os.environ.setdefault("LANCE_IO_THREADS", "256")
-    options = _storage_options(db_uri, storage_options, revision)
+    options = _storage_options(db_uri, storage_options, revision, token)
     return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
 
 
@@ -307,13 +317,21 @@ def lance_mp_context() -> str:
     return "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
 
 
-def localize_root(repo_id: str | None, root: str | Path, revision: str | None = None) -> Path:
+def localize_root(
+    repo_id: str | None,
+    root: str | Path,
+    revision: str | None = None,
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
+) -> Path:
     """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
 
     Hook used by :mod:`lerobot.datasets.storage` for object-store roots; data
     tables are never downloaded.
     """
-    _, local_root = resolve_lance_root(repo_id, root, revision=revision)
+    _, local_root = resolve_lance_root(
+        repo_id, root, revision=revision, token=token, force_cache_sync=force_cache_sync
+    )
     return local_root
 
 
@@ -322,6 +340,8 @@ def resolve_lance_root(
     root: str | Path | None,
     storage_options: dict | None = None,
     revision: str | None = None,
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
 ) -> tuple[str, Path]:
     """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
     if root is not None and is_remote_uri(root):
@@ -330,8 +350,10 @@ def resolve_lance_root(
         # reuse (or overwrite) another revision's materialized meta.
         cache_key = f"{db_uri}@{revision}" if revision else db_uri
         local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        if force_cache_sync:
+            shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():
-            _materialize_meta(_connect(db_uri, storage_options, revision), local_root)
+            _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
         return db_uri, local_root
     root_path = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
     if (root_path / f"{FRAMES_TABLE}.lance").exists():
@@ -380,14 +402,16 @@ class LanceBackend:
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         storage_options: dict | None = None,
         video_decoder_cache_size: int | None = None,
+        token: str | bool | None = None,
     ):
         require_package("lancedb", extra="lancedb")
         self.meta = meta
         self.repo_id = meta.repo_id
         self.tolerance_s = tolerance_s
         self._storage_options = storage_options
+        self._token = token
 
-        self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision)
+        self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
         self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
 
         if self.meta.image_keys:
@@ -489,7 +513,7 @@ class LanceBackend:
         if self.meta.video_keys:
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
-        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision)
+        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
         table = db.open_table(FRAMES_TABLE)
         n_rows = table.count_rows()
         if n_rows != self.meta.total_frames:
