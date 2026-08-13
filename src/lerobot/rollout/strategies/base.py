@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext
 from .core import RolloutStrategy, send_next_action, warn_loop_overrun
@@ -46,44 +46,36 @@ class BaseStrategy(RolloutStrategy):
         robot = ctx.hardware.robot_wrapper
         interpolator = self._interpolator
 
-        control_interval = interpolator.get_control_interval(cfg.fps)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, records_data=False)
 
         start_time = time.perf_counter()
         engine.resume()
         logger.info("Base strategy control loop started")
 
-        while not ctx.runtime.shutdown_event.is_set():
-            loop_start = time.perf_counter()
+        try:
+            while not ctx.runtime.shutdown_event.is_set():
+                timer.tick(new_cycle=interpolator.needs_new_action())
 
-            if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
-                logger.info("Duration limit reached (%.0fs)", cfg.duration)
-                break
+                if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
+                    logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                    break
 
-            obs = robot.get_observation()
-            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                with timer.section("observe"):
+                    obs = robot.get_observation()
+                with timer.section("process_obs"):
+                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-            if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
-                continue
+                if self._handle_warmup(cfg.use_torch_compile, timer):
+                    continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
-            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                with timer.section("telemetry"):
+                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
 
-            # Service the text-query channel at the end of the tick: /vqa
-            # answers and the /autosteer sequencer both advance here.  A sync
-            # backend generates here (text generation is far slower than a
-            # control tick, so it must not sit inside the action path), and
-            # every backend hands ready answers over here so observers fire on
-            # this thread.  No-op when nothing is queued.
-            served_query = engine.pump_query(obs_processed)
-
-            dt = time.perf_counter() - loop_start
-            if (sleep_t := control_interval - dt) > 0:
-                precise_sleep(sleep_t)
-            elif not served_query:
-                # A tick that generated text inline is *expected* to overrun;
-                # warning on it would teach operators to dismiss the one
-                # signal the interactive session's log muting lets through.
-                warn_loop_overrun(dt, 1.0 / control_interval, records_data=False)
+                timer.wait()
+        finally:
+            logger.info("Base strategy control loop ended")
+            timer.log_run_summary()
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""

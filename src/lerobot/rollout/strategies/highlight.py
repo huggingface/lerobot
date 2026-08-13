@@ -24,9 +24,9 @@ from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import log_say
 
 from ..configs import HighlightStrategyConfig
@@ -99,7 +99,7 @@ class HighlightStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        control_interval = interpolator.get_control_interval(cfg.fps)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
 
         engine.resume()
         play_sounds = cfg.play_sounds
@@ -111,70 +111,92 @@ class HighlightStrategy(RolloutStrategy):
         with VideoEncodingManager(dataset):
             try:
                 while not ctx.runtime.shutdown_event.is_set():
-                    loop_start = time.perf_counter()
+                    timer.tick(new_cycle=interpolator.needs_new_action())
 
                     if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                         logger.info("Duration limit reached (%.0fs)", cfg.duration)
                         break
 
-                    obs = robot.get_observation()
-                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                    with timer.section("observe"):
+                        obs = robot.get_observation()
+                    with timer.section("process_obs"):
+                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-                    if self._handle_warmup(cfg.use_torch_compile, loop_start, control_interval):
+                    if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
                     if action_dict is not None:
-                        self._log_telemetry(obs_processed, action_dict, ctx.runtime)
-                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        frame = {**obs_frame, **action_frame, "task": task_str}
-
-                        # NOTE: ``is_set()`` then ``clear()`` is not atomic
-                        # against the keyboard thread setting the flag again
-                        # in between — but that is benign: we lose at most one
-                        # toggle, processed on the next iteration.
-                        if self._save_requested.is_set():
-                            self._save_requested.clear()
-                            if not self._recording_live.is_set():
-                                logger.info(
-                                    "Flushing ring buffer (%d frames) + starting live recording",
-                                    len(ring),
-                                )
-                                for buffered_frame in ring.drain():
-                                    dataset.add_frame(buffered_frame)
-                                self._recording_live.set()
-                            else:
-                                dataset.add_frame(frame)
-                                with self._episode_lock:
-                                    dataset.save_episode()
-                                logger.info("Episode saved (total: %d)", dataset.num_episodes)
-                                log_say(
-                                    f"Episode {dataset.num_episodes} saved",
-                                    play_sounds,
-                                )
-                                self._recording_live.clear()
-                                continue  # frame already consumed — skip ring.append
+                        with timer.section("telemetry"):
+                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
 
                         if self._push_requested.is_set():
                             self._push_requested.clear()
                             logger.info("Push requested by user")
                             self._background_push(dataset, cfg)
 
-                        if self._recording_live.is_set():
-                            dataset.add_frame(frame)
-                        else:
-                            ring.append(frame)
+                        # Record (buffer or live) once per interpolation cycle so
+                        # the frame cadence matches the dataset's declared fps and
+                        # the ring buffer's fps-based sizing; interpolated ticks
+                        # only send commands to the robot.  Save toggles are also
+                        # handled here so an episode boundary always lands on a
+                        # recorded frame.
+                        if interpolator.emitted_policy_action:
+                            with timer.section("record"):
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                                frame = {**obs_frame, **action_frame, "task": task_str}
 
-                    dt = time.perf_counter() - loop_start
-                    if (sleep_t := control_interval - dt) > 0:
-                        precise_sleep(sleep_t)
-                    else:
-                        warn_loop_overrun(dt, 1.0 / control_interval)
+                                toggled = False
+                                frame_consumed = False
+                                # NOTE: ``is_set()`` then ``clear()`` is not atomic
+                                # against the keyboard thread setting the flag again
+                                # in between — but that is benign: we lose at most one
+                                # toggle, processed on the next iteration.
+                                if self._save_requested.is_set():
+                                    self._save_requested.clear()
+                                    toggled = True
+                                    if not self._recording_live.is_set():
+                                        logger.info(
+                                            "Flushing ring buffer (%d frames) + starting live recording",
+                                            len(ring),
+                                        )
+                                        for buffered_frame in ring.drain():
+                                            dataset.add_frame(buffered_frame)
+                                        self._recording_live.set()
+                                    else:
+                                        dataset.add_frame(frame)
+                                        with self._episode_lock:
+                                            dataset.save_episode()
+                                        logger.info("Episode saved (total: %d)", dataset.num_episodes)
+                                        log_say(
+                                            f"Episode {dataset.num_episodes} saved",
+                                            play_sounds,
+                                        )
+                                        self._recording_live.clear()
+                                        frame_consumed = True
+
+                                if not frame_consumed:
+                                    if self._recording_live.is_set():
+                                        dataset.add_frame(frame)
+                                    else:
+                                        ring.append(frame)
+
+                            # Draining the ring buffer and finalising an episode both
+                            # block for a good fraction of a second inside the timed
+                            # loop body.  They are operator events, not steady-state
+                            # cost, so drop the partial group and the gap they opened.
+                            if toggled:
+                                if frame_consumed:
+                                    timer.log_episode_summary(f"episode {dataset.num_episodes}")
+                                timer.restart()
+
+                    timer.wait()
 
             finally:
                 logger.info("Highlight control loop ended")
+                timer.log_run_summary()
                 if self._recording_live.is_set():
                     logger.info("Saving in-progress live episode")
                     with contextlib.suppress(Exception), self._episode_lock:

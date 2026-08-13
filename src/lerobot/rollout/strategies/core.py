@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_visualization_data
@@ -136,11 +137,12 @@ class RolloutStrategy(abc.ABC):
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
 
-    def _handle_warmup(self, use_torch_compile: bool, loop_start: float, control_interval: float) -> bool:
+    def _handle_warmup(self, use_torch_compile: bool, timer: CycleTimer) -> bool:
         """Handle torch.compile warmup phase.
 
         Returns ``True`` if the caller should ``continue`` (still warming
-        up).  On the first post-warmup iteration the engine and
+        up).  Warmup ticks are paced through *timer* so the loop cadence
+        stays anchored.  On the first post-warmup iteration the engine and
         interpolator are reset so stale warmup state is discarded.
         """
         engine = self._engine
@@ -148,14 +150,13 @@ class RolloutStrategy(abc.ABC):
         if not use_torch_compile:
             return False
         if not engine.ready:
-            dt = time.perf_counter() - loop_start
-            if (sleep_t := control_interval - dt) > 0:
-                precise_sleep(sleep_t)
+            timer.wait()
             return True
         if not self._warmup_flushed:
             logger.info("Warmup complete — flushing stale state and resuming engine")
             engine.reset()
             interpolator.reset()
+            timer.restart()
             self._warmup_flushed = True
             engine.resume()
         return False
@@ -364,6 +365,7 @@ def send_next_action(
     obs_raw: dict,
     ctx: RolloutContext,
     interpolator: ActionInterpolator,
+    timer: CycleTimer | None = None,
 ) -> dict | None:
     """Dispatch the next action to the robot.
 
@@ -372,26 +374,39 @@ def send_next_action(
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
 
+    When *timer* is given, the engine pull and the robot send are timed as the
+    ``infer`` and ``send`` steps of its cadence summary, and a tick with no action
+    to send is counted there.  Note that on async backends ``infer`` is only a
+    queue pull — inference runs off-thread, so its latency surfaces as starved
+    ticks rather than as loop-body time.
+
     Returns the action dict that was sent, or ``None`` if no action was
     ready (e.g. empty async queue, interpolator not yet primed).
     """
     engine = ctx.policy.inference
     features = ctx.data.dataset_features
     ordered_keys = ctx.data.ordered_action_keys
+    # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
+    # ``timer.section`` verbatim when no timer was passed.
+    section = timer.section if timer is not None else contextlib.nullcontext
 
     if interpolator.needs_new_action():
-        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-        action_tensor = engine.get_action(obs_frame)
+        with section("infer"):
+            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+            action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())
 
     interp = interpolator.get()
     if interp is None:
+        if timer is not None:
+            timer.note_starved_tick()
         return None
 
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
-    processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-    ctx.hardware.robot_wrapper.send_action(processed)
+    with section("send"):
+        processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
+        ctx.hardware.robot_wrapper.send_action(processed)
     return action_dict

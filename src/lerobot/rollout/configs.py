@@ -249,25 +249,11 @@ class RolloutConfig:
 
     # Runtime
     fps: float = 30.0
-    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode the
-    # timer restarts at every /start, so this bounds each segment — it is not
-    # a whole-session safety limit.
-    duration: float = 0.0
-    # Interactive session: control the rollout from stdin with chat-style
-    # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
-    # /reset, /stop) while hardware and policy stay warm.  The robot does not
-    # move until /start is received, and logs below WARNING are muted while
-    # the session runs so they don't interleave with the prompt.  Supported
-    # with --strategy.type=base (no recording) and sentry (continuous
-    # recording; frames carry dispatched-action task provenance).
-    interactive: bool = False
-    # /autosteer: seconds of robot motion between two "what is the next
-    # subtask?" queries to the policy.  Measured from the moment a subtask is
-    # applied, so a slow text generation cannot compound into back-to-back
-    # queries.  Each query is a full generation pass, so this is a
-    # cost/responsiveness knob: lower values re-plan sooner but spend a larger
-    # share of the loop generating text instead of acting.
-    autosteer_interval_s: float = 10.0
+    duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Robot commands sent per policy action.  Values > 1 linearly interpolate
+    # between consecutive policy actions for smoother motion: commands go to
+    # the robot at ``fps × multiplier`` Hz while policy inference and dataset
+    # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -301,6 +287,9 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.interpolation_multiplier < 1:
+            raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")

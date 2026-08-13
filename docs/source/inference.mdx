@@ -369,23 +369,48 @@ Set `play_sounds=False` in the config unless you want the vocal announcements, a
 
 ## Common Flags
 
-| Flag                              | Description                                                                                                                                   | Default |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path                                                                                        | --      |
-| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`)                                                                             | --      |
-| `--robot.port`                    | Serial port for the robot                                                                                                                     | --      |
-| `--robot.cameras`                 | Camera configuration (JSON dict)                                                                                                              | --      |
-| `--fps`                           | Control loop frequency                                                                                                                        | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite); in interactive mode this bounds each `/start` segment, not the session                                    | 0       |
-| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                                                                                                           | auto    |
-| `--task`                          | Task description (used when no dataset is provided)                                                                                           | --      |
-| `--display_data`                  | Stream telemetry to Rerun visualization                                                                                                       | false   |
-| `--display_ip` / `--display_port` | Remote Rerun server address                                                                                                                   | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                                                                                                   | 1       |
-| `--interactive`                   | Chat-style stdin session (see [Interactive Sessions](#interactive-sessions)); the robot stays idle until `/start`. Base and sentry strategies | false   |
-| `--use_torch_compile`             | Enable `torch.compile` for inference                                                                                                          | false   |
-| `--resume`                        | Resume a previous recording session                                                                                                           | false   |
-| `--play_sounds`                   | Vocal synthesis for events                                                                                                                    | true    |
+| Flag                              | Description                                                       | Default |
+| --------------------------------- | ----------------------------------------------------------------- | ------- |
+| `--policy.path`                   | **Required.** HF Hub model ID or local checkpoint path            | --      |
+| `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`) | --      |
+| `--robot.port`                    | Serial port for the robot                                         | --      |
+| `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
+| `--fps`                           | Policy inference and dataset recording frequency                  | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
+| `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
+| `--task`                          | Task description (used when no dataset is provided)               | --      |
+| `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
+| `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
+| `--interpolation_multiplier`      | Robot commands per policy action (control at `fps × N` Hz)        | 1       |
+| `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
+| `--resume`                        | Resume a previous recording session                               | false   |
+| `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+
+---
+
+## Cadence Reporting
+
+Every strategy reports what its control loop actually achieved, as do `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` — they all pace through the same timer. Each saved episode gets a one-line digest, and when the loop ends — including on `Ctrl-C` — a block covering the whole run:
+
+```
+Cadence (episode 1): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/598 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence (episode 2): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/599 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slot, 33.3 ms cycle budget): 2400 ticks, 1197 cycles judged
+  effective cadence: 29.84 Hz policy / 59.67 Hz commands over 40.2 s measured
+  cycles over the 33.3 ms work budget: 12/1197 (1.0%) — work mean 18.7 ms, worst 48.1 ms
+  ticks over their 16.7 ms slot: 40/2400 (costs interpolation smoothness only)
+  loop-body steps (share of measured work):
+    observe      mean   3.13 ms · worst   9.00 ms ·  31.7% of work · 2400 calls
+    process_obs  mean   0.50 ms · worst   1.00 ms ·   5.1% of work · 2400 calls
+    infer        mean   5.18 ms · worst  40.00 ms ·  52.4% of work · 2400 calls
+    send         mean   0.40 ms · worst   0.40 ms ·   4.1% of work · 2400 calls
+    record       mean   0.67 ms · worst 620.00 ms ·   6.8% of work · 2402 calls
+  pacing headroom: 7.4 ms slept per tick on average (max 13.0 ms) — near zero means the loop is saturated
+```
+
+Read it top-down: **effective cadence** is what you got against `--fps`, **cycles over budget** is how often the loop could not hold it, the **step breakdown** says where the time went, and **pacing headroom** near zero means there is nothing left to absorb a slow tick. A high `infer` share points at the policy or the device; a high `observe` share points at the cameras. A step's `worst` far above its `mean` is a one-off — above, `record` is 0.67 ms per frame and the 620 ms outlier is the blocking `save_episode` that closed an episode.
+
+A _cycle_ here is one policy action's worth of ticks (`--interpolation_multiplier` of them). Only whole cycles over the `1/fps` budget can cost you frames; a single tick overrunning its slot only makes the interpolated motion less smooth, which is why the two are counted separately. Without interpolation a cycle is a single tick, so the report drops the distinction and counts ticks throughout.
 
 ---
 
