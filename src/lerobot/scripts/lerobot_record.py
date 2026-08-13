@@ -323,6 +323,11 @@ def record_loop(
                     "This is likely to happen when resetting the environment without a teleop device. "
                     "The robot won't be at its rest position at the start of the next episode."
                 )
+            # `continue` skips the timestamp update at the bottom of this loop,
+            # so without the two lines below the reset phase never terminates
+            # (and busy-spins at 100% CPU) whenever no teleoperator is provided.
+            precise_sleep(control_interval)
+            timestamp = time.perf_counter() - start_episode_t
             continue
 
         # Send action to robot
