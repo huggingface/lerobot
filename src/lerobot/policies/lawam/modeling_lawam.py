@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections import deque
 from dataclasses import replace
 from types import SimpleNamespace
@@ -64,10 +63,6 @@ else:
 def _require_lawam_packages() -> None:
     require_package("transformers", extra="lawam")
     require_package("diffusers", extra="lawam")
-
-
-def _load_local_checkpoint(path: str) -> Any:
-    return torch.load(path, map_location="cpu", weights_only=True, mmap=True)
 
 
 def _build_prompt_config() -> SimpleNamespace:
@@ -155,7 +150,6 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
     policy_cfg = LatentWorldPolicyConfig(flow_cfg=flow_cfg)
     policy_cfg.action_horizon = config.effective_action_horizon
     policy_cfg.hf_cache_dir = config.hf_cache_dir
-    policy_cfg.lam_ckpt_path = config.lam_ckpt_path
     policy_cfg.lam_config = _build_lam_config(config)
     policy_cfg.latent_action_placeholder_token = str(config.latent_action_placeholder_token)
     policy_cfg.perceptual_weight = float(config.perceptual_weight)
@@ -167,38 +161,6 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
     policy_cfg.num_action_queries = int(config.num_action_queries)
     policy_cfg.flow_action_num_queries = int(config.flow_action_num_queries)
     return policy_cfg
-
-
-def _normalize_lawam_checkpoint_state_dict(
-    state_dict: dict[str, Tensor], model_state_dict: dict[str, Tensor]
-) -> dict[str, Tensor]:
-    normalized = {}
-    for key, value in state_dict.items():
-        normalized_key = key
-        if key.startswith("policy_backend.lam.vision_encoder.model.layer."):
-            candidate = key.replace(
-                "policy_backend.lam.vision_encoder.model.layer.",
-                "policy_backend.lam.vision_encoder.model.model.layer.",
-                1,
-            )
-            if candidate in model_state_dict:
-                normalized_key = candidate
-        normalized[normalized_key] = value
-        if key.startswith("policy_backend.vlm."):
-            candidate = key.replace("policy_backend.vlm.", "policy_vlm_adapter.model.", 1)
-            if candidate in model_state_dict:
-                normalized[candidate] = value
-    return normalized
-
-
-def _log_checkpoint_key_mismatch(kind: str, keys: list[str], *, max_examples: int = 8) -> None:
-    if not keys:
-        return
-    examples = keys[:max_examples]
-    suffix = "" if len(keys) <= max_examples else f" ... (+{len(keys) - max_examples} more)"
-    logging.getLogger(__name__).warning(
-        "%s keys when loading LaWAM checkpoint (%d): %s%s", kind, len(keys), examples, suffix
-    )
 
 
 class LaWAMModel(nn.Module):
@@ -256,7 +218,7 @@ class LaWAMPolicy(PreTrainedPolicy):
 
         self.model = kwargs.pop("native_model", None)
         if self.model is None:
-            self.model = self._load_native_model()
+            self.model = LaWAMModel(self.config)
 
         if not isinstance(self.model, nn.Module):
             raise TypeError(f"`native_model` must be a torch.nn.Module, got {type(self.model)}.")
@@ -268,26 +230,11 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.model.to(config.device)
         self.reset()
 
-    def _load_native_model(self) -> nn.Module:
-        model = LaWAMModel(self.config)
-        if self.config.lawam_checkpoint_path:
-            state_dict = _load_local_checkpoint(self.config.lawam_checkpoint_path)
-            if isinstance(state_dict, dict) and "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-            state_dict = _normalize_lawam_checkpoint_state_dict(state_dict, model.state_dict())
-            missing, unexpected = model.load_state_dict(state_dict, strict=False)
-            _log_checkpoint_key_mismatch("Missing", missing)
-            _log_checkpoint_key_mismatch("Unexpected", unexpected)
-        return model
-
     def _save_pretrained(self, save_directory, state_dict=None) -> None:
         runtime_config = self.config
         self.config = replace(
             runtime_config,
             base_vlm_path=None,
-            lam_ckpt_path=None,
-            lawam_checkpoint_path=None,
-            lawam_dataset_stats_path=None,
             hf_cache_dir=None,
         )
         try:

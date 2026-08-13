@@ -161,64 +161,13 @@ class LatentLAMModel(nn.Module):
         return features
 
 
-def load_latent_action_model(model_cfg: dict[str, Any], checkpoint_path: str | None = None):
+def build_latent_action_model(model_cfg: dict[str, Any]):
     if "image_hw" not in model_cfg:
         raise ValueError("LAM config must provide `image_hw`.")
     if "patch_size" not in model_cfg:
         raise ValueError("LAM config must provide `patch_size`.")
 
     latent_action_model = LatentLAMModel(**model_cfg).to("cpu")
-    if checkpoint_path is None:
-        for parameter in latent_action_model.parameters():
-            parameter.requires_grad = False
-        return latent_action_model.eval()
-
-    lam_payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True, mmap=True)
-    lam_ckpt = lam_payload["state_dict"]
-    model_state = latent_action_model.state_dict()
-    new_ckpt = {}
-    for key, value in lam_ckpt.items():
-        renamed = key.replace("lam.", "")
-        if renamed.startswith("vision_encoder.model.layer."):
-            candidate = renamed.replace(
-                "vision_encoder.model.layer.",
-                "vision_encoder.model.model.layer.",
-                1,
-            )
-            if candidate in model_state:
-                renamed = candidate
-        new_ckpt[renamed] = value
-
-    model_keys = set(model_state)
-    checkpoint_keys = set(new_ckpt)
-    missing_keys = sorted(model_keys - checkpoint_keys)
-    unexpected_keys = sorted(checkpoint_keys - model_keys)
-    shape_mismatches = [
-        (key, tuple(model_state[key].shape), tuple(new_ckpt[key].shape))
-        for key in sorted(model_keys & checkpoint_keys)
-        if model_state[key].shape != new_ckpt[key].shape
-    ]
-    if missing_keys or unexpected_keys or shape_mismatches:
-        error_lines = ["Failed to load LAM weights:"]
-        if missing_keys:
-            error_lines.append(
-                f"Missing keys required by the model but absent from the checkpoint ({len(missing_keys)}):"
-            )
-            error_lines.extend(f"  - {key}" for key in missing_keys)
-        if unexpected_keys:
-            error_lines.append(
-                f"Unexpected keys present in the checkpoint but unused by the model ({len(unexpected_keys)}):"
-            )
-            error_lines.extend(f"  - {key}" for key in unexpected_keys)
-        if shape_mismatches:
-            error_lines.append(f"Keys with shape mismatches ({len(shape_mismatches)}):")
-            error_lines.extend(
-                f"  - {key}: model{model_shape} vs checkpoint{checkpoint_shape}"
-                for key, model_shape, checkpoint_shape in shape_mismatches
-            )
-        raise RuntimeError("\n".join(error_lines))
-
-    latent_action_model.load_state_dict(new_ckpt, strict=True)
     for parameter in latent_action_model.parameters():
         parameter.requires_grad = False
     return latent_action_model.eval()

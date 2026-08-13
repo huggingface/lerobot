@@ -4,13 +4,15 @@
 
 Resources:
 
-| Resource              | Link                                                                                                         | Used for                                          |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| Project page          | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | Method overview                                   |
-| Paper                 | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | Citation and method details                       |
-| Code                  | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | Original training and evaluation code             |
-| Checkpoint collection | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | Released LAM, pretraining, and LIBERO checkpoints |
-| LIBERO dataset        | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT                                        |
+| Resource           | Link                                                                                                         | Used for                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| Project page       | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | Method overview                       |
+| Paper              | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | Citation and method details           |
+| Code               | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | Original training and evaluation code |
+| Native pretraining | [lawam-pretrain-lerobot](https://huggingface.co/jialei02/lawam-pretrain-lerobot)                             | LeRobot fine-tuning initialization    |
+| Native LIBERO SFT  | [lawam-libero-sft-lerobot](https://huggingface.co/jialei02/lawam-libero-sft-lerobot)                         | LIBERO evaluation                     |
+| Source checkpoints | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | Original LaWAM release artifacts      |
+| LIBERO dataset     | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT                            |
 
 ## Installation
 
@@ -28,22 +30,11 @@ pip install -e ".[lawam,libero]" "mujoco==3.3.2"
 
 LIBERO benchmark success rates are sensitive to the MuJoCo simulator version. Newer MuJoCo releases can materially reduce measured LIBERO success rates, including for policies beyond LaWAM. This is an evaluation-environment compatibility issue rather than a LaWAM adapter issue. Use `mujoco==3.3.2` to reproduce the released LaWAM LIBERO and paper results exactly.
 
-LaWAM needs a Qwen3-VL checkpoint, a LAM checkpoint, and optionally a released LaWAM SFT or pretraining checkpoint. The released LAM architecture is represented directly by `LaWAMConfig`; DINOv3 is constructed from that configuration and does not require a separate gated-model download. Download the released artifacts before training or evaluation:
-
-```bash
-hf download jialei02/lawam_lam \
-  --local-dir /path/to/lawam_lam
-
-hf download jialei02/lawam_libero_sft_release \
-  --local-dir /path/to/lawam_libero_sft_release
-```
-
-The examples below assume:
-
-```bash
-export LAM_DIR=/path/to/lawam_lam
-export LAWAM_LIBERO_DIR=/path/to/lawam_libero_sft_release
-```
+LaWAM checkpoints use LeRobot's native `model.safetensors` format. The complete
+LAM, VLM adapter, and flow-head state is restored through `policy.path`; original
+LaWAM `.pt` files are not loaded by the adapter. The LAM and DINOv3 architectures
+are represented directly by `LaWAMConfig` and do not require separate checkpoint
+downloads.
 
 Keep `policy.base_vlm` set to the portable Hub model ID. To load Qwen from an existing local
 download without recording that machine-specific path in the saved policy, additionally pass
@@ -52,28 +43,11 @@ download without recording that machine-specific path in the saved policy, addit
 
 ## Fine-Tuning
 
-Fine-tune from the released LAM files and a Qwen3-VL backbone:
+Fine-tune from the native pretrained LaWAM policy:
 
 ```bash
 lerobot-train \
-  --policy.type=lawam \
-  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
-  --policy.lam_ckpt_path=$LAM_DIR/checkpoints/pytorch_model.pt \
-  --policy.chunk_size=50 \
-  --dataset.repo_id=your_org/your_lerobot_dataset \
-  --policy.repo_id=your_org/lawam_sft
-```
-
-To initialize from an original LaWAM PyTorch checkpoint, pass `policy.lawam_checkpoint_path`:
-
-```bash
-lerobot-train \
-  --policy.type=lawam \
-  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
-  --policy.lawam_checkpoint_path=/path/to/lawam_pretrain/final_model/pytorch_model.pt \
-  --policy.chunk_size=50 \
-  --policy.action_hz=20 \
-  --policy.flow_horizon_sec=1.2 \
+  --policy.path=jialei02/lawam-pretrain-lerobot \
   --dataset.repo_id=your_org/your_lerobot_dataset \
   --policy.repo_id=your_org/lawam_sft
 ```
@@ -86,38 +60,19 @@ When training locally without pushing to the Hub, set `--policy.push_to_hub=fals
 
 ## Evaluation
 
-Evaluate a LeRobot-saved LaWAM checkpoint through the standard evaluator:
+Evaluate the native LIBERO SFT checkpoint through the standard evaluator:
 
 ```bash
 lerobot-eval \
-  --policy.path=your_org/lawam_sft \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
   --env.type=libero \
   --env.task=libero_object \
   --eval.n_episodes=10
 ```
 
-Original LaWAM `.pt` checkpoints can be evaluated by constructing the policy from config and passing the checkpoint path:
-
-```bash
-lerobot-eval \
-  --policy.type=lawam \
-  --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
-  --policy.lawam_checkpoint_path=$LAWAM_LIBERO_DIR/final_model/pytorch_model.pt \
-  --policy.lawam_dataset_stats_path=$LAWAM_LIBERO_DIR/dataset_statistics.json \
-  --policy.flow_action_dim=32 \
-  --policy.flow_state_dim=32 \
-  --policy.flow_horizon_sec=0.4 \
-  --policy.action_hz=20 \
-  --policy.clip_normalized_actions=true \
-  --policy.pre_snap_gripper_action=true \
-  --policy.binarize_gripper_action=true \
-  --policy.push_to_hub=false \
-  --env.type=libero \
-  --env.task=libero_object \
-  --eval.n_episodes=10
-```
-
-Original LaWAM `.pt` files are initialization inputs. Pass their dataset statistics explicitly with `policy.lawam_dataset_stats_path`; if the file contains multiple datasets, select one with `policy.lawam_unnorm_key`. After saving through LeRobot, the complete model uses `model.safetensors`, processor statistics are saved with the processor pipelines, and local initialization paths are omitted from `config.json`.
+The Hub repository includes the policy config and the complete preprocessor and
+postprocessor pipelines, including normalization tensors and LIBERO gripper
+processing.
 
 For a reproducible LIBERO benchmark run with the released LIBERO SFT checkpoint, run each suite task with the same checkpoint:
 
@@ -125,18 +80,7 @@ For a reproducible LIBERO benchmark run with the released LIBERO SFT checkpoint,
 for suite in libero_spatial libero_object libero_goal libero_10; do
   for task_id in 0 1 2 3 4 5 6 7 8 9; do
     lerobot-eval \
-      --policy.type=lawam \
-      --policy.base_vlm=Qwen/Qwen3-VL-2B-Instruct \
-      --policy.lawam_checkpoint_path=$LAWAM_LIBERO_DIR/final_model/pytorch_model.pt \
-      --policy.lawam_dataset_stats_path=$LAWAM_LIBERO_DIR/dataset_statistics.json \
-      --policy.flow_action_dim=32 \
-      --policy.flow_state_dim=32 \
-      --policy.flow_horizon_sec=0.4 \
-      --policy.action_hz=20 \
-      --policy.clip_normalized_actions=true \
-      --policy.pre_snap_gripper_action=true \
-      --policy.binarize_gripper_action=true \
-      --policy.push_to_hub=false \
+      --policy.path=jialei02/lawam-libero-sft-lerobot \
       --policy.device=cuda \
       --env.type=libero \
       --env.task=$suite \
@@ -173,19 +117,15 @@ By default, visual features whose names include `wrist`, `eye_in_hand`, or the L
 
 Common LaWAM-specific policy fields:
 
-| Field                      | Description                                                                                           |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `lawam_checkpoint_path`    | Initialization-only path to an original LaWAM `.pt` checkpoint; omitted from saved LeRobot configs.   |
-| `lawam_dataset_stats_path` | Initialization-only path to the original LaWAM `dataset_statistics.json`.                             |
-| `lawam_unnorm_key`         | Dataset-statistics key to use when the original stats file has multiple entries.                      |
-| `base_vlm`                 | Portable Qwen/Qwen3-VL Hub model ID stored in the published policy config.                            |
-| `base_vlm_path`            | Optional local Qwen directory used only at runtime and removed when the policy is saved.              |
-| `lam_ckpt_path`            | Initialization-only LAM checkpoint path; omitted from saved LeRobot configs.                          |
-| `flow_action_dim`          | Internal padded action dimension used by the LaWAM flow head.                                         |
-| `flow_state_dim`           | Internal padded state dimension used by the LaWAM flow head.                                          |
-| `flow_horizon_sec`         | Time horizon, in seconds, used for the flow-matching action loss.                                     |
-| `action_hz`                | Control frequency; inferred from dataset FPS during training and required for config-only evaluation. |
-| `embodiment_id`            | LaWAM embodiment ID used when the LeRobot dataset does not provide one.                               |
+| Field              | Description                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `base_vlm`         | Portable Qwen/Qwen3-VL Hub model ID stored in the published policy config.                            |
+| `base_vlm_path`    | Optional local Qwen directory used only at runtime and removed when the policy is saved.              |
+| `flow_action_dim`  | Internal padded action dimension used by the LaWAM flow head.                                         |
+| `flow_state_dim`   | Internal padded state dimension used by the LaWAM flow head.                                          |
+| `flow_horizon_sec` | Time horizon, in seconds, used for the flow-matching action loss.                                     |
+| `action_hz`        | Control frequency; inferred from dataset FPS during training and required for config-only evaluation. |
+| `embodiment_id`    | LaWAM embodiment ID used when the LeRobot dataset does not provide one.                               |
 
 ## Citation
 

@@ -49,7 +49,6 @@ class LaWAMConfig(PreTrainedConfig):
 
     base_vlm: str = "Qwen/Qwen3-VL-2B-Instruct"
     base_vlm_path: str | None = None
-    lam_ckpt_path: str | None = None
     hf_cache_dir: str | None = None
 
     lam_dim: int = 1024
@@ -79,10 +78,6 @@ class LaWAMConfig(PreTrainedConfig):
     dinov3_num_hidden_layers: int = 12
     dinov3_num_attention_heads: int = 12
     dinov3_num_register_tokens: int = 4
-
-    lawam_checkpoint_path: str | None = None
-    lawam_dataset_stats_path: str | None = None
-    lawam_unnorm_key: str | None = None
 
     primary_image_features: list[str] | None = None
     wrist_image_features: list[str] | None = None

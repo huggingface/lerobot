@@ -30,7 +30,7 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
-from lerobot.policies.lawam.lam_core.core.lam_model import LatentLAMModel, load_latent_action_model
+from lerobot.policies.lawam.lam_core.core.lam_model import LatentLAMModel, build_latent_action_model
 from lerobot.policies.lawam.lam_core.core.utils.modules import build_modal_block_attention_mask
 from lerobot.policies.lawam.latent_world.processor_utils import LatentWorldProcessorSpec
 from lerobot.policies.lawam.latent_world.train_collator import (
@@ -41,7 +41,6 @@ from lerobot.policies.lawam.modeling_lawam import (
     LaWAMPolicy,
     _build_freeze_config,
     _build_native_policy_config,
-    _normalize_lawam_checkpoint_state_dict,
 )
 from lerobot.policies.lawam.vlas.qwen3vl import (
     freeze_qwen3vl,
@@ -64,8 +63,6 @@ def make_config() -> LaWAMConfig:
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
-        lam_ckpt_path="lam.pt",
-        lawam_checkpoint_path="dummy.pt",
         base_vlm="dummy-qwen",
         action_hz=20.0,
         embodiment_id=25,
@@ -162,38 +159,25 @@ def test_lawam_defaults_match_native_state_normalization() -> None:
     assert make_config().normalization_mapping["STATE"] is NormalizationMode.MIN_MAX
 
 
-def test_native_checkpoint_stats_are_used_for_eval_processors(tmp_path) -> None:
-    run_dir = tmp_path / "lawam_run"
-    final_model_dir = run_dir / "final_model"
-    final_model_dir.mkdir(parents=True)
-    checkpoint_path = final_model_dir / "pytorch_model.pt"
-    checkpoint_path.touch()
-    (run_dir / "dataset_statistics.json").write_text(
-        json.dumps(
-            {
-                "franka": {
-                    "state": {
-                        "min": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        "max": [2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0],
-                        "mean": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        "std": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                    },
-                    "action": {
-                        "min": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 0.0],
-                        "max": [12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 1.0],
-                        "mean": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        "std": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                        "mask": [True, True, True, True, True, True, False],
-                    },
-                }
-            }
-        )
-    )
+def test_dataset_stats_are_used_for_eval_processors() -> None:
+    dataset_stats = {
+        OBS_STATE: {
+            "min": torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            "max": torch.tensor([2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]),
+            "mean": torch.zeros(7),
+            "std": torch.ones(7),
+        },
+        ACTION: {
+            "min": torch.tensor([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 0.0]),
+            "max": torch.tensor([12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 1.0]),
+            "mean": torch.zeros(7),
+            "std": torch.ones(7),
+            "mask": torch.tensor([True, True, True, True, True, True, False]),
+        },
+    }
     cfg = make_config()
-    cfg.lawam_checkpoint_path = str(checkpoint_path)
-    cfg.lawam_dataset_stats_path = str(run_dir / "dataset_statistics.json")
 
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_stats)
     batch = {
         "observation.images.front": torch.zeros(3, 8, 8),
         "observation.images.wrist": torch.zeros(3, 8, 8),
@@ -286,7 +270,7 @@ def test_native_config_uses_padded_lawam_action_space() -> None:
     assert policy_cfg.action_horizon == 4
 
 
-def test_lam_constructs_without_pretrained_dino_and_strictly_loads_legacy_checkpoint(tmp_path) -> None:
+def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
     model_config = {
         "dim": 32,
         "num_heads": 4,
@@ -319,34 +303,10 @@ def test_lam_constructs_without_pretrained_dino_and_strictly_loads_legacy_checkp
             "num_register_tokens": 4,
         },
     }
-    source_model = LatentLAMModel(**model_config)
-    legacy_state = {}
-    for key, value in source_model.state_dict().items():
-        legacy_key = key.replace(
-            "vision_encoder.model.model.layer.",
-            "vision_encoder.model.layer.",
-            1,
-        )
-        legacy_state[f"lam.{legacy_key}"] = value
-    checkpoint_path = tmp_path / "lam.ckpt"
-    torch.save({"state_dict": legacy_state}, checkpoint_path)
+    loaded_model = build_latent_action_model(model_config)
 
-    loaded_model = load_latent_action_model(model_config, checkpoint_path=str(checkpoint_path))
-
-    assert set(loaded_model.state_dict()) == set(source_model.state_dict())
+    assert isinstance(loaded_model, LatentLAMModel)
     assert all(not parameter.requires_grad for parameter in loaded_model.parameters())
-
-
-def test_checkpoint_normalization_populates_shared_vlm_adapter_alias() -> None:
-    state = {"policy_backend.vlm.model.visual.weight": torch.tensor([1.0])}
-    model_state = {
-        "policy_backend.vlm.model.visual.weight": torch.tensor([0.0]),
-        "policy_vlm_adapter.model.model.visual.weight": torch.tensor([0.0]),
-    }
-
-    normalized = _normalize_lawam_checkpoint_state_dict(state, model_state)
-
-    assert set(normalized) == set(model_state)
 
 
 def test_train_collator_masks_only_flow_horizon_steps() -> None:
@@ -496,10 +456,9 @@ def test_training_forward_converts_batch_to_lawam_samples() -> None:
     assert first["action_hz"] == 20.0
 
 
-def test_saved_policy_config_drops_local_initialization_paths(tmp_path) -> None:
+def test_saved_policy_uses_safetensors_without_torch_load(tmp_path, monkeypatch) -> None:
     cfg = make_config()
     cfg.base_vlm_path = "/private/qwen3-vl"
-    cfg.lawam_dataset_stats_path = "/private/dataset_statistics.json"
     cfg.hf_cache_dir = "/private/huggingface-cache"
     policy, _, _ = make_policy(cfg)
 
@@ -508,10 +467,13 @@ def test_saved_policy_config_drops_local_initialization_paths(tmp_path) -> None:
 
     assert saved_config["base_vlm"] == "dummy-qwen"
     assert saved_config["base_vlm_path"] is None
-    assert saved_config["lam_ckpt_path"] is None
-    assert saved_config["lawam_checkpoint_path"] is None
-    assert saved_config["lawam_dataset_stats_path"] is None
     assert saved_config["hf_cache_dir"] is None
+
+    def fail_torch_load(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("LaWAM native checkpoints must not call torch.load")
+
+    monkeypatch.setattr(torch, "load", fail_torch_load)
 
     loaded_policy = LaWAMPolicy.from_pretrained(
         tmp_path,

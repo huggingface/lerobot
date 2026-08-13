@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 
-from lerobot.policies.lawam.lam_core.core.lam_model import load_latent_action_model
+from lerobot.policies.lawam.lam_core.core.lam_model import build_latent_action_model
 from lerobot.policies.lawam.latent_world.processor_utils import (
     build_latent_world_processor_spec,
     configure_latent_world_processor,
@@ -50,7 +50,6 @@ class LatentWorldPolicyConfig:
 
     # Base checkpoints
     hf_cache_dir: str | None = None
-    lam_ckpt_path: str | None = None
     lam_config: dict[str, Any] = field(default_factory=dict)
 
     # VLM dtype
@@ -266,11 +265,8 @@ class LatentWorldPolicyBackend(nn.Module):
             self.vlm_model_id,
         )
 
-        # 2) Load LAM.
-        self.lam = load_latent_action_model(
-            self.model_cfg.lam_config,
-            checkpoint_path=self.model_cfg.lam_ckpt_path,
-        )
+        # 2) Build LAM. Native LeRobot safetensors restore its trained weights.
+        self.lam = build_latent_action_model(self.model_cfg.lam_config)
 
         # 3) Create trainable query and mapping head.
         self.num_action_queries = int(self.model_cfg.num_action_queries)
