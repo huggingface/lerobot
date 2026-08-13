@@ -215,6 +215,17 @@ class VLAJEPAModel(nn.Module):
             positions.append(prefix[:, -tokens_per_position:])
         return torch.cat(positions, dim=1)
 
+    @staticmethod
+    def _merge_views(embeddings: Tensor, b: int, v: int) -> Tensor:
+        """Merge per-view features: [B*V, N, H] -> [B, N, V*H].
+
+        Rows run view-fastest, since `videos.reshape(b * v, ...)` flattens (B, V) row-major. A
+        `chunk(chunks=v, dim=0)` + `cat(dim=2)` merge assumes view-slowest and so concatenates
+        features from *different* samples — shape-valid, so it fails silently for b > 1.
+        """
+        n_tokens, hidden = embeddings.shape[1], embeddings.shape[2]
+        return embeddings.reshape(b, v, n_tokens, hidden).permute(0, 2, 1, 3).reshape(b, n_tokens, v * hidden)
+
     def _world_model_loss(self, videos: Tensor, action_tokens: Tensor, reduction: str = "mean") -> Tensor:
         """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1].
 
@@ -242,17 +253,7 @@ class VLAJEPAModel(nn.Module):
         tubelet_size = self.video_encoder.config.tubelet_size
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
-            # Merge views: [B*V, N, H] -> [B, N, V*H].
-            # `flat` above flattens (B, V) row-major, so rows run view-fastest:
-            # (s0v0, s0v1, ..., s1v0, ...). A `chunk(chunks=v, dim=0)` + `cat(dim=2)` would
-            # instead assume view-slowest ordering and concatenate features belonging to
-            # *different samples* — shape-valid, so it fails silently. Regroup on (B, V).
-            n_tokens, hidden = video_embeddings.shape[1], video_embeddings.shape[2]
-            video_embeddings = (
-                video_embeddings.view(b, v, n_tokens, hidden)
-                .permute(0, 2, 1, 3)
-                .reshape(b, n_tokens, v * hidden)
-            )
+            video_embeddings = self._merge_views(video_embeddings, b, v)
 
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
@@ -269,7 +270,7 @@ class VLAJEPAModel(nn.Module):
             # gt_states keeps the full-pass embeddings (a target encoder seeing full context is fine).
             with torch.no_grad():
                 input_states = self._causal_video_embeddings(video_pixels, tubelet_size, t_enc_ctx)
-                input_states = torch.cat(torch.chunk(input_states, chunks=v, dim=0), dim=2)
+                input_states = self._merge_views(input_states, b, v)
         else:
             input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
         gt_states = video_embeddings[:, tokens_per_frame:, :]

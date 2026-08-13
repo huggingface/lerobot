@@ -756,8 +756,10 @@ def test_world_model_loss_feeds_causal_context_to_predictor(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("causal_context", [False, True])
 def test_world_model_view_merge_keeps_each_sample_with_its_own_views(
     patch_vla_jepa_external_models: None,
+    causal_context: bool,
 ) -> None:
     """The [B*V, N, H] -> [B, N, V*H] merge must not mix features across samples.
 
@@ -766,12 +768,16 @@ def test_world_model_view_merge_keeps_each_sample_with_its_own_views(
     pairs one sample's camera with a different sample's camera. Both orderings are
     shape-valid, and both are correct when B == 1 or V == 1, so only values expose it.
 
+    Both the shared-pass and the `causal_world_model_context` (#4381) branch merge views, so
+    both are parametrized here: they must agree on the ordering.
+
     Asserts on what `_world_model_loss` actually hands the predictor, by spying on it.
     """
     config = make_config(num_video_frames=2)
     config.jepa_tubelet_size = 1
     config.world_model_num_views = 3
     config.enable_world_model = True
+    config.causal_world_model_context = causal_context
     model = VLAJEPAModel(config)
 
     b, v = 2, 3
