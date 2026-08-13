@@ -2920,6 +2920,7 @@ all = [
     { name = "ipykernel" },
     { name = "jsonlines" },
     { name = "jupyter" },
+    { name = "lancedb" },
     { name = "matplotlib" },
     { name = "metaworld" },
     { name = "mock-serial", marker = "sys_platform != 'win32'" },
@@ -3127,7 +3128,13 @@ kinematics = [
     { name = "placo" },
 ]
 lancedb = [
+    { name = "av" },
+    { name = "datasets" },
+    { name = "jsonlines" },
     { name = "lancedb" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
 lekiwi = [
     { name = "deepdiff" },
@@ -3380,6 +3387,7 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'dataset-viz'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'hilserl'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'lancedb'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'pusht'" },
@@ -3412,6 +3420,7 @@ requires-dist = [
     { name = "lerobot", extras = ["hopejr"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["intelrealsense"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["kinematics"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["lancedb"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["libero"], marker = "sys_platform == 'linux' and extra == 'all'" },
     { name = "lerobot", extras = ["lingbot-va"], marker = "extra == 'all'" },
