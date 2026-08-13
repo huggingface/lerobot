@@ -28,14 +28,14 @@ import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
 
-from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig
+from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
 from .compute_stats import aggregate_stats
 from .depth_utils import MM_PER_METRE
-from .feature_utils import create_empty_dataset_info
+from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
 from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
@@ -400,16 +400,7 @@ class LeRobotDatasetMetadata:
         (or the legacy ``"video.is_depth_map"`` inside ``info`` or ``video_info``).
         """
 
-        def _is_depth(ft: dict) -> bool:
-            info = ft.get("info") or {}
-            video_info = ft.get("video_info") or {}
-            return (
-                info.get("is_depth_map", False)
-                or info.get("video.is_depth_map", False)
-                or video_info.get("video.is_depth_map", False)
-            )
-
-        return [key for key, ft in self.features.items() if _is_depth(ft)]
+        return [key for key, ft in self.features.items() if is_depth_map(ft)]
 
     def rescale_depth_stats(self, output_unit: str) -> None:
         """Rescale depth feature stats in place from their recorded unit to ``output_unit``.
@@ -712,19 +703,22 @@ class LeRobotDatasetMetadata:
         video_keys = [video_key] if video_key is not None else self.video_keys
         preserve_set = set(preserve_keys or ())
         for key in video_keys:
-            existing = self.features[key].get("info") or {}
+            feature = self.info.features[key]
+            existing = feature.get("info") or {}
             video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
             new_info = get_video_info(video_path, video_encoder=video_encoder)
             # Drop preserved keys so the existing values win on merge.
             new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
-            merged = {**existing, **new_info}
-            # Migrate the legacy depth marker to the canonical key.
-            if "video.is_depth_map" in merged:
-                logging.warning(
-                    f"Migrating legacy 'video.is_depth_map' to 'is_depth_map' for feature {key!r}."
-                )
-                merged.setdefault("is_depth_map", merged.pop("video.is_depth_map"))
-            self.info.features[key]["info"] = merged
+            feature["info"] = {**existing, **new_info}
+            # Migrate any legacy depth marker (in ``info`` or a separate ``video_info`` dict)
+            # to the canonical ``is_depth_map`` key.
+            video_info = feature.get("video_info")
+            had_legacy = "video.is_depth_map" in feature["info"] or (
+                isinstance(video_info, dict) and "video.is_depth_map" in video_info
+            )
+            canonicalize_depth_marker(feature)
+            if had_legacy:
+                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,
