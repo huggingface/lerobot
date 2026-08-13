@@ -24,22 +24,48 @@ pytest.importorskip("transformers")
 from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE  # noqa: E402
 
 from lerobot.configs.rewards import RewardModelConfig  # noqa: E402
-from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config  # noqa: E402
+from lerobot.rewards.factory import (  # noqa: E402
+    get_reward_model_class,
+    make_reward_model,
+    make_reward_model_config,
+    make_reward_pre_post_processors,
+)
 from lerobot.rewards.rynnvalue import RynnValueConfig  # noqa: E402
-from lerobot.rewards.rynnvalue.modeling_rynn_value_lang import RynnValueLangModel  # noqa: E402
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX  # noqa: E402
 from lerobot.rewards.rynnvalue.modeling_rynnvalue import (  # noqa: E402
-    RYNNVALUE_FEATURE_PREFIX,
     RynnValueRewardModel,
     reduce_remaining_time,
 )
-from lerobot.rewards.rynnvalue.value_heads import BroValueHead  # noqa: E402
-from lerobot.rewards.rynnvalue.value_tokenizer import ValueTokenizer, to_symexp, to_symlog  # noqa: E402
+from lerobot.rewards.rynnvalue.rynn_value_lang.modeling_rynn_value_lang import (  # noqa: E402
+    RynnValueLangModel,
+)
+from lerobot.rewards.rynnvalue.rynn_value_lang.value_heads import BroValueHead  # noqa: E402
+from lerobot.rewards.rynnvalue.rynn_value_lang.value_tokenizer import (  # noqa: E402
+    ValueTokenizer,
+    to_symexp,
+    to_symlog,
+)
+
+
+class _FakeNativeConfig:
+    _attn_implementation = None
+
+    def __init__(self, **values) -> None:
+        self.values = values or {"model_type": "rynn_value_lang", "hidden_size": 16}
+
+    def to_dict(self):
+        return self.values
 
 
 class _FakeRynnValueModel(torch.nn.Module):
-    def __init__(self, pred_value: torch.Tensor | None = None) -> None:
+    def __init__(
+        self,
+        pred_value: torch.Tensor | None = None,
+        config: _FakeNativeConfig | None = None,
+    ) -> None:
         super().__init__()
         self.anchor = torch.nn.Parameter(torch.zeros(()))
+        self.config = config or _FakeNativeConfig()
         self.pred_value = (
             pred_value
             if pred_value is not None
@@ -53,16 +79,25 @@ class _FakeRynnValueModel(torch.nn.Module):
 def _patch_checkpoint_load(monkeypatch, pred_value: torch.Tensor | None = None) -> None:
     from lerobot.rewards.rynnvalue import modeling_rynnvalue
 
+    class _FakeCheckpointModel(_FakeRynnValueModel):
+        def __init__(self, config=None) -> None:
+            super().__init__(pred_value=pred_value, config=config)
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):  # noqa: ARG003
+            return cls()
+
     monkeypatch.setattr(
         modeling_rynnvalue.RynnValueLangConfig,
         "from_pretrained",
-        classmethod(lambda cls, *args, **kwargs: SimpleNamespace(_attn_implementation=None)),
+        classmethod(lambda cls, *args, **kwargs: _FakeNativeConfig()),
     )
     monkeypatch.setattr(
-        modeling_rynnvalue.RynnValueLangModel,
-        "from_pretrained",
-        classmethod(lambda cls, *args, **kwargs: _FakeRynnValueModel(pred_value)),
+        modeling_rynnvalue.RynnValueLangConfig,
+        "from_dict",
+        classmethod(lambda cls, values: _FakeNativeConfig(**values)),
     )
+    monkeypatch.setattr(modeling_rynnvalue, "RynnValueLangModel", _FakeCheckpointModel)
 
 
 def _encoded_batch(batch_size: int = 2) -> dict[str, torch.Tensor]:
@@ -198,6 +233,23 @@ def test_embedded_model_config_avoids_upstream_checkpoint_load(monkeypatch):
     assert source_load_called is False
 
 
+def test_lerobot_checkpoint_without_embedded_model_config_fails_before_upstream_load(monkeypatch):
+    from lerobot.rewards.rynnvalue import modeling_rynnvalue
+
+    monkeypatch.setattr(
+        modeling_rynnvalue.RynnValueLangConfig,
+        "from_pretrained",
+        classmethod(lambda cls, *args, **kwargs: pytest.fail("upstream config load should not be attempted")),
+    )
+    with pytest.raises(ValueError, match="missing `model_config`"):
+        RynnValueRewardModel(
+            RynnValueConfig(
+                device="cpu",
+                pretrained_path="/tmp/legacy-rynnvalue",
+            )
+        )
+
+
 def test_save_and_load_lerobot_checkpoint(monkeypatch, tmp_path):
     _patch_checkpoint_load(monkeypatch)
     model = RynnValueRewardModel(
@@ -214,6 +266,7 @@ def test_save_and_load_lerobot_checkpoint(monkeypatch, tmp_path):
     loaded = RynnValueRewardModel.from_pretrained(tmp_path)
     assert loaded.config.model_id == "Alibaba-DAMO-Academy/RynnValue-8B"
     assert loaded.config.model_revision == "abc123"
+    assert loaded.config.model_config == {"model_type": "rynn_value_lang", "hidden_size": 16}
     assert loaded.config.pretrained_path == str(tmp_path)
 
 
@@ -262,3 +315,73 @@ def test_conversion_writes_self_contained_lerobot_checkpoint(monkeypatch, tmp_pa
     assert config.model_id == "upstream/rynnvalue"
     assert config.model_revision == "abc123"
     assert config.model_config == {"model_type": "rynn_value_lang", "hidden_size": 16}
+
+
+def test_offline_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_path):
+    from lerobot.rewards.rynnvalue import modeling_rynnvalue, processor_rynnvalue
+
+    original = RynnValueRewardModel(
+        RynnValueConfig(device="cpu", torch_dtype="float32"),
+        model=_FakeRynnValueModel(),
+    )
+    original.save_pretrained(tmp_path)
+
+    def fail_upstream_load(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("offline LeRobot checkpoint must not load the upstream model")
+
+    class _OfflineModel(_FakeRynnValueModel):
+        def __init__(self, config) -> None:
+            super().__init__(config=config)
+
+        from_pretrained = classmethod(fail_upstream_load)
+
+    class _OfflineProcessor:
+        tokenizer = SimpleNamespace(pad_token_id=0, eos_token_id=2)
+        use_meta = False
+
+        def process_episode(self, instruction, images, **kwargs):  # noqa: ARG002
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones(1, 3, dtype=torch.long),
+                "mm_token_type_ids": torch.zeros(1, 3, dtype=torch.long),
+                "pixel_values": torch.zeros(1, len(images), 4),
+                "image_grid_thw": torch.ones(1, len(images), 3, dtype=torch.long),
+            }
+
+    processor_sources = []
+    monkeypatch.setattr(
+        modeling_rynnvalue.RynnValueLangConfig,
+        "from_pretrained",
+        classmethod(fail_upstream_load),
+    )
+    monkeypatch.setattr(
+        modeling_rynnvalue.RynnValueLangConfig,
+        "from_dict",
+        classmethod(lambda cls, values: _FakeNativeConfig(**values)),
+    )
+    monkeypatch.setattr(modeling_rynnvalue, "RynnValueLangModel", _OfflineModel)
+    monkeypatch.setattr(
+        processor_rynnvalue.RynnValueLangProcessor,
+        "from_pretrained",
+        classmethod(
+            lambda cls, model_id, **kwargs: (
+                processor_sources.append((model_id, kwargs.get("revision"))) or _OfflineProcessor()
+            )
+        ),
+    )
+
+    config = RewardModelConfig.from_pretrained(tmp_path)
+    config.pretrained_path = str(tmp_path)
+    model = make_reward_model(config)
+    preprocessor, _ = make_reward_pre_post_processors(config)
+    encoded = preprocessor(
+        {
+            config.image_key: torch.zeros(3, 8, 8),
+            config.task_key: "pick up the cube",
+        }
+    )
+    reward = model.compute_reward(encoded)
+
+    assert processor_sources == [(str(tmp_path), None)]
+    assert reward.shape == (1,)
+    assert torch.isfinite(reward).all()

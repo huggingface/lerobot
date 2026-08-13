@@ -26,11 +26,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .configuration_rynn_value_lang import RynnValueLangConfig
 from .configuration_rynnvalue import RynnValueConfig
-from .modeling_rynn_value_lang import RynnValueLangModel
 from .modeling_rynnvalue import RynnValueRewardModel, _torch_dtype
-from .processing_rynn_value_lang import RynnValueLangProcessor
+from .rynn_value_lang.configuration_rynn_value_lang import RynnValueLangConfig
+from .rynn_value_lang.modeling_rynn_value_lang import RynnValueLangModel
+from .rynn_value_lang.processing_rynn_value_lang import RynnValueLangProcessor
 
 DEFAULT_SOURCE_MODEL_ID = "Alibaba-DAMO-Academy/RynnValue-4B"
 

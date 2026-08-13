@@ -23,17 +23,16 @@ from torch import Tensor
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from .configuration_rynn_value_lang import RynnValueLangConfig
-    from .modeling_rynn_value_lang import RynnValueLangModel
+    from .rynn_value_lang.configuration_rynn_value_lang import RynnValueLangConfig
+    from .rynn_value_lang.modeling_rynn_value_lang import RynnValueLangModel
 else:
     RynnValueLangConfig = None  # type: ignore[assignment]
     RynnValueLangModel = None  # type: ignore[assignment]
 
-RYNNVALUE_FEATURE_PREFIX = "observation.rynnvalue."
 RYNNVALUE_MODEL_INPUT_KEYS = (
     "input_ids",
     "attention_mask",
@@ -90,6 +89,12 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             return
 
         dtype = _torch_dtype(config.torch_dtype)
+        if config.pretrained_path is not None and config.model_config is None:
+            raise ValueError(
+                "RynnValue LeRobot checkpoint is missing `model_config`. "
+                "Reconvert the official checkpoint with "
+                "`python -m lerobot.rewards.rynnvalue.convert_rynnvalue_checkpoint`."
+            )
         if config.model_config is not None:
             model_config = RynnValueLangConfig.from_dict(config.model_config)
             model_config._attn_implementation = config.attn_implementation
@@ -143,6 +148,13 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         )
         reward = -remaining_time if self.config.reward_output == "potential" else remaining_time
         return reward.to(self.config.device or "cpu")
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        native_config = getattr(self.model, "config", None)
+        if native_config is None or not callable(getattr(native_config, "to_dict", None)):
+            raise TypeError("RynnValue native model must expose a serializable `config.to_dict()`")
+        self.config.model_config = native_config.to_dict()
+        super()._save_pretrained(save_directory)
 
     @classmethod
     def from_pretrained(

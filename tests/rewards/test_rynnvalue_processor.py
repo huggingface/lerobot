@@ -20,14 +20,18 @@ import torch
 pytest.importorskip("transformers")
 
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
-from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig  # noqa: E402
-from lerobot.rewards.rynnvalue.modeling_rynnvalue import RYNNVALUE_FEATURE_PREFIX  # noqa: E402
-from lerobot.rewards.rynnvalue.processing_rynn_value_lang import RynnValueLangProcessor  # noqa: E402
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import (  # noqa: E402
+    RYNNVALUE_FEATURE_PREFIX,
+    RynnValueConfig,
+)
 from lerobot.rewards.rynnvalue.processor_rynnvalue import (  # noqa: E402
     RynnValueEncoderProcessorStep,
     _uniform_subsample,
     _video_to_pil,
     make_rynnvalue_pre_post_processors,
+)
+from lerobot.rewards.rynnvalue.rynn_value_lang.processing_rynn_value_lang import (  # noqa: E402
+    RynnValueLangProcessor,
 )
 
 

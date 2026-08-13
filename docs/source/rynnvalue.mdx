@@ -100,6 +100,8 @@ Use `Alibaba-DAMO-Academy/RynnValue-8B` as the converter's `--source-model-id` t
 
 The converted `config.json` embeds the native architecture configuration, while `model.safetensors` stores weights under the LeRobot reward wrapper. Loading the converted checkpoint therefore does not need the original repository to construct the model. Processor assets are loaded from the same local directory or Hub repository.
 
+Subsequent calls to `save_pretrained()` refresh the embedded native configuration before writing the checkpoint. A LeRobot checkpoint is never reconstructed from the upstream `model_id`; older checkpoints without embedded `model_config` must be reconverted.
+
 ## Reward shaping
 
 The scalar returned by LeRobot is the state potential, not a complete transition reward. Apply potential-based shaping in the RL loop:

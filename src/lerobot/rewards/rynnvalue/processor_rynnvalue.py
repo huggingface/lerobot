@@ -33,13 +33,12 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
-from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
-from lerobot.rewards.rynnvalue.modeling_rynnvalue import RYNNVALUE_FEATURE_PREFIX
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RYNNVALUE_FEATURE_PREFIX, RynnValueConfig
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
-    from .processing_rynn_value_lang import RynnValueLangProcessor
+    from .rynn_value_lang.processing_rynn_value_lang import RynnValueLangProcessor
 else:
     RynnValueLangProcessor = None  # type: ignore[assignment]
 
@@ -213,9 +212,10 @@ def make_rynnvalue_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     del dataset_stats
-    is_converted_checkpoint = config.model_config is not None and config.pretrained_path is not None
-    processor_id = config.pretrained_path if is_converted_checkpoint else config.model_id
-    processor_revision = config.pretrained_revision if is_converted_checkpoint else config.model_revision
+    processor_id = str(config.pretrained_path) if config.pretrained_path is not None else config.model_id
+    processor_revision = (
+        config.pretrained_revision if config.pretrained_path is not None else config.model_revision
+    )
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[
             AddBatchDimensionProcessorStep(),

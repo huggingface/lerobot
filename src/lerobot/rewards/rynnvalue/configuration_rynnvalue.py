@@ -19,6 +19,8 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
+RYNNVALUE_FEATURE_PREFIX = "observation.rynnvalue."
+
 
 @RewardModelConfig.register_subclass("rynnvalue")
 @dataclass
