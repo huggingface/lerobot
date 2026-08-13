@@ -3927,12 +3927,16 @@ class MolmoAct2ForConditionalGeneration(MolmoAct2PreTrainedModel, GenerationMixi
         past_length = _cache_seq_len_int(past_key_values)
         end = past_length + int(next_input_ids.shape[1])
         if position_ids is None:
-            position_ids = torch.arange(
-                past_length,
-                end,
-                device=next_input_ids.device,
-                dtype=torch.long,
-            ).unsqueeze(0).expand(next_input_ids.shape[0], -1)
+            position_ids = (
+                torch.arange(
+                    past_length,
+                    end,
+                    device=next_input_ids.device,
+                    dtype=torch.long,
+                )
+                .unsqueeze(0)
+                .expand(next_input_ids.shape[0], -1)
+            )
         else:
             position_ids = position_ids.to(device=next_input_ids.device, dtype=torch.long)
             if position_ids.shape != next_input_ids.shape:

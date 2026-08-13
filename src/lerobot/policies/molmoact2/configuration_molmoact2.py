@@ -95,9 +95,7 @@ class MolmoAct2AdamW(torch.optim.AdamW):
         """
         for group in self.param_groups:
             bfloat16_group = dict(group)
-            bfloat16_group["params"] = [
-                param for param in group["params"] if param.dtype == torch.bfloat16
-            ]
+            bfloat16_group["params"] = [param for param in group["params"] if param.dtype == torch.bfloat16]
 
             params_with_grad: list[torch.Tensor] = []
             grads: list[torch.Tensor] = []
@@ -245,8 +243,7 @@ class MolmoAct2CosineWithWarmupSchedulerConfig(LRSchedulerConfig):
             raise ValueError(f"peak_lr must be > 0, got {self.peak_lr}.")
         if not 0 <= self.decay_lr < self.peak_lr:
             raise ValueError(
-                f"decay_lr must be in [0, peak_lr), got decay_lr={self.decay_lr}, "
-                f"peak_lr={self.peak_lr}."
+                f"decay_lr must be in [0, peak_lr), got decay_lr={self.decay_lr}, peak_lr={self.peak_lr}."
             )
 
         # Official Trainer uses its configured max_duration as the cosine

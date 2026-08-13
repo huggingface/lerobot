@@ -139,9 +139,7 @@ def test_molmoact2_scheduler_preserves_configured_clock_when_training_stops_earl
 
     # A 3K diagnostic stop must remain at the corresponding point on the final
     # 30K clock; it must not be compressed to the 0.1 decay floor.
-    expected_multiplier = 0.1 + 0.9 * 0.5 * (
-        1.0 + math.cos(math.pi * (3_000 - 200) / (30_000 - 200))
-    )
+    expected_multiplier = 0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * (3_000 - 200) / (30_000 - 200)))
     assert scheduler.lr_lambdas[0](2_999) == pytest.approx(expected_multiplier)
     assert scheduler.lr_lambdas[0](2_999) > 0.97
     assert scheduler.lr_lambdas[0](29_999) == pytest.approx(0.1)
@@ -180,9 +178,7 @@ def test_molmoact2_scheduler_checkpoint_resume_matches_uninterrupted_updates():
     optimizer_state = copy.deepcopy(split_optimizer.state_dict())
     scheduler_state = copy.deepcopy(split_scheduler.state_dict())
 
-    resumed_parameter, resumed_optimizer, resumed_scheduler = make_training_state(
-        split_parameter.detach()
-    )
+    resumed_parameter, resumed_optimizer, resumed_scheduler = make_training_state(split_parameter.detach())
     resumed_optimizer.load_state_dict(optimizer_state)
     resumed_scheduler.load_state_dict(scheduler_state)
     run_updates(resumed_parameter, resumed_optimizer, resumed_scheduler, 13, 31)
@@ -546,7 +542,9 @@ def test_molmoact2_optimizer_mixed_dtype_matches_native_adamw():
     assert "compensation" not in optimizer.state[params[1]]
     for param, native_param in zip(params, native_params, strict=True):
         for state_name in ("step", "exp_avg", "exp_avg_sq"):
-            assert torch.equal(optimizer.state[param][state_name], native_optimizer.state[native_param][state_name])
+            assert torch.equal(
+                optimizer.state[param][state_name], native_optimizer.state[native_param][state_name]
+            )
 
 
 def test_molmoact2_optimizer_bfloat16_checkpoint_resume_is_bitwise(tmp_path):
@@ -758,10 +756,14 @@ def test_molmoact2_optimizer_bfloat16_tracks_native_long_horizon():
     assert compensated_error < native_error * 0.1
     assert optimizer.state[param]["compensation"].dtype == torch.bfloat16
     for state_name in ("step", "exp_avg", "exp_avg_sq"):
-        assert torch.equal(optimizer.state[param][state_name], native_optimizer.state[native_param][state_name])
+        assert torch.equal(
+            optimizer.state[param][state_name], native_optimizer.state[native_param][state_name]
+        )
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required to inspect native foreach dispatch.")
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is required to inspect native foreach dispatch."
+)
 def test_molmoact2_optimizer_uses_native_cuda_foreach(monkeypatch):
     bfloat16_param = torch.nn.Parameter(torch.ones(16, device="cuda", dtype=torch.bfloat16))
     float32_param = torch.nn.Parameter(torch.ones(16, device="cuda", dtype=torch.float32))
@@ -1071,14 +1073,12 @@ def test_joint_training_fallback_positions_ignore_left_padding():
         dtype=torch.long,
     )
 
-    _embeddings, _causal_mask, position_ids, _cache_position = (
-        policy._prepare_joint_training_backbone_inputs(
-            {
-                "inputs_embeds": torch.ones(2, 5, 4),
-                "attention_mask": attention_mask,
-                "token_type_ids": torch.ones(2, 5, dtype=torch.long),
-            }
-        )
+    _embeddings, _causal_mask, position_ids, _cache_position = policy._prepare_joint_training_backbone_inputs(
+        {
+            "inputs_embeds": torch.ones(2, 5, 4),
+            "attention_mask": attention_mask,
+            "token_type_ids": torch.ones(2, 5, dtype=torch.long),
+        }
     )
 
     assert torch.equal(position_ids, _position_ids_from_attention_mask(attention_mask))
@@ -1263,9 +1263,7 @@ def test_cuda_graph_rope_selection_uses_logical_not_physical_position():
     rotary = SimpleNamespace(_pos_cos_cache=cos_cache, _pos_sin_cache=sin_cache)
     transformer = SimpleNamespace(rotary_emb=rotary)
     backbone = SimpleNamespace(transformer=transformer)
-    manager = hf_molmoact2_modeling.DepthDecodeCudaGraphManager(
-        SimpleNamespace(model=backbone)
-    )
+    manager = hf_molmoact2_modeling.DepthDecodeCudaGraphManager(SimpleNamespace(model=backbone))
     cos = torch.empty(1, 1, 2)
     sin = torch.empty_like(cos)
 
@@ -1942,9 +1940,7 @@ def _make_compile_test_policy(
     class DummyTransformer(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.blocks = torch.nn.ModuleList(
-                [RecordingModule("text.0"), RecordingModule("text.1")]
-            )
+            self.blocks = torch.nn.ModuleList([RecordingModule("text.0"), RecordingModule("text.1")])
             self.input_embeddings = RecordingModule("text.input_embeddings")
 
     class DummyImageViT(torch.nn.Module):
@@ -1966,9 +1962,7 @@ def _make_compile_test_policy(
     class DummyActionExpert(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.blocks = torch.nn.ModuleList(
-                [RecordingModule("action.0"), RecordingModule("action.1")]
-            )
+            self.blocks = torch.nn.ModuleList([RecordingModule("action.0"), RecordingModule("action.1")])
             self.action_embed = RecordingModule("action.action_embed")
 
     class DummyBackbone(torch.nn.Module):
@@ -2098,9 +2092,7 @@ def test_molmoact2_compile_marks_only_context_sequence_dynamic(monkeypatch):
 
 
 @pytest.mark.parametrize("train_mode_vlm", ["fft", "lora", "freeze"])
-def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(
-    monkeypatch, train_mode_vlm
-):
+def test_molmoact2_compile_is_limited_to_action_expert_for_every_train_mode(monkeypatch, train_mode_vlm):
     policy = _make_compile_test_policy(train_mode_vlm=train_mode_vlm)
     backbone = policy._backbone()
     monkeypatch.setattr(torch, "set_float32_matmul_precision", lambda precision: None)
@@ -2274,8 +2266,7 @@ def test_bfloat16_parameter_policy_keeps_action_expert_float32():
     assert policy.model.model.action_expert.modulation.linear.weight.dtype == torch.float32
     assert policy.model.model.action_expert.norm.weight.dtype == torch.float32
     assert all(
-        parameter.dtype == torch.float32
-        for parameter in policy.model.model.action_expert.parameters()
+        parameter.dtype == torch.float32 for parameter in policy.model.model.action_expert.parameters()
     )
     assert policy.model.model.action_expert_depth_gate.weight.dtype == torch.float32
     rotary_emb = policy.model.model.transformer.rotary_emb

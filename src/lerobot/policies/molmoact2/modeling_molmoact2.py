@@ -229,7 +229,6 @@ def _load_hf_norm_metadata_for_tag(
     norm_tag = str(norm_tag or "").strip()
     if not norm_tag:
         return {}
-    from contextlib import suppress
     from pathlib import Path
 
     norm_stats_filename = "norm_stats.json"
@@ -911,9 +910,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # trainable for the published ft_embedding="lm_head" FFT recipe,
             # so route it to the connector LR and independent clip group even
             # though it is structurally nested below the text embedding.
-            elif ".wte.new_embedding" in name:
-                connector_params.append(param)
-            elif any(part in name for part in ("image_pooling_2d", "image_projector")):
+            elif ".wte.new_embedding" in name or any(
+                part in name for part in ("image_pooling_2d", "image_projector")
+            ):
                 connector_params.append(param)
             elif any(part in name for part in ("vision", "image_encoder", "vit")):
                 vit_params.append(param)
@@ -2147,8 +2146,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             return (5, int(vit_match.group(1)), leaf_order)
 
         raise RuntimeError(
-            "MolmoAct2 cannot map a LoRA target into the official initialization order: "
-            f"{module_name!r}."
+            f"MolmoAct2 cannot map a LoRA target into the official initialization order: {module_name!r}."
         )
 
     def _apply_lora_adapters(self) -> None:
@@ -2173,9 +2171,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         from peft.tuners.lora.layer import LoraLayer
 
         lora_layers = [
-            (name, module)
-            for name, module in self.model.named_modules()
-            if isinstance(module, LoraLayer)
+            (name, module) for name, module in self.model.named_modules() if isinstance(module, LoraLayer)
         ]
         lora_layers.sort(key=lambda item: self._official_lora_initialization_sort_key(item[0]))
         devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []

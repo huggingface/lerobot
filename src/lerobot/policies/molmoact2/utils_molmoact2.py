@@ -59,7 +59,6 @@ def position_ids_from_attention_mask(attention_mask: Tensor) -> Tensor:
     """Build padding-invariant positions matching native MolmoAct2 training."""
     if attention_mask.ndim != 2:
         raise ValueError(
-            "MolmoAct2 position ids require a 2D attention mask, "
-            f"got shape {tuple(attention_mask.shape)}."
+            f"MolmoAct2 position ids require a 2D attention mask, got shape {tuple(attention_mask.shape)}."
         )
     return torch.clamp(torch.cumsum(attention_mask.to(torch.long), dim=-1) - 1, min=0)
