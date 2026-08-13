@@ -106,10 +106,15 @@ class ActionInterpolator:
         """
         if self.multiplier > 1 and self._prev is not None:
             self._buffer = []
-            for i in range(1, self.multiplier + 1):
+            for i in range(1, self.multiplier):
                 t = i / self.multiplier
                 interp = self._prev + t * (action - self._prev)
                 self._buffer.append(interp)
+            # The end point is the policy's action itself, appended verbatim rather
+            # than computed as ``prev + 1.0 * (action - prev)``, which can land an ULP
+            # away.  ``emitted_policy_action`` promises the recorded frame carries the
+            # policy's own output, so make that exact.
+            self._buffer.append(action.clone())
         else:
             # First step: no previous action yet, so run at base FPS without interpolation.
             self._buffer = [action.clone()]
@@ -129,22 +134,3 @@ class ActionInterpolator:
         self._idx += 1
         self._emitted_policy_action = self._idx == len(self._buffer)
         return action
-
-    def get_control_interval(self, fps: float) -> float:
-        """Get the control interval based on interpolation multiplier.
-
-        Note:
-            Rollout strategies pace their loops with
-            :class:`lerobot.rollout.strategies.CycleTimer` instead, which spaces
-            ticks by this same interval but judges loop slowness per group of
-            ``multiplier`` ticks against ``1/fps``.  Using this value directly as
-            a per-tick budget reports a policy tick that borrowed time from the
-            interpolated ticks after it as a missed frame rate, which it is not.
-
-        Args:
-            fps: Base frames per second.
-
-        Returns:
-            Control interval in seconds (divided by multiplier).
-        """
-        return 1.0 / (fps * self.multiplier)

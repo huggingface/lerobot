@@ -182,6 +182,33 @@ def test_emitted_policy_action_survives_an_odd_starvation_gap(interp2):
     assert recorded == pytest.approx(values[: len(recorded)])
 
 
+@pytest.mark.parametrize("multiplier", [2, 3, 4])
+def test_emitted_policy_action_is_bit_exactly_the_policy_action(multiplier):
+    """Test the cycle-end action is the policy tensor itself, not a lerp that lands near it.
+
+    ``emitted_policy_action`` promises the recorded frame carries the policy's own
+    output, and a dataset should not hold a value the policy never produced.
+    Computing the end point as ``prev + 1.0 * (action - prev)`` is off by an ULP for
+    these float32 pairs specifically, so ``assert_close`` would pass where equality
+    does not.
+    """
+    interp = ActionInterpolator(multiplier=multiplier)
+    prev = torch.tensor([-8.56674575805664, 0.6271883249282837])
+    action = torch.tensor([11.006041526794434, -7.663063049316406])
+    # Guard the guard: these values only discriminate because the lerp is inexact.
+    assert not torch.equal(prev + 1.0 * (action - prev), action)
+
+    interp.add(prev)
+    interp.get()  # drain the priming buffer
+    interp.add(action)
+    for _ in range(multiplier - 1):
+        interp.get()
+    emitted = interp.get()
+
+    assert interp.emitted_policy_action
+    assert torch.equal(emitted, action), f"{emitted.tolist()} != {action.tolist()}"
+
+
 def test_emitted_policy_action_cleared_by_reset(interp2):
     """Test reset() clears the marker so a re-primed interpolator starts clean."""
     interp2.add(torch.tensor([1.0]))
@@ -340,30 +367,6 @@ def test_reset_episode_boundary(interp2):
     result = interp2.get()
     torch.testing.assert_close(result, torch.tensor([100.0]))
     assert interp2.get() is None
-
-
-# ====================== get_control_interval Tests ======================
-
-
-def test_control_interval_30fps_multiplier_1():
-    """Test control interval at 30fps with no interpolation."""
-    interp = ActionInterpolator(multiplier=1)
-    assert interp.get_control_interval(30.0) == pytest.approx(1.0 / 30.0)
-
-
-def test_control_interval_30fps_multiplier_2(interp2):
-    """Test control interval at 30fps with 2x interpolation."""
-    assert interp2.get_control_interval(30.0) == pytest.approx(1.0 / 60.0)
-
-
-def test_control_interval_30fps_multiplier_3(interp3):
-    """Test control interval at 30fps with 3x interpolation."""
-    assert interp3.get_control_interval(30.0) == pytest.approx(1.0 / 90.0)
-
-
-def test_control_interval_60fps_multiplier_2(interp2):
-    """Test control interval at 60fps with 2x interpolation."""
-    assert interp2.get_control_interval(60.0) == pytest.approx(1.0 / 120.0)
 
 
 # ====================== get() on Empty Tests ======================

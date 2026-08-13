@@ -391,58 +391,70 @@ class DAggerStrategy(RolloutStrategy):
                             correction_tick = 0
 
                     phase = events.phase
-                    obs = robot.get_observation()
+                    with timer.section("observe"):
+                        obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
                     # decouple the two, sample teleop at its native rate and
                     # interpolate to the control loop's tick rate.
                     if phase == DAggerPhase.CORRECTING:
-                        obs_processed = ctx.processors.robot_observation_processor(obs)
-                        teleop_action = teleop.get_action()
-                        processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
-                        robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
-                        robot.send_action(robot_action_to_send)
+                        with timer.section("process_obs"):
+                            obs_processed = ctx.processors.robot_observation_processor(obs)
+                        with timer.section("teleop"):
+                            teleop_action = teleop.get_action()
+                            processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
+                            robot_action_to_send = ctx.processors.robot_action_processor(
+                                (processed_teleop, obs)
+                            )
+                        with timer.section("send"):
+                            robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
-                        self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
+                        with timer.section("telemetry"):
+                            self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
                         if correction_tick % correction_stride == 0:
-                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                            action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
-                            frame = {
-                                **obs_frame,
-                                **action_frame,
-                                "task": task_str,
-                                "intervention": np.array([True], dtype=bool),
-                            }
-                            dataset.add_frame(frame)
+                            with timer.section("record"):
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
+                                frame = {
+                                    **obs_frame,
+                                    **action_frame,
+                                    "task": task_str,
+                                    "intervention": np.array([True], dtype=bool),
+                                }
+                                dataset.add_frame(frame)
                         correction_tick += 1
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
-                            robot.send_action(last_action)
+                            with timer.section("send"):
+                                robot.send_action(last_action)
 
                     # --- AUTONOMOUS: policy control ---
                     else:
-                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                        with timer.section("process_obs"):
+                            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                         if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                         if action_dict is not None:
-                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                            with timer.section("telemetry"):
+                                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
                             if interpolator.emitted_policy_action:
-                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                                action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                                frame = {
-                                    **obs_frame,
-                                    **action_frame,
-                                    "task": task_str,
-                                    "intervention": np.array([False], dtype=bool),
-                                }
-                                dataset.add_frame(frame)
+                                with timer.section("record"):
+                                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                                    frame = {
+                                        **obs_frame,
+                                        **action_frame,
+                                        "task": task_str,
+                                        "intervention": np.array([False], dtype=bool),
+                                    }
+                                    dataset.add_frame(frame)
 
                     # Episode rotation derived from the video file-size target.
                     # Saving is deferred while a correction is ongoing so the
@@ -459,6 +471,11 @@ class DAggerStrategy(RolloutStrategy):
                             elapsed,
                         )
                         log_say(f"Episode {dataset.num_episodes} saved", play_sounds)
+                        # ``save_episode`` blocks inside the timed loop body: report
+                        # the episode, then drop the partial group and the gap it
+                        # opened, which are finalisation rather than cadence.
+                        timer.log_episode_summary(f"episode {dataset.num_episodes}")
+                        timer.restart()
 
                         if episodes_since_push >= self.config.upload_every_n_episodes:
                             self._background_push(dataset, cfg)
@@ -470,6 +487,7 @@ class DAggerStrategy(RolloutStrategy):
 
             finally:
                 logger.info("DAgger continuous control loop ended — pausing engine")
+                timer.log_run_summary()
                 engine.pause()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:
@@ -563,6 +581,11 @@ class DAggerStrategy(RolloutStrategy):
                                 self.config.num_episodes,
                             )
                             log_say(f"Correction {recorded} saved", play_sounds)
+                            # ``save_episode`` blocks inside the timed loop body: report
+                            # the correction, then drop the partial group and the gap it
+                            # opened, which are finalisation rather than cadence.
+                            timer.log_episode_summary(f"correction {recorded}")
+                            timer.restart()
 
                     # On-demand upload
                     if events.upload_requested.is_set():
@@ -571,55 +594,67 @@ class DAggerStrategy(RolloutStrategy):
                         self._background_push(dataset, cfg)
 
                     phase = events.phase
-                    obs = robot.get_observation()
+                    with timer.section("observe"):
+                        obs = robot.get_observation()
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
                     # decouple the two, sample teleop at its native rate and
                     # interpolate to the control loop's tick rate.
                     if phase == DAggerPhase.CORRECTING:
-                        obs_processed = ctx.processors.robot_observation_processor(obs)
-                        teleop_action = teleop.get_action()
-                        processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
-                        robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
-                        robot.send_action(robot_action_to_send)
+                        with timer.section("process_obs"):
+                            obs_processed = ctx.processors.robot_observation_processor(obs)
+                        with timer.section("teleop"):
+                            teleop_action = teleop.get_action()
+                            processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
+                            robot_action_to_send = ctx.processors.robot_action_processor(
+                                (processed_teleop, obs)
+                            )
+                        with timer.section("send"):
+                            robot.send_action(robot_action_to_send)
                         last_action = robot_action_to_send
-                        self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
+                        with timer.section("telemetry"):
+                            self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 
                         if correction_tick % correction_stride == 0:
-                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                            action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
-                            dataset.add_frame(
-                                {
-                                    **obs_frame,
-                                    **action_frame,
-                                    "task": task_str,
-                                    "intervention": np.array([True], dtype=bool),
-                                }
-                            )
+                            with timer.section("record"):
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
+                                dataset.add_frame(
+                                    {
+                                        **obs_frame,
+                                        **action_frame,
+                                        "task": task_str,
+                                        "intervention": np.array([True], dtype=bool),
+                                    }
+                                )
                         correction_tick += 1
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
                         if last_action:
-                            robot.send_action(last_action)
+                            with timer.section("send"):
+                                robot.send_action(last_action)
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
-                        obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                        with timer.section("process_obs"):
+                            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
                         if self._handle_warmup(cfg.use_torch_compile, timer):
                             continue
 
-                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                        action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                         if action_dict is not None:
-                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                            with timer.section("telemetry"):
+                                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                             last_action = ctx.processors.robot_action_processor((action_dict, obs))
 
                     timer.wait()
 
             finally:
                 logger.info("DAgger corrections-only loop ended — pausing engine")
+                timer.log_run_summary()
                 engine.pause()
                 with contextlib.suppress(Exception):
                     with self._episode_lock:

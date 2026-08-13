@@ -109,6 +109,10 @@ class EpisodicStrategy(RolloutStrategy):
             else cfg.display_compressed_images
         )
 
+        # One timer for the whole session: episodes get their own cadence line, and
+        # the run summary averages across them without the untimed reset phases.
+        timer = CycleTimer(fps, self._interpolator.multiplier)
+
         with VideoEncodingManager(dataset):
             try:
                 recorded_episodes = 0
@@ -119,6 +123,10 @@ class EpisodicStrategy(RolloutStrategy):
                     # Reset policy state at episode start (discard leftover hidden state / queue)
                     self._engine.reset()
                     self._interpolator.reset()
+                    # A reset interpolator re-primes over two consecutive inference
+                    # ticks, exactly like loop start-up, so exempt the group that
+                    # spans them instead of reporting a healthy episode as slow.
+                    timer.restart()
                     self._engine.resume()
 
                     log_say(f"Recording episode {dataset.num_episodes}", play_sounds)
@@ -127,7 +135,7 @@ class EpisodicStrategy(RolloutStrategy):
                         robot=robot,
                         events=events,
                         features=features,
-                        fps=fps,
+                        timer=timer,
                         control_time_s=episode_time_s,
                         dataset=dataset,
                         single_task=single_task,
@@ -186,6 +194,7 @@ class EpisodicStrategy(RolloutStrategy):
                         events["rerecord_episode"] = False
                         events["exit_early"] = False
                         dataset.clear_episode_buffer()
+                        timer.log_episode_summary("discarded episode")
 
                         # returns to its initial joint positions captured at startup
                         if not teleop and self.config.reset_to_initial_position:
@@ -195,11 +204,13 @@ class EpisodicStrategy(RolloutStrategy):
 
                     dataset.save_episode()
                     recorded_episodes += 1
+                    timer.log_episode_summary(f"episode {dataset.num_episodes}")
             finally:
                 # Save any frames buffered in the current episode so an unexpected
                 # exception or KeyboardInterrupt does not silently drop recorded data.
                 # suppress: save_episode raises if the buffer is empty (nothing to lose).
                 logger.info("Episodic control loop ended — saving any in-progress episode")
+                timer.log_run_summary()
                 with contextlib.suppress(Exception):
                     dataset.save_episode()
 
@@ -209,14 +220,17 @@ class EpisodicStrategy(RolloutStrategy):
         robot,
         events: dict,
         features: dict,
-        fps: float,
+        timer: CycleTimer,
         control_time_s: float,
         dataset,
         single_task: str,
     ) -> None:
-        """Policy-driven recording loop for a single episode."""
+        """Policy-driven recording loop for a single episode.
+
+        *timer* is owned by :meth:`run` and shared across episodes so its run
+        summary spans the session; the caller re-arms it between episodes.
+        """
         interpolator = self._interpolator
-        timer = CycleTimer(fps, interpolator.multiplier)
 
         timestamp = 0.0
         start_t = time.perf_counter()
@@ -231,23 +245,27 @@ class EpisodicStrategy(RolloutStrategy):
             if ctx.runtime.shutdown_event.is_set():
                 break
 
-            obs = robot.get_observation()
-            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+            with timer.section("observe"):
+                obs = robot.get_observation()
+            with timer.section("process_obs"):
+                obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
             if self._handle_warmup(ctx.runtime.cfg.use_torch_compile, timer):
                 continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
             if action_dict is not None:
-                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                with timer.section("telemetry"):
+                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
                 # Record once per interpolation cycle so the dataset cadence
                 # matches its declared fps; interpolated ticks only send
                 # commands to the robot.
                 if interpolator.emitted_policy_action:
-                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                    dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
+                    with timer.section("record"):
+                        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                        action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
             timer.wait()
             timestamp = time.perf_counter() - start_t

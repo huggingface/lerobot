@@ -50,23 +50,30 @@ class BaseStrategy(RolloutStrategy):
         engine.resume()
         logger.info("Base strategy control loop started")
 
-        while not ctx.runtime.shutdown_event.is_set():
-            timer.tick(new_cycle=interpolator.needs_new_action())
+        try:
+            while not ctx.runtime.shutdown_event.is_set():
+                timer.tick(new_cycle=interpolator.needs_new_action())
 
-            if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
-                logger.info("Duration limit reached (%.0fs)", cfg.duration)
-                break
+                if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
+                    logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                    break
 
-            obs = robot.get_observation()
-            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+                with timer.section("observe"):
+                    obs = robot.get_observation()
+                with timer.section("process_obs"):
+                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 
-            if self._handle_warmup(cfg.use_torch_compile, timer):
-                continue
+                if self._handle_warmup(cfg.use_torch_compile, timer):
+                    continue
 
-            action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
-            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                with timer.section("telemetry"):
+                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
 
-            timer.wait()
+                timer.wait()
+        finally:
+            logger.info("Base strategy control loop ended")
+            timer.log_run_summary()
 
     def teardown(self, ctx: RolloutContext) -> None:
         """Disconnect hardware and stop inference."""
