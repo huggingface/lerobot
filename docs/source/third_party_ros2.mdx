@@ -6,7 +6,7 @@
 > These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, supported ROS 2 distros, and support.
 
 > [!TIP]
-> ⚠️ marks projects that require a patched or pinned version of LeRobot rather than working with a current, unmodified install. Check each repository's declared `lerobot` version range before installing.
+> ⚠️ marks projects that are forks/extensions of LeRobot. They may require custom setup rather than working with an unmodified install. LeRobot moves quickly, so check each project's declared `lerobot` version range against your installed version before installing.
 
 ## Robot Bridges
 
@@ -27,7 +27,7 @@ Plugins follow LeRobot's auto-discovery convention (`lerobot_robot_*`, `lerobot_
       <td>Plugins (<code>lerobot_robot_ros2</code>, <code>lerobot_teleoperator_ros2</code>) with a composable, config-driven mapping between ROS 2 topics and LeRobot features: joint positions, end-effector poses, torques/wrenches, grippers, and compressed images. Also ships <code>leros2-convert</code> for bag-to-dataset conversion (see below). Installs from source.</td>
     </tr>
     <tr style="border:0">
-      <td><a href="https://github.com/ycheng517/lerobot-ros">lerobot-ros (ycheng517)</a> ⚠️</td>
+      <td><a href="https://github.com/ycheng517/lerobot-ros">lerobot-ros (ycheng517)</a></td>
       <td>Plugin wrapping any <a href="https://control.ros.org/">ros2_control</a> / <a href="https://moveit.ai/">MoveIt</a> arm, with joint position, joint trajectory, and MoveIt Servo end-effector velocity modes, plus gamepad and keyboard teleoperators. Targets lerobot 0.4.x and ROS 2 Jazzy.</td>
     </tr>
     <tr style="border:0">
