@@ -2188,6 +2188,24 @@ def test_model_inputs_keep_continuous_values_float32_before_autocast():
     assert "ignored_float" not in model_inputs
 
 
+def test_explicit_flow_matching_tensors_follow_fp32_action_dtype():
+    policy = object.__new__(MolmoAct2Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = SimpleNamespace(num_flow_timesteps=2, mask_action_dim_padding=False)
+
+    actions, timesteps, xt, target_velocity = policy._prepare_flow_matching_tensors(
+        actions=torch.ones(1, 3, 4, dtype=torch.float64),
+        action_dim_is_pad=None,
+        timesteps=torch.tensor([[0.25, 0.75]], dtype=torch.float64),
+        noise=torch.zeros(1, 2, 3, 4, dtype=torch.float64),
+    )
+
+    assert actions.dtype == torch.float32
+    assert timesteps.dtype == torch.float32
+    assert xt.dtype == torch.float32
+    assert target_velocity.dtype == torch.float32
+
+
 def test_joint_training_external_embeddings_use_active_autocast_dtype():
     class DummyBackbone:
         def merge_visual_inputs(self, **kwargs):

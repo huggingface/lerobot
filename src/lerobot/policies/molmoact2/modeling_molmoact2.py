@@ -1198,7 +1198,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             )
         else:
             expected_timesteps_shape = (batch_size, num_flow_timesteps)
-            timesteps = timesteps.to(device=device, dtype=action_dtype)
+            timesteps = timesteps.to(device=device, dtype=actions.dtype)
             if tuple(timesteps.shape) != expected_timesteps_shape:
                 raise ValueError(
                     f"flow timesteps must have shape {expected_timesteps_shape}, got {tuple(timesteps.shape)}."
