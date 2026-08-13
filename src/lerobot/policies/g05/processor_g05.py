@@ -805,6 +805,52 @@ def _project_stats(
     return result
 
 
+def fix_g05_train_overrides(
+    config: G05Config,
+    preprocessor_overrides: dict[str, Any] | None,
+    postprocessor_overrides: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Adapt ``lerobot-train``'s generic normalizer overrides to G0.5's pipeline.
+
+    ``lerobot-train`` assumes a ``normalizer_processor``/``unnormalizer_processor`` step pair
+    that normalizes raw dataset-space stats with ``policy.config.normalization_mapping``. G0.5's
+    normalizer instead runs after ``G05EmbodimentProjectionStep`` (policy-space, padded dims) and
+    keeps its own mode in ``config.normalization_mode``; its unnormalizer is also renamed to
+    ``g05_stepwise_unnormalizer`` when per-timestep stats are enabled. Left alone, the override
+    either targets a step name that doesn't exist (unnormalizer) or silently replaces the correct
+    projected stats/norm_map with raw, all-identity ones (normalizer).
+    """
+    mode = _normalization_mode(config)
+    full_norm_map = {
+        FeatureType.STATE: mode,
+        FeatureType.ACTION: mode,
+        FeatureType.VISUAL: NormalizationMode.IDENTITY,
+    }
+
+    preprocessor_overrides = dict(preprocessor_overrides or {})
+    normalizer_override = preprocessor_overrides.get("normalizer_processor")
+    if normalizer_override is not None:
+        normalizer_override = dict(normalizer_override)
+        normalizer_override["norm_map"] = full_norm_map
+        if normalizer_override.get("stats") is not None:
+            normalizer_override["stats"] = _project_stats(config, normalizer_override["stats"])
+        preprocessor_overrides["normalizer_processor"] = normalizer_override
+
+    postprocessor_overrides = dict(postprocessor_overrides or {})
+    unnormalizer_override = postprocessor_overrides.pop("unnormalizer_processor", None)
+    if unnormalizer_override is not None:
+        unnormalizer_override = dict(unnormalizer_override)
+        unnormalizer_override["norm_map"] = {FeatureType.ACTION: mode}
+        if unnormalizer_override.get("stats") is not None:
+            unnormalizer_override["stats"] = _project_stats(config, unnormalizer_override["stats"])
+        registry_name = (
+            "g05_stepwise_unnormalizer" if config.use_stepwise_action_norm else "unnormalizer_processor"
+        )
+        postprocessor_overrides[registry_name] = unnormalizer_override
+
+    return preprocessor_overrides, postprocessor_overrides
+
+
 def reconcile_g05_processors(
     config: G05Config,
     preprocessor: PolicyProcessorPipeline,

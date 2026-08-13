@@ -636,6 +636,92 @@ def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_p
     ]
 
 
+def test_finetune_overrides_reproject_stats_and_retarget_stepwise_unnormalizer(tmp_path: Path):
+    """Regression test for lerobot-train's generic normalizer overrides (see lerobot_train.py),
+    which assume raw dataset-space stats and a step literally named unnormalizer_processor.
+    G0.5 normalizes in policy (padded) space after G05EmbodimentProjectionStep and may rename its
+    unnormalizer to g05_stepwise_unnormalizer; naively applying the generic override either raises
+    (unnormalizer name mismatch) or silently swaps in wrong-width, all-IDENTITY normalization
+    (normalizer name matches but content doesn't).
+    """
+    cameras = (
+        "observation.images.exterior",
+        "observation.images.wrist_left",
+        "observation.images.wrist_right",
+    )
+    config = G05Config(
+        checkpoint_profile="custom",
+        embodiment="so100",
+        policy_state_dim=20,
+        policy_action_dim=20,
+        raw_state_dim=6,
+        raw_action_dim=6,
+        chunk_size=4,
+        n_action_steps=4,
+        normalization_mode="q01_q99",
+        use_stepwise_action_norm=True,
+        camera_order=cameras,
+        camera_sizes=dict.fromkeys(cameras, (8, 8)),
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+            **{key: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)) for key in cameras},
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        device="cpu",
+    )
+    seed_stats = {
+        OBS_STATE: {"q01": torch.zeros(6), "q99": torch.full((6,), 2.0)},
+        ACTION: {"q01": torch.zeros(6), "q99": torch.full((6,), 2.0)},
+    }
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=seed_stats)
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    # Mirrors lerobot_train.py's generic override construction verbatim: raw 6-D dataset stats,
+    # keyed by the plain "normalizer_processor"/"unnormalizer_processor" step names, using
+    # `policy.config.normalization_mapping` (which defaults to all-IDENTITY for G0.5).
+    dataset_stats = {
+        OBS_STATE: {"q01": torch.zeros(6), "q99": torch.full((6,), 4.0)},
+        ACTION: {"q01": torch.zeros(6), "q99": torch.full((6,), 4.0)},
+    }
+    preprocessor_overrides = {
+        "normalizer_processor": {
+            "features": {**config.input_features, **config.output_features},
+            "norm_map": config.normalization_mapping,
+            "stats": dataset_stats,
+        },
+    }
+    postprocessor_overrides = {
+        "unnormalizer_processor": {
+            "features": config.output_features,
+            "norm_map": config.normalization_mapping,
+            "stats": dataset_stats,
+        },
+    }
+
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=tmp_path,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+    )
+
+    # Retargeted to the stepwise step instead of raising on the unmatched "unnormalizer_processor"
+    # key, and normalizing (not IDENTITY) with the new stats projected to the 20-wide policy space.
+    unnorm_step = loaded_postprocessor.steps[0]
+    assert unnorm_step.__class__.__name__ == "G05StepwiseUnnormalizerStep"
+    assert unnorm_step.norm_map[FeatureType.ACTION].value == "QUANTILES"
+    assert unnorm_step._tensor_stats[ACTION]["q99"].shape[-1] == 20
+
+    norm_step = next(
+        step for step in loaded_preprocessor.steps if step.__class__.__name__ == "NormalizerProcessorStep"
+    )
+    assert norm_step.norm_map[FeatureType.STATE].value == "QUANTILES"
+    assert norm_step._tensor_stats[OBS_STATE]["q99"].shape[-1] == 20
+    # so100 state maps to policy dims 10..15; the new stat (4.0) should land there, not be dropped.
+    torch.testing.assert_close(norm_step._tensor_stats[OBS_STATE]["q99"][10:16], torch.full((6,), 4.0))
+
+
 def test_exact_raw_task_reaches_author_command_and_head_selection():
     backend = TinyG05Backend()
     policy = G05Policy(_config(), backend=backend)
