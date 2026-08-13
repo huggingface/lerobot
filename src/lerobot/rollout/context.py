@@ -158,8 +158,9 @@ class RuntimeContext:
     shutdown_event: Event
     # Where the control loop's ``CycleTimer`` sends its cadence summaries; None
     # leaves them on ``logger.info``.  ``InteractiveSession`` sets it to its
-    # terminal writer, since a session mutes INFO.  A strategy that declares
-    # ``supports_interactive`` must forward it to the timer it builds in ``run()``.
+    # terminal writer, since a session mutes everything below ERROR.  A strategy
+    # that declares ``supports_interactive`` must forward it to the timer it
+    # builds in ``run()``.
     cadence_report: Callable[[str], None] | None = None
 
 

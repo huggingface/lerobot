@@ -43,13 +43,13 @@ ended through the session's :class:`LinkedEvent` (installed as
 propagate through the linked event's parent, so Ctrl-C behaves exactly as in
 non-interactive runs.
 
-While the session runs, log records below WARNING and Python warnings are
+While the session runs, log records below ERROR and Python warnings are
 suppressed process-wide (via ``logging.disable``) so routine system output
-does not interleave with the chat prompt; WARNING records and above still
-reach the console (e.g. the control loop missing its FPS target), and a
-fatal inference-engine error is additionally reported with its captured
-traceback.  Normal logging resumes when the session ends (so teardown logs
-are visible).  Run without ``--interactive`` to see the full live log output.
+does not interleave with the chat prompt; ERROR records and above still
+reach the console, and a fatal inference-engine error is additionally
+reported with its captured traceback.  Normal logging resumes when the
+session ends (so teardown logs are visible).  Run without ``--interactive``
+to see the full live log output.
 
 The control loop's cadence summaries are the exception: they arrive only at
 episode and segment boundaries, so instead of being lost to the mute they are
@@ -88,23 +88,27 @@ _BANNER_RULE = "─" * 60
 
 @contextlib.contextmanager
 def _mute_system_output() -> Iterator[None]:
-    """Suppress log records below WARNING and Python warnings, process-wide.
+    """Suppress log records below ERROR and Python warnings, process-wide.
 
     System logs (policy, robot, control loop) contend with the chat prompt
     for the terminal.  ``logging.disable`` gates records before any handler
     dispatch, which covers non-propagating library loggers (``transformers``,
-    ``datasets``) and loggers created mid-session alike; WARNING and above
-    still get through, so control-loop overruns (``CycleTimer``'s slow-loop
-    warning) and failures stay visible.  The cadence *summaries* that same
-    timer emits are INFO, so the session routes them past logging entirely
-    (see :meth:`InteractiveSession._route_cadence_reports`).
+    ``datasets``) and loggers created mid-session alike; ERROR and above still
+    get through, so failures stay visible.  WARNING is muted with the rest:
+    the ones that fire during a session are either high-frequency (a slow
+    control loop warns once per over-budget cycle, which the routed cadence
+    summary already reports in aggregate) or third-party noise, and neither
+    is worth breaking up the operator's prompt.  The cadence *summaries* the
+    control loop's timer emits are INFO, so the session routes them past
+    logging entirely (see
+    :meth:`InteractiveSession._route_cadence_reports`).
     The gate applies to every handler — including file handlers, which
-    therefore also miss INFO/DEBUG records for the duration.  Python warnings
-    bypass logging entirely and are silenced separately: they are dominated
-    by third-party deprecation notices, not operational signals.
+    therefore also miss WARNING/INFO/DEBUG records for the duration.  Python
+    warnings bypass logging entirely and are silenced separately: they are
+    dominated by third-party deprecation notices, not operational signals.
     """
     previous_disable = logging.root.manager.disable
-    logging.disable(logging.INFO)
+    logging.disable(logging.WARNING)
     try:
         # catch_warnings restores the filters, the mutation counter, and
         # showwarning on exit — a hand-rolled filters snapshot misses the
@@ -426,7 +430,7 @@ class InteractiveSession:
             "Interactive rollout session — the robot will NOT move until you type /start.\n"
             f"Task: {_format_task(self.controller.initial_task)}\n"
             f"{self._render_help()}\n"
-            "Routine system logs are muted during the session (warnings, errors and the "
+            "Routine system logs and warnings are muted during the session (errors and the "
             "cadence summary of each run still show).\n"
             f"{_BANNER_RULE}"
         )

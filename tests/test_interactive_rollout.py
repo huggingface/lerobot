@@ -80,9 +80,9 @@ def _join_session(thread: Thread) -> None:
 
     Session threads mute logging process-wide for their lifetime: a hung
     thread surviving a bare join(timeout=...) would silently keep
-    ``logging.disable(INFO)`` active for the rest of the pytest process,
-    blanking every later caplog/INFO assertion with no visible connection
-    to the culprit.
+    ``logging.disable(WARNING)`` active for the rest of the pytest process,
+    blanking every later caplog assertion below ERROR with no visible
+    connection to the culprit.
     """
     thread.join(timeout=2.0)
     assert not thread.is_alive(), "thread did not exit — a hung session leaks process-wide log muting"
@@ -808,7 +808,7 @@ def test_session_commands_via_stream():
         assert strategy.run.call_count == 1
 
 
-def test_session_mutes_logs_below_warning_and_restores_on_exit():
+def test_session_mutes_logs_below_error_and_restores_on_exit():
     import warnings
 
     # Libraries like transformers attach their own console handler with
@@ -825,10 +825,12 @@ def test_session_mutes_logs_below_warning_and_restores_on_exit():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
 
             lib_logger.info("muted-info")
-            lib_logger.warning("visible-warning")  # e.g. control loop missing its FPS target
+            # e.g. the control loop's per-cycle slow-loop warning, which the
+            # routed cadence summary already reports in aggregate.
+            lib_logger.warning("muted-warning")
             lib_logger.error("visible-error")  # errors must surface mid-session
 
             session._handle_line("/stop")
@@ -836,7 +838,7 @@ def test_session_mutes_logs_below_warning_and_restores_on_exit():
 
         output = lib_stream.getvalue()
         assert "muted-info" not in output
-        assert "visible-warning" in output
+        assert "muted-warning" not in output
         assert "visible-error" in output
 
         # Everything is restored once the session ends.
@@ -858,7 +860,7 @@ def test_session_restores_preexisting_disable_level():
         with _pipe_stream() as (reader, _writer):
             session, _strategy, _engine, _parent, _run_started = _make_session(reader)
             thread = _start_session_thread(session)
-            assert _wait_for(lambda: logging.root.manager.disable == logging.INFO)
+            assert _wait_for(lambda: logging.root.manager.disable == logging.WARNING)
             session._handle_line("/stop")
             _join_session(thread)
         assert logging.root.manager.disable == logging.DEBUG
@@ -867,7 +869,7 @@ def test_session_restores_preexisting_disable_level():
 
 
 def test_session_prints_cadence_summaries_and_restores_the_sink(capsys):
-    """Cadence summaries reach the operator despite the muted INFO logs."""
+    """Cadence summaries reach the operator despite the muted logs."""
     sinks: list = []
 
     def run(ctx):
@@ -1042,8 +1044,9 @@ def test_session_empty_quoted_arguments_are_rejected(capsys):
 def test_query_tick_overrun_is_reported_like_any_other(caplog):
     """A generating tick overruns, and is warned about rather than exempted.
 
-    It is seconds of a robot holding position, and WARNING is the only level
-    the session's log muting lets through.
+    It is seconds of a robot holding position: a non-interactive run gets the
+    warning live, and an interactive one — which mutes WARNING — sees it in
+    the miss counts of the cadence summary.
     """
     from lerobot.rollout import BaseStrategy, BaseStrategyConfig
 
@@ -1546,8 +1549,8 @@ def test_sentry_tail_saves_count_toward_upload_cadence(monkeypatch):
 def test_sentry_warns_before_blocking_on_inflight_push(monkeypatch, caplog):
     """/reset//stop during a Hub upload must say why the robot is frozen.
 
-    The WARNING level is deliberate: it pierces the interactive session's
-    log muting.
+    An interactive session mutes WARNING, so on the console this lands only
+    in a non-interactive run or an attached log file.
     """
     strategy, ctx, dataset, _engine, stop_event = _make_sentry(monkeypatch)
     pending = MagicMock()

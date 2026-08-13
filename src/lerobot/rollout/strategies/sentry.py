@@ -288,12 +288,14 @@ class SentryStrategy(RolloutStrategy):
             self._episodes_since_push = 0
 
     def _warn_if_push_in_flight(self) -> None:
-        """Warn — piercing the muted interactive console — before a save that must wait.
+        """Warn before a save that must wait on a background upload.
 
         ``save_episode`` contends with a background Hub push for
         ``_episode_lock``; on a slow uplink an operator's ``/reset`` or
         ``/stop`` would otherwise freeze the robot at an arbitrary pose for
-        minutes with zero feedback.
+        minutes with zero feedback.  An interactive session mutes WARNING
+        along with the rest of the routine output, so there this explains the
+        freeze only in an attached log file — not on the console.
         """
         if self._pending_push is not None and not self._pending_push.done():
             logger.warning(
