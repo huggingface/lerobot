@@ -353,7 +353,6 @@ class MolmoAct2Config(PreTrainedConfig):
     # compilation strategy. The policy intentionally keeps the compiler
     # backend/scope internal so there is only one supported execution plan.
     compile_model: bool = False
-    compile_mode: str = "default"
 
     # Pi0.5-style precision switch controlling parameter storage and autocast.
     # ``bfloat16`` stores large text and vision matrices in bf16 while the full
@@ -437,11 +436,6 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
         if self.dtype not in {"float32", "bfloat16"}:
             raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected 'float32' or 'bfloat16'.")
-        if self.compile_mode not in {"default", "max-autotune-no-cudagraphs"}:
-            raise ValueError(
-                f"Unsupported compile_mode={self.compile_mode!r}. Expected one of "
-                "{'default', 'max-autotune-no-cudagraphs'}."
-            )
         if not 0 <= self.llm_residual_dropout <= 1:
             raise ValueError(f"llm_residual_dropout must be in [0, 1], got {self.llm_residual_dropout}.")
         if self.lora_rank < 1:

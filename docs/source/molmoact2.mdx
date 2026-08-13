@@ -229,11 +229,6 @@ fine-tuning datasets, larger global batch sizes and full VLM fine-tuning
   dynamic; batch size, action horizon, and flow-timestep count remain static.
   Dynamo graph-cache reordering and its extra DDP graph splitter are disabled in
   that mode so backward recomputation selects the same block graph as forward.
-- `policy.compile_mode`: either `default` or
-  `max-autotune-no-cudagraphs`. The default matches official MolmoAct2
-  training. CUDA-graph modes such as `reduce-overhead` and `max-autotune` are
-  intentionally rejected: independently compiled blocks keep outputs alive
-  for backward, which is incompatible with CUDA Graph output-buffer reuse.
   Batch-local text/action sequences are left-padded to an internal multiple of
   8 before BOS insertion. This adds at most seven masked tokens while sharply
   reducing shape-specific compile warm-up; it is not a user-facing option.

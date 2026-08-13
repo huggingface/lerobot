@@ -1033,8 +1033,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         torch.set_float32_matmul_precision("high")
         compile_options = {"emulate_precision_casts": True}
-        if self.config.compile_mode == "max-autotune-no-cudagraphs":
-            compile_options.update(max_autotune=True, coordinate_descent_tuning=True)
         compile_kwargs = {
             "backend": "inductor",
             "options": compile_options,
@@ -1050,8 +1048,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._compiled_module_names = tuple(compiled_names)
         self._compile_applied = True
         logger.info(
-            "Enabled MolmoAct2 block-wise torch.compile (%s) for %d modules.",
-            self.config.compile_mode,
+            "Enabled MolmoAct2 block-wise torch.compile for %d modules.",
             len(compiled_names),
         )
 

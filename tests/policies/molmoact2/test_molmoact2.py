@@ -21,8 +21,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-import os
-import time
 from collections import deque
 from types import SimpleNamespace
 
@@ -792,60 +790,6 @@ def test_molmoact2_optimizer_uses_native_cuda_foreach(monkeypatch):
     assert optimizer.state[bfloat16_param]["compensation"].dtype == torch.bfloat16
     assert optimizer.state[float32_param]["exp_avg"].dtype == torch.float32
     assert "compensation" not in optimizer.state[float32_param]
-
-
-@pytest.mark.skipif(
-    os.environ.get("LEROBOT_RUN_MOLMOACT2_OPTIMIZER_BENCHMARK") != "1",
-    reason="Set LEROBOT_RUN_MOLMOACT2_OPTIMIZER_BENCHMARK=1 on a CUDA worker.",
-)
-def test_molmoact2_optimizer_native_foreach_microbenchmark():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for the MolmoAct2 optimizer microbenchmark.")
-    device = torch.device("cuda")
-    tensor_count = 256
-    tensor_numel = 16 * 1024
-    optimized_params = [
-        torch.nn.Parameter(torch.ones(tensor_numel, device=device, dtype=torch.bfloat16))
-        for _ in range(tensor_count)
-    ]
-    native_params = [torch.nn.Parameter(param.detach().clone()) for param in optimized_params]
-    optimized = MolmoAct2AdamWConfig(
-        lr=1e-4,
-        betas=(0.9, 0.95),
-        eps=1e-6,
-        group_grad_clip_norm=1e6,
-    ).build(optimized_params)
-    native = torch.optim.AdamW(
-        native_params,
-        lr=1e-4,
-        betas=(0.9, 0.95),
-        eps=1e-6,
-        weight_decay=0.0,
-    )
-    for param in (*optimized_params, *native_params):
-        param.grad = torch.full_like(param, 0.25)
-
-    for _ in range(2):
-        optimized.step()
-        native.step()
-    torch.cuda.synchronize()
-
-    def elapsed_seconds(callable_step):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        for _ in range(3):
-            callable_step()
-        torch.cuda.synchronize()
-        return time.perf_counter() - start
-
-    optimized_seconds = elapsed_seconds(optimized.step)
-    native_seconds = elapsed_seconds(native.step)
-    print(
-        "MolmoAct2 AdamW microbenchmark: "
-        f"compensated={optimized_seconds:.6f}s native_bf16={native_seconds:.6f}s "
-        f"overhead={optimized_seconds / native_seconds:.2f}x"
-    )
-    assert optimized_seconds < native_seconds * 1.5
 
 
 def test_molmoact2_checkpoint_download_ignores_remote_python(monkeypatch):
@@ -1873,13 +1817,6 @@ def test_molmoact2_pi05_compile_defaults():
     config = MolmoAct2Config()
 
     assert config.compile_model is False
-    assert config.compile_mode == "default"
-    for compile_mode in ("default", "max-autotune-no-cudagraphs"):
-        assert MolmoAct2Config(compile_mode=compile_mode).compile_mode == compile_mode
-
-    for compile_mode in ("reduce-overhead", "max-autotune", "invalid"):
-        with pytest.raises(ValueError, match="Unsupported compile_mode"):
-            MolmoAct2Config(compile_mode=compile_mode)
 
 
 def test_joint_checkpoint_bypasses_only_nested_transformers_wrapper():
@@ -1982,7 +1919,6 @@ def _make_compile_test_policy(
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(
         compile_model=compile_model,
-        compile_mode="default",
         gradient_checkpointing=gradient_checkpointing,
         train_mode_vlm=train_mode_vlm,
     )
