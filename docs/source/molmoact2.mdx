@@ -21,44 +21,19 @@ uv sync --locked --extra molmoact2
 ```
 
 To run the models in this repository, you need an NVIDIA GPU. The current
-mixed-precision and compile path was measured on one NVIDIA GB200 with PyTorch
-2.11, real augmented LIBERO samples from two RGB cameras, per-GPU batch size
-32, `train_mode_vlm=fft`, `action_mode=continuous`, `chunk_size=10`,
-`num_flow_timesteps=8`, and `gradient_checkpointing=true`. The complete action
-expert was stored in fp32 and the large VLM matrices in bf16. Timings cover a
-complete forward, backward, gradient clipping, and AdamW step; image decode and
-preprocessing are outside the timed region. Each row used a cold compiler cache,
-four warmup steps, and eight measured steps alternating real sequence lengths
-524 and 538.
+mixed-precision path stores the complete action expert in fp32 and the large VLM
+matrices in bf16. `policy.compile_model=true` optionally compiles the action
+expert blocks while leaving the VLM, vision tower, connector, and policy wrapper
+eager. This boundary passed same-start output, gradient, and optimizer-update
+parity checks; compiling the bf16 VLM path did not.
 
 Multi-GPU training through `accelerate` increases throughput and global batch
-size. The path has been exercised on two-node, eight-GPU GB200 runs, but this
-LeRobot port does not currently expose the original MolmoAct2 `fsdp_devices`
-model-parallel training path.
-
-| Execution strategy | Effective sequence lengths | Median step | Samples/s | Speedup | Peak allocated / reserved | 30k-step compute projection |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Eager, batch-local padding | 524 / 538 | 2.067 s | 15.48 | 1.00x | 51.48 / 53.82 GiB | 17.23 h |
-| Compile, automatic dynamic shapes | 524 / 538 | 1.206 s | 26.54 | 1.71x | 51.46 / 52.97 GiB | 10.06 h |
-| Compile, every sequence dimension dynamic | 524 / 538 | 1.260 s | 25.40 | 1.64x | 51.46 / 52.97 GiB | 10.51 h |
-| Compile, fixed left-padding | 640 / 640 | 1.212 s | 26.40 | 1.71x | 51.49 / 52.87 GiB | 10.11 h |
-
-The selected implementation is block-wise compile with fully dynamic text and
-action blocks when gradient checkpointing is enabled. This prevents PyTorch's
-automatic static-to-dynamic graph transition from selecting a different graph
-during checkpoint recomputation. Because repeated transformer blocks can still
-produce multiple valid graphs, this combination also disables Dynamo LRU hit
-reordering so recomputation searches compiled graphs in the same stable order
-as the original forward. It also disables Dynamo's additional DDP graph
-splitter, whose context exists in the original DDP forward but not in backward
-recomputation; normal C++ DDP gradient reduction remains enabled. Graph caching
-and compilation remain enabled. Without gradient checkpointing, the policy uses
-the slightly faster automatic dynamic-shape strategy. Neither path increased
-peak allocated memory in this benchmark. The 30k-step column is a one-GPU
-compute projection, not a multi-node wall-clock ETA. Plain
-`max-autotune` is not supported because its implicit CUDA Graph output-buffer
-reuse is unsafe for independently compiled blocks whose outputs remain live for
-backward.
+size. This path has been exercised on two-node, eight-GPU GB200 runs, but this
+LeRobot port does not expose the original MolmoAct2 `fsdp_devices`
+model-parallel training path. A one-GPU GB200 replay with two real prompt widths
+produced one compiled action graph with no graph breaks, the same 55.15 GiB peak
+memory as eager execution, and a modest steady-state speedup. Treat these as
+implementation checks rather than portable throughput or ETA claims.
 
 The repo has been tested with Ubuntu 22.04.
 
@@ -247,12 +222,13 @@ fine-tuning datasets, larger global batch sizes and full VLM fine-tuning
   activation and gradient drift while retaining acceleration for the action
   path evaluated at every flow timestep. Inductor is also instructed to
   preserve eager BF16 downcast/upcast boundaries across fused operations. This
-  is one fixed precision-safe boundary and does not add another compile option. Compilation
-  is disabled by default; enable it for long GPU training runs. Text and action
-  blocks are fully dynamic with gradient checkpointing, and otherwise use
-  PyTorch's automatic dynamic-shape generalization. Some mask/shape guards still
-  specialize exact batch widths, so the internal bucketing described below
-  bounds shape-specific compile warm-up.
+  is one fixed precision-safe boundary and does not add another compile option.
+  Compilation is disabled by default; enable it for long GPU training runs.
+  The action blocks use PyTorch's automatic shape strategy. With gradient
+  checkpointing, only the variable encoder-context sequence dimension is marked
+  dynamic; batch size, action horizon, and flow-timestep count remain static.
+  Dynamo graph-cache reordering and its extra DDP graph splitter are disabled in
+  that mode so backward recomputation selects the same block graph as forward.
 - `policy.compile_mode`: either `default` or
   `max-autotune-no-cudagraphs`. The default matches official MolmoAct2
   training. CUDA-graph modes such as `reduce-overhead` and `max-autotune` are
