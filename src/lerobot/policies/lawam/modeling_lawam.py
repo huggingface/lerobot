@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -230,7 +231,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.model.to(config.device)
         self.reset()
 
-    def _save_pretrained(self, save_directory, state_dict=None) -> None:
+    def _save_pretrained(self, save_directory: Path) -> None:
         runtime_config = self.config
         self.config = replace(
             runtime_config,
@@ -238,7 +239,7 @@ class LaWAMPolicy(PreTrainedPolicy):
             hf_cache_dir=None,
         )
         try:
-            super()._save_pretrained(save_directory, state_dict=state_dict)
+            super()._save_pretrained(save_directory)
         finally:
             self.config = runtime_config
 
