@@ -254,10 +254,15 @@ class SentryStrategy(RolloutStrategy):
             )
 
     def teardown(self, ctx: RolloutContext) -> None:
-        """Flush pending pushes, finalise the dataset, and disconnect hardware."""
-        play_sounds = ctx.runtime.cfg.play_sounds
+        """Disconnect hardware, then flush pending pushes and finalise the dataset."""
         logger.info("Stopping sentry recording")
-        log_say("Stopping sentry recording", play_sounds)
+        log_say("Stopping sentry recording", ctx.runtime.cfg.play_sounds)
+
+        self._teardown(ctx)
+        logger.info("Sentry strategy teardown complete")
+
+    def _teardown_dataset(self, ctx: RolloutContext) -> None:
+        play_sounds = ctx.runtime.cfg.play_sounds
 
         # Flush any queued/running push cleanly.
         if self._push_executor is not None:
@@ -287,12 +292,6 @@ class SentryStrategy(RolloutStrategy):
                 ):
                     logger.info("Dataset uploaded to hub")
                     log_say("Dataset uploaded to hub", play_sounds)
-
-        self._teardown_hardware(
-            ctx.hardware,
-            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
-        )
-        logger.info("Sentry strategy teardown complete")
 
     def _background_push(self, dataset, cfg) -> None:
         """Queue a Hub push on the single-worker executor.

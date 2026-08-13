@@ -766,6 +766,29 @@ def test_sentry_run_is_restartable_and_finalizes_only_in_teardown(monkeypatch):
     dataset.finalize.assert_called_once()
 
 
+def test_teardown_releases_hardware_before_the_dataset_work(monkeypatch):
+    """The robot must not hold torque through a finalize plus a Hub upload."""
+    strategy, ctx, dataset, _engine, _stop_event = _make_sentry(monkeypatch)
+
+    order = []
+    ctx.hardware.robot_wrapper.inner.disconnect.side_effect = lambda: order.append("disconnect")
+    dataset.finalize.side_effect = lambda: order.append("finalize")
+
+    strategy.teardown(ctx)
+    assert order == ["disconnect", "finalize"]
+
+
+def test_teardown_finalizes_the_dataset_when_the_disconnect_fails(monkeypatch):
+    """A wedged serial port must not cost the dataset; the error still surfaces."""
+    strategy, ctx, dataset, _engine, _stop_event = _make_sentry(monkeypatch)
+    ctx.hardware.robot_wrapper.inner.disconnect.side_effect = OSError("serial port gone")
+
+    with pytest.raises(OSError, match="serial port gone"):
+        strategy.teardown(ctx)
+
+    dataset.finalize.assert_called_once()
+
+
 def test_sentry_labels_frames_with_dispatched_action_task(monkeypatch):
     strategy, ctx, dataset, engine, stop_event = _make_sentry(monkeypatch)
 

@@ -148,6 +148,28 @@ class RolloutStrategy(abc.ABC):
             engine.resume()
         return False
 
+    def _teardown(self, ctx: RolloutContext) -> None:
+        """Release the hardware, then shut the dataset down.
+
+        Hardware teardown is bounded — a return-to-pose plus a disconnect — while the
+        dataset work is not: a video flush and a Hub upload run for minutes, and the
+        robot would otherwise hold torque (and defer its return-to-pose) for all of it.
+        The ``finally`` keeps the guarantee that motivated the old ordering: the dataset
+        is still written when the disconnect raises, including on the ``SystemExit`` a
+        second Ctrl-C raises through ``ProcessSignalHandler`` — a ``BaseException`` that
+        an ``except Exception`` would miss.
+        """
+        try:
+            self._teardown_hardware(
+                ctx.hardware,
+                return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
+            )
+        finally:
+            self._teardown_dataset(ctx)
+
+    def _teardown_dataset(self, ctx: RolloutContext) -> None:  # noqa: B027
+        """Dataset shutdown, run after the hardware is released.  No-op by default."""
+
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
         """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
         if self._engine is not None:

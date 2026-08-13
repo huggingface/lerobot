@@ -558,27 +558,31 @@ def record(
 
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 
-        if dataset:
-            dataset.finalize()
+        # Release the hardware before the dataset work: disconnecting is bounded, the
+        # hub upload is not, and the robot would otherwise hold torque throughout it.
+        # The `finally` keeps the dataset written even when a disconnect blows up.
+        try:
+            if robot.is_connected:
+                robot.disconnect()
+            if teleop and teleop.is_connected:
+                teleop.disconnect()
+        finally:
+            if dataset:
+                dataset.finalize()
 
-        if robot.is_connected:
-            robot.disconnect()
-        if teleop and teleop.is_connected:
-            teleop.disconnect()
+            if listener is not None:
+                listener.stop()
 
-        if listener is not None:
-            listener.stop()
+            if cfg.display_data:
+                shutdown_visualization(cfg.display_mode)
 
-        if cfg.display_data:
-            shutdown_visualization(cfg.display_mode)
+            if cfg.dataset.push_to_hub:
+                if dataset and dataset.num_episodes > 0:
+                    dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
+                else:
+                    logging.warning("No episodes saved — skipping push to hub")
 
-        if cfg.dataset.push_to_hub:
-            if dataset and dataset.num_episodes > 0:
-                dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
-            else:
-                logging.warning("No episodes saved — skipping push to hub")
-
-        log_say("Exiting", cfg.play_sounds)
+            log_say("Exiting", cfg.play_sounds)
     return dataset
 
 

@@ -323,14 +323,20 @@ class EpisodicStrategy(RolloutStrategy):
             timestamp = time.perf_counter() - start_t
 
     def teardown(self, ctx: RolloutContext) -> None:
-        """Finalise dataset, stop listener, push to hub, and disconnect hardware."""
-        cfg = ctx.runtime.cfg
-        play_sounds = cfg.play_sounds
+        """Stop the listener, disconnect hardware, then finalise and push the dataset."""
+        play_sounds = ctx.runtime.cfg.play_sounds
 
         log_say("Stop recording", play_sounds, blocking=True)
 
         if self._listener is not None:
             self._listener.stop()
+
+        self._teardown(ctx)
+        log_say("Exiting", play_sounds)
+        logger.info("Episodic strategy teardown complete")
+
+    def _teardown_dataset(self, ctx: RolloutContext) -> None:
+        cfg = ctx.runtime.cfg
 
         if ctx.data.dataset is not None:
             logger.info("Finalizing dataset...")
@@ -347,11 +353,4 @@ class EpisodicStrategy(RolloutStrategy):
             )
         ):
             logger.info("Dataset uploaded to hub")
-            log_say("Dataset uploaded to hub", play_sounds)
-
-        self._teardown_hardware(
-            ctx.hardware,
-            return_to_initial_position=cfg.return_to_initial_position,
-        )
-        log_say("Exiting", play_sounds)
-        logger.info("Episodic strategy teardown complete")
+            log_say("Dataset uploaded to hub", cfg.play_sounds)

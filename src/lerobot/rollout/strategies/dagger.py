@@ -284,14 +284,19 @@ class DAggerStrategy(RolloutStrategy):
             self._run_corrections_only(ctx)
 
     def teardown(self, ctx: RolloutContext) -> None:
-        """Stop listeners, finalise the dataset, and disconnect hardware."""
-        play_sounds = ctx.runtime.cfg.play_sounds
+        """Stop listeners, disconnect hardware, then finalise and push the dataset."""
         logger.info("Stopping DAgger recording")
-        log_say("Stopping DAgger recording", play_sounds)
+        log_say("Stopping DAgger recording", ctx.runtime.cfg.play_sounds)
 
         if self._listener is not None:
             logger.info("Stopping keyboard listener")
             self._listener.stop()
+
+        self._teardown(ctx)
+        logger.info("DAgger strategy teardown complete")
+
+    def _teardown_dataset(self, ctx: RolloutContext) -> None:
+        play_sounds = ctx.runtime.cfg.play_sounds
 
         # Flush any queued/running push cleanly
         if self._push_executor is not None:
@@ -311,12 +316,6 @@ class DAggerStrategy(RolloutStrategy):
                 ):
                     logger.info("Dataset uploaded to hub")
                     log_say("Dataset uploaded to hub", play_sounds)
-
-        self._teardown_hardware(
-            ctx.hardware,
-            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
-        )
-        logger.info("DAgger strategy teardown complete")
 
     # ------------------------------------------------------------------
     # Continuous recording mode (record_autonomous=True)
