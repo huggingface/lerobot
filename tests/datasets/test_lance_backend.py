@@ -116,9 +116,16 @@ def test_tabular_parity(dataset_roots):
     with pytest.raises(IndexError):
         lance_ds[len(lance_ds)]
 
-    # out-of-range episode indices are dropped like upstream, not wrapped
+    # out-of-range episode indices are dropped (same resolve_episode_indices helper);
+    # an all-invalid selection errors on both readers rather than wrapping around
+    with pytest.raises(ValueError):
+        LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[-1])[0]
     with pytest.raises(ValueError, match="None of the requested episodes"):
         LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[-1])
+    upstream_m = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[-1, 1])
+    lance_m = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[-1, 1])
+    assert len(lance_m) == len(upstream_m)
+    assert_items_equal(lance_m[0], upstream_m[0])
 
     # episode subset: relative/absolute mapping mirrors upstream
     upstream_s = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1])

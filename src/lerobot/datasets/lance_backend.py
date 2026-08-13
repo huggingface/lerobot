@@ -30,7 +30,6 @@ from __future__ import annotations
 import bisect
 import io
 import json
-import logging
 import multiprocessing
 import os
 import re
@@ -58,9 +57,8 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices
 from .storage import is_remote_uri
+from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
-
-logger = logging.getLogger(__name__)
 
 FRAMES_TABLE = "frames"
 VIDEOS_TABLE = "videos"
@@ -406,17 +404,9 @@ class LanceBackend:
         self.set_image_transforms(image_transforms)
         self.return_uint8 = return_uint8
 
-        if episodes is not None:
-            invalid = [ep for ep in episodes if not 0 <= ep < meta.total_episodes]
-            if invalid:
-                logger.warning(
-                    "Ignoring episode indices outside the dataset range [0, %d): %s",
-                    meta.total_episodes,
-                    invalid,
-                )
-                episodes = [ep for ep in episodes if 0 <= ep < meta.total_episodes]
-            if not episodes:
-                raise ValueError("None of the requested episodes are in the dataset.")
+        episodes = resolve_episode_indices(episodes, meta.total_episodes)
+        if episodes is not None and not episodes:
+            raise ValueError("None of the requested episodes are in the dataset.")
         self.episodes = sorted(episodes) if episodes is not None else None
         self.delta_indices = None
         if delta_timestamps is not None:
