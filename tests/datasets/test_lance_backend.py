@@ -111,6 +111,15 @@ def test_tabular_parity(dataset_roots):
     for idx, item in zip(indices, lance_ds.__getitems__(indices), strict=True):
         assert_items_equal(item, lance_ds[idx])
 
+    # negative indexing mirrors upstream; out-of-range raises
+    assert_items_equal(lance_ds[-1], upstream[-1])
+    with pytest.raises(IndexError):
+        lance_ds[len(lance_ds)]
+
+    # out-of-range episode indices are dropped like upstream, not wrapped
+    with pytest.raises(ValueError, match="None of the requested episodes"):
+        LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[-1])
+
     # episode subset: relative/absolute mapping mirrors upstream
     upstream_s = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1])
     lance_s = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1])
