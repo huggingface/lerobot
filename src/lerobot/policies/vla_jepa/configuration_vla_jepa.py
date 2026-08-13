@@ -101,22 +101,18 @@ class VLAJEPAConfig(PreTrainedConfig):
     # world model is enabled the encoder's own `config.tubelet_size` is authoritative and this
     # is only used for the `num_video_frames` sanity check below.
     jepa_tubelet_size: int = 2
-    # Number of camera views the world model's predictor is built for; its embedding width is
-    # `encoder_hidden_size * world_model_num_views`, so it is baked into the checkpoint shapes.
-    # Views beyond this are trimmed and missing ones are padded with the first view.
-    # `None` falls back to `jepa_tubelet_size`, which is what the published checkpoints
-    # (trained before the two meanings were separated) actually encode.
+    # Camera views the world-model predictor is built for (extra views trimmed, missing ones padded
+    # with the first). Baked into checkpoint shapes. `None` falls back to `jepa_tubelet_size`, which
+    # is what the published checkpoints encode.
     world_model_num_views: int | None = None
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
     # If True, encode the world-model context causally instead of slicing it from the leaky shared pass (#4153).
     causal_world_model_context: bool = False
 
     resize_images_to: tuple[int, int] | None = None
-    # Gripper post-processing, ported from the starVLA LIBERO eval loop. OFF by default
-    # because it is only correct for LIBERO's action convention: `pre_snap` writes {0, 1}
-    # into normalized space and `binarize` then thresholds the *unnormalized* value at
-    # `gripper_threshold`, so a gripper whose physical range is not roughly [0, 1] (degrees,
-    # mm, [0, 100]) gets pinned to a constant. Enable them only for LIBERO-style setups.
+    # Gripper post-processing from the starVLA LIBERO eval loop. Off by default: only correct for
+    # LIBERO's action convention, and pins the gripper to a constant when its physical range is not
+    # roughly [0, 1]. See the docs for why.
     binarize_gripper_action: bool = False
     pre_snap_gripper_action: bool = False
     clip_normalized_actions: bool = True
@@ -202,11 +198,10 @@ class VLAJEPAConfig(PreTrainedConfig):
     def set_dataset_feature_metadata(self, dataset_features: dict[str, Any]) -> None:
         """Derive action/state dims and dimension names from the dataset actually being used.
 
-        `input_features` keeps the *pretrained* model's feature keys (rename_map needs them),
-        so `validate_features` can read stale dims off a pretrained config. `make_policy` calls
-        this before instantiating the policy, so the dims and names are correct by the time
-        either the model or the processor pipeline is built. Also adds `observation.state` to
-        `input_features` if missing, so it gets normalized.
+        `input_features` keeps the *pretrained* feature keys (rename_map needs them), so
+        `validate_features` would otherwise read stale dims off a pretrained config. Called by
+        `make_policy` before the model and processor pipeline are built. Also adds
+        `observation.state` to `input_features` if missing, so it gets normalized.
         """
         if OBS_STATE in dataset_features:
             self.state_dim = dataset_features[OBS_STATE]["shape"][0]
@@ -242,10 +237,9 @@ class VLAJEPAConfig(PreTrainedConfig):
         # window would decode `num_video_frames` frames per camera per sample and drop them.
         if not self.enable_world_model:
             return [0]
-        # matches original repo's observation_indices=list(range(video_horizon)) when the chunk
-        # fits within video_horizon frames. When chunk_size is longer (e.g. folding's 30-step
-        # chunk vs 8 video frames), spread the frames evenly across the chunk instead of
-        # clustering them at the start, so the world model sees dynamics over the whole horizon.
+        # Matches the original repo's `range(video_horizon)` when the chunk fits in the video window.
+        # For longer chunks, stride the frames across the chunk rather than clustering them at the
+        # start, so the world model sees dynamics over the whole horizon.
         if self.num_video_frames >= self.chunk_size:
             return list(range(self.num_video_frames))
         stride = (self.chunk_size - 1) // (self.num_video_frames - 1)

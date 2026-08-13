@@ -341,11 +341,9 @@ class ActionConditionedVideoPredictor(nn.Module):
         self.use_extrinsics = use_extrinsics
         self.predictor_embed = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
         self.action_encoder = nn.Linear(action_embed_dim, predictor_embed_dim, bias=True)
-        # `extrinsics_encoder` only feeds the `use_extrinsics` branch of `forward`. Building it
-        # unconditionally left ~2.1M parameters that never received a gradient (and were only
-        # tolerated by the trainer's global `find_unused_parameters=True`). There was a
-        # `state_encoder` here too, which nothing ever called. Checkpoints written before this
-        # change carry both; they surface as unexpected keys and are ignored on load.
+        # Only built when `use_extrinsics`; unconditionally was ~2.1M parameters that never got a
+        # gradient. A never-called `state_encoder` was dropped for the same reason. Older checkpoints
+        # carry both and they are ignored as unexpected keys on load.
         self.extrinsics_encoder = (
             nn.Linear(action_embed_dim - 1, predictor_embed_dim, bias=True) if use_extrinsics else None
         )

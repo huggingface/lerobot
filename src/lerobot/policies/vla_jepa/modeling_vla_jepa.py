@@ -139,18 +139,13 @@ class VLAJEPAModel(nn.Module):
     def _qwen_last_decoder_hidden(self, qwen_inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Return the last decoder hidden state before the final RMSNorm.
 
-        The model was trained with the output of the last transformer block BEFORE
-        the final RMSNorm. In transformers 5.x, `hidden_states[-1]` from
-        `output_hidden_states=True` is post-norm (tied to `last_hidden_state` via
-        `@capture_outputs`). A forward hook on `language_model.layers[-1]` recovers
-        the correct pre-RMSNorm state, matching the training-time representation.
+        The model was trained on the last block's pre-RMSNorm output, but in transformers 5.x
+        `hidden_states[-1]` is post-norm, so hook `language_model.layers[-1]` instead.
 
-        Calls the inner `Qwen3VLModel` rather than the `Qwen3VLForConditionalGeneration`
-        wrapper: only the hooked hidden state is used, and the wrapper's forward ends in
-        `lm_head(hidden_states[:, slice(None), :])` because `logits_to_keep` defaults to 0,
-        so it would build full-sequence logits over the 151936-token vocab and discard them
-        (~3.4 GB in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head`
-        keeps its checkpoint key; only this forward path skips it.
+        Calls the inner `Qwen3VLModel`, not the `Qwen3VLForConditionalGeneration` wrapper, whose
+        forward would build and discard full-sequence logits over the 151936-token vocab (~3.4 GB
+        in bf16 at batch 8). The wrapper stays as `self.qwen.model` so `lm_head` keeps its
+        checkpoint key; only this path skips it.
         """
         captured: list[torch.Tensor] = []
 
@@ -393,10 +388,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
     def __init__(self, config: VLAJEPAConfig, **kwargs) -> None:
         super().__init__(config)
         config.validate_features()
-        # NOTE: dimension derivation from the dataset lives in
-        # `VLAJEPAConfig.set_dataset_feature_metadata`, which `make_policy` calls before it
-        # ever gets here. Doing it in the config keeps `__init__` from mutating an object it
-        # does not own, and makes the derived dims visible to the processor factory too.
+        # Dataset dim derivation lives in `VLAJEPAConfig.set_dataset_feature_metadata` (called by
+        # `make_policy` before this): keeps `__init__` from mutating a config it does not own, and
+        # makes the derived dims visible to the processor factory too.
         self.model = VLAJEPAModel(config)
         self.reset()
 
@@ -426,10 +420,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
             raise ValueError("VLAJEPA requires at least one image feature.")
         batch_size = batch[image_keys[0]].shape[0]
 
-        # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages.
-        # Resize to config.resize_images_to (as predict_action does) so training and inference feed
-        # Qwen the same resolution. Critical for memory: native camera frames (e.g. 720x1280) would
-        # otherwise blow up the Qwen3-VL vision-tower attention (patch count grows with resolution).
+        # Current-frame image per view ([B, C, H, W]); regroup per sample for Qwen messages. Resize to
+        # `resize_images_to` as `predict_action` does, so training and inference feed Qwen the same
+        # resolution and native frames (e.g. 720x1280) don't blow up the vision-tower patch count.
         resize_hw = tuple(self.config.resize_images_to) if self.config.resize_images_to else None
         frames = []
         for key in image_keys:
@@ -455,12 +448,10 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         # Videos [B, V, T, C, H, W] - only assembled during training when the world model consumes them.
         if self.model.config.enable_world_model and training:
             views = [batch[k].unsqueeze(1) if batch[k].ndim == 4 else batch[k] for k in image_keys]
-            # The world model consumes a SINGLE stacked [B, V, T, C, H, W] tensor, so all camera
-            # views must share a spatial size. Cameras can differ (e.g. base 480x640 vs wrist
-            # 720x1280), so resize each view to a common size before stacking — config.resize_images_to
-            # if set (same target predict_action uses), else the first view's size (a no-op when all
-            # views already match, preserving behavior for single-resolution datasets). The vjepa video
-            # processor does the final resize to the encoder resolution downstream.
+            # A single stacked [B, V, T, C, H, W] tensor needs one spatial size for every view, and
+            # cameras can differ (base 480x640 vs wrist 720x1280). Resize to `resize_images_to`, else
+            # to the first view's size (a no-op for single-resolution datasets). The vjepa video
+            # processor handles the final resize to the encoder resolution.
             cfg = self.model.config
             target_hw = tuple(cfg.resize_images_to) if cfg.resize_images_to else tuple(views[0].shape[-2:])
             resized = []

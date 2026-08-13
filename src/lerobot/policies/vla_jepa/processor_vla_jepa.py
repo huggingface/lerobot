@@ -44,16 +44,13 @@ from lerobot.utils.constants import ACTION
 class ImagePrepProcessorStep(ObservationProcessorStep):
     """Prepares image observations for the VLA-JEPA model: float cast, 1->3 channel expand, resize.
 
-    This makes explicit (in the serialized pipeline) the image prep the model used to do
-    internally. The model keeps the same operations as idempotent guards, so:
-      - checkpoints saved WITHOUT this step (older uploads) are unaffected — the model still
-        does the prep;
-      - checkpoints saved WITH this step get it done here, and the model-side guards no-op.
+    Surfaces in the serialized pipeline the prep the model used to do internally. The model keeps the
+    same operations as idempotent guards, so older checkpoints saved without this step still get
+    prepped and newer ones no-op there.
 
-    Mirrors `Qwen3VLInterface.to_pixel_values` + the `F.interpolate(mode="area")` resize in
-    `VLAJEPAPolicy._prepare_model_inputs`/`predict_action`. Deliberately does NOT clamp (the
-    model path doesn't), so values stay bit-identical. Handles [C,H,W], [B,C,H,W]/[T,C,H,W]
-    and [B,T,C,H,W] image tensors.
+    Mirrors `Qwen3VLInterface.to_pixel_values` plus the `F.interpolate(mode="area")` resize in
+    `VLAJEPAPolicy._prepare_model_inputs`/`predict_action`, and does not clamp (neither does the model
+    path), so values stay bit-identical. Handles [C,H,W], [B,C,H,W]/[T,C,H,W] and [B,T,C,H,W].
     """
 
     def __init__(self, resize_to: tuple[int, int] | None = None, expand_channels: bool = True):
@@ -158,12 +155,10 @@ class BinarizeGripperProcessorStep(ProcessorStep):
     Maps continuous value to {-1, 1}: > threshold → -1, <= threshold → 1 (matches starVLA convention).
     Only applied when action has more dimensions than gripper_dim.
 
-    WARNING: this step runs *below* the unnormalizer, so `threshold` is compared against the
-    gripper's **physical** value while its default of 0.5 comes from the model's [0, 1]/±1
-    convention. It is only meaningful when the gripper's physical range is roughly [0, 1].
-    For a gripper in degrees, mm or [0, 100], every unnormalized value exceeds 0.5 and the
-    output collapses to the constant -1. `make_vla_jepa_pre_post_processors` warns when the
-    dataset stats say that is the case.
+    WARNING: runs *below* the unnormalizer, so `threshold` is compared against the gripper's
+    **physical** value while its 0.5 default comes from the model's [0, 1]/±1 convention. For a
+    gripper in degrees, mm or [0, 100] every value exceeds 0.5 and the output collapses to -1;
+    `make_vla_jepa_pre_post_processors` warns when the dataset stats say that is the case.
     """
 
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
@@ -194,11 +189,9 @@ def _warn_if_gripper_steps_are_misconfigured(
 ) -> None:
     """Warn when the gripper post-steps would pin the gripper to a constant.
 
-    `BinarizeGripperProcessorStep` thresholds the *unnormalized* gripper at
-    `gripper_threshold` (default 0.5, a number from the model's [0, 1] convention). When the
-    dataset says the gripper's physical range sits well above that, every unnormalized value
-    lands on the same side of the threshold and the commanded gripper never moves. The stats
-    needed to detect that are already here, so say so rather than letting it look like it worked.
+    `BinarizeGripperProcessorStep` thresholds the *unnormalized* gripper at `gripper_threshold`. When
+    the dataset's physical range sits well above it, every value lands on the same side and the
+    gripper never moves — detectable from the stats already here, so say so.
     """
     if not (config.pre_snap_gripper_action or config.binarize_gripper_action):
         return

@@ -71,11 +71,10 @@ class Qwen3VLInterface(torch.nn.Module):
             tokenizer.add_tokens([embodied_action_token], special_tokens=True)
         embodied_action_token_id = tokenizer.convert_tokens_to_ids(embodied_action_token)
 
-        # Qwen3-VL-2B ships 151936 embedding rows for a 151669-token vocab, i.e. 267 spare
-        # rows, so `chunk_size * 4 + 1` added tokens fit without a resize up to chunk_size=66.
-        # Past that, resizing changes `embed_tokens` and `lm_head` shapes, and the checkpoint
-        # will no longer load against a model built with a smaller chunk_size (or vice versa)
-        # unless those prefixes are listed in `reinit_modules`. Silent until now.
+        # Qwen3-VL-2B ships 267 spare embedding rows, so the `chunk_size * 4 + 1` added tokens fit
+        # without a resize up to chunk_size=66. Past that, resizing changes the `embed_tokens` /
+        # `lm_head` shapes and checkpoints stop loading across chunk sizes unless those prefixes are
+        # in `reinit_modules` — warn instead of failing silently.
         current_rows = self.model.get_input_embeddings().weight.size(0)
         if current_rows < len(tokenizer):
             logging.warning(

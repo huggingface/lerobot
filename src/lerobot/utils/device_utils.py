@@ -136,15 +136,12 @@ def is_amp_available(device: str):
 def get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16):
     """Return a device-safe autocast context manager.
 
-    Hardcoding `torch.autocast(dtype=torch.bfloat16)` breaks on backends without AMP
-    (MPS) and silently misbehaves on pre-Ampere CUDA GPUs that lack bf16 support. This
-    picks a safe context per device:
-      - no AMP support (e.g. mps): `nullcontext()` (run in the tensors' native dtype)
-      - CPU asked for a dtype its autocast does not implement (notably float32, used to force
-        a block back to full precision): `nullcontext()`. `torch.autocast` would accept it,
-        then warn and disable itself on *every* call, so this keeps the same behavior without
-        the per-forward log spam.
-      - CUDA requesting bf16 on compute capability < 8.0 (pre-Ampere): fall back to fp16
+    A hardcoded `torch.autocast(dtype=torch.bfloat16)` breaks on backends without AMP (MPS) and
+    misbehaves on pre-Ampere CUDA. Instead:
+      - no AMP support (e.g. mps): `nullcontext()`, i.e. the tensors' native dtype
+      - CPU with a dtype its autocast does not implement (notably float32): `nullcontext()`, since
+        `torch.autocast` would accept it and then warn-and-disable on every call
+      - CUDA asking for bf16 on compute capability < 8.0: fall back to fp16
       - otherwise: `torch.autocast(device_type, dtype)`
     """
     if not is_amp_available(device_type):
