@@ -54,6 +54,11 @@ from lerobot.utils.import_utils import (
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
+from .utils_molmoact2 import (
+    hf_token as _hf_token,
+    position_ids_from_attention_mask as _position_ids_from_attention_mask,
+    resolve_checkpoint_location as _resolve_checkpoint_location,
+)
 
 if TYPE_CHECKING or _peft_available:
     from peft import LoraConfig, get_peft_model
@@ -62,37 +67,6 @@ else:
     get_peft_model = None
 
 logger = logging.getLogger(__name__)
-
-
-def _hf_token() -> str | None:
-    return os.environ.get("HF_TOKEN") or os.environ.get("HF_ACCESS_TOKEN")
-
-
-def _resolve_checkpoint_location(
-    checkpoint_path: str,
-    *,
-    revision: str | None = None,
-    force_download: bool = False,
-) -> str:
-    """Resolve a checkpoint path to a local directory, downloading from Hub if needed."""
-    checkpoint_path = str(checkpoint_path or "").strip()
-    if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
-    from pathlib import Path
-
-    local_path = Path(checkpoint_path).expanduser()
-    if local_path.exists():
-        return str(local_path)
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(
-        repo_id=checkpoint_path,
-        repo_type="model",
-        revision=revision,
-        force_download=force_download,
-        ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
-    )
 
 
 def _torch_dtype(dtype: str) -> torch.dtype:
@@ -119,16 +93,6 @@ def _call_module_without_gradient_checkpointing_layer(
     module compilation, hooks, and autograd.
     """
     return torch.nn.Module.__call__(module, *args, **kwargs)
-
-
-def _position_ids_from_attention_mask(attention_mask: Tensor) -> Tensor:
-    """Build padding-invariant positions matching native MolmoAct2 training."""
-    if attention_mask.ndim != 2:
-        raise ValueError(
-            "MolmoAct2 position ids require a 2D attention mask, "
-            f"got shape {tuple(attention_mask.shape)}."
-        )
-    return torch.clamp(torch.cumsum(attention_mask.to(torch.long), dim=-1) - 1, min=0)
 
 
 def _next_decode_position_ids_from_attention_mask(attention_mask: Tensor | None) -> Tensor | None:

@@ -60,10 +60,10 @@ from lerobot.utils.constants import (
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 from .configuration_molmoact2 import MolmoAct2Config
-from .modeling_molmoact2 import (
-    _hf_token,
-    _position_ids_from_attention_mask,
-    _resolve_checkpoint_location,
+from .utils_molmoact2 import (
+    hf_token as _hf_token,
+    position_ids_from_attention_mask as _position_ids_from_attention_mask,
+    resolve_checkpoint_location as _resolve_checkpoint_location,
 )
 
 logger = logging.getLogger(__name__)
