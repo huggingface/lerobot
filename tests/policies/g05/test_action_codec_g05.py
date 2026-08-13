@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
+
+pytest.importorskip("transformers", reason="g05 requires the `g05` extra (transformers)")
 
 from lerobot.policies.g05.modeling_g05 import G05NativeActionCodec, _BinarySequenceCodec
 

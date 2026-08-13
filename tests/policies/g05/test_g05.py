@@ -23,6 +23,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 from torch import nn
+
+pytest.importorskip("transformers", reason="g05 requires the `g05` extra (transformers)")
+
 from transformers import DynamicCache
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig, Qwen3_5VisionConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import (

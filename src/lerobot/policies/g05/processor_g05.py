@@ -22,13 +22,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torchvision.transforms.functional as vision_functional
 from huggingface_hub import snapshot_download
 from torch import Tensor
-from transformers import AutoTokenizer
 
 from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
@@ -62,6 +61,12 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.import_utils import _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+else:
+    AutoTokenizer = None
 
 from .configuration_g05 import (
     G05_EMBODIMENT_MAPPINGS,
@@ -1147,6 +1152,7 @@ class G05Tokenizer:
     _PLACEHOLDER = re.compile(r"<([^<>|]+)>")
 
     def __init__(self, processor_path: str | Path, model_config: dict[str, Any]) -> None:
+        require_package("transformers", extra="g05")
         self.processor_path = Path(processor_path)
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.processor_path,
