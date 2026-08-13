@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -153,6 +154,82 @@ class _NormalizationMixin:
                     continue
                 self._tensor_stats[key][stat_name] = stat_tensor.reshape(-1, 1, 1)
 
+    def _required_stats_keys(self) -> list[str]:
+        """Returns the keys this step will look up in `_tensor_stats` at runtime.
+
+        Only features whose `FeatureType` maps to a non-identity `NormalizationMode`
+        need statistics. Actions are always transformed under the canonical `ACTION`
+        key by `_normalize_action`, whatever name they carry in `features`.
+        """
+        required: list[str] = []
+        has_action = False
+        for key, feature in self.features.items():
+            if self.norm_map.get(feature.type, NormalizationMode.IDENTITY) == NormalizationMode.IDENTITY:
+                continue
+            if feature.type == FeatureType.ACTION:
+                has_action = True
+                continue
+            if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
+                continue
+            required.append(key)
+        if has_action:
+            required.append(ACTION)
+        return required
+
+    def _resolve_prefixed_stats_keys(self) -> None:
+        """Strips dataset prefixes from loaded stats keys when the mapping is unambiguous.
+
+        Checkpoints whose normalization layers were kept per dataset store their stats
+        under prefixed keys (e.g. `'so100.buffer.action'`), while lookups happen under
+        the plain feature name (e.g. `'action'`). A prefixed key is remapped onto the
+        feature name when exactly one candidate exists.
+
+        Raises:
+            ValueError: If several datasets provide stats for the same feature. Picking
+                one of them would silently apply the wrong statistics, so the caller has
+                to supply the stats explicitly instead.
+        """
+        required = set(self._required_stats_keys())
+        ambiguous: dict[str, list[str]] = {}
+
+        for key in sorted(required):
+            if key in self._tensor_stats:
+                continue
+            candidates = sorted(k for k in self._tensor_stats if k.endswith(f".{key}") and k not in required)
+            if len(candidates) == 1:
+                self._tensor_stats[key] = self._tensor_stats.pop(candidates[0])
+            elif len(candidates) > 1:
+                ambiguous[key] = candidates
+
+        if ambiguous:
+            details = "\n".join(f"  {key}: {', '.join(cands)}" for key, cands in ambiguous.items())
+            raise ValueError(
+                "Normalization stats are stored under several dataset-prefixed keys, so the "
+                f"statistics to use cannot be determined:\n{details}\n"
+                "This happens with checkpoints trained on multiple datasets. Choose the stats "
+                "explicitly, for instance with "
+                'from_pretrained(..., overrides={"normalizer_processor": {"stats": dataset.meta.stats}}).'
+            )
+
+    def _warn_on_missing_stats(self) -> None:
+        """Logs the features that will be passed through unchanged for lack of stats.
+
+        `_apply_transform` returns its input untouched when a key has no statistics,
+        which is indistinguishable from a correctly normalized tensor. Reporting it once
+        at load time keeps an incomplete checkpoint from silently degrading inference.
+        """
+        missing = sorted(key for key in self._required_stats_keys() if key not in self._tensor_stats)
+        if not missing:
+            return
+        logging.warning(
+            "%s has no normalization stats for: %s. These features are passed through unchanged, "
+            "so a policy trained on normalized data will receive (or produce) values on the wrong "
+            "scale. Provide the stats explicitly through the processor overrides if this is "
+            "unexpected.",
+            type(self).__name__,
+            ", ".join(missing),
+        )
+
     def to(
         self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
     ) -> _NormalizationMixin:
@@ -206,9 +283,21 @@ class _NormalizationMixin:
         model to a new dataset with different statistics without retraining the entire
         model.
 
+        **Dataset-Prefixed Keys:**
+        Checkpoints that kept one normalization layer per training dataset store their
+        stats under prefixed keys (e.g. `'so100.buffer.action'`). Such a key is remapped
+        onto the feature name it ends with when it is the only candidate; when several
+        datasets provide stats for the same feature, a `ValueError` is raised rather than
+        picking one arbitrarily. Features left without stats are reported via a warning,
+        since they would otherwise be passed through unchanged and unnoticed.
+
         Args:
             state: A flat state dictionary with keys in the format
                    `'feature_name.stat_name'`.
+
+        Raises:
+            ValueError: If a feature's stats are only available under several different
+                dataset prefixes.
 
         Note:
             When stats are preserved due to explicit provision, only the tensor
@@ -221,6 +310,7 @@ class _NormalizationMixin:
             # But ensure _tensor_stats is properly initialized
             self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
             self._reshape_visual_stats()
+            self._warn_on_missing_stats()
             return
 
         # Normal behavior: load stats from state_dict
@@ -231,6 +321,7 @@ class _NormalizationMixin:
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
                 dtype=torch.float32, device=self.device
             )
+        self._resolve_prefixed_stats_keys()
         self._reshape_visual_stats()
 
         # Reconstruct the original stats dict from tensor stats for compatibility with to() method
@@ -241,6 +332,8 @@ class _NormalizationMixin:
             for stat_name, tensor in tensor_dict.items():
                 # Convert tensor back to python/numpy format
                 self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
+
+        self._warn_on_missing_stats()
 
     def get_config(self) -> dict[str, Any]:
         """
@@ -327,7 +420,11 @@ class _NormalizationMixin:
             ValueError: If an unsupported normalization mode is encountered.
         """
         norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if norm_mode == NormalizationMode.IDENTITY or key not in self._tensor_stats:
+        if norm_mode == NormalizationMode.IDENTITY:
+            return tensor
+        if key not in self._tensor_stats:
+            # Missing stats are reported once by `_warn_on_missing_stats` when the state
+            # is loaded; this path stays quiet so inference does not flood the logs.
             return tensor
 
         if norm_mode not in (
