@@ -96,6 +96,36 @@ potential = model.compute_reward(encoded)
 
 Use `Alibaba-DAMO-Academy/RynnValue-8B` as the converter's `--source-model-id` to select the larger checkpoint. `--revision` can pin a Hub commit.
 
+## Evaluate a LeRobot dataset
+
+The dataset adapter evaluates causal trajectory prefixes at a configurable inference rate and interpolates the anchor predictions to every dataset frame:
+
+```bash
+uv sync --locked --extra rynnvalue --extra dataset
+
+uv run python -m lerobot.rewards.rynnvalue.compute_rabc_weights \
+    --dataset-repo-id lilkm/stackblocks_recap_all_for_vf_v2 \
+    --reward-model-path outputs/rynnvalue-4b \
+    --output-path outputs/rynnvalue/stackblocks_top.parquet \
+    --image-key observation.images.top \
+    --robot-description "an SO-100 single-arm robot" \
+    --camera-description "a fixed third-person top camera" \
+    --inference-fps 1 \
+    --max-frames 8 \
+    --batch-size 2 \
+    --episodes 0 1
+```
+
+The Parquet file always contains the raw `remaining_time_s` prediction, `potential = -remaining_time_s`, and `is_inference_frame`. Inspect these values before using RynnValue for sample weighting. On successful trajectories, remaining time should generally decrease toward zero.
+
+To additionally write the `progress_sparse` column expected by the existing RA-BC loader, provide a fixed task horizon:
+
+```bash
+--max-remaining-time-s 60
+```
+
+This computes `progress_sparse = clip(1 - remaining_time_s / 60, 0, 1)`. Use one explicit task-level horizon rather than independently normalizing each episode, which would incorrectly force failed trajectories to end at progress one. The checkpoint, camera, sampling rates, and optional horizon are recorded in the Parquet metadata.
+
 ## Checkpoint format
 
 The converted `config.json` embeds the native architecture configuration, while `model.safetensors` stores weights under the LeRobot reward wrapper. Loading the converted checkpoint therefore does not need the original repository to construct the model. Processor assets are loaded from the same local directory or Hub repository.
