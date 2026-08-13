@@ -738,7 +738,7 @@ def _compute_horizon_relative_action_stats(
 
 def _iter_action_state_training_samples(dataset: Any):
     ensure_reader = getattr(dataset, "_ensure_reader", None)
-    if callable(ensure_reader):
+    if callable(ensure_reader) and getattr(dataset, "_storage_backend", None) is None:
         reader = ensure_reader()
         if reader.hf_dataset is None:
             reader.load_and_activate()
