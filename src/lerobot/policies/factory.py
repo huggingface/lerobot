@@ -34,6 +34,7 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    RenameObservationsProcessorStep,
     batch_to_transition,
     policy_action_to_transition,
     transition_to_batch,
@@ -48,6 +49,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .evo1.configuration_evo1 import Evo1Config
+from .g05.configuration_g05 import G05Config
 from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
@@ -191,11 +193,17 @@ def make_pre_post_processors(
             "Building processor pipelines from the active policy config instead of loading them from %s.",
             pretrained_path,
         )
-        return _make_processors_from_policy_config(
+        preprocessor, postprocessor = _make_processors_from_policy_config(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
         )
+        rename_override = (kwargs.get("preprocessor_overrides") or {}).get("rename_observations_processor")
+        if rename_override:
+            for step in preprocessor.steps:
+                if isinstance(step, RenameObservationsProcessorStep):
+                    step.rename_map = dict(rename_override.get("rename_map") or {})
+        return preprocessor, postprocessor
 
     if pretrained_path:
         if isinstance(policy_cfg, GrootConfig):
@@ -217,12 +225,21 @@ def make_pre_post_processors(
                 ),
             )
 
+        preprocessor_overrides = kwargs.get("preprocessor_overrides", {})
+        postprocessor_overrides = kwargs.get("postprocessor_overrides", {})
+        if isinstance(policy_cfg, G05Config):
+            from .g05.processor_g05 import fix_g05_train_overrides
+
+            preprocessor_overrides, postprocessor_overrides = fix_g05_train_overrides(
+                policy_cfg, preprocessor_overrides, postprocessor_overrides
+            )
+
         preprocessor = PolicyProcessorPipeline.from_pretrained(
             pretrained_model_name_or_path=pretrained_path,
             config_filename=kwargs.get(
                 "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
+            overrides=preprocessor_overrides,
             to_transition=batch_to_transition,
             to_output=transition_to_batch,
             revision=pretrained_revision,
@@ -232,7 +249,7 @@ def make_pre_post_processors(
             config_filename=kwargs.get(
                 "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
             ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
+            overrides=postprocessor_overrides,
             to_transition=policy_action_to_transition,
             to_output=transition_to_policy_action,
             revision=pretrained_revision,
@@ -242,6 +259,14 @@ def make_pre_post_processors(
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
             preprocessor, postprocessor = reconcile_evo1_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
+        if isinstance(policy_cfg, G05Config):
+            from .g05.processor_g05 import reconcile_g05_processors
+
+            preprocessor, postprocessor = reconcile_g05_processors(
                 policy_cfg,
                 preprocessor,
                 postprocessor,

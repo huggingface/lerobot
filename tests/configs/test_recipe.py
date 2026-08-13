@@ -156,6 +156,25 @@ def test_from_dict_with_nested_blend():
     assert isinstance(recipe.blend["a"].messages[0], MessageTurn)
 
 
+def test_message_if_present_round_trips_from_dict():
+    recipe = TrainingRecipe.from_dict(
+        {
+            "messages": [
+                {"role": "user", "content": "${task}", "stream": "low_level"},
+                {
+                    "role": "assistant",
+                    "content": "${subtask}",
+                    "stream": "low_level",
+                    "target": True,
+                    "if_present": "subtask",
+                },
+            ]
+        }
+    )
+
+    assert recipe.messages[1].if_present == "subtask"
+
+
 def test_from_yaml_round_trips_through_load_recipe(tmp_path: Path):
     yaml_text = dedent(
         """

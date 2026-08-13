@@ -143,6 +143,16 @@ class TestRoboTwinEnv:
         assert call_kwargs["seed"] == 42
         assert call_kwargs["is_test"] is True
 
+    def test_repeated_reset_closes_previous_scene(self):
+        mock_task = _make_mock_task_env()
+        env = RoboTwinEnv(task_name="beat_block_hammer")
+        with _patch_runtime(mock_task):
+            env.reset(seed=1)
+            env.reset(seed=2)
+
+        mock_task.close_env.assert_called_once()
+        assert mock_task.setup_demo.call_count == 2
+
     def test_step_returns_correct_types(self):
         mock_task = _make_mock_task_env()
         env = RoboTwinEnv(task_name="beat_block_hammer")
@@ -176,6 +186,7 @@ class TestRoboTwinEnv:
             _, _, terminated, _, info = env.step(action)
         assert terminated is True
         assert info["is_success"] is True
+        assert mock_task.setup_demo.call_count == 1
 
     def test_truncation_after_episode_length(self):
         mock_task = _make_mock_task_env()
