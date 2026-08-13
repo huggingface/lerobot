@@ -35,10 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 class KochFollower(Robot):
-    """
-    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
-        expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
-    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
+    """The Koch follower arm, in either of its two revisions.
+
+    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the
+      wrist-to-elbow expansion, developed by Alexander Koch from
+      [Tau Robotics](https://tau-robotics.com).
+    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1), developed by Jess Moss.
+
+    Args:
+        config (`KochFollowerConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
     """
 
     config_class = KochFollowerConfig
@@ -79,23 +85,47 @@ class KochFollower(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._motors_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
+        """Connect the motor bus and cameras, calibrating and configuring the arm.
 
+        > [!WARNING]
+        > The arm is assumed to be at rest when this is called, because torque is disabled to run
+        > calibration.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration if the arm is not already calibrated.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the robot is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -111,9 +141,18 @@ class KochFollower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         self.bus.disable_torque()
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
@@ -157,6 +196,7 @@ class KochFollower(Robot):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
@@ -181,6 +221,11 @@ class KochFollower(Robot):
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building the robot. Interactive: prompts you to connect the controller board to a
+        single motor at a time.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -189,6 +234,14 @@ class KochFollower(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         # Read arm position
+        """Read the robot's current state and a frame from each camera.
+
+        Returns:
+            `dict[str, Any]`: Keys matching [`~robots.Robot.observation_features`].
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
@@ -225,7 +278,6 @@ class KochFollower(Robot):
         Returns:
             RobotAction: The action sent to the motors, potentially clipped.
         """
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -241,6 +293,11 @@ class KochFollower(Robot):
 
     @check_if_not_connected
     def disconnect(self):
+        """Disconnect from the robot and its cameras.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+        """
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()

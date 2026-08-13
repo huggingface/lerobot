@@ -37,15 +37,19 @@ kTopicLowCommand_Debug = "rt/lowcmd"
 
 
 class LowStateMsg:
-    """
-    Wrapper class that mimics the Unitree SDK LowState_ message structure.
+    """Wrapper class that mimics the Unitree SDK LowState_ message structure.
 
     Reconstructs the message from deserialized JSON data to maintain
     compatibility with existing code that expects SDK message objects.
     """
 
     class MotorState:
-        """Motor state data for a single joint."""
+        """Motor state data for a single joint.
+
+        Args:
+            data (`dict[str, Any]`):
+                The motor's entry from the robot's state message.
+        """
 
         def __init__(self, data: dict[str, Any]) -> None:
             self.q: float = data.get("q", 0.0)
@@ -54,7 +58,12 @@ class LowStateMsg:
             self.temperature: float = data.get("temperature", 0.0)
 
     class IMUState:
-        """IMU sensor data."""
+        """IMU sensor data.
+
+        Args:
+            data (`dict[str, Any]`):
+                The IMU's entry from the robot's state message.
+        """
 
         def __init__(self, data: dict[str, Any]) -> None:
             self.quaternion: list[float] = data.get("quaternion", [1.0, 0.0, 0.0, 0.0])
@@ -100,15 +109,16 @@ def lowcmd_to_dict(topic: str, msg: Any) -> dict[str, Any]:
 
 
 def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  # noqa: N802
-    """
-    Initialize ZMQ sockets for robot communication.
+    """Initialize ZMQ sockets for robot communication.
 
     This function mimics the Unitree SDK's ChannelFactoryInitialize but uses
     ZMQ sockets to connect to the robot server bridge instead of DDS.
 
     Args:
-        domain_id: Ignored (for API compatibility with Unitree SDK)
-        config: UnitreeG1Config instance with robot_ip
+        domain_id (`int`, *optional*, defaults to 0):
+            Ignored. Accepted only for API compatibility with the Unitree SDK.
+        config (`Any`, *optional*):
+            A `UnitreeG1Config` supplying `robot_ip`. Defaults to a fresh `UnitreeG1Config` when `None`.
     """
     global _ctx, _lowcmd_sock, _lowstate_sock
 
@@ -135,7 +145,14 @@ def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  #
 
 
 class ChannelPublisher:
-    """ZMQ-based publisher that sends commands to the robot server."""
+    """ZMQ-based publisher that sends commands to the robot server.
+
+    Args:
+        topic (`str`):
+            The topic name to publish under.
+        msg_type (`type`):
+            The message class this topic carries.
+    """
 
     def __init__(self, topic: str, msg_type: type) -> None:
         self.topic = topic
@@ -155,7 +172,14 @@ class ChannelPublisher:
 
 
 class ChannelSubscriber:
-    """ZMQ-based subscriber that receives state from the robot server."""
+    """ZMQ-based subscriber that receives state from the robot server.
+
+    Args:
+        topic (`str`):
+            The topic name to receive from.
+        msg_type (`type`):
+            The message class this topic carries.
+    """
 
     def __init__(self, topic: str, msg_type: type) -> None:
         self.topic = topic

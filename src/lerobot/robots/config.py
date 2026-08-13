@@ -21,12 +21,33 @@ import draccus
 
 @dataclass(kw_only=True)
 class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
+    """Base configuration shared by every robot.
+
+    Concrete robots subclass this and register themselves with
+    `@RobotConfig.register_subclass("name")`, which is what makes `--robot.type=name` work on the command
+    line. Subclasses inherit the two fields below and must document them alongside their own.
+
+    Args:
+        id (`str`, *optional*):
+            Identifier for this particular unit, used to tell apart several robots of the same type. It
+            also names the calibration file, so keep it stable for a given piece of hardware.
+        calibration_dir (`Path`, *optional*):
+            Where to read and write the calibration file. Defaults to a per-robot directory under the
+            LeRobot calibration home.
+    """
+
     # Allows to distinguish between different robots of the same type
     id: str | None = None
     # Directory to store calibration file
     calibration_dir: Path | None = None
 
     def __post_init__(self):
+        """Validate that every configured camera specifies the fields a robot requires.
+
+        Raises:
+            ValueError: If a camera does not set `width`, `height` and `fps`. A robot records frames at a
+                fixed shape, so these cannot be left to the driver's defaults.
+        """
         if hasattr(self, "cameras") and self.cameras:
             for _, config in self.cameras.items():
                 for attr in ["width", "height", "fps"]:
@@ -37,4 +58,10 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @property
     def type(self) -> str:
+        """The registered name of this robot type.
+
+        Returns:
+            `str`: The name passed to `@RobotConfig.register_subclass`, e.g. `"so101_follower"`. This is
+            what `make_robot_from_config` dispatches on and what a user writes as `--robot.type=...`.
+        """
         return self.get_choice_name(self.__class__)

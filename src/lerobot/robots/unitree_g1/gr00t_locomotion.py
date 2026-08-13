@@ -83,6 +83,7 @@ class GrootLocomotionController:
     control_dt = CONTROL_DT  # Expose for unitree_g1.py
 
     def __init__(self):
+        """Load the GR00T locomotion policy and set up its observation history."""
         # Load policies
         self.policy_balance, self.policy_walk = load_groot_policies()
 

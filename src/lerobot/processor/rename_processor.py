@@ -32,10 +32,9 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     from an environment's format to the format expected by a LeRobot policy or
     other downstream components.
 
-    Attributes:
-        rename_map: A dictionary mapping from old key names to new key names.
-                    Keys present in an observation that are not in this map will
-                    be kept with their original names.
+    **Attributes**:
+        - **rename_map** (`dict[str, str]`) -- A dictionary mapping from old key names to new key names. Keys
+          present in an observation that are not in this map will be kept with their original names.
     """
 
     rename_map: dict[str, str] = field(default_factory=dict)

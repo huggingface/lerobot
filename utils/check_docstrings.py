@@ -64,22 +64,7 @@ MODULES_TO_CHECK = [
 
 # Objects that do not yet follow the standard, so the check can be green from day one. Removing an entry
 # and running `--fix_and_overwrite` is how a module gets converted.
-#
-# Every entry below has a bare `Attributes:` section, which this checker reads as an argument section (the
-# same aliasing doc-builder does) and therefore compares against the signature. They are converted in the
-# docstring PR that follows this one, which empties this set.
-OBJECTS_TO_IGNORE: set[str] = {
-    "ChannelFactoryInitialize",
-    "EarthRoverMiniPlus",
-    "EarthRoverMiniPlusConfig",
-    "EEBoundsAndSafety",
-    "EEReferenceAndDelta",
-    "ForwardKinematicsJointsToEEAction",
-    "ForwardKinematicsJointsToEEObservation",
-    "GripperVelocityToJoint",
-    "InverseKinematicsEEToJoints",
-    "Robot",
-}
+OBJECTS_TO_IGNORE: set[str] = set()
 
 OPTIONAL_KEYWORD = "*optional*"
 

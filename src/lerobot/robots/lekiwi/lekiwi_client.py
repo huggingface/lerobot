@@ -31,6 +31,17 @@ from .config_lekiwi import LeKiwiClientConfig
 
 
 class LeKiwiClient(Robot):
+    """Drives a LeKiwi over the network from another machine.
+
+    Presents the same [`~robots.Robot`] interface as [`~robots.lekiwi.LeKiwi`], but every observation and
+    action crosses a ZMQ connection to the host process running on the robot. Calibration stays on the
+    robot, so this class does not perform it.
+
+    Args:
+        config (`LeKiwiClientConfig`):
+            The robot's configuration. Its `port` and `cameras` determine what is connected.
+    """
+
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
 
@@ -105,24 +116,50 @@ class LeKiwiClient(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        """The values this robot reports, and their types or shapes.
+
+        Returns:
+            `dict`: Keys as returned by [`~robots.Robot.get_observation`], mapped to a scalar type for
+            proprioceptive values or to a `(height, width, channels)` shape for images.
+        """
         return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The values this robot accepts, and their types.
+
+        Returns:
+            `dict`: Keys accepted by [`~robots.Robot.send_action`], mapped to their type.
+        """
         return self._state_ft
 
     @property
     def is_connected(self) -> bool:
+        """Whether every device this robot uses is connected.
+
+        Returns:
+            `bool`: `True` only when the robot and all its cameras are connected.
+        """
         return self._is_connected
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether the robot is calibrated.
+
+        Returns:
+            `bool`: `True` when no calibration is needed before use.
+        """
         pass
 
     @check_if_already_connected
     def connect(self) -> None:
-        """Establishes ZMQ sockets with the remote mobile robot"""
+        """Open the ZMQ command and observation sockets to the LeKiwi host.
 
+        Takes no `calibrate` argument: calibration lives on the robot, not on the client.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the client is already connected.
+        """
         zmq = self._zmq
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PUSH)
@@ -146,6 +183,10 @@ class LeKiwiClient(Robot):
         self._is_connected = True
 
     def calibrate(self) -> None:
+        """Calibrate the robot and store the result.
+
+        Interactive: prompts on stdin and asks you to move the robot through the required positions.
+        """
         pass
 
     def _poll_and_get_latest_message(self) -> list[bytes] | None:
@@ -203,7 +244,6 @@ class LeKiwiClient(Robot):
         self, observation: RobotObservation
     ) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """Extracts frames, and state from the parsed observation."""
-
         flat_state = {key: observation.get(key, 0.0) for key in self._state_order}
 
         state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
@@ -222,14 +262,12 @@ class LeKiwiClient(Robot):
         return current_frames, obs_dict
 
     def _get_data(self) -> tuple[dict[str, np.ndarray], RobotObservation]:
-        """
-        Polls the video socket for the latest observation data.
+        """Polls the video socket for the latest observation data.
 
         Attempts to retrieve and decode the latest message within a short timeout.
         If successful, updates and returns the new frames, speed, and arm state.
         If no new data arrives or decoding fails, returns the last known values.
         """
-
         # 1. Get the latest message's frames from the socket
         latest_frames = self._poll_and_get_latest_message()
 
@@ -258,12 +296,17 @@ class LeKiwiClient(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        """
-        Capture observations from the remote robot: current follower arm positions,
-        present wheel speeds (converted to body-frame velocities: x, y, theta),
-        and a camera frame. Receives over ZMQ, translate to body-frame vel
-        """
+        """Receive one observation from the remote robot over ZMQ.
 
+        Wheel speeds arrive as raw motor velocities and are converted here to body-frame `x`, `y` and
+        `theta`.
+
+        Returns:
+            `dict[str, Any]`: Follower arm positions, body-frame base velocities and camera frames.
+
+        Raises:
+            DeviceNotConnectedError: If the client is not connected.
+        """
         frames, obs_dict = self._get_data()
 
         # Loop over each configured camera
@@ -308,21 +351,24 @@ class LeKiwiClient(Robot):
         }
 
     def configure(self):
+        """Apply the operating mode, gains and limits from the configuration to the robot."""
         pass
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
+        """Send a target configuration to the remote robot over ZMQ.
+
+        Body-frame base velocities are translated into wheel velocities before sending.
 
         Args:
-            action (RobotAction): array containing the goal positions for the motors.
+            action (`dict[str, Any]`): Goal positions for the arm and body-frame velocities for the base.
+
         Raises:
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
             np.ndarray: the action sent to the motors, potentially clipped.
         """
-
         # Action values may be torch tensors (e.g. replayed from a dataset) or numpy
         # scalars; json.dumps only serializes Python primitives, so coerce each value to a
         # plain float before sending.
@@ -338,8 +384,11 @@ class LeKiwiClient(Robot):
 
     @check_if_not_connected
     def disconnect(self):
-        """Cleans ZMQ comms"""
+        """Close the ZMQ sockets and terminate the context.
 
+        Raises:
+            DeviceNotConnectedError: If the client is not connected.
+        """
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()

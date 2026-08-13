@@ -46,10 +46,11 @@ class ActionQueue:
     Args:
         cfg (RTCConfig): Configuration for Real-Time Chunking behavior.
 
-    Attributes:
-        queue (Tensor | None): Processed actions for robot rollout (time_steps, action_dim).
-        original_queue (Tensor | None): Original actions for RTC computation (time_steps, action_dim).
-        last_index (int): Current consumption index in the queue.
+    **Attributes**:
+        - **queue** (`Tensor | None`) -- Processed actions for robot rollout (time_steps, action_dim).
+        - **original_queue** (`Tensor | None`) -- Original actions for RTC computation (time_steps,
+          action_dim).
+        - **last_index** (`int`) -- Current consumption index in the queue.
     """
 
     def __init__(self, cfg: RTCConfig):
