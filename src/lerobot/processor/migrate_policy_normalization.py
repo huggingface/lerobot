@@ -83,6 +83,7 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
     # Define patterns to match and their prefixes to remove
     normalization_patterns = [
         "normalize_inputs.buffer_",
+        "normalize_inputs.",  # Also handles dataset-prefixed legacy keys
         "unnormalize_outputs.buffer_",
         "normalize_targets.buffer_",
         "normalize.",  # Must come after normalize_* patterns

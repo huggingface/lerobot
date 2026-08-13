@@ -23,7 +23,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import torch
 
+from lerobot.processor.migrate_policy_normalization import extract_normalization_stats
 from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorMigrationError
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -59,6 +61,22 @@ def test_is_processor_config_invalid_configs():
         assert not DataProcessorPipeline._is_processor_config(config), (
             f"Invalid config {i} should not be detected as processor config: {config}"
         )
+
+
+def test_extracts_dataset_prefixed_state_stats():
+    state_dict = {
+        "normalize_inputs.so100_buffer_observation_state.mean": torch.tensor([1.0, 2.0]),
+        "normalize_inputs.so100_buffer_observation_state.std": torch.tensor([3.0, 4.0]),
+        "normalize_inputs.so100-blue_buffer_observation_state.mean": torch.tensor([5.0, 6.0]),
+        "normalize_inputs.so100-blue_buffer_observation_state.std": torch.tensor([7.0, 8.0]),
+    }
+
+    stats = extract_normalization_stats(state_dict)
+
+    torch.testing.assert_close(stats["so100.buffer.observation.state"]["mean"], torch.tensor([1.0, 2.0]))
+    torch.testing.assert_close(stats["so100.buffer.observation.state"]["std"], torch.tensor([3.0, 4.0]))
+    torch.testing.assert_close(stats["so100-blue.buffer.observation.state"]["mean"], torch.tensor([5.0, 6.0]))
+    torch.testing.assert_close(stats["so100-blue.buffer.observation.state"]["std"], torch.tensor([7.0, 8.0]))
 
 
 def test_should_suggest_migration_with_processor_config():
