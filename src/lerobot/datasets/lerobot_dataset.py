@@ -469,8 +469,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Check if there are unsaved frames in the episode buffer."""
         if self.writer is None:
             return False
-        # A buffer abandoned by a mid-save failure has had "size" popped by
-        # save_episode; treat it as holding nothing pending rather than raising.
+        # save_episode pops "size", so a buffer abandoned mid-save has nothing pending.
         return self.writer.episode_buffer is not None and self.writer.episode_buffer.get("size", 0) > 0
 
     def finalize(self):

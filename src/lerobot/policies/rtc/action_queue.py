@@ -43,10 +43,8 @@ class ActionQueue:
     1. RTC-enabled: Replaces the entire queue with new actions, accounting for inference delay
     2. RTC-disabled: Appends new actions to the queue, maintaining continuity
 
-    Each queued action also carries the task (instruction) whose inference
-    produced its chunk, kept in lockstep with the action queues under the same
-    lock; ``get_with_task`` returns it so consumers can label dispatched
-    actions with the instruction they were actually computed under.
+    Every queued action is labeled, in lockstep and under the same lock, with the task whose
+    inference produced its chunk; ``get_with_task`` returns that label.
 
     Args:
         cfg (RTCConfig): Configuration for Real-Time Chunking behavior.
@@ -87,10 +85,7 @@ class ActionQueue:
                 return None
 
             if self._task_queue is not None and len(self._task_queue) != len(self.queue):
-                # Every mutation keeps the two queues in lockstep under this
-                # lock; a mismatch means a future edit broke that invariant.
-                # Fail with a self-describing error instead of an opaque
-                # IndexError on the control thread's hot path.
+                # A mismatch means some mutation broke the action/task lockstep.
                 raise RuntimeError(
                     f"ActionQueue task labels out of sync with actions "
                     f"({len(self._task_queue)} labels for {len(self.queue)} actions) — "
@@ -236,8 +231,7 @@ class ActionQueue:
         Args:
             original_actions: Unprocessed actions from policy.
             processed_actions: Post-processed actions for robot.
-            task: Instruction that generated the appended chunk; actions already
-                queued keep the label of the chunk that produced them.
+            task: Instruction that generated the appended chunk; already-queued actions keep theirs.
         """
         if self.queue is None:
             self.original_queue = original_actions.clone()

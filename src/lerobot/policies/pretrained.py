@@ -81,13 +81,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
     # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
     _cp_plan: ClassVar[dict[str, Any] | None] = None
-    # Attribute names `drop_queued_actions` recognizes as this policy's action queue.
-    # The defaults cover the two in-tree chunking idioms: a `_queues` dict holding an
-    # ACTION deque (the `populate_queues` convention) and a bare `_action_queue` deque.
-    # A chunking policy that stores its queue under a different name MUST extend this
-    # ClassVar (or override `drop_queued_actions`), otherwise the method silently
-    # becomes a no-op and stale queued actions keep executing after a mid-episode
-    # conditioning change (e.g. an interactive /subtask).
+    # Attribute names `drop_queued_actions` clears: a `populate_queues`-style `_queues` dict
+    # and a bare `_action_queue` deque. A chunking policy using another name must extend this
+    # ClassVar (or override the method), otherwise dropping the queue silently does nothing.
     _action_queue_attrs: ClassVar[tuple[str, ...]] = ("_queues", "_action_queue")
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
@@ -106,15 +102,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
-        # generate_text() and supports_text_generation() must be overridden in
-        # tandem: the rollout stack consults the flag before accepting text
-        # queries (/vqa, /autosteer), so a text head without the flag is
-        # unreachable — and the operator is told the policy has none.  Caught
-        # here so the mismatch fails at class-definition time instead of
-        # silently in the field.  Compared through the MRO (not cls.__dict__)
-        # so an override inherited from a conforming parent counts, and one
-        # supplied by a mixin is still caught.  Checkpoint-conditional support
-        # stays possible: the override just has to exist somewhere in the MRO.
+        # The rollout stack gates text queries on supports_text_generation(), so a
+        # generate_text() override without it is unreachable. Compared through the MRO, so an
+        # override inherited from a conforming parent counts.
         if (
             cls.generate_text is not PreTrainedPolicy.generate_text
             and cls.supports_text_generation is PreTrainedPolicy.supports_text_generation
@@ -240,29 +230,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def drop_queued_actions(self) -> None:
         """Discard actions precomputed by earlier ``select_action`` calls.
 
-        Chunking policies answer most control ticks from a queue filled by an
-        earlier forward pass, so a mid-episode change to the conditioning —
-        e.g. a new language instruction — would otherwise only take effect
-        once that queue drains (up to ``n_action_steps`` ticks, the queue's
-        length).  Dropping the queue forces a fresh forward pass on the next
-        ``select_action``.
-
-        Unlike :meth:`reset` this keeps the rest of the episode state (e.g.
-        observation history), so it does not perturb policies that condition
-        on it.  Call it from the thread that calls ``select_action``: it
-        mutates the same queues that thread pops from.
-
-        The queue is found by name: the attributes listed in
-        :attr:`_action_queue_attrs` (a dict clears only its ``ACTION``
-        entry; anything else is ``clear()``-ed).  Policies whose queue lives
-        under a different name must extend that ClassVar — see its comment.
-        Policies that keep no action queue inherit a no-op.
+        Forces a fresh forward pass on the next ``select_action`` so a mid-episode conditioning
+        change (e.g. a new instruction) takes effect at once instead of after the queue drains.
+        Unlike :meth:`reset`, the rest of the episode state is kept.  Call it from the thread
+        that calls ``select_action``.  Clears the queues named in :attr:`_action_queue_attrs`;
+        a policy that keeps no action queue inherits a no-op.
         """
         for attr in self._action_queue_attrs:
             queue = getattr(self, attr, None)
             if isinstance(queue, dict):
-                # populate_queues-style dict; other entries (observation
-                # history) are deliberately left alone.
+                # populate_queues-style dict: clear only ACTION, not the observation history.
                 if ACTION in queue:
                     queue[ACTION].clear()
             elif queue is not None:
@@ -273,31 +250,16 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return False
 
     def supports_text_generation(self) -> bool:
-        """Whether this policy implements :meth:`generate_text`.
-
-        The rollout stack checks this up front to accept or refuse text
-        queries (``/vqa``, ``/autosteer``), so a policy that overrides
-        :meth:`generate_text` must also override this to return True.
-        """
+        """Whether this policy implements :meth:`generate_text` (override both together)."""
         return False
 
     def generate_text(self, batch: dict[str, Any]) -> str:
         """Run the policy's text head on a preprocessed observation batch.
 
-        ``batch`` is the output of this policy's preprocessor pipeline for a
-        single observation.  Besides the usual observation features it carries
-        the request as complementary data: the request text under
-        :data:`~lerobot.utils.constants.QUERY_TEXT` (a processor step may have
-        rewritten it into this policy's prompt format) and what is being asked
-        for under :data:`~lerobot.utils.constants.QUERY_KIND` — ``"vqa"``
-        answers a free-form question about the scene, ``"next_subtask"``
-        replies with exactly one subtask toward the given goal.  The batch
-        also holds the current ``task``, so the policy can condition on what
-        the robot is presently doing.
-
-        Returns the generated text.  Must not mutate action-producing state
-        (queues, observation history): a text query happens between control
-        ticks and the action path must not notice it.
+        The request rides on ``batch`` as complementary data (:data:`~lerobot.utils.constants.QUERY_KIND`
+        / ``QUERY_TEXT``); a ``next_subtask`` reply is fed straight into ``set_task``, so it must be
+        exactly one subtask, not a plan or a numbered list.  Returns the generated text, and must not
+        mutate action-producing state (queues, observation history).
         """
         raise NotImplementedError(
             f"{type(self).__name__} has no text head — it cannot answer questions or plan subtasks."

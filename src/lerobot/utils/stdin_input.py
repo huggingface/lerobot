@@ -14,23 +14,14 @@
 
 """Non-blocking, line-oriented stdin reading.
 
-This complements :mod:`lerobot.utils.keyboard_input`, which serves discrete
-hotkeys: :class:`TerminalKeyListener` reads single raw bytes in cbreak mode,
-whereas :class:`StdinCommandListener` here assembles whole typed lines and
-leaves the terminal in canonical (line-buffered, echoing) mode — the operator
-is typing chat-style commands, not pressing hotkeys.  The two cannot share
-stdin at the same time.  More generally the listener must be the stream's
-*sole* consumer: in select mode it reads the file descriptor directly with
-``os.read``, so nothing else in the process may read the same stream while it
-runs, and bytes already slurped into a buffered wrapper (e.g. by an earlier
-``input()`` call) are invisible to it.
+Unlike :mod:`lerobot.utils.keyboard_input`, which reads single raw bytes in cbreak
+mode for hotkeys, :class:`StdinCommandListener` assembles whole typed lines and leaves
+the terminal in canonical mode — so the two cannot share stdin.  The listener must be
+the stream's *sole* consumer: it reads the file descriptor directly with ``os.read``,
+so bytes already buffered by e.g. an earlier ``input()`` call are invisible to it.
 
-Environment support: reading works over SSH (the session's pty is a regular
-TTY file descriptor), in headless setups (no display server is involved,
-unlike the ``pynput`` keyboard backend), and from piped stdin.  End-of-file
-means "no more commands": an interactive Ctrl-D, an exhausted piped script,
-or ``stdin`` redirected from ``/dev/null`` all trigger ``on_eof``, as does a
-missing ``sys.stdin`` (e.g. a daemonized process).
+Reading works over SSH, headless (no display server, unlike the ``pynput`` keyboard
+backend) and from piped stdin.
 """
 
 from __future__ import annotations
@@ -49,12 +40,11 @@ logger = logging.getLogger(__name__)
 class StdinCommandListener:
     """Daemon thread that reads input lines and forwards them to a callback.
 
-    On POSIX the reader polls the stream with ``select`` so ``stop()`` can
-    end the thread promptly; elsewhere (or for file-like objects without a
-    file descriptor) it falls back to a blocking ``readline`` daemon thread
-    that dies with the process.  Blank lines are skipped; end-of-file and
-    unexpected read errors trigger ``on_eof`` — a dead command channel must
-    never leave the consumer waiting for input that can no longer arrive.
+    On POSIX the reader polls the stream with ``select`` so ``stop()`` can end the
+    thread promptly; elsewhere (or for file-like objects without a file descriptor) it
+    falls back to a blocking ``readline`` daemon thread that dies with the process.
+    Blank lines are skipped; end-of-file and unexpected read errors trigger ``on_eof``,
+    so a dead command channel never leaves the consumer waiting.
     """
 
     def __init__(
@@ -66,8 +56,7 @@ class StdinCommandListener:
     ) -> None:
         self._on_line = on_line
         self._on_eof = on_eof
-        # sys.stdin can itself be None (pythonw, daemonized processes);
-        # start() treats that as an immediately-closed stream.
+        # sys.stdin can itself be None (pythonw, daemonized processes).
         self._stream = stream if stream is not None else sys.stdin
         self._poll_interval_s = poll_interval_s
         self._running = False
@@ -83,9 +72,8 @@ class StdinCommandListener:
     def start(self) -> None:
         """Start the reader thread (idempotent).
 
-        Callbacks fire on the reader thread — except when the stream is
-        missing (``sys.stdin`` is ``None``), in which case ``on_eof`` fires
-        synchronously on the caller's thread before ``start()`` returns.
+        Callbacks fire on the reader thread — except with a missing stream
+        (``sys.stdin`` is ``None``), where ``on_eof`` fires synchronously here.
         """
         if self._thread is not None:
             return
@@ -102,9 +90,8 @@ class StdinCommandListener:
     def stop(self) -> None:
         """Stop the reader thread.
 
-        Blocking-mode threads may be stuck inside ``readline`` and cannot be
-        joined; they are daemons and die with the process. Late lines are
-        ignored via the ``_running`` flag either way.
+        Blocking-mode threads may be stuck inside ``readline`` and cannot be joined;
+        they are daemons and die with the process.  Late lines are ignored either way.
         """
         self._running = False
         thread = self._thread
@@ -121,11 +108,9 @@ class StdinCommandListener:
     def _run_select(self) -> None:
         """Poll the file descriptor and split lines from raw bytes.
 
-        Reading raw bytes (instead of ``stream.readline()``) matters: a
-        buffered file object can slurp several lines off the descriptor at
-        once, after which ``select`` reports the drained fd as not-ready and
-        the buffered lines would never be delivered — breaking pasted or
-        piped command sequences.
+        Raw bytes rather than ``stream.readline()``: a buffered file object can slurp
+        several lines at once, after which ``select`` reports the drained fd as
+        not-ready and those lines would never be delivered.
         """
         try:
             fd = self._stream.fileno()
@@ -192,9 +177,7 @@ class StdinCommandListener:
     def _emit_read_error(self) -> None:
         """Treat an unexpected read failure like EOF so consumers shut down.
 
-        A dead command channel must not leave the consumer running with no
-        way to reach it.  Deliberate ``stop()`` calls clear ``_running``
-        first and do not reach this path.
+        A deliberate ``stop()`` clears ``_running`` first and does not reach this.
         """
         if self._running:
             logger.warning("Input stream failed — treating as EOF")

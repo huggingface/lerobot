@@ -47,11 +47,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     """
 
     # Whether the strategy honours the restartable-run() contract that
-    # ``--interactive=true`` requires (see ``RolloutStrategy`` in
-    # strategies/core.py).  Flip to True only after making the strategy's
-    # run() restartable: no dataset finalization in run(), segment-surviving
-    # state on the instance, and no keyboard/terminal bindings that fight
-    # the interactive command prompt for stdin.
+    # ``--interactive=true`` requires (see ``RolloutStrategy``).
     supports_interactive: ClassVar[bool] = False
 
     @property
@@ -249,26 +245,17 @@ class RolloutConfig:
 
     # Runtime
     fps: float = 30.0
-    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode the
-    # timer restarts at every /start, so this bounds each segment — it is not
-    # a whole-session safety limit.
+    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode this
+    # bounds each /start segment, not the whole session.
     duration: float = 0.0
-    # Interactive session: control the rollout from stdin with chat-style
-    # commands (/start, /subtask <text>, /vqa <text>, /autosteer <goal>,
-    # /reset, /stop) while hardware and policy stay warm.  The robot does not
-    # move until /start is received, and logs below ERROR are muted while the
-    # session runs so they don't interleave with the prompt — the cadence
-    # summaries are printed on the chat stream instead of being lost to the
-    # mute.  Supported with --strategy.type=base (no
-    # recording) and sentry (continuous recording; frames carry
-    # dispatched-action task provenance).
+    # Control the rollout from stdin with chat-style commands (/start, /subtask,
+    # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
+    # robot does not move until /start, and logs below ERROR are muted for the
+    # session's duration.
     interactive: bool = False
-    # /autosteer: seconds of robot motion between two "what is the next
-    # subtask?" queries to the policy.  Measured from the moment a subtask is
-    # applied, so a slow text generation cannot compound into back-to-back
-    # queries.  Each query is a full generation pass, so this is a
-    # cost/responsiveness knob: lower values re-plan sooner but spend a larger
-    # share of the loop generating text instead of acting.
+    # /autosteer: seconds of robot motion between two "what is the next subtask?"
+    # queries, measured from the moment a subtask is applied.  Lower values
+    # re-plan sooner but spend more of the loop generating text instead of acting.
     autosteer_interval_s: float = 10.0
     # Robot commands sent per policy action.  Values > 1 linearly interpolate
     # between consecutive policy actions for smoother motion: commands go to
@@ -332,13 +319,8 @@ class RolloutConfig:
                 "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
             )
 
-        # Interactive mode drives strategy.run() in restartable segments and reads
-        # commands from stdin.  Only strategies whose config declares
-        # ``supports_interactive`` honour that contract (see ``RolloutStrategy``
-        # in strategies/core.py).  The other recording strategies are excluded
-        # for now: they bind their own keyboard controls (which fight the
-        # command prompt for the terminal) and their run() loops finalize the
-        # dataset on exit, so they cannot be restarted.
+        # Interactive mode calls strategy.run() once per segment, so only strategies
+        # declaring ``supports_interactive`` may be driven by it.
         if self.interactive and not self.strategy.supports_interactive:
             supported = " or ".join(
                 sorted(

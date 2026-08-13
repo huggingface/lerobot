@@ -38,13 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 class QueryKind(Enum):
-    """What the policy's text head is being asked for.
-
-    Both kinds return text, but they are preprocessed differently — a
-    high-level goal is formatted so the reply is exactly one subtask — so
-    the kind travels in the batch alongside the query text (see
-    :meth:`InferenceEngine._mark_query`).
-    """
+    """What the policy's text head is being asked for."""
 
     VQA = "vqa"
     """A free-form question about the current scene; the reply goes to the operator."""
@@ -65,15 +59,8 @@ class PolicyQuery:
 class QueryAnswer:
     """Result of a policy text query.
 
-    Exactly one of ``answer`` / ``error`` is set: ``error`` carries the
-    reason the query could not be served (policy without a text head,
-    inference failure, run ended first) so the caller can report it instead
-    of silently dropping it.
-
-    ``NEXT_SUBTASK`` answers report the sequencer's turns: a success carries
-    the subtask the engine has *already applied* through ``set_task`` (the
-    receiver only announces it, never applies it again), a failure the reason
-    the sequencer just stopped.
+    Exactly one of ``answer`` / ``error`` is set.  A ``NEXT_SUBTASK`` success carries a
+    subtask the engine has *already applied*, so the receiver only announces it.
     """
 
     question: str
@@ -110,40 +97,22 @@ class InferenceEngine(abc.ABC):
 
     Task
     ----
-    ``task`` / ``set_task`` hold the language instruction the policy is
-    conditioned on.  ``set_task`` is safe to call from any thread (the
-    interactive session's ``/subtask`` command calls it from its stdin
-    reader); subclasses pick the new value up on their own inference
-    thread via :meth:`_take_task`, so no policy state is ever mutated
-    across threads.  ``dispatched_task`` names the instruction that
-    generated the most recently returned action — it trails ``task``
-    while actions produced under the previous instruction are still
-    being consumed.
+    ``set_task`` is callable from any thread; subclasses pick the value up on their own
+    inference thread via :meth:`_take_task`, so policy state is never mutated across threads.
 
     Text queries
     ------------
-    ``ask`` queues a question for the policy's text head.  Like
-    ``set_task`` it is safe to call from any thread (the interactive
-    session's ``/vqa`` command calls it from its stdin reader) and never
-    touches the policy itself: the question is answered by the thread
-    that *owns* the policy — declared by each backend through
-    :attr:`control_thread_owns_policy`: the control thread for sync
-    backends, the background inference thread for async ones — through
-    :meth:`_service_query`.  The answer lands in a small queue and is
-    handed to the observer registered via :meth:`set_answer_observer` when
-    the control thread next calls :meth:`pump_query`, so observers never
-    fire on a background inference thread.  Whether the channel can be served
-    at all is reported by :attr:`supports_text_queries`, which callers
-    check *before* queueing so a policy without a text head is refused up
-    front instead of failing one tick later.
+    ``ask`` is callable from any thread and never touches the policy: queries are served
+    by :meth:`_service_query` on the thread owning the policy (see
+    :attr:`control_thread_owns_policy`), and answers reach observers only from
+    :meth:`pump_query` on the control thread.
 
     Optional hooks
     --------------
     ``notify_observation`` / ``pause`` / ``resume`` have a no-op default
     so rollout strategies can invoke them unconditionally.
 
-    Subclasses must call ``super().__init__(task=...)``; the task and
-    query holders are set up there.
+    Subclasses must call ``super().__init__(task=...)``.
     """
 
     def __init__(self, task: str = "") -> None:
@@ -152,23 +121,13 @@ class InferenceEngine(abc.ABC):
         self._dispatched_task = task
         self._task_lock = Lock()
 
-        # Text-query channel.  Its own lock, separate from the task holder's;
-        # both only guard short slot handoffs — no lock is ever held across
-        # text generation (``_service_query`` claims the query, generates
-        # lock-free, then publishes), so a slow generate never blocks a
-        # concurrent ``set_task`` or ``ask``.
+        # Text-query channel.  Its own lock, never held across a text generation.
         self._query_lock = Lock()
         self._pending_query: PolicyQuery | None = None
-        # True from the moment the policy-owning thread claims a query
-        # (``_take_query``) until its answer is published (or the turn is
-        # discarded).  Async backends generate lock-free for seconds, and the
-        # autosteer poll must not queue a duplicate turn in that window.
+        # Set from the claim (``_take_query``) until the answer is published or the turn
+        # is discarded, so the autosteer poll cannot queue a duplicate turn meanwhile.
         self._query_in_flight = False
-        # Answers awaiting delivery.  A queue, not a single slot: with an
-        # async backend a second query can be accepted and answered while the
-        # control thread is between pumps (e.g. during torch.compile warmup),
-        # and an undelivered answer must never be silently overwritten.
-        # Bounded in practice — queries are single-slot at the source.
+        # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
 
@@ -190,8 +149,7 @@ class InferenceEngine(abc.ABC):
     def set_task(self, task: str) -> bool:
         """Set the instruction used from the next inference onwards.
 
-        Callable from any thread.  Returns ``True`` when the value
-        actually changed, so callers can report no-op switches.
+        Callable from any thread.  Returns ``True`` when the value actually changed.
         """
         with self._task_lock:
             if task == self._task:
@@ -202,12 +160,7 @@ class InferenceEngine(abc.ABC):
         return True
 
     def _take_task(self) -> tuple[str, bool]:
-        """Read the task and whether it changed since the last read.
-
-        Call from the thread that runs inference: the "changed" edge is
-        consumed here so the backend can drop actions precomputed under
-        the previous instruction before using the new one.
-        """
+        """Read the task and consume the "changed" edge.  Call from the inference thread."""
         with self._task_lock:
             changed, self._task_changed = self._task_changed, False
             return self._task, changed
@@ -216,17 +169,10 @@ class InferenceEngine(abc.ABC):
     def dispatched_task(self) -> str:
         """Instruction that generated the most recently returned action.
 
-        Unlike :attr:`task` — the *requested* instruction, which
-        ``set_task`` changes immediately — this follows the actions the
-        engine actually hands out: every successful ``get_action``
-        records the task that generated the returned action.  Recording
-        strategies label frames with it so actions still queued (or
-        being interpolated) from a previous instruction keep that
-        instruction's label.
-
-        Only meaningful on the control thread right after it consumed
-        ``get_action``; between a reset and the next dispatched action
-        it holds the requested task.
+        Trails :attr:`task` (the *requested* instruction) while actions from a previous
+        instruction are still being consumed; recording strategies label frames with it.
+        Only meaningful on the control thread right after ``get_action``; after a reset it
+        holds the requested task.
         """
         with self._task_lock:
             return self._dispatched_task
@@ -239,9 +185,8 @@ class InferenceEngine(abc.ABC):
     def _discard_task_change(self) -> None:
         """Drop a pending task-change edge, e.g. from ``reset`` (state is already cleared).
 
-        Also re-primes ``dispatched_task``: the caller just cleared any
-        queued actions, so the next dispatched action can only come from
-        the current instruction.
+        Also re-primes ``dispatched_task``: with queued actions gone, the next dispatched
+        action can only come from the current instruction.
         """
         with self._task_lock:
             self._task_changed = False
@@ -255,11 +200,8 @@ class InferenceEngine(abc.ABC):
     def supports_text_queries(self) -> bool:
         """True when this backend's policy can serve text queries.
 
-        Backends holding a policy report ``policy.supports_text_generation()``;
-        the default is False so a backend without a text path never accepts a
-        query it cannot serve.  Callers (the controller's ``ask`` /
-        ``autosteer``) check this before queueing, so the operator is refused
-        immediately instead of receiving an error answer a tick later.
+        Default False, so a backend without a text path never accepts a query it cannot
+        serve; callers check this before queueing.
         """
         return False
 
@@ -283,31 +225,23 @@ class InferenceEngine(abc.ABC):
     def ask(self, question: str) -> bool:
         """Queue a free-form ``question`` for the policy's text head.
 
-        Callable from any thread.  Returns ``False`` when a query is
-        already pending — the channel holds one at a time, so a second
-        query cannot silently displace an unserved one.
+        Callable from any thread.  Returns ``False`` when one is already pending: the
+        channel holds a single query at a time.
         """
         return self._queue_query(PolicyQuery(kind=QueryKind.VQA, text=question))
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
         """Drive the task from ``goal``, re-planning every ``interval_s`` seconds.
 
-        Callable from any thread.  The engine asks the policy for the next
-        subtask and applies it through :meth:`set_task`, so the normal
-        instruction-switch path (queue blending on RTC, action drop on
-        sync) handles the transition.  Progress through the plan lives in
-        the policy, not here: every query re-sends the same goal.
-
-        The interval is measured from the moment a subtask is *applied*,
-        not from when its query is queued, so a generation slower than the
-        interval cannot queue the next one back-to-back and starve the
-        robot of motion.
+        Callable from any thread.  Each turn asks the policy for the next subtask and
+        applies it through :meth:`set_task`; every query re-sends the same goal, so plan
+        progress lives in the policy.  The interval is measured from when a subtask is
+        *applied*, so a slow generation cannot starve the robot of motion.
         """
         with self._query_lock:
             self._autosteer_goal = goal
             self._autosteer_interval_s = max(0.0, interval_s)
-            # Due immediately: the first subtask is requested on the very next
-            # control tick rather than a full interval from now.
+            # Due immediately: first subtask requested on the next control tick.
             self._autosteer_due_at = time.perf_counter()
         logger.info("Autosteer started for goal '%s' (every %.1fs)", goal, interval_s)
 
@@ -322,8 +256,7 @@ class InferenceEngine(abc.ABC):
     def drop_pending_query(self) -> PolicyQuery | None:
         """Discard an unserved query, returning it (or ``None``).
 
-        The controller calls this when a run segment ends: the query would
-        otherwise sit in the slot and be served against a completely
+        Called when a run segment ends, so the query is not served against a completely
         different scene the next time the robot starts.
         """
         with self._query_lock:
@@ -335,38 +268,21 @@ class InferenceEngine(abc.ABC):
     def control_thread_owns_policy(self) -> bool:
         """Whether the control thread is the one allowed to touch the policy.
 
-        This single fact is what varies between backends in the query
-        channel: when True (inline backends), :meth:`pump_query` serves a
-        pending query on the control thread; when False (async backends),
-        the backend's own inference thread must call :meth:`_service_query`
-        itself, and :meth:`pump_query` only advances the sequencer and
-        delivers finished answers.
+        True (inline backends): :meth:`pump_query` serves pending queries itself.  False
+        (async backends): their inference thread must call :meth:`_service_query`, and
+        :meth:`pump_query` only advances the sequencer and delivers finished answers.
         """
 
     def pump_query(self, obs_processed: dict | None = None) -> bool:
         """Advance the text-query channel by one tick.  Control thread only.
 
-        Runs, in order: :meth:`_poll_autosteer` (so the sequencer can queue
-        its next-subtask query), then :meth:`_service_query` — only when
-        :attr:`control_thread_owns_policy`; async backends answer on their
-        inference thread instead — and finally :meth:`_deliver_answer`, so
-        observers always fire on this thread.
-
-        Deliberately separate from :meth:`get_action`: text generation takes
-        far longer than a control tick, and stalling the action path
-        mid-dispatch would leave a recording strategy pairing a stale
-        observation with a fresh timestamp.  Strategies call this at the end
-        of a tick instead, where an inline-serving tick is simply expected
-        to overrun its budget.
-
-        Returns ``True`` when a query was served inline on this call.  Async
-        backends always return ``False`` — they generate on their own thread.
-
-        ``obs_processed`` is the processed observation of the current
-        control tick; pass ``None`` when none is available (the
-        controller's idle poll does).  A pending query is then left queued
-        rather than served without a view, and the autosteer sequencer does
-        not advance.
+        Polls the autosteer sequencer, serves a pending query when
+        :attr:`control_thread_owns_policy` (async backends answer on their own thread),
+        then delivers ready answers, so observers always fire on this thread.  Called at
+        the end of a tick rather than from :meth:`get_action`: a text generation far
+        outlasts a control tick.  Returns ``True`` when a query was served inline.  With
+        ``obs_processed=None`` (the controller's idle poll) a pending query stays queued
+        and the sequencer does not advance.
         """
         self._poll_autosteer(obs_processed)
         served = False
@@ -383,12 +299,7 @@ class InferenceEngine(abc.ABC):
         return True
 
     def _poll_autosteer(self, obs_processed: dict | None) -> None:
-        """Queue the next-subtask query if the sequencer is due.
-
-        Driven from the control loop rather than a timer thread so it only
-        advances while the robot is actually running: ``obs_processed`` is
-        ``None`` on the controller's idle poll, which is not a control loop.
-        """
+        """Queue the next-subtask query if the sequencer is due (control loop only)."""
         if obs_processed is None:
             return
         with self._query_lock:
@@ -397,12 +308,8 @@ class InferenceEngine(abc.ABC):
             if time.perf_counter() < self._autosteer_due_at:
                 return
             if self._pending_query is not None or self._query_in_flight:
-                # The operator's /vqa (or our own previous query) is still
-                # queued or being generated — async backends free the slot at
-                # claim time, so the in-flight flag is what stops a duplicate
-                # turn from queueing during the whole generation latency.  The
-                # deadline stays in the past, so the next tick retries rather
-                # than losing this turn entirely.
+                # A /vqa (or our own previous query) is still queued or being generated.
+                # The deadline stays in the past, so the next tick retries this turn.
                 return
             self._pending_query = PolicyQuery(kind=QueryKind.NEXT_SUBTASK, text=self._autosteer_goal)
 
@@ -411,19 +318,14 @@ class InferenceEngine(abc.ABC):
         with self._query_lock:
             query, self._pending_query = self._pending_query, None
             if query is not None:
-                # In flight until the answer is published (or the turn is
-                # discarded); see _poll_autosteer.
                 self._query_in_flight = True
             return query
 
     def _service_query(self, obs_processed: dict | None) -> bool:
         """Serve a pending query.  Call ONLY from the policy-owning thread.
 
-        Failures are captured into an answer rather than raised: a query
-        the policy cannot handle must not take down the control loop or
-        the background inference thread.  Returns ``True`` when a query was
-        claimed and served (successfully or not) — i.e. when this call
-        spent a text generation's worth of time.
+        Failures become error answers instead of exceptions, so a bad query never takes
+        down the calling thread.  Returns ``True`` when a query was claimed and served.
         """
         if obs_processed is None:
             return False
@@ -433,9 +335,8 @@ class InferenceEngine(abc.ABC):
         try:
             text = self._generate_text(obs_processed, query)
             if not isinstance(text, str) or not text.strip():
-                # Contract violation (a forgotten return, a tensor, an empty
-                # string).  Fail here so the garbage becomes an error answer
-                # instead of steering the robot and labeling recorded frames.
+                # Fail here so garbage becomes an error answer instead of steering the
+                # robot and labeling recorded frames.
                 raise TypeError(
                     f"generate_text() must return a non-empty str, got {text!r} ({type(text).__name__})"
                 )
@@ -449,23 +350,17 @@ class InferenceEngine(abc.ABC):
             return True
         if query.kind is QueryKind.NEXT_SUBTASK and not self._apply_subtask(query, text):
             return True  # sequencer stopped meanwhile; the turn was discarded
-        # Published after being applied, so an observer announcing the subtask
-        # never gets ahead of the task it describes.
+        # Published after being applied, so an announcing observer never gets ahead of
+        # the task it describes.
         self._publish_answer(QueryAnswer(question=query.text, answer=text, kind=query.kind))
         return True
 
     def _fail_subtask(self, query: PolicyQuery) -> bool:
         """Stop the sequencer after a failed turn — unless it stopped or retargeted meanwhile.
 
-        The liveness counterpart of :meth:`_apply_subtask` for the failure
-        path: a sequencer that cannot get its next subtask is broken and must
-        stop rather than fail again every interval — but only if it is still
-        the sequencer that requested this turn.  A stale turn's failure must
-        neither kill a goal the operator has since set nor produce an
-        "Autosteer stopped" announcement for a sequencer that is already off
-        (e.g. after a segment end whose cleanup ran before this generation
-        failed).  Returns ``True`` when the failure answer should be
-        published.
+        A sequencer that cannot get its next subtask must stop rather than fail every
+        interval — but only if it is still the one that requested this turn.  Returns
+        ``True`` when the failure answer should be published.
         """
         with self._query_lock:
             live = self._autosteer_goal == query.text
@@ -486,27 +381,15 @@ class InferenceEngine(abc.ABC):
     def _apply_subtask(self, query: PolicyQuery, subtask: str) -> bool:
         """Apply a generated subtask, unless the sequencer stopped meanwhile.
 
-        Between ``_take_query`` and this call the generation ran lock-free
-        for up to seconds, during which a ``/reset``, ``/subtask``, or
-        ``/autosteer off`` may have stopped the sequencer (or pointed it at
-        a different goal).  Applying unconditionally would silently
-        overwrite the operator's newer instruction with a stale plan, so
-        the check and the apply run atomically under ``_query_lock``
-        (``_task_lock`` nests inside it; nothing acquires them in the
-        reverse order).  Returns ``True`` when the subtask was applied.
-        When it was not, the turn is discarded without an answer: the
-        sequencer that requested it is gone, and announcing the discard
-        would describe a sequencer the operator already stopped.
+        The generation ran lock-free for seconds, so check and apply happen atomically
+        under ``_query_lock`` (``_task_lock`` nests inside it, never the reverse) or a
+        stale plan could overwrite a newer instruction.  Returns ``True`` when applied.
         """
         with self._query_lock:
             live = self._autosteer_goal == query.text
             if live:
-                # Applied here, on the policy-owning thread, so the subtask is
-                # live for the very next inference.
                 self.set_task(subtask)
-                # Armed only now, so the interval measures robot motion
-                # between subtasks rather than wall-clock that a slow
-                # generate ate into.
+                # Armed only now, so the interval measures motion between subtasks.
                 self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
             else:
                 self._query_in_flight = False  # no answer will be published
@@ -520,9 +403,8 @@ class InferenceEngine(abc.ABC):
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head on ``obs_processed``.  Backend-specific.
 
-        Implementations build the batch, stamp the query into it with
-        :meth:`_mark_query`, run the preprocessor, and call
-        ``policy.generate_text(batch)``.
+        Implementations build the batch, stamp it with :meth:`_mark_query`, preprocess it,
+        and call ``policy.generate_text``.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support text queries — no /vqa or /autosteer on this backend."
@@ -532,16 +414,10 @@ class InferenceEngine(abc.ABC):
     def _mark_query(batch: dict, query: PolicyQuery) -> dict:
         """Stamp ``batch`` with the query's kind and text, for the preprocessor.
 
-        Call between ``prepare_observation_for_inference`` and the
-        preprocessor pipeline.  ``QUERY_KIND`` and ``QUERY_TEXT`` are in the
-        converters' complementary-data allowlist, so they survive
-        ``batch_to_transition`` and land beside ``task``.  That is the
-        intended extension point for text-capable policies: a policy-specific
-        ``ComplementaryDataProcessorStep`` (none exists in-tree yet) can read
-        the kind there and rewrite ``QUERY_TEXT`` in place into its prompt
-        format before ``generate_text`` consumes it.  Stored as plain strings
-        so processor steps need not import this module, and unbatched because
-        they describe the request, not a sample.
+        Call between ``prepare_observation_for_inference`` and the preprocessor pipeline.
+        ``QUERY_KIND`` / ``QUERY_TEXT`` are allowlisted complementary data, so they land
+        beside ``task``: a policy-specific ``ComplementaryDataProcessorStep`` can read the
+        kind there and rewrite ``QUERY_TEXT`` into its prompt format.
         """
         batch[QUERY_KIND] = query.kind.value
         batch[QUERY_TEXT] = query.text
@@ -550,12 +426,9 @@ class InferenceEngine(abc.ABC):
     def drop_ready_subtask_answers(self) -> None:
         """Discard undelivered ``NEXT_SUBTASK`` answers.
 
-        The controller calls this when a run segment ends, right after
-        stopping the sequencer: delivered later (by the idle pump), such an
-        answer would announce a subtask from a sequencer that no longer
-        drives anything.  Operator (VQA) answers stay deliverable — a
-        question answered during the segment is still worth reporting after
-        it ends.
+        Called at segment end, right after stopping the sequencer, so no later
+        announcement describes a sequencer that no longer drives anything.  VQA answers
+        stay deliverable.
         """
         with self._query_lock:
             kept = [a for a in self._ready_answers if a.kind is not QueryKind.NEXT_SUBTASK]

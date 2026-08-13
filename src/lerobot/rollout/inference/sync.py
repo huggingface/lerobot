@@ -95,8 +95,7 @@ class SyncInferenceEngine(InferenceEngine):
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
-        # The policy was just reset, so a pending task change has nothing
-        # stale left to flush.
+        # The policy was just reset, so a pending task change has nothing stale to flush.
         self._discard_task_change()
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
@@ -115,14 +114,9 @@ class SyncInferenceEngine(InferenceEngine):
         task, task_changed = self._take_task()
         with torch.inference_mode(), autocast_ctx:
             if task_changed:
-                # Chunking policies serve actions from an internal queue filled
-                # under the previous instruction (up to n_action_steps ticks of
-                # stale behavior), so drop them and let the new instruction take effect
-                # on this very tick.  Deliberately narrower than ``policy.reset``:
-                # observation history and other episode state are kept, so a
-                # policy that conditions on them (and one that ignores the task
-                # entirely) sees no discontinuity.  Safe to mutate here — this is
-                # the thread that calls ``select_action``.
+                # Chunking policies queue actions computed under the previous instruction,
+                # so drop them and let the new one take effect on this tick.  Narrower
+                # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
@@ -134,8 +128,8 @@ class SyncInferenceEngine(InferenceEngine):
         # Reorder to match dataset action ordering so the caller can treat
         # the returned tensor uniformly across backends.
         action_dict = make_robot_action(action_tensor, self._dataset_features)
-        # ``task`` is the snapshot taken before inference, not the live value:
-        # a /subtask landing mid-inference must not relabel this action.
+        # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
+        # not relabel this action.
         self._set_dispatched_task(task)
         return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
 
@@ -161,22 +155,14 @@ class SyncInferenceEngine(InferenceEngine):
             if self._device.type == "cuda" and self._policy.config.use_amp
             else nullcontext()
         )
-        # The live task, read without consuming the task-changed edge: that
-        # edge belongs to the action path, which uses it to drop actions
-        # precomputed under the previous instruction.  A query must not
-        # swallow it.
+        # Live task, read without consuming the task-changed edge (the action path needs it).
         task = self.task
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
             observation = self._mark_query(observation, query)
-            # Reuses the action path's preprocessor, which is safe only while
-            # its steps are stateless per call: the one stateful step that
-            # matters (an enabled RelativeActionsProcessorStep) is rejected for
-            # this backend at context-build time.  Revisit if that rejection is
-            # lifted — a query advancing a stateful step would let the action
-            # path notice the query.
+            # Reusing the action path's preprocessor is safe only while its steps are
+            # stateless per call; the one that is not (an enabled RelativeActionsProcessorStep)
+            # is rejected for this backend at context-build time.
             observation = self._preprocessor(observation)
-            # No str() coercion: _service_query validates the return value, so
-            # a contract-violating policy (None, a tensor) surfaces as an
-            # error answer instead of steering the robot with "None".
+            # No str() coercion: _service_query validates the return value.
             return self._policy.generate_text(observation)

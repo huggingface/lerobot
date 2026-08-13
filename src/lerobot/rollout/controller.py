@@ -12,41 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Programmatic control of a rollout: start, pause, re-instruct, and stop a
-policy while hardware and policy stay connected and warm.
+"""Programmatic control of a rollout: start, pause, re-instruct, and stop a policy while
+hardware and policy stay connected and warm.
 
-:class:`RolloutController` is the embedding-friendly core of interactive
-rollouts.  It has no I/O of its own — no stdin, no printing, no log
-manipulation — so it can be driven from any application code: a CLI
-(:class:`lerobot.rollout.interactive.InteractiveSession` is exactly that), a
-network server, a voice front-end, or a notebook.
-
-Typical embedding::
-
-    from threading import Event, Thread
-    from lerobot.rollout import (
-        LinkedEvent,
-        RolloutController,
-        build_rollout_context,
-        create_strategy,
-    )
-
-    parent = Event()  # your application's shutdown signal
-    ctx = build_rollout_context(cfg, LinkedEvent(parent))
-    strategy = create_strategy(cfg.strategy)
-    strategy.setup(ctx)
-
-    controller = RolloutController(strategy, ctx)
-    serve_thread = Thread(target=controller.serve)
-    serve_thread.start()  # or call serve() on your main thread
-
-    controller.start()  # robot starts executing the policy
-    controller.set_task("grab the red cube")  # re-instruct mid-run
-    controller.reset()  # stop movement, return home, stay warm
-    controller.stop()  # end serve()
-
-    serve_thread.join()
-    strategy.teardown(ctx)  # teardown stays with the caller
+:class:`RolloutController` is the embedding-friendly core: it has no I/O of its own, so it can be
+driven from a CLI (:class:`lerobot.rollout.interactive.InteractiveSession`), a network server, or a
+notebook.  See ``docs/source/inference.mdx`` for a worked embedding example.
 """
 
 from __future__ import annotations
@@ -71,12 +42,8 @@ logger = logging.getLogger(__name__)
 class LinkedEvent(Event):
     """A ``threading.Event`` whose ``is_set`` also reflects a parent event.
 
-    ``set``/``clear`` act only on the local flag, so a controller can raise
-    and clear its own segment-stop requests without masking (or accidentally
-    re-arming) the process-wide shutdown event carried by ``parent``.  Every
-    rollout strategy control loop polls ``ctx.runtime.shutdown_event.is_set()``,
-    so installing a ``LinkedEvent`` there makes the loops react both to
-    controller commands and to real shutdown signals.
+    ``set``/``clear`` act only on the local flag, so a controller can raise and clear its own
+    segment-stop requests without masking (or re-arming) the shutdown event carried by ``parent``.
     """
 
     _WAIT_SLICE_S = 0.05
@@ -89,12 +56,7 @@ class LinkedEvent(Event):
         return super().is_set() or self.parent.is_set()
 
     def wait(self, timeout: float | None = None) -> bool:
-        """Wait for either the local or the parent flag.
-
-        The base ``Event.wait`` only watches the local flag, so poll in short
-        slices to also observe the parent.  Strategy loops only call
-        ``is_set()``; this coarse wait exists for API completeness.
-        """
+        """Wait for either the local or the parent flag, polling in short slices."""
         deadline = None if timeout is None else time.perf_counter() + timeout
         while not self.is_set():
             remaining = None if deadline is None else deadline - time.perf_counter()
@@ -109,35 +71,30 @@ class AskResult(Enum):
     """Outcome of :meth:`RolloutController.ask`."""
 
     QUEUED = "queued"
-    """The question was accepted; the answer arrives as a ``QUERY_ANSWERED`` event."""
+    """Accepted; the answer arrives as a ``QUERY_ANSWERED`` event."""
 
     NOT_RUNNING = "not_running"
     """Rejected: no segment is running, so no fresh observation is flowing."""
 
     BUSY = "busy"
-    """Rejected: another query holds the channel: a previous question, or
-    an autosteer subtask query queued but not yet served."""
+    """Rejected: another question or autosteer turn holds the single-slot channel."""
 
     UNSUPPORTED = "unsupported"
-    """Rejected: the policy has no text head, so it can neither answer
-    questions nor plan subtasks.  Unlike the other rejections this one is
-    permanent for the session."""
+    """Rejected: the policy has no text head; unlike the others, permanent for the session."""
 
 
 class RolloutEvent(Enum):
     """Lifecycle notifications emitted by :class:`RolloutController`.
 
-    All events are emitted on the thread running :meth:`RolloutController.serve`;
-    callbacks must be quick and must not call back into the controller's
-    blocking methods.
+    All events fire on the thread running :meth:`RolloutController.serve`; callbacks must be
+    quick and must not call back into the controller's blocking methods.
     """
 
     SEGMENT_STARTED = "segment_started"
     """A control-loop segment is about to run (control state freshly reset)."""
 
     SEGMENT_ENDED = "segment_ended"
-    """The segment returned on its own (e.g. ``--duration`` elapsed); the
-    controller is idle again and the robot is holding position."""
+    """The segment returned on its own (e.g. ``--duration`` elapsed); the robot is holding."""
 
     RESET_STARTED = "reset_started"
     """A reset is being executed: inference paused, robot about to move home."""
@@ -149,68 +106,36 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     RESET_FAILED = "reset_failed"
-    """The return move errored partway: the robot may be holding an arbitrary
-    pose, *not* the initial position.  Verify the robot before the next
-    :meth:`RolloutController.start`."""
+    """The return move errored partway: the robot may be holding an arbitrary pose, *not* the
+    initial position."""
 
     QUERY_ANSWERED = "query_answered"
-    """A text query was resolved: a question queued with
-    :meth:`RolloutController.ask`, or one of the autosteer sequencer's turns
-    (kind ``NEXT_SUBTASK`` — a success carries the subtask just applied to the
-    task, a failure the reason the sequencer stopped).  The event payload is a
-    :class:`~lerobot.rollout.inference.QueryAnswer`; check its ``ok`` before
-    reading ``answer``, since it also reports questions the policy could not
-    handle and ones dropped when the run ended first."""
+    """A text query resolved (an :meth:`RolloutController.ask` question or an autosteer turn); the
+    payload is a :class:`~lerobot.rollout.inference.QueryAnswer`, check ``ok`` before ``answer``."""
 
     ENGINE_FAILED = "engine_failed"
-    """The inference engine hit an unrecoverable error; ``serve()`` is about
-    to return.  Read :attr:`RolloutController.failure_traceback` for details."""
+    """The engine hit an unrecoverable error; ``serve()`` is returning.  Read
+    :attr:`RolloutController.failure_traceback` (same for ``STRATEGY_FAILED``)."""
 
     STRATEGY_FAILED = "strategy_failed"
-    """``strategy.run()`` raised mid-segment (robot I/O error, recording
-    failure, ...); ``serve()`` is about to return.  Read
-    :attr:`RolloutController.failure_traceback` for details."""
+    """``strategy.run()`` raised mid-segment (robot I/O, recording, ...); ``serve()`` is returning."""
 
     STOPPED = "stopped"
-    """``serve()`` is returning (after :meth:`RolloutController.stop`, EOF of
-    the driving front-end, an engine failure, or a parent shutdown signal)."""
+    """``serve()`` is returning (stop, front-end EOF, a failure, or a parent shutdown signal)."""
 
 
 class RolloutController:
     """Drive a rollout strategy through thread-safe start/reset/stop/set_task calls.
 
-    The controller owns the outer lifecycle between ``strategy.setup(ctx)``
-    and ``strategy.teardown(ctx)`` (both stay with the caller): the robot is
-    idle until :meth:`start`, each run *segment* executes ``strategy.run(ctx)``
-    on the thread that called :meth:`serve` until interrupted or until the
-    strategy returns on its own (e.g. ``--duration`` elapsed).  :meth:`reset`
-    pauses the inference engine, returns the robot to its initial position,
-    and restores the launch task, while hardware and policy stay warm.
-    :meth:`stop` ends :meth:`serve` so the caller can run
-    ``strategy.teardown(ctx)``.  :meth:`ask` queues a question for the
-    policy's text head and reports the answer through ``on_event``.
+    The robot is idle until :meth:`start`; each run *segment* executes ``strategy.run(ctx)`` on the
+    thread that called :meth:`serve`, while ``strategy.setup``/``teardown`` stay with the caller.
 
-    Requires ``ctx.runtime.shutdown_event`` to be a :class:`LinkedEvent`: the
-    controller sets the local flag to end a segment, and process shutdown
-    signals still propagate through the parent.  Build the context with
-    ``build_rollout_context(cfg, LinkedEvent(shutdown_event))``.
-
-    Thread safety: the control methods (:meth:`start`, :meth:`reset`,
-    :meth:`stop`, :meth:`set_task`, :meth:`ask`, :meth:`autosteer`,
-    :meth:`stop_autosteer`) may be called from any thread and are
-    serialized by an internal lock, so calls issued in order from one thread
-    keep that order — e.g. a ``set_task`` right after a ``reset`` is not
-    clobbered by the reset's task restore.  Commands are last-write-wins:
-    ``reset`` and ``stop`` cancel a still-pending ``start`` so the robot
-    never starts moving after the caller's most recent command asked it not
-    to.  Events are emitted on the :meth:`serve` thread via ``on_event``.
-
-    The controller is one-shot: once :meth:`serve` returns (stop, EOF of the
-    driving front-end, engine or strategy failure, parent shutdown) it is
-    terminally :attr:`stopped` — :meth:`start`, :meth:`reset`, and
-    :meth:`set_task` refuse with ``False`` instead of acknowledging commands
-    nothing will ever service, and a second :meth:`serve` call raises.
-    Build a new controller (and rollout context) to run again.
+    - ``ctx.runtime.shutdown_event`` must be a :class:`LinkedEvent`, so ending a segment does not
+      trigger process shutdown: ``build_rollout_context(cfg, LinkedEvent(shutdown_event))``.
+    - The control methods are callable from any thread and serialized by an internal lock, so calls
+      issued in order from one thread keep that order.  Events fire on the :meth:`serve` thread.
+    - One-shot: once :meth:`serve` returns the controller is terminally :attr:`stopped`, the control
+      methods refuse with ``False``, and a second :meth:`serve` call raises.
     """
 
     _POLL_INTERVAL_S = 0.2
@@ -229,9 +154,8 @@ class RolloutController:
                 "rollout context with build_rollout_context(cfg, LinkedEvent(shutdown_event))."
             )
         if not strategy.config.supports_interactive:
-            # Same contract the CLI enforces (see RolloutConfig.__post_init__):
-            # one-shot strategies finalize their dataset when run() exits, so a
-            # second start() would record into a finalized dataset.
+            # One-shot strategies finalize their dataset when run() exits, so a second start()
+            # would record into a finalized dataset (same guard as RolloutConfig.__post_init__).
             raise ValueError(
                 f"RolloutController drives strategy.run() in restartable segments, but "
                 f"'{strategy.config.type}' is a one-shot strategy "
@@ -243,12 +167,10 @@ class RolloutController:
         self._segment_stop = stop_event
         self._global_shutdown = stop_event.parent
         self._on_event = on_event
-        # The instruction the rollout was launched with; reset() restores it.
         self._initial_task = ctx.policy.inference.task
         self._autosteer_interval_s = ctx.runtime.cfg.autosteer_interval_s
 
-        # Serializes the control methods so multi-writer task updates (e.g.
-        # reset()'s restore followed by a set_task()) keep their call order.
+        # Serializes the control methods so multi-writer task updates keep their call order.
         self._control_lock = Lock()
 
         # Written by control methods (any thread), consumed by the serve loop.
@@ -257,17 +179,11 @@ class RolloutController:
         self._stop_requested = Event()
         self._wake = Event()
         self._running = Event()
-        # Latched (never cleared) when serve() exits: the terminal state that
-        # makes the control methods refuse instead of acknowledging commands
-        # nothing will ever service.
+        # Latched (never cleared) when serve() exits; the control methods then refuse.
         self._stopped = Event()
-        # A strategy.run() failure captured by _run_segment; consulted by
-        # failed/failure_traceback alongside the engine's own failure slot.
         self._strategy_failure_traceback: str | None = None
 
-        # Answers are produced on whichever thread owns the policy, but the
-        # engine only hands them over from ``pump_query`` — which the control
-        # loop and the idle poll below both call on the serve thread — so this
+        # Answers only leave the engine through pump_query(), called on the serve thread, so this
         # observer keeps the "events fire on the serve thread" guarantee.
         ctx.policy.inference.set_answer_observer(self._on_query_answer)
 
@@ -310,13 +226,10 @@ class RolloutController:
     # ------------------------------------------------------------------
 
     def start(self) -> bool:
-        """Request a control-loop segment.
+        """Request a control-loop segment, which executes on the :meth:`serve` thread.
 
-        Returns ``False`` when a segment is already running, when the
-        controller has terminally :attr:`stopped` (or a stop is pending), or
-        after a failure — an accepted start would never be serviced.  Returns
-        ``True`` when the segment was scheduled.  The segment itself executes
-        on the :meth:`serve` thread.
+        Returns ``True`` when the segment was scheduled, ``False`` when one is already running, after a
+        failure, or once the controller is stopping or stopped (an accepted start would never run).
         """
         with self._control_lock:
             if self._stopped.is_set() or self._stop_requested.is_set() or self.failed:
@@ -330,27 +243,19 @@ class RolloutController:
     def reset(self) -> bool:
         """Stop movement, return the robot to its initial position, restore the launch task.
 
-        Hardware and policy stay warm; call :meth:`start` to run again.
-        Returns ``True`` when the task was restored to the launch task (i.e.
-        it had been changed), ``False`` when it was already the launch task —
-        or when the controller has stopped (a stopped controller executes no
-        reset, so nothing is acknowledged).
+        Hardware and policy stay warm; call :meth:`start` to run again.  Returns ``True`` when the
+        task was restored (i.e. it had been changed), ``False`` when it was already the launch task
+        or the controller is stopping or stopped.
         """
         with self._control_lock:
             if self._stopped.is_set() or self._stop_requested.is_set():
                 return False
-            # Last command wins: a start() still waiting to be serviced is
-            # cancelled so the robot never starts moving after the caller
-            # asked it not to.  Flag first, segment-stop second (see the
-            # ordering note in _run_segment).
+            # Last command wins: cancel a pending start().  Flag first, segment-stop second
+            # (see the ordering note in _run_segment).
             self._start_requested.clear()
-            # Reset means back to square one, so the sequencer stops too —
-            # otherwise it would overwrite the launch task being restored below.
+            # Back to square one, so the sequencer stops too: it would overwrite the restored task.
             self._ctx.policy.inference.stop_autosteer()
-            # Restore the task here, under the control lock, rather than in
-            # _reset_robot (which runs later, on the serve thread) so that a
-            # set_task() issued right after this reset() is not silently
-            # reverted by a deferred restore.
+            # Restore here, not later on the serve thread, so a following set_task() survives.
             restored = self._ctx.policy.inference.set_task(self._initial_task)
             self._reset_requested.set()
             self._segment_stop.set()
@@ -358,10 +263,7 @@ class RolloutController:
             return restored
 
     def stop(self) -> None:
-        """End :meth:`serve`; the caller then runs ``strategy.teardown(ctx)``.
-
-        Idempotent, and a no-op once the controller has already stopped.
-        """
+        """End :meth:`serve` so the caller can run ``strategy.teardown(ctx)``.  Idempotent."""
         with self._control_lock:
             if self._stopped.is_set():
                 return
@@ -373,15 +275,10 @@ class RolloutController:
     def set_task(self, task: str) -> bool:
         """Change the instruction the policy follows, effective from the next inference.
 
-        Returns ``True`` when the value actually changed.  Safe to call while
-        a segment is running: the engine applies the switch on its own
-        inference thread (sync backends also drop actions precomputed under
-        the previous instruction).  Refused (``False``, engine untouched)
-        once the controller has stopped or a stop is pending.
-
-        Setting the instruction by hand stops :meth:`autosteer`: the operator
-        is taking the wheel, and leaving the sequencer on would silently
-        overwrite this instruction at the next interval.
+        Returns ``True`` when the value actually changed.  Safe to call while a segment is running:
+        the engine applies the switch on its own inference thread (sync backends also drop actions
+        precomputed under the previous instruction).  Refused (``False``, engine untouched) once the
+        controller is stopping or stopped.  Stops :meth:`autosteer`, which would overwrite this instruction.
         """
         with self._control_lock:
             if self._stopped.is_set() or self._stop_requested.is_set():
@@ -392,33 +289,16 @@ class RolloutController:
     def ask(self, question: str) -> AskResult:
         """Queue a question about what the robot currently sees.
 
-        Returns immediately; the answer arrives later as a
-        :attr:`RolloutEvent.QUERY_ANSWERED` event carrying a
-        :class:`~lerobot.rollout.inference.QueryAnswer`.  The policy is
-        never touched on the caller's thread — the question is answered by
-        whichever thread owns the policy, which for async backends means the
-        robot keeps executing already-queued actions and then holds while the
-        text head runs.
-
-        Refused outright (:attr:`AskResult.UNSUPPORTED`) when the policy has
-        no text head — checked here, before queueing, so the operator learns
-        immediately rather than from an error answer a tick later.
-
-        Only accepted while a segment is running (:attr:`running`).  Engines
-        are fed observations by the control loop and by nothing else, so an
-        idle engine has no current view to answer from — and an async
-        backend's inference thread is parked and would never pick the
-        question up at all.
+        Returns immediately; the answer arrives as a :attr:`RolloutEvent.QUERY_ANSWERED` event, and
+        the policy is never touched on the caller's thread.  Rejected with
+        :attr:`AskResult.UNSUPPORTED` (no text head), :attr:`AskResult.NOT_RUNNING` (no segment
+        running, so no observation to answer from), or :attr:`AskResult.BUSY` (channel taken).
         """
-        # A static capability, so checked outside the control lock — and
-        # first, so the operator is not told to /start a policy that could
-        # never answer.
+        # A static capability: checked first, and outside the control lock.
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
         with self._control_lock:
-            # Checked under the same lock that _run_segment clears _running
-            # and drops the pending question under, so a question can never
-            # slip past this guard and be left orphaned in the slot.
+            # Same lock _run_segment clears _running under, so a question is never left orphaned.
             if not self._running.is_set():
                 return AskResult.NOT_RUNNING
             if not self._ctx.policy.inference.ask(question):
@@ -433,19 +313,10 @@ class RolloutController:
     def autosteer(self, goal: str) -> AskResult:
         """Let the policy decompose ``goal`` and drive its own subtasks.
 
-        Every ``autosteer_interval_s`` seconds the engine asks the policy
-        for the next subtask and applies it through the *engine's*
-        ``set_task`` (not this controller's, which would stop the
-        sequencer), so the switch takes the usual instruction-change path.  Progress
-        through the plan lives in the policy — each query re-sends the same
-        goal — which is why the sequencer does not survive a segment:
-        restarting a segment resets the policy, and with it the plan.
-
-        Subject to the same capability and running-only guards as :meth:`ask`,
-        and stopped by :meth:`reset`, :meth:`set_task`, and the end of a
-        segment.  Returns :attr:`AskResult.NOT_RUNNING` when no segment is
-        running and :attr:`AskResult.UNSUPPORTED` when the policy has no text
-        head to plan with.
+        Every ``autosteer_interval_s`` seconds the engine asks the policy for the next subtask and
+        applies it through the *engine's* ``set_task``.  Plan progress lives in the policy, so the
+        sequencer does not survive a segment; it is also stopped by :meth:`reset` and
+        :meth:`set_task`.  Same guards and rejection values as :meth:`ask`.
         """
         if not self._ctx.policy.inference.supports_text_queries:
             return AskResult.UNSUPPORTED
@@ -467,12 +338,9 @@ class RolloutController:
     def serve(self) -> None:
         """Service control requests until :meth:`stop`, a failure, or parent shutdown.
 
-        Blocks the calling thread; run segments execute here.  Emits
-        :class:`RolloutEvent` notifications through ``on_event``.
-
-        One-shot: once it returns the controller is terminally
-        :attr:`stopped` and calling ``serve()`` again raises — stale request
-        flags from the previous life must never replay into a new loop.
+        Blocks the calling thread; run segments execute here and :class:`RolloutEvent`
+        notifications are emitted through ``on_event``.  One-shot: once it returns the controller
+        is terminally :attr:`stopped` and calling ``serve()`` again raises.
         """
         if self._stopped.is_set():
             raise RuntimeError(
@@ -494,13 +362,8 @@ class RolloutController:
                     self._reset_robot()
                     continue
                 if self._start_requested.is_set():
-                    # Consume the request and mark the segment running in one
-                    # atomic step: start() gates on _running, so a concurrent
-                    # start() is rejected for the entire startup sequence
-                    # (reset_control_state, SEGMENT_STARTED emission), not just
-                    # once strategy.run() begins — otherwise it could re-arm
-                    # _start_requested behind the running segment and the robot
-                    # would start again, uncommanded, when the segment ends.
+                    # Consume the request and mark the segment running in one atomic step, so a
+                    # concurrent start() cannot re-arm the flag behind the running segment.
                     with self._control_lock:
                         starting = self._start_requested.is_set()
                         if starting:
@@ -509,36 +372,27 @@ class RolloutController:
                     if starting:
                         self._run_segment()
                     continue
-                # Deliver an answer that landed just as the segment ended.
-                # While a segment runs the control loop pumps every tick; this
-                # is the idle counterpart.  No observation to offer, so a
-                # pending question stays queued rather than being answered
-                # blind — _run_segment has already dropped it anyway.
+                # Idle counterpart of the per-tick pump in the control loop: deliver an answer
+                # that landed just as the segment ended.
                 self._ctx.policy.inference.pump_query()
                 self._wake.wait(timeout=self._POLL_INTERVAL_S)
                 self._wake.clear()
         finally:
-            # Latch the terminal state before announcing it, so an observer
-            # reacting to STOPPED already sees a stopped controller.
+            # Latch before announcing, so an observer reacting to STOPPED sees a stopped controller.
             self._stopped.set()
             self._emit(RolloutEvent.STOPPED)
 
     def _run_segment(self) -> None:
         """Execute one ``strategy.run`` segment until interrupted or finished.
 
-        The serve loop has already set ``_running`` (under the control lock),
-        so this method must clear it on every exit path.
+        The serve loop has already set ``_running`` (under the control lock), so this method must
+        clear it on every exit path.
         """
         engine = self._ctx.policy.inference
         try:
-            # Clear the local flag *before* checking the request flags: control
-            # methods set their flag first and the segment-stop event second, so
-            # a reset() or stop() racing with this start() is either seen here or
-            # ends the freshly started loop on its first tick.  A dying engine
-            # signals shutdown through that same local flag (in interactive mode
-            # the engine's shutdown event *is* the LinkedEvent), so the clear
-            # would silently absorb a fatal failure — re-check engine.failed
-            # here; returning lets serve()'s next iteration emit ENGINE_FAILED.
+            # Clear the local flag *before* checking the request flags: control methods set their flag
+            # first and the event second, so a racing reset()/stop() is either seen here or ends the
+            # fresh loop at once.  The clear also absorbs a dying engine's signal: hence engine.failed.
             self._segment_stop.clear()
             if (
                 self._stop_requested.is_set()
@@ -552,34 +406,23 @@ class RolloutController:
             try:
                 self._strategy.run(self._ctx)
             except Exception:
-                # A strategy failure (robot I/O, recording) must reach the
-                # same public failure surface as an engine failure — not
-                # unwind through serve() as a clean-looking STOPPED with the
-                # traceback lost to the thread excepthook.  serve()'s next
-                # iteration emits STRATEGY_FAILED and shuts down.
+                # Route to the same public failure surface as an engine failure, instead of
+                # unwinding through serve() as a clean-looking STOPPED.
                 self._strategy_failure_traceback = traceback.format_exc()
                 logger.exception("Rollout strategy failed mid-segment")
             finally:
                 engine.pause()
         finally:
-            # Clear and drop together under the control lock: ask() gates on
-            # _running under the same lock, so a question either lands before
-            # this (and is dropped here) or is rejected outright.  Left in the
-            # slot it would be answered against a completely different scene
-            # whenever the robot next starts.
+            # Clear and drop together under the control lock: ask() gates on _running under the same
+            # lock, so a question either lands before this and is dropped, or is rejected outright.
             with self._control_lock:
                 self._running.clear()
-                # The sequencer cannot outlive the segment: restarting one
-                # resets the policy, and the plan's progress lives there.
+                # The sequencer cannot outlive the segment: its plan progress lives in the policy.
                 engine.stop_autosteer()
                 dropped = engine.drop_pending_query()
-                # An undelivered sequencer answer would otherwise be handed
-                # to the observer by the idle pump, announcing a subtask
-                # after the segment (and the sequencer) ended.  VQA answers
-                # stay deliverable — see the idle pump in serve().
+                # Else the idle pump would announce a subtask after the sequencer ended; VQA stays.
                 engine.drop_ready_subtask_answers()
-            # Only an operator question is worth reporting — a dropped
-            # next-subtask query is just the sequencer stopping with it.
+            # Only an operator question is worth reporting.
             if dropped is not None and dropped.kind is QueryKind.VQA:
                 self._emit(
                     RolloutEvent.QUERY_ANSWERED,
@@ -602,8 +445,7 @@ class RolloutController:
         elif self._strategy.return_to_initial_position(self._ctx.hardware):
             self._emit(RolloutEvent.RESET_DONE)
         else:
-            # RESET_DONE guarantees "back at the initial position"; a failed
-            # move must not be reported as that.
+            # RESET_DONE guarantees "back at the initial position"; a failed move must not claim it.
             self._emit(RolloutEvent.RESET_FAILED)
 
     def _on_query_answer(self, answer: QueryAnswer) -> None:

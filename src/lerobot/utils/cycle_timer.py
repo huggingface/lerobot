@@ -166,11 +166,10 @@ class CycleTimer:
     work went — and reports them twice: a one-line summary per episode
     (:meth:`log_episode_summary`) and a full block for the whole run
     (:meth:`log_run_summary`, called from the loop's ``finally`` so a
-    ``KeyboardInterrupt`` still produces it).  Both go to ``logger.info``, or to
-    the ``report`` sink when one is given — for callers that mute the logger,
-    such as an interactive rollout session.  Only the summaries are routed; the
-    slow-loop warning and the DEBUG telemetry stay on the logger (a session that
-    mutes them still gets the miss counts through the routed summaries).
+    ``KeyboardInterrupt`` still produces it).  Both go to ``logger.info``, or to the
+    ``report`` sink when one is given — for callers that mute the logger.  Only the
+    summaries are routed; the slow-loop warning and the DEBUG telemetry stay on the
+    logger.
 
     Usage::
 

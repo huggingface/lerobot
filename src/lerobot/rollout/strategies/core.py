@@ -46,36 +46,20 @@ class RolloutStrategy(abc.ABC):
     exclusive — only one runs per session.
 
     Lifecycle: ``setup()`` once, then ``run()``, then ``teardown()`` once.
-    A strategy whose config declares ``supports_interactive = True`` can
-    additionally be driven by ``--interactive=true``, which calls ``run()``
-    any number of times between ``setup()`` and ``teardown()`` (one call
-    per start/stop segment).  Such a strategy must keep ``run()``
-    restartable:
+    A strategy whose config declares ``supports_interactive = True`` is also
+    driven by ``--interactive=true``, which calls ``run()`` once per
+    start/stop segment.  Such a strategy must keep ``run()`` restartable:
 
-    - never finalize the dataset in ``run()`` — finalization belongs in
-      ``teardown()``; at most save a partial tail episode when a segment
-      ends (see ``SentryStrategy`` for the reference implementation);
-    - state that must survive a segment (upload cadence counters, etc.)
-      lives on the instance (initialised in ``__init__``/``setup()``), not
-      in ``run()`` locals — note the ``CycleTimer`` is deliberately the
-      other way round, see ``run()``;
-    - never bind keyboard/terminal listeners — stdin belongs to the
-      interactive command prompt;
-    - call ``engine.pump_query(obs_processed)`` once per tick, at the *end*
-      of the tick (recording strategies: after ``add_frame``, so a slow
-      generate cannot separate an observation from its recorded frame) and
-      before ``timer.wait()``, so the generation is billed to the tick that
-      caused it.  Every ``/vqa`` answer and every autosteer turn is served
-      or delivered through that call — skipping it silently degrades text
-      queries: on sync backends a queued question is never answered during
-      the run, on async backends computed answers only surface at segment
-      end.  Do not fold it into the action path: text generation is far
-      slower than a control tick, so a generating tick overruns the cadence
-      budget and is reported for it like any other.
+    - never finalize the dataset in ``run()`` — that belongs in ``teardown()``;
+      at most save a partial tail episode when a segment ends;
+    - keep state that must survive a segment on the instance, not in ``run()``
+      locals (the ``CycleTimer`` is deliberately the other way round, see ``run()``);
+    - never bind keyboard/terminal listeners — stdin belongs to the command prompt;
+    - call ``engine.pump_query(obs_processed)`` once at the end of every tick, see
+      ``run()``.
 
-    One-shot strategies (``supports_interactive = False``, the default)
-    are free to finalize on ``run()`` exit, e.g. via
-    ``VideoEncodingManager``.
+    One-shot strategies (``supports_interactive = False``, the default) are
+    free to finalize on ``run()`` exit, e.g. via ``VideoEncodingManager``.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -104,20 +88,12 @@ class RolloutStrategy(abc.ABC):
     def reset_control_state(self) -> None:
         """Clear episode-scoped control state so a paused session can restart cleanly.
 
-        Resets the inference engine (policy hidden state, action queues), the
-        action interpolator, and the cached processed observation.
-        ``RolloutController`` calls this on its serve thread before each run
-        segment (``_init_engine`` also runs it once during setup).  Only call
-        while the control loop is not running: the engine and interpolator
-        resets are not synchronized against a live loop.
-
-        Pacing/cadence state is deliberately not touched: each ``run()``
-        segment builds its own ``CycleTimer``, so a fresh segment already
-        starts with the start-up exemption armed — which is what absorbs the
-        re-primed interpolator this method leaves behind.  A caller that ever
-        resets control state *while* a loop is running, or a strategy that
-        hoists its timer onto the instance, must also call
-        ``timer.restart()``, for the same reason ``_handle_warmup`` does.
+        Resets the inference engine (policy hidden state, action queues), the action
+        interpolator and the cached processed observation; pacing state is untouched.
+        ``RolloutController`` calls it on its serve thread before each run segment.
+        Only call while the control loop is not running: these resets are not synchronized
+        against a live loop.  A caller that resets control state while a loop runs — or a
+        strategy that hoists its timer onto the instance — must also call ``timer.restart()``.
         """
         if self._engine is not None:
             self._engine.reset()
@@ -197,11 +173,9 @@ class RolloutStrategy(abc.ABC):
     def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
         """Smoothly interpolate the robot back to its initial position.
 
-        Returns ``True`` when the interpolation completed, ``False`` when it
-        failed partway — the robot may then be anywhere between its previous
-        pose and the target, so callers with a positioning guarantee to
-        uphold (the controller's ``RESET_DONE`` event) must not report
-        success on ``False``.
+        Returns ``True`` when the interpolation completed, ``False`` when it failed
+        partway — the robot is then at an arbitrary pose, so callers must not report
+        a completed reset on ``False``.
         """
         robot = hw.robot_wrapper
         target = hw.initial_position
@@ -246,33 +220,21 @@ class RolloutStrategy(abc.ABC):
     def run(self, ctx: RolloutContext) -> None:
         """Main rollout loop.  Returns when shutdown is requested or duration expires.
 
-        Called exactly once per session — unless the strategy declares
-        ``supports_interactive``, in which case it is called once per
-        interactive segment and must be restartable (see the class
-        docstring for the contract).
+        Implementations must call ``engine.resume()`` before entering their loop
+        (async backends start paused, and the interactive controller pauses again at
+        the end of every segment), and ``engine.pump_query(obs_processed)`` at the end
+        of every tick — the text-query channel only advances through it, and a
+        multi-second generation must not sit inside the action path.
 
-        Implementations must call ``engine.resume()`` before entering their
-        loop: async backends start with inference paused, and the interactive
-        controller pauses the engine again at the end of every segment.
-        Interactive strategies must also call
-        ``engine.pump_query(obs_processed)`` at the end of every tick — the
-        text-query channel only advances through it (see the class
-        docstring).
-
-        Each ``run()`` call owns its own ``CycleTimer``, built from
-        ``cfg.fps`` and the interpolator's multiplier, and reports through
-        ``timer.log_run_summary()`` from its ``finally``.  In interactive
-        mode that means one cadence report *per segment* rather than per
-        session, and each segment's first group is exempt from judging —
-        which is what absorbs the interpolator that ``reset_control_state()``
-        re-primes at every ``/start``.
+        Each ``run()`` call builds its own ``CycleTimer`` and reports it through
+        ``timer.log_run_summary()`` from its ``finally``: a fresh timer's start-up
+        exemption is what absorbs the interpolator that ``reset_control_state()``
+        re-primes at every ``/start``, and each segment gets its own cadence report.
         """
 
     @abc.abstractmethod
     def teardown(self, ctx: RolloutContext) -> None:
-        """Cleanup: finalize dataset, stop threads, disconnect hardware.
-
-        Called exactly once, after the last ``run()`` call."""
+        """Cleanup: finalize dataset, stop threads, disconnect hardware."""
 
 
 # ---------------------------------------------------------------------------

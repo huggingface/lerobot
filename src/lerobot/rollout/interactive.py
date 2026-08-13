@@ -14,51 +14,11 @@
 
 """Interactive rollout session: chat-style stdin commands for ``lerobot-rollout``.
 
-Enabled with ``--interactive=true``, this module lets the operator control a
-rollout from the terminal while hardware and policy stay connected and warm:
-
-    /start           start (or restart) the policy control loop
-    /subtask <text>  change the instruction the policy follows, mid-run
-    /vqa <text>      ask the policy a question about what it currently sees
-    /autosteer <goal>  let the policy pick its own subtasks toward a goal
-                     (``/autosteer off`` hands control back)
-    /reset           stop movement, return the robot to its initial position,
-                     and restore the instruction passed on the command line
-    /stop            end the session and run the normal shutdown routines
-    /help            show the available commands
-
-This module is only the CLI front-end: stdin reading
-(:class:`lerobot.utils.stdin_input.StdinCommandListener`), command parsing,
-terminal output, and log muting.  All control logic lives in
-:class:`lerobot.rollout.controller.RolloutController`, which is the public
-API for driving a rollout programmatically (from an application, a network
-server, a notebook, ...) without any of this module's terminal I/O.
-
-Threading model: a daemon stdin-listener thread parses lines and calls the
-controller's thread-safe methods (``start``/``reset``/``stop``/``set_task``/
-``ask``/``autosteer``); it never touches hardware or policy state.  ``RolloutController.serve()``
-runs on the main thread and executes ``strategy.run(ctx)`` in *segments*,
-ended through the session's :class:`LinkedEvent` (installed as
-``ctx.runtime.shutdown_event``).  Real shutdown signals (SIGINT/SIGTERM)
-propagate through the linked event's parent, so Ctrl-C behaves exactly as in
-non-interactive runs.
-
-While the session runs, log records below ERROR and Python warnings are
-suppressed process-wide (via ``logging.disable``) so routine system output
-does not interleave with the chat prompt; ERROR records and above still
-reach the console, and a fatal inference-engine error is additionally
-reported with its captured traceback.  Normal logging resumes when the
-session ends (so teardown logs are visible).  Run without ``--interactive``
-to see the full live log output.
-
-The control loop's cadence summaries are the exception: they arrive only at
-episode and segment boundaries, so instead of being lost to the mute they are
-printed on the chat stream (see
-:meth:`InteractiveSession._route_cadence_reports`).
-
-The command table is intentionally a name → (handler, argument hint, help)
-mapping so further commands can be registered without restructuring the
-parser, the help output, or the session loop.
+Enabled with ``--interactive=true``, this module lets the operator drive a rollout from the terminal
+(``/help`` lists the commands) while hardware and policy stay connected and warm.  It adds only the
+CLI front-end — stdin reading, command parsing, terminal output, and log muting.  Real shutdown
+signals (SIGINT/SIGTERM) propagate through the session's :class:`LinkedEvent` parent, so Ctrl-C
+behaves exactly as in non-interactive runs.
 """
 
 from __future__ import annotations
@@ -90,29 +50,14 @@ _BANNER_RULE = "─" * 60
 def _mute_system_output() -> Iterator[None]:
     """Suppress log records below ERROR and Python warnings, process-wide.
 
-    System logs (policy, robot, control loop) contend with the chat prompt
-    for the terminal.  ``logging.disable`` gates records before any handler
-    dispatch, which covers non-propagating library loggers (``transformers``,
-    ``datasets``) and loggers created mid-session alike; ERROR and above still
-    get through, so failures stay visible.  WARNING is muted with the rest:
-    the ones that fire during a session are either high-frequency (a slow
-    control loop warns once per over-budget cycle, which the routed cadence
-    summary already reports in aggregate) or third-party noise, and neither
-    is worth breaking up the operator's prompt.  The cadence *summaries* the
-    control loop's timer emits are INFO, so the session routes them past
-    logging entirely (see
-    :meth:`InteractiveSession._route_cadence_reports`).
-    The gate applies to every handler — including file handlers, which
-    therefore also miss WARNING/INFO/DEBUG records for the duration.  Python
-    warnings bypass logging entirely and are silenced separately: they are
-    dominated by third-party deprecation notices, not operational signals.
+    Routine system logs would contend with the chat prompt.  ``logging.disable`` gates records
+    before handler dispatch, so non-propagating library loggers and loggers created mid-session are
+    covered too (as are file handlers); ERROR and above still get through, so failures stay visible.
     """
     previous_disable = logging.root.manager.disable
     logging.disable(logging.WARNING)
     try:
-        # catch_warnings restores the filters, the mutation counter, and
-        # showwarning on exit — a hand-rolled filters snapshot misses the
-        # counter bump and can leave warnings suppressed after the session.
+        # catch_warnings also restores the mutation counter and showwarning, unlike a filters snapshot.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             yield
@@ -143,9 +88,8 @@ def _strip_quotes(text: str) -> str:
 def parse_command(line: str) -> InteractiveCommand | None:
     """Parse an input line into an :class:`InteractiveCommand`.
 
-    Commands are ``/name`` optionally followed by free-text arguments (e.g.
-    ``/subtask grab the red cube``).  Returns ``None`` for lines that are not
-    commands (no leading ``/`` or a bare ``/``).
+    Commands are ``/name`` optionally followed by free-text arguments.  Returns ``None`` for lines
+    that are not commands (no leading ``/`` or a bare ``/``).
     """
     line = line.strip()
     if not line.startswith("/"):
@@ -160,21 +104,14 @@ def parse_command(line: str) -> InteractiveCommand | None:
 class InteractiveSession:
     """Drive a rollout from chat-style stdin commands.
 
-    A thin terminal front-end over :class:`RolloutController`: the stdin
-    listener parses lines into commands, each command calls one of the
-    controller's thread-safe methods, and controller events are rendered
-    back as terminal output.  The controller is exposed as
-    :attr:`controller` for tests and embedders.
+    A thin terminal front-end over :class:`RolloutController`, exposed as :attr:`controller` for
+    tests and embedders: the stdin listener parses lines into commands that call the controller's
+    thread-safe methods, and controller events are rendered back as terminal output.
 
-    Commands are last-write-wins: ``/reset`` and ``/stop`` cancel a pending
-    ``/start`` so the robot never starts moving after the operator's final
-    command asked it not to.  End-of-file on the command stream stops the
-    session (a closed stdin means there is no way left to command the
-    robot), so piped scripts must keep stdin open for the intended session
-    duration, e.g. ``(printf '/start\\n'; sleep 60; printf '/stop\\n') |
-    lerobot-rollout ... --interactive=true``.  The session works over SSH
-    and in headless setups — it reads the terminal (or pipe) directly and
-    needs no display server.
+    Commands are last-write-wins: ``/reset`` and ``/stop`` cancel a pending ``/start``.  EOF on the
+    command stream stops the session (nothing is left to command the robot with), so piped scripts
+    must keep stdin open for the intended duration, e.g.
+    ``(printf '/start\\n'; sleep 60; printf '/stop\\n') | lerobot-rollout ... --interactive=true``.
     """
 
     def __init__(
@@ -188,8 +125,7 @@ class InteractiveSession:
         self._play_sounds = ctx.runtime.cfg.play_sounds
         self._listener = StdinCommandListener(self._handle_line, on_eof=self._handle_eof, stream=input_stream)
 
-        # name -> (handler, argument hint, help line); /help and the banner
-        # render from this table, so future commands stay documented for free.
+        # name -> (handler, argument hint, help line); /help and the banner render from this table.
         self._commands: dict[str, tuple[Callable[[InteractiveCommand], None], str, str]] = {
             "start": (self._cmd_start, "", "start (or restart) the policy control loop"),
             "subtask": (self._cmd_subtask, " <text>", "set the instruction the policy follows"),
@@ -206,12 +142,9 @@ class InteractiveSession:
 
     @contextlib.contextmanager
     def _route_cadence_reports(self) -> Iterator[None]:
-        """Send the control loop's cadence summaries to the chat stream, not the log.
+        """Send the control loop's cadence summaries to the chat stream, not the muted log.
 
-        Boundary-only output (one line per recorded episode, one block per run
-        segment), printed on the serve thread like the controller events.
-        Scoped like :func:`_mute_system_output`: a strategy run after the
-        session logs its summaries as usual.
+        Boundary-only output, printed on the serve thread; scoped like :func:`_mute_system_output`.
         """
         previous = self._runtime.cadence_report
         self._runtime.cadence_report = self._print
@@ -231,8 +164,7 @@ class InteractiveSession:
                 finally:
                     self._listener.stop()
         finally:
-            # Outside the muting context so the closing announcement and any
-            # teardown logs are visible again.
+            # Outside the muting context, so the announcement and teardown logs are visible again.
             log_say("Interactive session ended", self._play_sounds)
 
     # ------------------------------------------------------------------
@@ -296,8 +228,7 @@ class InteractiveSession:
             self._print("Re-run without --interactive=true to see the error output.")
 
     # ------------------------------------------------------------------
-    # Command handlers (called from the listener thread; the controller's
-    # methods are thread-safe and only publish state)
+    # Command handlers (called from the listener thread)
     # ------------------------------------------------------------------
 
     def _handle_line(self, line: str) -> None:
@@ -319,16 +250,14 @@ class InteractiveSession:
     def _cmd_start(self, cmd: InteractiveCommand) -> None:
         if self.controller.start():
             return
-        # start() also refuses once the controller is stopping or has failed;
-        # claiming "already running" there would mislabel an idle robot.
+        # start() also refuses while stopping or after a failure — don't mislabel an idle robot.
         if self.controller.running:
             self._print("Already running — /reset to pause first, or /stop to shut down.")
         else:
             self._print("Can't start — the session is stopping or has failed.")
 
     def _cmd_subtask(self, cmd: InteractiveCommand) -> None:
-        # Quotes are stripped before the emptiness check (as in
-        # _cmd_autosteer), so /subtask "" reports the current task instead of
+        # Strip quotes before the emptiness check, so /subtask "" reports the task instead of
         # silently applying the empty instruction.
         task = _strip_quotes(cmd.args)
         if not task:
@@ -346,13 +275,11 @@ class InteractiveSession:
         elif task == self.controller.task:
             self._print(f"Task unchanged: {_format_task(task)}")
         else:
-            # set_task also refuses (without touching the engine) once the
-            # controller is stopping; "unchanged" would imply it was applied.
+            # set_task also refuses while stopping; "unchanged" would imply it was applied.
             self._print("Can't change the task — the session is stopping.")
 
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
-        # Quotes stripped before the emptiness check, so /vqa "" prints the
-        # usage hint instead of queueing an empty question.
+        # Strip quotes first, so /vqa "" prints the usage hint instead of queueing an empty question.
         question = _strip_quotes(cmd.args)
         if not question:
             self._print("Usage: /vqa <question> — e.g. /vqa is the cube inside the box?")
@@ -365,8 +292,7 @@ class InteractiveSession:
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
         elif result is AskResult.BUSY:
-            # Could be a previous /vqa or an autosteer subtask query — the
-            # channel holds one at a time and does not say which.
+            # Could be a previous /vqa or an autosteer query — the channel does not say which.
             self._print("The policy is busy with another query — try again in a moment.")
         else:  # a future AskResult variant must not be mislabeled as busy
             logger.error("Unhandled AskResult %r for /vqa", result)
@@ -439,10 +365,8 @@ class InteractiveSession:
     def _print(message: str) -> None:
         """User-facing chat output; logging stays on stderr, replies on stdout.
 
-        One ``write`` call per message, newline included: acknowledgements
-        print on the stdin-listener thread while controller events print on
-        the serve thread, and ``print()``'s separate message/newline writes
-        can interleave mid-line between threads.
+        One ``write`` call per message, newline included: ``print()``'s separate message/newline
+        writes can interleave mid-line between the listener and serve threads.
         """
         sys.stdout.write(message + "\n")
         sys.stdout.flush()

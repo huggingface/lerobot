@@ -325,7 +325,6 @@ def test_cycle_timer_report_sink_takes_the_summaries_off_the_log(caplog, clock):
     assert reported[0].startswith("Cadence (episode 1): 10.00 Hz vs 10 Hz target · 4 ticks")
     assert reported[1].startswith("Cadence (final episode):")
     assert reported[2].startswith("Cadence summary — whole run, 2 episodes")
-    # The over-budget ticks warned on the logger, and nowhere else.
     assert len(_timer_warnings(caplog)) == 2
     assert not any("running slower" in message for message in reported)
 

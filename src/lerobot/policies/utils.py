@@ -32,11 +32,8 @@ def populate_queues(
 ):
     """Append the batch's values to their per-key deques (filling them on first use).
 
-    Convention: policies using this helper store the dict as ``self._queues``
-    — one of the attribute names ``PreTrainedPolicy.drop_queued_actions``
-    recognizes (see ``PreTrainedPolicy._action_queue_attrs``) so a
-    mid-episode conditioning change can clear the ACTION queue.  A policy
-    that picks a different attribute name must extend that ClassVar.
+    Policies using this helper hold the dict as ``self._queues``, one of the names
+    ``PreTrainedPolicy._action_queue_attrs`` knows how to clear.
     """
     if exclude_keys is None:
         exclude_keys = []

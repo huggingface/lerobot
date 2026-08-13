@@ -140,8 +140,8 @@ class RTCInferenceEngine(InferenceEngine):
         self._action_queue: ActionQueue | None = None
         self._obs_holder: dict[str, Any] = {}
         self._obs_lock = Lock()
-        # Bumped by reset() (under _obs_lock) so chunks whose inference started
-        # before a reset are discarded instead of merged into the fresh queue.
+        # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
+        # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
         self._policy_active = Event()
         self._compile_warmup_done = Event()
@@ -198,11 +198,7 @@ class RTCInferenceEngine(InferenceEngine):
     def failure_traceback(self) -> str | None:
         """Traceback captured when the RTC thread died (see ``failed``).
 
-        Kept on the engine as data, not just logged: the failure happens on a
-        background thread at an arbitrary time, so consumers re-surface it
-        when someone is looking — ``RolloutController.failure_traceback``
-        exposes it to API callers, and the interactive session prints it in
-        the chat flow when it reports the failure.
+        Kept as data, not just logged, so consumers can re-surface it when someone looks.
         """
         return self._failure_traceback
 
@@ -253,32 +249,24 @@ class RTCInferenceEngine(InferenceEngine):
     def reset(self) -> None:
         """Reset the policy, processors, and action queue.
 
-        Safe to call while the RTC thread is paused (DAgger transitions, the
-        interactive session) or still running (episode-start resets, the
-        post-warmup flush): either way an inference may be in flight, so
-        ``reset`` also drops the last published observation — it can be
-        arbitrarily stale by the time actions are next consumed (e.g. the
-        robot was returned to its initial position in the meantime), and a
-        chunk computed from it would jerk the robot toward the old pose —
-        and bumps the reset epoch so an in-flight chunk is discarded instead
-        of merged into the cleared queue.
+        Safe to call with the RTC thread paused or running.  Also drops the last published
+        observation — a chunk computed from a stale one would jerk the robot toward an old
+        pose — and bumps the reset epoch so an in-flight chunk is discarded instead of
+        merged into the cleared queue.
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
         self._preprocessor.reset()
         self._postprocessor.reset()
         with self._obs_lock:
-            # Queue clear and epoch bump in one critical section, mirroring
-            # the epoch-check-and-merge in _rtc_loop: a reset can then never
-            # interleave between that check and the merge and leak a
-            # pre-reset chunk into the freshly cleared queue.  Lock order is
-            # _obs_lock -> queue.lock on both sides.
+            # Clear and bump in one critical section, mirroring _rtc_loop's epoch
+            # check-and-merge, so a reset cannot leak a pre-reset chunk into the fresh
+            # queue.  Lock order is _obs_lock -> queue.lock on both sides.
             if self._action_queue is not None:
                 self._action_queue.clear()
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
-        # The queue was just cleared, so a pending task change has nothing
-        # stale left to blend against.
+        # The queue is empty, so a pending task change has nothing stale to blend against.
         self._discard_task_change()
 
     # ------------------------------------------------------------------
@@ -292,16 +280,12 @@ class RTCInferenceEngine(InferenceEngine):
         queued = self._action_queue.get_with_task()
         if queued is None:
             return None
-        # The queue pairs each action with the task that generated its chunk
-        # (paired under the queue lock, so a concurrent merge cannot cross
-        # labels between chunks); expose it for frame labeling.
+        # The queue pairs each action with its chunk's task under the queue lock, so a
+        # concurrent merge cannot cross labels between chunks.
         action, task = queued
         if task is None:
-            # Every merge in this engine labels its chunk (see _rtc_loop), so a
-            # missing label means a foreign writer touched the queue.  Fail
-            # loudly: an unlabeled action would silently corrupt
-            # ``dispatched_task`` and the frame labels recording strategies
-            # derive from it.
+            # Every merge here labels its chunk, so a missing label means a foreign
+            # writer: fail loudly rather than corrupt dispatched_task and frame labels.
             raise RuntimeError("RTC action queue returned an action without task provenance")
         self._set_dispatched_task(task)
         return action
@@ -328,8 +312,8 @@ class RTCInferenceEngine(InferenceEngine):
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
         obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
-        # The live task, read without consuming the task-changed edge — that
-        # belongs to the chunk path, which logs and applies the switch.
+        # Live task, read without consuming the task-changed edge: that belongs to the
+        # chunk path.
         task = self.task
         obs_batch = prepare_observation_for_inference(
             obs_batch, torch.device(self._device), task, self._robot.robot_type
@@ -337,9 +321,7 @@ class RTCInferenceEngine(InferenceEngine):
         obs_batch = self._mark_query(obs_batch, query)
         preprocessed = self._preprocessor(obs_batch)
         with torch.inference_mode():
-            # No str() coercion: _service_query validates the return value, so
-            # a contract-violating policy (None, a tensor) surfaces as an
-            # error answer instead of steering the robot with "None".
+            # No str() coercion: _service_query validates the return value.
             return self._policy.generate_text(preprocessed)
 
     # ------------------------------------------------------------------
@@ -370,24 +352,15 @@ class RTCInferenceEngine(InferenceEngine):
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue
 
-                # Serve a queued text query here — an operator's /vqa question
-                # or the autosteer sequencer's next-subtask request (which
-                # ``_service_query`` applies via ``set_task``, so the chunk
-                # path below picks it up on this very iteration): this is the
-                # thread that owns the policy.  Above the refill branch on
-                # purpose — a query issued while the queue is full would
-                # otherwise wait for it to drain.  ``_service_query`` swallows
-                # its own errors, so a bad question never trips the
-                # consecutive-error counter below.  The chunk path re-runs the
-                # preprocessor on its own observation, so the stateful steps
-                # (relative-action anchoring) are not left holding this one.
+                # Serve a queued text query here — this is the thread that owns the policy.  Above the
+                # refill branch on purpose: a query issued while the queue is full would otherwise wait
+                # for it to drain.  A next-subtask answer is applied via ``set_task``, so the chunk path
+                # below uses it, and that path re-runs the preprocessor on its own observation, so
+                # stateful steps (relative-action anchoring) are not left holding this query's.
                 if self._service_query(obs):
-                    # The query blocked this thread for a full text
-                    # generation, so the snapshot above is now seconds old: a
-                    # chunk conditioned on it would steer the robot from a
-                    # pose it has long left.  Re-read the freshest
-                    # observation — and the epoch, so the discard guard below
-                    # also covers a reset that landed during the query.
+                    # The generation took seconds, so the snapshot above is stale: re-read
+                    # the observation, and the epoch so the discard guard below also covers
+                    # a reset that landed during the query.
                     with self._obs_lock:
                         obs = self._obs_holder.get("obs")
                         epoch_before = self._reset_epoch
@@ -405,18 +378,11 @@ class RTCInferenceEngine(InferenceEngine):
 
                         task, task_changed = self._take_task()
                         if task_changed:
-                            # No queue flush on purpose: dropping the queued
-                            # actions would leave the robot without commands for
-                            # a full inference latency.  With RTC blending on
-                            # (the default) this chunk — already conditioned on
-                            # the new instruction — is merged over the previous
-                            # chunk's leftover prefix, so the switch lands within
-                            # one inference and the transition stays continuous.
-                            # With blending disabled the queue drains first, so
-                            # it lands up to one chunk later.  Worded "next
-                            # merged chunk" because the epoch guard below may
-                            # still discard this particular chunk; the task
-                            # holder keeps the new value either way.
+                            # No queue flush on purpose: dropping queued actions would
+                            # leave the robot uncommanded for a full inference latency.
+                            # With RTC blending on this chunk is merged over the previous
+                            # chunk's leftover prefix, so the switch lands within one
+                            # inference; with blending off the queue drains first.
                             logger.info("Task changed to '%s' — applied from the next merged chunk", task)
 
                         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
@@ -465,12 +431,9 @@ class RTCInferenceEngine(InferenceEngine):
                             latency_tracker.add(new_latency)
 
                         with self._obs_lock:
-                            # Check and merge in one critical section,
-                            # mirroring reset()'s clear-and-bump: a reset can
-                            # no longer land between the epoch check and the
-                            # merge and leak a pre-reset chunk into the fresh
-                            # queue.  Lock order is _obs_lock -> queue.lock on
-                            # both sides, so no inversion.
+                            # Check and merge in one critical section, mirroring reset()'s
+                            # clear-and-bump, so a reset cannot land between them and leak
+                            # a pre-reset chunk.  Lock order: _obs_lock -> queue.lock.
                             epoch_unchanged = epoch_before == self._reset_epoch
                             if epoch_unchanged:
                                 queue.merge(original, processed, new_delay, idx_before, task=task)

@@ -663,8 +663,6 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
     dataset = MagicMock()
     dataset.num_episodes = 0
     # A real (non-existent) path so VideoEncodingManager's image-dir cleanup no-ops.
-    # Still needed for episodic/highlight/dagger; sentry no longer runs inside the
-    # manager (its run() is restartable, so it finalizes in teardown() instead).
     dataset.root = Path("/nonexistent-lerobot-rollout-test")
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(cfg=cfg, shutdown_event=shutdown_event, cadence_report=None),

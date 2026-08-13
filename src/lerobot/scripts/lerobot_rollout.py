@@ -44,13 +44,9 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
 
-    # Interactive session (base or sentry strategy): the robot stays idle
-    # until /start is typed; /subtask <text> re-instructs the policy mid-run
-    # (/vqa and /autosteer additionally query policies with a text head);
-    # /reset returns it to the initial position (hardware and policy stay
-    # warm); /stop shuts down gracefully.  With --strategy.type=sentry the
-    # session also records continuously, labeling each frame with the task
-    # that generated its action.
+    # Interactive session: the robot stays idle until /start is typed, then /subtask,
+    # /vqa, /autosteer, /reset and /stop drive the run from stdin. With
+    # --strategy.type=sentry it also records, labeling frames with their task.
     lerobot-rollout \\
         --strategy.type=base \\
         --policy.path=lerobot/act_koch_real \\
@@ -237,8 +233,8 @@ def rollout(cfg: RolloutConfig):
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
     if cfg.interactive:
-        # Session commands (/reset, /stop) end the running control loop by setting
-        # the local flag; process signals still propagate through the parent event.
+        # /reset and /stop end the control loop via the local flag; process signals still
+        # propagate through the parent event.
         shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")

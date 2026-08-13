@@ -77,12 +77,8 @@ class BaseStrategy(RolloutStrategy):
                 with timer.section("telemetry"):
                     self._log_telemetry(obs_processed, action_dict, ctx.runtime)
 
-                # Service the text-query channel at the end of the tick: /vqa
-                # answers and the /autosteer sequencer both advance here.  A sync
-                # backend generates here (text generation is far slower than a
-                # control tick, so it must not sit inside the action path), and
-                # every backend hands ready answers over here so observers fire on
-                # this thread.  No-op when nothing is queued.
+                # Service the text-query channel (/vqa answers, /autosteer turns) at
+                # the end of the tick; no-op when nothing is queued.
                 with timer.section("query"):
                     engine.pump_query(obs_processed)
 

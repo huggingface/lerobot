@@ -60,16 +60,9 @@ class SentryStrategy(RolloutStrategy):
     Requires ``streaming_encoding=True`` (enforced in config validation)
     to prevent disk I/O from blocking the control loop.
 
-    ``run()`` is restartable: each call records complete episodes plus one
-    final partial episode, and the dataset is only finalized in
-    ``teardown()`` — this is what lets ``--interactive=true`` drive sentry
-    in start/reset/start segments while the dataset stays open.  Frames are
-    labeled with ``engine.dispatched_task`` — the instruction that generated
-    the action actually sent.  A mid-run ``/subtask`` therefore cannot
-    relabel actions still queued or interpolated from the previous
-    instruction.  One frame is recorded per interpolation cycle, on the tick
-    that emits the policy's own end-point action, so the recorded
-    observation, action and task label all come from the same policy cycle.
+    ``run()`` is restartable, as ``--interactive=true`` requires: each call records
+    complete episodes plus one final partial one, and only ``teardown()`` finalizes
+    the dataset.
     """
 
     config: SentryStrategyConfig
@@ -80,15 +73,11 @@ class SentryStrategy(RolloutStrategy):
         self._pending_push: Future | None = None
         self._needs_push = Event()
         self._episode_lock = Lock()
-        # Instance state (not run()-local) so the upload cadence survives
-        # interactive run segments.  Initialised here rather than in setup() so a
-        # strategy driven directly by the loop tests — which construct it and wire
-        # up _engine/_interpolator by hand — still has a usable counter when the
-        # tail save registers an episode.
+        # Instance state, not run()-local, so the upload cadence survives segments.
         self._episodes_since_push = 0
-        # Latched when save_episode fails mid-write: the dataset on disk may
-        # then hold committed rows unreachable from metadata, so recording
-        # more into it or pushing it would grow/upload corruption.
+        # Latched when save_episode fails mid-write: the dataset on disk may then
+        # hold committed rows unreachable from metadata, so recording more into it
+        # or pushing it would grow/upload corruption.
         self._dataset_poisoned = False
 
     def setup(self, ctx: RolloutContext) -> None:
@@ -119,13 +108,7 @@ class SentryStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        # Per-segment timer: ``RolloutController`` calls ``reset_control_state()``
-        # before every ``run()``, so the interpolator re-primes over two
-        # consecutive inference ticks and the first group legitimately runs over
-        # budget.  Only a fresh timer's start-up exemption absorbs that; a timer
-        # hoisted onto the instance would warn on every /start, bill the idle time
-        # between segments to the effective cadence, and re-report segment N-1's
-        # ticks in segment N's summary.
+        # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
         timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
         engine.resume()
@@ -135,8 +118,6 @@ class SentryStrategy(RolloutStrategy):
         episode_start = time.perf_counter()
         logger.info("Sentry recording started (episode_duration=%.0fs)", episode_duration_s)
 
-        # No dataset finalization here: run() must be restartable (interactive
-        # segments), so the dataset stays open until teardown() finalizes it.
         try:
             while not ctx.runtime.shutdown_event.is_set():
                 timer.tick(new_cycle=interpolator.needs_new_action())
@@ -165,15 +146,10 @@ class SentryStrategy(RolloutStrategy):
                         with timer.section("record"):
                             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                             action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                            # ``dispatched_task`` is the instruction that generated
-                            # the action just sent.  Reading the live ``engine.task``
-                            # here would expose a race where an action still queued
-                            # or interpolated from the previous instruction is
-                            # labeled with a newly requested one.  Sound at any
-                            # multiplier: this tick emits the policy's own end-point
-                            # action and no ``get_action`` has run since the refill
-                            # tick that produced it, so observation, action and label
-                            # all come from the same policy cycle.
+                            # Label with ``dispatched_task``, the instruction that generated the action just
+                            # sent (the live ``engine.task`` would mislabel actions still queued from the
+                            # previous one); sound at any multiplier, since no ``get_action`` has run since
+                            # the refill tick that produced this action.
                             frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
                             # ``add_frame`` writes to the in-progress episode buffer; the
                             # background pusher only ever touches *finalised* episode
@@ -204,12 +180,9 @@ class SentryStrategy(RolloutStrategy):
 
                     episode_start = time.perf_counter()
 
-                # Service the text-query channel (/vqa answers and the
-                # /autosteer sequencer) at the end of the tick, after the
-                # frame has been recorded: a sync backend generates here, and
-                # a multi-second generate must not land between this tick's
-                # observation and its ``add_frame``.  Outside the
-                # ``action_dict is not None`` guard so starved ticks pump too.
+                # Service the text-query channel after the frame is recorded, so a
+                # multi-second generate cannot land between this tick's observation
+                # and its ``add_frame``; outside the guard above so starved ticks pump too.
                 with timer.section("query"):
                     engine.pump_query(obs_processed)
 
@@ -217,28 +190,17 @@ class SentryStrategy(RolloutStrategy):
 
         finally:
             logger.info("Sentry control loop ended")
-            # Before the tail save, not after: ``_save_tail_episode`` re-raises on
-            # a broken save by design (unlike the suppressed save this replaces),
-            # and the cadence report of the segment that broke is exactly the one
-            # worth having.
+            # Report before the tail save, which re-raises on a broken save.
             timer.log_run_summary()
             self._save_tail_episode(dataset, cfg)
 
     def _checked_save_episode(self, dataset) -> None:
         """``save_episode`` under the push lock; a failure poisons the dataset and re-raises.
 
-        Shared by the rotation and tail save sites so *any* mid-write failure
-        takes the same path.  A failed ``save_episode`` is *not* recoverable
-        by discarding the buffer: ``DatasetWriter.save_episode`` writes the
-        episode's parquet rows and advances its counters *before* the
-        failure-prone steps (video encode, metadata commit), so a mid-save
-        failure can leave committed rows unreachable from metadata, and the
-        next segment would reuse the same episode index with overlapping row
-        indices.  The dataset is latched as poisoned — refusing further
-        segments and Hub pushes — the in-flight streaming encode and the
-        half-mutated buffer are dropped through the public API, and the
-        error is re-raised so it reaches the controller's failure surface
-        instead of silently growing corrupt data.
+        A failed ``save_episode`` is *not* recoverable by discarding the buffer:
+        rows and counters are committed before the failure-prone steps (video
+        encode, metadata commit), so the next segment would reuse the same episode
+        index.  Hence the poison latch, which refuses further segments and pushes.
         """
         self._warn_if_push_in_flight()
         try:
@@ -253,14 +215,9 @@ class SentryStrategy(RolloutStrategy):
     def _save_tail_episode(self, dataset, cfg) -> None:
         """Commit the segment's partial tail episode; fail loudly on real errors.
 
-        Runs in ``run()``'s ``finally``.  When a rotation save already failed
-        in this segment, the poison is latched and the buffer cleaned — return
-        immediately so the original error propagates instead of this method
-        failing again on its debris.  A segment that recorded nothing
-        (``/start`` followed immediately by ``/reset``, or a segment ending
-        right after a rotation) has no tail either — guarded up front so
-        :meth:`_checked_save_episode`'s failure path is reserved for genuinely
-        broken saves.
+        Runs in ``run()``'s ``finally``.  Returns early on an already-poisoned
+        dataset so the original error propagates, and on a segment that recorded
+        nothing, so :meth:`_checked_save_episode` only ever fails on a broken save.
         """
         if self._dataset_poisoned:
             return
@@ -274,11 +231,8 @@ class SentryStrategy(RolloutStrategy):
     def _register_saved_episode(self, dataset, cfg) -> None:
         """Post-save bookkeeping, shared by the rotation and tail-save sites.
 
-        Keeping the upload cadence in one place matters: tail episodes saved
-        at segment end must count toward ``upload_every_n_episodes`` too,
-        otherwise an interactive session whose segments are all shorter than
-        one rotation (~30 min at the defaults) never background-pushes and
-        loses the documented periodic-upload durability.
+        Tail episodes must count toward ``upload_every_n_episodes`` too, or a session
+        of short segments would never background-push.
         """
         self._episodes_since_push += 1
         self._needs_push.set()
@@ -290,12 +244,8 @@ class SentryStrategy(RolloutStrategy):
     def _warn_if_push_in_flight(self) -> None:
         """Warn before a save that must wait on a background upload.
 
-        ``save_episode`` contends with a background Hub push for
-        ``_episode_lock``; on a slow uplink an operator's ``/reset`` or
-        ``/stop`` would otherwise freeze the robot at an arbitrary pose for
-        minutes with zero feedback.  An interactive session mutes WARNING
-        along with the rest of the routine output, so there this explains the
-        freeze only in an attached log file — not on the console.
+        ``save_episode`` contends with a background Hub push for ``_episode_lock``,
+        so on a slow uplink a ``/reset`` freezes the robot for minutes.
         """
         if self._pending_push is not None and not self._pending_push.done():
             logger.warning(
@@ -363,8 +313,7 @@ class SentryStrategy(RolloutStrategy):
             try:
                 with self._episode_lock:
                     if self._dataset_poisoned:
-                        # Poisoned while this push waited in the executor
-                        # queue (submit-time check passed); never upload it.
+                        # Poisoned while queued, after the submit-time check passed.
                         logger.error(
                             "Skipping queued Hub push: a failed save_episode left the dataset "
                             "possibly corrupt"

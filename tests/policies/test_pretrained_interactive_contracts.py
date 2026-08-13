@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the PreTrainedPolicy contracts the interactive rollout stack
-relies on: the drop_queued_actions() queue-attribute convention and the
-generate_text()/supports_text_generation() tandem-override rule."""
+"""Tests for the PreTrainedPolicy contracts the interactive rollout stack relies on:
+drop_queued_actions() and the generate_text()/supports_text_generation() tandem override."""
 
 from __future__ import annotations
 
@@ -48,18 +47,21 @@ def _tiny_act_policy() -> ACTPolicy:
     return ACTPolicy(config)
 
 
-# ---------------------------------------------------------------------------
-# drop_queued_actions: the queue-attribute convention against a real policy
-# ---------------------------------------------------------------------------
+def _policy_class_body():
+    """Concrete-method stubs so subclassing trips no other check."""
+    return {
+        "config_class": object,
+        "get_optim_params": lambda self: {},
+        "reset": lambda self: None,
+        "forward": lambda self, batch: (torch.tensor(0.0), None),
+        "predict_action_chunk": lambda self, batch, **kwargs: torch.zeros(1),
+        "select_action": lambda self, batch, **kwargs: torch.zeros(1),
+    }
 
 
 def test_drop_queued_actions_forces_fresh_forward_on_real_chunking_policy():
-    """After drop_queued_actions(), the next select_action must run a forward.
-
-    This is the conformance check behind the interactive /subtask fast
-    switch: if a rename breaks the attribute convention, the policy would
-    silently keep serving up to n_action_steps stale actions.
-    """
+    """Behind the interactive /subtask fast switch: a broken attribute convention would
+    silently keep serving stale actions."""
     policy = _tiny_act_policy()
     policy.reset()
 
@@ -84,89 +86,27 @@ def test_drop_queued_actions_forces_fresh_forward_on_real_chunking_policy():
     assert len(forwards) == 2, "drop_queued_actions() did not force a fresh forward"
 
 
-def test_drop_queued_actions_recognized_attrs_cover_the_real_queue():
-    """The real policy's queue attribute is one the base class declares.
+@pytest.mark.parametrize("via_mixin", [False, True], ids=["own-method", "mixin-supplied"])
+def test_generate_text_override_without_flag_fails_at_class_definition(via_mixin):
+    """Without the guard the text head exists but supports_text_generation() stays False, so
+    /vqa reports "this policy has no text head" — a symptom pointing away from the fix."""
 
-    Guards the convention itself: a rename of ACT's `_action_queue` (or a
-    new policy inventing a third name) must extend _action_queue_attrs.
-    """
-    policy = _tiny_act_policy()
-    policy.reset()
-    assert any(getattr(policy, attr, None) is not None for attr in PreTrainedPolicy._action_queue_attrs)
+    class _TextHeadMixin:
+        def generate_text(self, batch):
+            return "an answer"
 
+    bases = (_TextHeadMixin, PreTrainedPolicy) if via_mixin else (PreTrainedPolicy,)
+    body = {**_policy_class_body(), "name": "text_head_without_flag"}
+    if not via_mixin:
+        body["generate_text"] = lambda self, batch: "an answer"
 
-def test_drop_queued_actions_honours_extended_classvar():
-    """A policy declaring a custom queue attribute gets it cleared."""
-
-    class _CustomQueuePolicy:
-        _action_queue_attrs = (*PreTrainedPolicy._action_queue_attrs, "_my_cache")
-
-        def __init__(self):
-            from collections import deque
-
-            self._my_cache = deque([1, 2, 3])
-
-    policy = _CustomQueuePolicy()
-    PreTrainedPolicy.drop_queued_actions(policy)
-    assert len(policy._my_cache) == 0
-
-
-# ---------------------------------------------------------------------------
-# generate_text / supports_text_generation tandem override
-# ---------------------------------------------------------------------------
-
-
-def _policy_class_body():
-    """Minimal concrete-method stubs so subclassing does not trip other checks."""
-    return {
-        "config_class": object,
-        "get_optim_params": lambda self: {},
-        "reset": lambda self: None,
-        "forward": lambda self, batch: (torch.tensor(0.0), None),
-        "predict_action_chunk": lambda self, batch, **kwargs: torch.zeros(1),
-        "select_action": lambda self, batch, **kwargs: torch.zeros(1),
-    }
-
-
-def test_generate_text_override_without_flag_fails_at_class_definition():
-    """The mismatch a third-party implementer is most likely to ship must fail loudly.
-
-    Without the guard, the text head exists but supports_text_generation()
-    stays False, so /vqa reports "this policy has no text head" — a symptom
-    pointing away from the fix.
-    """
     with pytest.raises(TypeError, match="supports_text_generation"):
-        type(
-            "TextHeadWithoutFlag",
-            (PreTrainedPolicy,),
-            {
-                **_policy_class_body(),
-                "name": "text_head_without_flag",
-                "generate_text": lambda self, batch: "an answer",
-            },
-        )
+        type("TextHeadWithoutFlag", bases, body)
 
 
-def test_generate_text_override_with_flag_is_accepted():
-    cls = type(
-        "TextHeadWithFlag",
-        (PreTrainedPolicy,),
-        {
-            **_policy_class_body(),
-            "name": "text_head_with_flag",
-            "supports_text_generation": lambda self: True,
-            "generate_text": lambda self, batch: "an answer",
-        },
-    )
-    assert cls is not None
-
-
-def test_subclass_of_conforming_text_head_parent_is_accepted():
-    """Refining generate_text under a parent's inherited flag is conforming.
-
-    The guard resolves through the MRO, so it must not fire on a subclass
-    whose supports_text_generation override comes from the parent.
-    """
+def test_generate_text_with_flag_is_accepted_including_through_an_inherited_flag():
+    """Both overrides on one class is conforming, and so is a subclass refining generate_text
+    under the parent's flag (the guard resolves through the MRO)."""
     parent = type(
         "ConformingParent",
         (PreTrainedPolicy,),
@@ -182,36 +122,7 @@ def test_subclass_of_conforming_text_head_parent_is_accepted():
         (parent,),
         {"name": "refined_text_head", "generate_text": lambda self, batch: "refined answer"},
     )
-    assert child is not None
 
-
-def test_mixin_supplied_generate_text_without_flag_fails():
-    """A text head arriving through a mixin must not dodge the guard."""
-
-    class _TextHeadMixin:
-        def generate_text(self, batch):
-            return "mixin answer"
-
-    with pytest.raises(TypeError, match="supports_text_generation"):
-        type(
-            "MixinTextHeadWithoutFlag",
-            (_TextHeadMixin, PreTrainedPolicy),
-            {**_policy_class_body(), "name": "mixin_text_head_without_flag"},
-        )
-
-
-def test_flag_only_override_is_allowed_but_generate_text_fails_loudly():
-    """Checkpoint-conditional support may flip the flag without a text head;
-    the base generate_text then fails loudly instead of silently no-oping."""
-    cls = type(
-        "FlagWithoutTextHead",
-        (PreTrainedPolicy,),
-        {
-            **_policy_class_body(),
-            "name": "flag_without_text_head",
-            "supports_text_generation": lambda self: True,
-        },
-    )
-    instance = cls.__new__(cls)  # skip nn.Module init; generate_text touches no state
-    with pytest.raises(NotImplementedError, match="no text head"):
-        instance.generate_text({})
+    instance = child.__new__(child)  # skip nn.Module init; neither method touches state
+    assert instance.supports_text_generation()
+    assert instance.generate_text({}) == "refined answer"

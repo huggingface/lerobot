@@ -42,12 +42,10 @@ DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
 
-# Complementary-data keys describing a text-generation request.  Set by the
-# rollout inference engines before the preprocessor runs — QUERY_KIND names what
-# is being asked for ("vqa", "next_subtask", ...) and QUERY_TEXT carries the
-# request itself (the operator's question, or the autosteer goal) — so a
-# processor step can format the prompt according to the kind of request.
-# Absent on ordinary action inference.
+# Complementary-data keys describing a text-generation request, set by the rollout
+# inference engines before the preprocessor runs so a processor step can format the
+# prompt: QUERY_KIND is what is being asked for ("vqa", "next_subtask", ...) and
+# QUERY_TEXT the request itself.  Absent on ordinary action inference.
 QUERY_KIND = "query_kind"
 QUERY_TEXT = "query_text"
 
