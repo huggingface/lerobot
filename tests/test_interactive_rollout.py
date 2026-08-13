@@ -541,7 +541,7 @@ def test_session_start_while_running_is_rejected():
         thread.join(timeout=2.0)
 
 
-def test_session_reset_cancels_pending_start():
+def test_session_reset_cancels_a_pending_start():
     """Last command wins: a queued /start must not fire after a later /reset."""
     with _pipe_stream() as (reader, _writer):
         session, strategy, _engine, _parent, _run_started = _make_session(reader)
@@ -860,7 +860,7 @@ def test_session_subtask_after_reset_is_not_clobbered():
         thread.join(timeout=2.0)
 
 
-def test_session_reset_restores_initial_task():
+def test_session_reset_restores_the_initial_task():
     with _pipe_stream() as (reader, _writer):
         session, strategy, engine, _parent, _run_started = _make_session(reader)
         initial = engine.task
