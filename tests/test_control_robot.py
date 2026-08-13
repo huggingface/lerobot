@@ -50,15 +50,23 @@ def test_calibrate():
     calibrate(cfg)
 
 
-def test_teleoperate():
+def test_teleoperate(cadence_log):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
     cfg = TeleoperateConfig(
         robot=robot_cfg,
         teleop=teleop_cfg,
+        fps=30,
         teleop_time_s=0.1,
     )
     teleoperate(cfg)
+
+    # A teleop session has no episodes, so there is one cadence block for the whole run,
+    # and the steps it names are the ones the loop wraps.
+    (summary,) = cadence_log
+    assert summary.startswith("Cadence summary — whole run · target 30 Hz (33.3 ms budget per tick):")
+    for step in ("observe", "teleop", "send"):
+        assert step in summary, step
 
 
 def test_record_and_resume(tmp_path):
@@ -146,26 +154,6 @@ def test_record_and_replay(tmp_path, cadence_log):
     # last one and names its own steps.
     assert cadence_log[-1].startswith("Cadence summary — whole run · target 30 Hz")
     assert "read_frame" in cadence_log[-1]
-
-
-def test_teleoperate_reports_its_cadence(cadence_log):
-    robot_cfg = MockRobotConfig()
-    teleop_cfg = MockTeleopConfig()
-    cfg = TeleoperateConfig(
-        robot=robot_cfg,
-        teleop=teleop_cfg,
-        fps=30,
-        teleop_time_s=0.1,
-    )
-
-    teleoperate(cfg)
-
-    # A teleop session has no episodes, so there is one block for the whole run, and the
-    # steps it names are the ones the loop wraps.
-    (summary,) = cadence_log
-    assert summary.startswith("Cadence summary — whole run · target 30 Hz (33.3 ms budget per tick):")
-    for step in ("observe", "teleop", "send"):
-        assert step in summary, step
 
 
 def test_record_reports_a_cadence_summary_per_episode_and_for_the_run(tmp_path, cadence_log):

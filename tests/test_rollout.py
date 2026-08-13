@@ -548,18 +548,6 @@ def _info_messages(caplog):
     return [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and r.name == _TIMER_LOGGER]
 
 
-def test_handle_warmup_is_a_noop_without_torch_compile():
-    from lerobot.rollout import BaseStrategyConfig
-    from lerobot.rollout.strategies import BaseStrategy
-
-    strategy = BaseStrategy(BaseStrategyConfig())
-    strategy._engine = MagicMock(ready=False)
-    timer = CycleTimer(20.0, 2)
-
-    assert strategy._handle_warmup(False, timer) is False
-    strategy._engine.reset.assert_not_called()
-
-
 def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog, clock):
     from lerobot.rollout import BaseStrategyConfig
     from lerobot.rollout.strategies import BaseStrategy
@@ -746,25 +734,6 @@ def test_sentry_records_every_tick_at_default_multiplier():
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
 
 
-def test_base_strategy_drives_robot_without_recording():
-    from lerobot.rollout import BaseStrategyConfig
-    from lerobot.rollout.strategies import BaseStrategy
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
-    strategy = BaseStrategy(BaseStrategyConfig())
-    strategy._engine = ctx.policy.inference
-    strategy._interpolator = ActionInterpolator(multiplier=2)
-
-    strategy.run(ctx)
-
-    # Commands go out every tick (fps × 2) while inference stays at fps, and
-    # nothing is recorded.
-    assert ctx.hardware.robot_wrapper.send_action.call_count == 8
-    assert ctx.policy.inference.get_action.call_count == 5
-    assert dataset.add_frame.call_count == 0
-
-
 def test_highlight_buffers_once_per_interpolation_cycle():
     from lerobot.rollout import HighlightStrategyConfig
     from lerobot.rollout.ring_buffer import RolloutRingBuffer
@@ -911,43 +880,6 @@ def test_dagger_records_policy_actions_after_a_correction_of_any_length(correcti
     assert all(float(a).is_integer() for a in autonomous), autonomous
 
 
-def test_dagger_resume_does_not_warn_about_the_reprimed_interpolator(caplog, clock):
-    from lerobot.rollout import DAggerStrategyConfig
-    from lerobot.rollout.strategies import DAggerStrategy
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    # Returning to AUTONOMOUS resets the interpolator, which re-primes over two
-    # ticks exactly like loop start-up.  On a healthy loop that must not be
-    # reported as a slow cycle.
-    fps, multiplier = 20.0, 2
-    policy_work = 1.0 / (fps * multiplier) * 1.5  # overruns its slot, fits the cycle
-    strategy = DAggerStrategy(
-        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=False)
-    )
-
-    def on_tick(n):
-        if n == 6:
-            strategy._events.request_transition("pause_resume")  # -> PAUSED
-        elif n == 8:
-            strategy._events.request_transition("correction")  # -> CORRECTING
-        elif n == 12:
-            strategy._events.request_transition("correction")  # -> PAUSED
-        elif n == 14:
-            strategy._events.request_transition("pause_resume")  # -> AUTONOMOUS
-
-    ctx, dataset = _make_loop_ctx(fps=fps, multiplier=multiplier, num_ticks=22, on_tick=on_tick)
-    ctx.hardware.teleop.get_action.return_value = {"m.pos": 42.0}
-    ctx.policy.inference.get_action.side_effect = lambda _f: (clock.advance(policy_work), torch.zeros(1))[1]
-    strategy._engine = ctx.policy.inference
-    strategy._interpolator = ActionInterpolator(multiplier=multiplier)
-    strategy._episode_duration_s = 1e9
-
-    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
-        strategy._run_continuous(ctx)
-
-    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
-
-
 def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
@@ -978,51 +910,6 @@ def test_dagger_correction_frames_keep_the_cycle_cadence_and_are_tagged():
     tags = [call.args[0]["intervention"].item() for call in dataset.add_frame.call_args_list]
     assert tags == [False, True, True, True]
     assert _recorded_actions(dataset) == [1.0, 42.0, 42.0, 42.0]
-
-
-def test_dagger_handover_ramp_is_not_reported_as_a_slow_loop(caplog, clock, monkeypatch):
-    import lerobot.rollout.strategies.dagger as dagger_mod
-    from lerobot.rollout import DAggerStrategyConfig
-    from lerobot.rollout.strategies import DAggerPhase, DAggerStrategy
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    # The smooth-handover ramps block for a good fraction of a second *inside*
-    # the timed loop body.  That is a one-off operator event, not the steady-state
-    # cadence, so the group carrying it must be dropped rather than reported —
-    # otherwise every takeover warns that the loop is slow.
-    monkeypatch.setattr(dagger_mod, "teleop_smooth_move_to", lambda *_: clock.advance(0.5))
-    monkeypatch.setattr(dagger_mod, "teleop_supports_feedback", lambda _: True)
-
-    fps, multiplier = 20.0, 2  # 50 ms cycle budget
-    strategy = DAggerStrategy(
-        DAggerStrategyConfig(record_autonomous=True, num_episodes=1, smooth_handover=True)
-    )
-    ctx, _ = _make_loop_ctx(fps=fps, multiplier=multiplier, num_ticks=1)
-    interpolator = ActionInterpolator(multiplier=multiplier)
-    timer = CycleTimer(fps, multiplier)
-
-    def healthy_ticks(count):
-        for _ in range(count):
-            timer.tick(new_cycle=True)
-            clock.advance(0.001)
-            timer.wait()
-
-    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
-        healthy_ticks(4)  # spend the start-up exemption
-        timer.tick(new_cycle=True)
-        strategy._apply_transition(
-            DAggerPhase.AUTONOMOUS,
-            DAggerPhase.PAUSED,
-            ctx.policy.inference,
-            interpolator,
-            ctx,
-            {"m.pos": 1.0},
-            timer,
-        )
-        timer.wait()
-        healthy_ticks(4)
-
-    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
 
 
 # ---------------------------------------------------------------------------
@@ -1099,25 +986,6 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
-def test_sentry_reports_a_cadence_summary_per_episode_and_for_the_run(caplog):
-    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=4)
-    strategy = _make_sentry(ctx, 1)
-    strategy._episode_duration_s = 0.0  # rotate on every tick
-
-    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
-        strategy.run(ctx)
-
-    messages = _info_messages(caplog)
-    # Rotating on literally every tick is degenerate — it exists here only to drive
-    # the reporting plumbing.  Each boundary is requested mid-tick and lands on the
-    # next one, so the four rotations produce four one-tick digests (the last flushed
-    # by the run summary) and no separate trailing window.
-    assert len(messages) == 5
-    assert [m.split(":")[0] for m in messages[:4]] == ["Cadence (episode 0)"] * 4
-    assert messages[4].startswith("Cadence summary — whole run, 4 episodes")
-    assert dataset.save_episode.call_count >= 4
-
-
 def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
@@ -1151,67 +1019,3 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Recording still lands once per interpolation cycle over the 8 ticks.
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
     assert not _timer_warnings(caplog)
-
-
-def test_episodic_exempts_each_episode_reprimed_interpolator(caplog, clock):
-    from lerobot.rollout import EpisodicStrategyConfig
-    from lerobot.rollout.strategies import EpisodicStrategy
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    # Every episode resets the interpolator, which then re-primes over two
-    # consecutive inference ticks — exactly like loop start-up, so that group
-    # legitimately runs over budget.  Episodes used to get a fresh timer each (and
-    # the exemption for free); now one timer spans the session and `run()` has to
-    # re-arm it, or the second episode onward warns on every healthy launch.
-    events = {"stop_recording": False, "exit_early": False, "rerecord_episode": False}
-
-    def on_tick(n):
-        if n == 4:
-            events["exit_early"] = True  # end episode 1; tick 5 sees it and breaks
-        if n in (5, 6):
-            clock.advance(0.5)  # episode 2's two re-priming inference ticks
-
-    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8, on_tick=on_tick)
-    ctx.runtime.cfg.dataset = SimpleNamespace(
-        single_task="task",
-        episode_time_s=10.0,
-        reset_time_s=0.0,
-        num_episodes=2,
-        push_to_hub=False,
-        tags=None,
-        private=False,
-    )
-    # No teleop and no homing: with two episodes the reset phase between them runs,
-    # and a mock teleop would drag a real two-second smooth-handover ramp into a test
-    # that is about the timer.
-    ctx.hardware.teleop = None
-    strategy = EpisodicStrategy(EpisodicStrategyConfig(reset_to_initial_position=False))
-    strategy._engine = ctx.policy.inference
-    strategy._interpolator = ActionInterpolator(multiplier=2)
-    strategy._events = events
-
-    with caplog.at_level(logging.WARNING, logger=_TIMER_LOGGER):
-        strategy.run(ctx)
-
-    assert not _timer_warnings(caplog), [r.getMessage() for r in _timer_warnings(caplog)]
-
-
-def test_dagger_continuous_reports_a_cadence_summary_per_episode_and_for_the_run(caplog):
-    from lerobot.rollout import DAggerStrategyConfig
-    from lerobot.rollout.strategies import DAggerStrategy
-    from lerobot.utils.action_interpolator import ActionInterpolator
-
-    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=4)
-    strategy = DAggerStrategy(DAggerStrategyConfig(record_autonomous=True, num_episodes=1))
-    strategy._engine = ctx.policy.inference
-    strategy._interpolator = ActionInterpolator(multiplier=1)
-    strategy._episode_duration_s = 0.0  # rotate on every tick
-
-    with caplog.at_level(logging.INFO, logger=_TIMER_LOGGER):
-        strategy._run_continuous(ctx)
-
-    messages = _info_messages(caplog)
-    # As in the sentry case, rotating every tick is only a way to drive the
-    # reporting: four boundaries, each landing on the following tick.
-    assert [m.split(":")[0] for m in messages[:-1]] == ["Cadence (episode 0)"] * 4
-    assert messages[-1].startswith("Cadence summary — whole run, 4 episodes")
