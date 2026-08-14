@@ -48,11 +48,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import subprocess
 from pathlib import Path
 
+import av
 import cv2
 import numpy as np
 import pandas as pd
@@ -411,6 +413,36 @@ def _draw_text_outlined(
     cv2.putText(frame, text, position, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
+def _iter_episode_frames_pyav(
+    video_path: Path,
+    from_timestamp: float,
+    num_frames: int,
+    fps: float,
+):
+    """Yield an episode's frames as BGR arrays using PyAV software decoding."""
+    tolerance_s = 0.5 / fps
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        container.seek(
+            max(int((from_timestamp - tolerance_s) * av.time_base), 0),
+            backward=True,
+            any_frame=False,
+        )
+
+        yielded = 0
+        for decoded_frame in container.decode(stream):
+            if decoded_frame.pts is None:
+                continue
+            timestamp = float(decoded_frame.pts * decoded_frame.time_base)
+            if timestamp + tolerance_s < from_timestamp:
+                continue
+            yield decoded_frame.to_ndarray(format="bgr24")
+            yielded += 1
+            if yielded >= num_frames:
+                return
+
+
 def composite_progress_video(
     video_path: Path,
     from_timestamp: float,
@@ -423,10 +455,10 @@ def composite_progress_video(
     value_min: float | None = 0.0,
     value_max: float | None = 1.0,
 ) -> Path:
-    """Read episode frames by seeking into the source video, draw progress overlay, write output.
+    """Decode episode frames with PyAV, draw a scalar overlay, and write an MP4.
 
-    Uses cv2.CAP_PROP_POS_MSEC to seek directly into the source video,
-    eliminating the need for an intermediate clip file.
+    PyAV provides software AV1 decoding on platforms where OpenCV's bundled
+    decoder cannot open LeRobot dataset videos.
 
     Args:
         video_path: Path to the full source video file.
@@ -443,68 +475,70 @@ def composite_progress_video(
     Returns:
         Path to the written output file (MP4).
     """
-    capture = cv2.VideoCapture(str(video_path))
+    duration_seconds = to_timestamp - from_timestamp
+    num_frames = int(round(duration_seconds * fps))
+    frame_iterator = _iter_episode_frames_pyav(video_path, from_timestamp, num_frames, fps)
     try:
-        capture.set(cv2.CAP_PROP_POS_MSEC, from_timestamp * 1000)
+        first_frame = next(frame_iterator)
+    except StopIteration as e:
+        raise RuntimeError(
+            f"PyAV could not decode any frames from {video_path} at {from_timestamp:.3f}s"
+        ) from e
 
-        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        duration_seconds = to_timestamp - from_timestamp
-        num_frames = int(round(duration_seconds * fps))
+    frame_height, frame_width = first_frame.shape[:2]
+    logging.info(
+        "   Video: %dx%d, %d frames @ %.1f fps (%.2fs), decoder=pyav",
+        frame_width,
+        frame_height,
+        num_frames,
+        fps,
+        duration_seconds,
+    )
 
-        logging.info(
-            "   Video: %dx%d, %d frames @ %.1f fps (%.2fs)",
-            frame_width,
-            frame_height,
-            num_frames,
-            fps,
-            duration_seconds,
-        )
+    progress_values = progress_data[:, 1].astype(float)
+    finite_values = progress_values[np.isfinite(progress_values)]
+    if not finite_values.size:
+        raise ValueError("The selected value column contains no finite values")
+    resolved_min = float(finite_values.min()) if value_min is None else value_min
+    resolved_max = float(finite_values.max()) if value_max is None else value_max
+    if resolved_max <= resolved_min:
+        padding = max(abs(resolved_min) * 0.05, 1e-6)
+        resolved_min -= padding
+        resolved_max += padding
 
-        progress_values = progress_data[:, 1].astype(float)
-        finite_values = progress_values[np.isfinite(progress_values)]
-        if not finite_values.size:
-            raise ValueError("The selected value column contains no finite values")
-        resolved_min = float(finite_values.min()) if value_min is None else value_min
-        resolved_max = float(finite_values.max()) if value_max is None else value_max
-        if resolved_max <= resolved_min:
-            padding = max(abs(resolved_min) * 0.05, 1e-6)
-            resolved_min -= padding
-            resolved_max += padding
+    pixel_coords = _precompute_pixel_coords(
+        progress_data,
+        num_frames,
+        frame_width,
+        frame_height,
+        value_min=resolved_min,
+        value_max=resolved_max,
+    )
+    y_ref = int(frame_height * GRAPH_Y_TOP_FRAC)
 
-        pixel_coords = _precompute_pixel_coords(
-            progress_data,
-            num_frames,
-            frame_width,
-            frame_height,
-            value_min=resolved_min,
-            value_max=resolved_max,
-        )
-        y_ref = int(frame_height * GRAPH_Y_TOP_FRAC)
+    fill_image = _prerender_fill_polygon(pixel_coords, frame_width, frame_height)
 
-        fill_image = _prerender_fill_polygon(pixel_coords, frame_width, frame_height)
+    ref_line_image = np.zeros((frame_height, frame_width, 4), dtype=np.uint8)
+    cv2.line(
+        ref_line_image,
+        (0, y_ref),
+        (frame_width - 1, y_ref),
+        (200, 200, 200, int(255 * REF_ALPHA)),
+        1,
+        cv2.LINE_AA,
+    )
 
-        ref_line_image = np.zeros((frame_height, frame_width, 4), dtype=np.uint8)
-        cv2.line(
-            ref_line_image,
-            (0, y_ref),
-            (frame_width - 1, y_ref),
-            (200, 200, 200, int(255 * REF_ALPHA)),
-            1,
-            cv2.LINE_AA,
-        )
+    frame_indices = progress_data[:, 0].astype(int)
 
-        frame_indices = progress_data[:, 0].astype(int)
+    logging.info("[3/4] Compositing %d frames ...", num_frames)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
+    if not writer.isOpened():
+        raise RuntimeError(f"OpenCV could not create output video: {output_path}")
 
-        logging.info("[3/4] Compositing %d frames ...", num_frames)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (frame_width, frame_height))
-
-        for frame_idx in range(num_frames):
-            ret, frame = capture.read()
-            if not ret:
-                break
-
+    written_frames = 0
+    try:
+        for frame_idx, frame in enumerate(itertools.chain([first_frame], frame_iterator)):
             drawn_count = int(np.searchsorted(frame_indices, frame_idx, side="right"))
             x_current = (
                 int(pixel_coords[min(drawn_count, len(pixel_coords)) - 1][0]) + 1 if drawn_count > 0 else 0
@@ -584,12 +618,16 @@ def composite_progress_video(
                 _draw_text_outlined(frame, task_name, (task_x, 22), TASK_FONT_SCALE)
 
             writer.write(frame)
+            written_frames += 1
             if frame_idx % 100 == 0:
                 logging.info("   Frame %d/%d ...", frame_idx, num_frames)
-
-        writer.release()
     finally:
-        capture.release()
+        writer.release()
+
+    if written_frames != num_frames:
+        raise RuntimeError(
+            f"Decoded {written_frames} of {num_frames} expected episode frames from {video_path}"
+        )
 
     logging.info("   MP4 written: %s", output_path)
     return output_path

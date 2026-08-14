@@ -16,11 +16,13 @@ import numpy as np
 import pytest
 
 pytest.importorskip("cv2")
+av = pytest.importorskip("av")
 pd = pytest.importorskip("pandas")
 
 from examples.dataset.create_progress_videos import (  # noqa: E402
     GRAPH_Y_BOT_FRAC,
     GRAPH_Y_TOP_FRAC,
+    _iter_episode_frames_pyav,
     _precompute_pixel_coords,
     load_progress_data,
 )
@@ -79,3 +81,33 @@ def test_pixel_coordinates_support_physical_value_range():
     assert coordinates[:, 0].tolist() == [0, 50, 100]
     assert coordinates[0, 1] == int(frame_height * GRAPH_Y_TOP_FRAC)
     assert coordinates[-1, 1] == int(frame_height * GRAPH_Y_BOT_FRAC)
+
+
+def test_pyav_decoder_reads_requested_episode_segment(tmp_path):
+    video_path = tmp_path / "source.mp4"
+    with av.open(video_path, mode="w") as container:
+        stream = container.add_stream("mpeg4", rate=10)
+        stream.width = 8
+        stream.height = 8
+        stream.pix_fmt = "yuv420p"
+        stream.gop_size = 1
+        for index in range(6):
+            image = np.full((8, 8, 3), index * 30, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(image, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+    frames = list(
+        _iter_episode_frames_pyav(
+            video_path,
+            from_timestamp=0.3,
+            num_frames=3,
+            fps=10,
+        )
+    )
+
+    assert len(frames) == 3
+    assert all(frame.shape == (8, 8, 3) for frame in frames)
+    assert [float(frame.mean()) for frame in frames] == pytest.approx([90, 120, 150], abs=3)
