@@ -64,6 +64,7 @@ from .inference import (
     create_inference_engine,
 )
 from .interactive import InteractiveSession
+from .robot_wrapper import ThreadSafeRobot
 from .strategies import (
     BaseStrategy,
     DAggerStrategy,
@@ -72,6 +73,9 @@ from .strategies import (
     RolloutStrategy,
     SentryStrategy,
     create_strategy,
+    estimate_max_episode_seconds,
+    safe_push_to_hub,
+    send_next_action,
 )
 
 __all__ = [
@@ -109,7 +113,11 @@ __all__ = [
     "SentryStrategyConfig",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
+    "ThreadSafeRobot",
     "build_rollout_context",
     "create_inference_engine",
     "create_strategy",
+    "estimate_max_episode_seconds",
+    "safe_push_to_hub",
+    "send_next_action",
 ]

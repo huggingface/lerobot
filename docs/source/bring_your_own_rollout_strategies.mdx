@@ -1,0 +1,588 @@
+# Bring Your Own Rollout Strategy
+
+A **rollout strategy** is the real-time control loop `lerobot-rollout` runs once your policy, robot and dataset are wired up: it decides what happens on every tick — observe, infer, send, and whether/what to record. LeRobot ships five ([Strategies](./inference#strategies): `base`, `sentry`, `highlight`, `dagger`, `episodic`), and they cover the common shapes: pure autonomous evaluation, always-on recording, keystroke-triggered highlights, human-in-the-loop corrections, episode-oriented recording with reset phases. Write your own when the _loop itself_ has to be different — a patrol that rotates between named sub-tasks, a safety monitor that aborts on a force threshold, an A/B harness that swaps prompts every N seconds, a bench rig that drives a fixture between trials. Everything around the loop (policy loading, processors, hardware, dataset creation, inference backends, interactive sessions, cadence reporting) is already built for you and handed over in a single context object.
+
+Like robots, cameras and teleoperators, the strategy registry is **open**: a standalone `pip`-installable package can register a strategy and be driven by `lerobot-rollout --strategy.type=<name>` with no edit to LeRobot.
+
+## Prerequisites
+
+- A working `lerobot-rollout` run with a built-in strategy (start from [Policy Deployment](./inference)) — you want the hardware and policy path already proven before you add a custom loop.
+- LeRobot installed in your environment. Follow our [Installation Guide](./installation).
+- A skim of [`strategies/core.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/rollout/strategies/core.py) and [`strategies/sentry.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/rollout/strategies/sentry.py). They are the reference implementation; this page is the map.
+
+---
+
+## Getting your strategy seen by the CLI
+
+Your config class registers itself with `@RolloutStrategyConfig.register_subclass("<name>")`, but that decorator only runs if something imports your package. `--strategy.type` is parsed by draccus **before** any of your code would naturally be reached, so the import has to happen first. There are two ways.
+
+### 1. The `lerobot_strategy_` distribution prefix (auto-discovered)
+
+Name your distribution `lerobot_strategy_<name>` and it is imported automatically. `lerobot-rollout`'s `main()` calls [`register_third_party_plugins()`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/import_utils.py) before draccus parses; that function walks the installed distributions and imports every one whose name starts with a known prefix — `lerobot_robot_`, `lerobot_camera_`, `lerobot_teleoperator_`, `lerobot_policy_`, `lerobot_env_` and `lerobot_strategy_`.
+
+> [!IMPORTANT]
+> The distribution `Name` **is** the import name — there is no indirection. Discovery matches the prefix against the distribution `Name` metadata and then calls `importlib.import_module(<that same name>)`, so your distribution **must** ship an importable top-level package named exactly like itself: distribution `lerobot_strategy_patrol` → package `lerobot_strategy_patrol/`. Two consequences:
+>
+> - Use **underscores**, not hyphens. `lerobot-strategy-patrol` matches no prefix — and would not be a legal module name anyway — so it is silently skipped.
+> - A distribution that installs its code under a _different_ top-level name (distribution `lerobot_strategy_patrol`, package `patrol/`) is matched and then fails to import. The `ModuleNotFoundError` lands in `logging.exception("Could not import third-party plugin: %s", …)` and discovery carries on, so the only symptom you get is draccus's `invalid choice: 'patrol'` when it parses `--strategy.type`.
+
+### 2. `--strategy.discover_packages_path=<package>` (no naming requirement)
+
+Any importable package can be loaded explicitly (add your usual `--policy.path`, `--robot.*` and `--dataset.*` flags):
+
+```bash
+lerobot-rollout \
+    --strategy.discover_packages_path=my_company.robotics.strategies \
+    --strategy.type=patrol
+```
+
+This is handled generically in [`configs/parser.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/parser.py): `@parser.wrap()` pulls every `*.discover_packages_path` argument out of `sys.argv`, imports the named package **and all of its top-level submodules**, then strips the argument before draccus sees it. Use this when the package name is out of your hands (a monorepo namespace, an internal distribution), or during development before you have published anything. It has to be a **package** — a directory with an `__init__.py`, not a single `.py` module.
+
+Both routes end in the same place — your `@register_subclass` has run and `--strategy.type=<name>` is a valid choice.
+
+---
+
+## The `SomethingConfig` / `Something` naming convention
+
+Once the config is registered, [`create_strategy`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/rollout/strategies/factory.py) has to find the _implementation_ class. It dispatches the five built-ins explicitly, then falls back to `make_device_from_device_class(config)` — the very same resolver the robot, camera and teleoperator factories use. So the convention is the one you already know from the "4 Core Conventions" of [Bring Your Own Hardware](./integrate_hardware):
+
+**The implementation class name is the config class name minus the trailing `Config`.**
+
+- Config class: `PatrolStrategyConfig` → strategy class: `PatrolStrategy`
+- Config class: `ForceGuardConfig` → strategy class: `ForceGuard`
+
+Given a config class defined in `lerobot_strategy_patrol/config_patrol.py`, the resolver tries exactly these modules, in order, and takes the first one that both imports and has a `PatrolStrategy` attribute:
+
+| Order | Candidate module                         | Where it comes from                                                         |
+| ----: | ---------------------------------------- | --------------------------------------------------------------------------- |
+|     1 | `lerobot_strategy_patrol`                | the config module's **parent package**                                      |
+|     2 | `lerobot_strategy_patrol.patrolstrategy` | parent + `PatrolStrategy.lower()`                                           |
+|     3 | `lerobot_strategy_patrol.patrol`         | only when the config module is named `config_*`: `config_patrol` → `patrol` |
+
+> [!WARNING]
+> **When the config lives inside a package — the normal case, and the only one `--strategy.discover_packages_path` accepts — its own module is never searched.** Defining `PatrolStrategy` next to `PatrolStrategyConfig` inside `config_patrol.py` and stopping there resolves to nothing: `config_patrol` is not on the candidate list. Either put the strategy in its own module (`patrol.py` or `patrolstrategy.py`), or re-export it from the package `__init__.py` so candidate #1 finds it. The example below does both, which is why it is robust.
+>
+> The single exception is a config defined in a **top-level module** with no parent package (`patrol.py` on `sys.path`, config class `__module__ == "patrol"`): the resolver's parent falls back to the module itself, so candidate #1 _is_ its own module. Don't build on that — ship a package.
+
+Two more requirements from the resolver: the config class name **must** end with `Config`, and the strategy class must be constructible from the config alone — `PatrolStrategy(config)`.
+
+---
+
+## A complete worked example
+
+Let's build `patrol`: an autonomous, always-recording strategy that cycles the policy's task through a fixed list of sub-tasks, one "leg" at a time, and tags every recorded frame with the leg index it came from.
+
+### Package layout
+
+```
+lerobot_strategy_patrol/
+├── pyproject.toml
+└── src/
+    └── lerobot_strategy_patrol/
+        ├── __init__.py
+        ├── config_patrol.py
+        └── patrol.py
+```
+
+### `pyproject.toml`
+
+```toml
+[project]
+name = "lerobot_strategy_patrol"   # underscores — this is the discovery prefix
+version = "0.1.0"
+requires-python = ">= 3.12"
+dependencies = ["lerobot"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+```
+
+Any PEP 517 backend works — `hatchling`, `flit_core`, `poetry-core`. What matters is that the built distribution keeps the underscored `Name` the prefix match needs; both setuptools and hatchling do (neither normalizes `lerobot_strategy_patrol` to hyphens in `Name`).
+
+### `config_patrol.py` — the capability declarations
+
+The config is where you declare what the engine must arrange on your behalf. `RolloutConfig.__post_init__` and `build_rollout_context` read **only** these declarations — they contain no `isinstance` branch on any concrete strategy — so a third-party strategy is validated and provisioned exactly like a built-in one.
+
+```python
+from dataclasses import dataclass, field
+from typing import ClassVar, Literal
+
+from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.rollout import RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("patrol")
+@dataclass
+class PatrolStrategyConfig(RolloutStrategyConfig):
+    """Autonomous rollout that cycles the task through a list of sub-tasks."""
+
+    # --- capability declarations (ClassVars, never CLI flags) ---
+    supports_interactive: ClassVar[bool] = True  # run() is restartable, see the checklist below
+    # "required": --dataset.repo_id becomes mandatory and the engine creates the dataset for us.
+    dataset_mode: ClassVar[Literal["none", "optional", "required"]] = "required"
+    requires_teleop: ClassVar[bool] = False      # fully autonomous
+
+    # --- normal dataclass fields: these DO become --strategy.* CLI flags ---
+    legs: list[str] = field(default_factory=lambda: ["patrol left", "patrol right"])
+    # None means "resolve it from --dataset.episode_time_s" — see resolve_defaults below.
+    leg_seconds: float | None = None
+
+    def __post_init__(self):
+        if not self.legs:
+            raise ValueError("--strategy.legs must list at least one sub-task")
+        if self.leg_seconds is not None and self.leg_seconds <= 0:
+            raise ValueError(f"--strategy.leg_seconds must be > 0 (got {self.leg_seconds})")
+
+    def requires_streaming_encoding(self) -> bool:
+        """We add_frame() from inside the timed loop, so a blocking encode would wreck cadence."""
+        return True
+
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """One extra column. Every frame we record must carry this key — no exceptions.
+
+        The name is ours alone: colliding with a robot/policy-derived feature is rejected
+        at startup, and so is --resume onto a dataset recorded without this column.
+        """
+        return {"patrol_leg": {"dtype": "int64", "shape": (1,), "names": None}}
+
+    def resolve_defaults(self, dataset_cfg: DatasetRecordConfig | None) -> None:
+        """Fill leg_seconds from --dataset.episode_time_s when the user left it unset.
+
+        Called last of the capability steps — but still early in
+        RolloutConfig.__post_init__: the policy is not loaded yet, --task has not been
+        propagated into dataset.single_task yet, and device resolution has not run. So
+        read only fields that are already populated here; episode_time_s always is (it
+        has a dataclass default), whereas single_task is still "" at this point whenever
+        the user set the task with --task rather than --dataset.single_task.
+        """
+        if self.leg_seconds is not None:
+            return
+        if dataset_cfg is None:
+            # dataset_mode="required" guarantees otherwise; be explicit so a future
+            # capability change fails loudly instead of crashing on None inside run().
+            raise ValueError("patrol needs --strategy.leg_seconds or --dataset.episode_time_s")
+        self.leg_seconds = dataset_cfg.episode_time_s
+```
+
+### `patrol.py` — the strategy and its tick loop
+
+Everything a strategy author needs comes from the single `lerobot.rollout` root: the base class and the context, plus the `send_next_action`, `safe_push_to_hub` and `estimate_max_episode_seconds` helpers.
+
+```python
+import logging
+import time
+
+import numpy as np
+
+from lerobot.rollout import (
+    RolloutContext,
+    RolloutStrategy,
+    safe_push_to_hub,
+    send_next_action,
+)
+from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.cycle_timer import CycleTimer
+from lerobot.utils.feature_utils import build_dataset_frame
+
+from .config_patrol import PatrolStrategyConfig
+
+logger = logging.getLogger(__name__)
+
+
+class PatrolStrategy(RolloutStrategy):
+    """Autonomous recording rollout that rotates the task between patrol legs."""
+
+    config: PatrolStrategyConfig
+
+    def __init__(self, config: PatrolStrategyConfig):
+        super().__init__(config)
+        # Cross-segment state lives on the instance, never in run() locals: with
+        # --interactive=true, run() is called once per /start ... /reset segment.
+        self._leg = 0
+        self._leg_start = 0.0
+
+    def setup(self, ctx: RolloutContext) -> None:
+        # _init_engine attaches the inference engine and the action interpolator and
+        # starts the backend. Without it, self._engine / self._interpolator stay None.
+        self._init_engine(ctx)
+        logger.info("Patrol strategy ready (%d legs, %.0fs each)", len(self.config.legs), self.config.leg_seconds)
+
+    def run(self, ctx: RolloutContext) -> None:
+        cfg = ctx.runtime.cfg
+        robot = ctx.hardware.robot_wrapper          # thread-safe wrapper, not the raw robot
+        dataset = ctx.data.dataset                  # created for us: dataset_mode="required"
+        features = ctx.data.dataset_features        # already includes our "patrol_leg" column
+        engine = self._engine
+        interpolator = self._interpolator
+
+        # A FRESH timer per run(): its start-up exemption absorbs the interpolator that
+        # reset_control_state() re-primes at every /start, and each segment gets its own
+        # cadence report. Never hoist this onto self.
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
+
+        # Async backends start paused, and the interactive controller pauses again at the
+        # end of every segment. Without this the loop spins and never gets an action.
+        engine.resume()
+
+        start_time = time.perf_counter()
+        self._leg_start = start_time
+        engine.set_task(self.config.legs[self._leg])
+        logger.info("Patrol started on leg %d: '%s'", self._leg, self.config.legs[self._leg])
+
+        try:
+            while not ctx.runtime.shutdown_event.is_set():
+                timer.tick(new_cycle=interpolator.needs_new_action())
+
+                if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
+                    logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                    break
+
+                # Observe every tick so obs stays fresh for the action post-processor;
+                # the helper throttles the expensive processor + notify to policy ticks.
+                with timer.section("observe"):
+                    obs = robot.get_observation()
+                with timer.section("process_obs"):
+                    obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+
+                if self._handle_warmup(cfg.use_torch_compile, timer):
+                    continue
+
+                # Pulls from the engine, feeds the interpolator, sends through the
+                # robot_action_processor. Never touch interpolator.add()/get() yourself.
+                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+
+                if action_dict is not None:
+                    with timer.section("telemetry"):
+                        self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+
+                    # Record once per interpolation cycle, so the dataset cadence matches
+                    # its declared fps; interpolated ticks only command the robot.
+                    if interpolator.emitted_policy_action:
+                        with timer.section("record"):
+                            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                            action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                            dataset.add_frame(
+                                {
+                                    **obs_frame,
+                                    **action_frame,
+                                    # dispatched_task, NOT engine.task: the label must be the
+                                    # instruction that produced the action we just sent. Actions
+                                    # still queued from the previous leg keep the previous label.
+                                    "task": engine.dispatched_task,
+                                    # Declared in extra_dataset_features() -> mandatory on every frame,
+                                    # with exactly the declared dtype and shape.
+                                    "patrol_leg": np.array([self._leg], dtype=np.int64),
+                                }
+                            )
+
+                # Leg rotation: close the episode and re-task the policy.
+                if (time.perf_counter() - self._leg_start) >= self.config.leg_seconds:
+                    self._rotate_leg(dataset, engine, timer)
+
+                # Service the text-query channel (/vqa, /autosteer) at the END of the tick,
+                # after the frame is recorded and outside the guard above so starved ticks
+                # pump too. A multi-second generation must never sit in the action path.
+                with timer.section("query"):
+                    engine.pump_query(obs_processed)
+
+                timer.wait()
+        finally:
+            logger.info("Patrol control loop ended")
+            # Report before the tail save, which may raise.
+            timer.log_run_summary()
+            self._save_tail_episode(dataset)
+
+    def _rotate_leg(self, dataset, engine, timer) -> None:
+        """Commit the current leg's episode and move on to the next sub-task."""
+        # save_episode() rejects an empty buffer ("You must add one or several frames with
+        # `add_frame` before calling `add_episode`."), and a leg can legitimately record
+        # nothing: a leg shorter than the torch.compile warmup, or an RTC/async backend
+        # starved for the leg's whole duration. Skip the save, but still rotate.
+        if dataset.has_pending_frames():
+            # Production strategies should wrap this in a poison latch — see
+            # SentryStrategy._checked_save_episode.
+            dataset.save_episode()
+            logger.info("Leg %d saved (total episodes: %d)", self._leg, dataset.num_episodes)
+            # save_episode blocks inside the timed body — that is finalisation, not
+            # steady-state cadence. Report it, then drop the gap it opened. Both calls
+            # belong here: on the empty-leg path there is no episode to report, and
+            # restarting would throw away a cadence window that never had a save in it.
+            timer.log_episode_summary(f"episode {dataset.num_episodes}")
+            timer.restart()
+        else:
+            logger.warning("Leg %d recorded no frames — nothing to save", self._leg)
+        self._leg = (self._leg + 1) % len(self.config.legs)
+        self._leg_start = time.perf_counter()
+        engine.set_task(self.config.legs[self._leg])
+
+    def _save_tail_episode(self, dataset) -> None:
+        """Save the segment's partial tail episode — but never finalize the dataset here."""
+        if dataset is not None and dataset.has_pending_frames():
+            logger.info("Saving the segment's final (partial) episode")
+            dataset.save_episode()
+
+    def teardown(self, ctx: RolloutContext) -> None:
+        """Called once, after the last run() segment. This is where finalisation belongs."""
+        dataset = ctx.data.dataset
+        ds_cfg = ctx.runtime.cfg.dataset
+        if dataset is not None:
+            logger.info("Finalizing dataset...")
+            dataset.finalize()
+            if ds_cfg is not None and ds_cfg.push_to_hub:
+                safe_push_to_hub(dataset, tags=ds_cfg.tags, private=ds_cfg.private)
+        self._teardown_hardware(
+            ctx.hardware,
+            return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
+        )
+        logger.info("Patrol strategy teardown complete")
+```
+
+### `__init__.py`
+
+Expose both classes. Importing the config module is what runs `@register_subclass`; exposing the strategy is what makes candidate #1 of the resolver succeed.
+
+```python
+"""Patrol rollout strategy for LeRobot."""
+
+try:
+    import lerobot  # noqa: F401
+except ImportError as e:
+    raise ImportError(
+        "lerobot is not installed. Please install lerobot to use this strategy package."
+    ) from e
+
+from .config_patrol import PatrolStrategyConfig
+from .patrol import PatrolStrategy
+
+__all__ = ["PatrolStrategy", "PatrolStrategyConfig"]
+```
+
+### Install and run
+
+```bash
+cd lerobot_strategy_patrol
+pip install -e .          # or: uv pip install -e .
+```
+
+Then the strategy is a first-class CLI citizen — its dataclass fields become `--strategy.*` flags:
+
+```bash
+lerobot-rollout \
+    --strategy.type=patrol \
+    --strategy.leg_seconds=45 \
+    --strategy.legs='["patrol the left aisle", "patrol the right aisle"]' \
+    --policy.path=lerobot/smolvla_base \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras='{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}' \
+    --dataset.repo_id=${HF_USER}/rollout_patrol \
+    --dataset.single_task="patrol the aisle" \
+    --fps=30 \
+    --duration=600
+```
+
+Because the config declares `supports_interactive = True`, `--interactive=true` works too — the robot idles until you type `/start`, and `/subtask`, `/vqa`, `/autosteer`, `/reset` and `/stop` drive the session. See [Interactive Sessions](./inference#interactive-sessions).
+
+> [!TIP]
+> Dataset repo names for `lerobot-rollout` must start with `rollout_` (enforced in `build_rollout_context`). This keeps deployment datasets distinguishable from teleoperated recordings.
+
+---
+
+## Capability-declaration reference
+
+Everything below lives on the **config** class, not the strategy class. Nothing outside your strategy needs to know its concrete type.
+
+| Declaration                                   | Kind             | What the engine does with it                                                                                                                                                                                                                                                                                  | Default |
+| --------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `supports_interactive`                        | `ClassVar[bool]` | Gates `--interactive=true`. When accepted, `run()` is called **once per `/start`…`/reset` segment** and must honour the extra obligations in the checklist below.                                                                                                                                              | `False` |
+| `dataset_mode`                                | `ClassVar[str]`  | `"none"` → passing **any** `--dataset.*` flag is rejected. `"optional"` / `"required"` → `build_rollout_context` creates the dataset from `--dataset.*` and hands it over as `ctx.data.dataset`; `"required"` also makes `--dataset.repo_id` mandatory. With `"optional"`, `ctx.data.dataset` can be `None` — guard for it. | `"none"` |
+| `requires_teleop`                             | `ClassVar[bool]` | Makes `--teleop.type` mandatory, so `ctx.hardware.teleop` is guaranteed non-`None` (human-in-the-loop strategies).                                                                                                                                                                                             | `False` |
+| `requires_streaming_encoding() -> bool`       | method           | `True` forces `--dataset.streaming_encoding=true` (with a warning). Return `True` whenever you `add_frame()` from inside the timed loop; a blocking encode collapses cadence.                                                                                                                                  | `False` |
+| `extra_dataset_features() -> dict[str, dict]` | method           | Merged into `ctx.data.dataset_features` above the create/resume split, so that dict describes the same schema on both paths. Collisions and un-resumable datasets are rejected at startup (below). Every frame you record must carry every key.                                                                | `{}`    |
+| `resolve_defaults(dataset_cfg) -> None`       | method           | Called **last of the capability steps** in `RolloutConfig.__post_init__` — but still early (below). Fill strategy fields left unset from the dataset config; raise `ValueError` if you can't.                                                                                                                  | no-op   |
+
+A method rather than a `ClassVar` wherever the answer can depend on the config's own fields — `DAggerStrategyConfig.requires_streaming_encoding()` returns `self.record_autonomous`, for instance.
+
+> [!TIP]
+> Keep the capability flags as `ClassVar`s. A plain dataclass field would turn them into `--strategy.*` CLI flags, letting a user contradict a declaration your loop depends on.
+
+### What `extra_dataset_features()` really promises
+
+The merge happens in `build_rollout_context` above the create/resume split, so `ctx.data.dataset_features` — the dict you pass to `build_dataset_frame` — carries your columns on both paths. That is the whole of it; the two paths reach the columns differently:
+
+- **Fresh dataset:** the merged dict is handed to `LeRobotDataset.create(features=…)`, so your columns are part of the new schema.
+- **`--resume`:** `LeRobotDataset.resume()` takes **no** `features` argument. A resumed dataset's schema comes from its on-disk metadata, so the merge cannot add anything to it — which is why the resume branch _checks_ instead, and fails before the robot moves:
+
+  ```
+  ValueError: Cannot resume 'user/rollout_patrol' with the patrol strategy: it records
+  ['patrol_leg'], which the existing dataset does not have. Resume a dataset recorded by a
+  strategy declaring the same extra_dataset_features(), or start a new one.
+  ```
+
+  Without it you would only find out on the first recorded frame — robot connected, engine running — through a `validate_frame` complaint about the frame rather than about `--resume`.
+
+A name that clashes with the features derived from the robot and policy is rejected on both paths:
+
+```
+ValueError: patrol strategy declares extra_dataset_features() that collide with the features
+derived from the robot and policy: ['action']. Extra columns must use names of their own (and
+must not start with 'observation.' or 'action', which the frame builders own).
+```
+
+### Where `resolve_defaults()` sits in `__post_init__`
+
+It is last among the **capability** steps — every declaration above it has been validated, and `requires_streaming_encoding()` has already forced `--dataset.streaming_encoding` — but it is far from the last thing `RolloutConfig.__post_init__` does. All of this still lies ahead when your hook runs:
+
+1. **Policy loading** from `--policy.path` (so `cfg.policy` may still be `None`).
+2. **Task propagation**: `--task` is copied into `dataset.single_task` (and vice versa) _after_ your hook. Read `dataset_cfg.single_task` and you get `""` whenever the user passed only `--task=…`, silently — no error, just a default that never resolves.
+3. **Device resolution** (whatever `--device` you passed is not validated or defaulted yet).
+
+So resolve from fields the user's flags populate directly — `episode_time_s`, `num_episodes`, `fps` — as the example above and `DAggerStrategyConfig.resolve_defaults` both do. Needing the task means needing it at `setup()`/`run()` time, where `ctx.runtime.cfg.task` and `engine.task` are both settled.
+
+> [!IMPORTANT]
+> The hook receives only the **dataset** config. Requirements that cut across the rest of `RolloutConfig` — "this loop only works with `--inference.type=rtc`", "I need `fps >= 30`", "I assume `interpolation_multiplier == 1`", or anything about the specific robot or teleoperator — cannot be enforced at parse time today. Check them at the top of `setup()` and raise; note that by then the policy is loaded and the hardware is connected, so fail before you touch the robot. Widening the hook to the whole `RolloutConfig` would make `__post_init__`'s internal ordering part of the public contract, which is why it takes the dataset config alone.
+
+---
+
+## The `run()` contract
+
+`run()` is abstract, but most of its contract is _not_ enforced — the base class documents it and nothing checks it. Break one of these and you get a loop that "works" while quietly starving, mislabeling or misreporting. This is the checklist to read twice.
+
+Every `run()` must:
+
+- [ ] **Call `engine.resume()` before entering the loop.** Async backends start paused, and the interactive controller pauses again at the end of every segment. Skip it and the loop spins forever without an action.
+- [ ] **Build a fresh `CycleTimer` inside `run()`** — `CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)` — and **never** hoist it onto `self`. A new timer's start-up exemption is what absorbs the interpolator that `reset_control_state()` re-primes at every `/start`. (If you _do_ hoist it, you must call `timer.restart()` yourself on every reset.)
+- [ ] **Forward `report=ctx.runtime.cadence_report`.** An interactive session mutes everything below `ERROR`; without the report callback your cadence summaries vanish.
+- [ ] **Pass `records_data=False` to the timer if you do not record.** `CycleTimer` defaults to `records_data=True` and labels its cadence groups accordingly, so a non-recording strategy that leaves the default gets summaries claiming a `recording` group it never had (`BaseStrategy` is the in-tree example of getting this right).
+- [ ] **Call `timer.log_run_summary()` from `finally`**, before anything that can raise (like a tail save), so the run is reported even on `Ctrl-C`.
+- [ ] **Pace through the timer**: `timer.tick(new_cycle=interpolator.needs_new_action())` at the top of each iteration, `timer.wait()` at the bottom. Warmup ticks go through `self._handle_warmup(cfg.use_torch_compile, timer)`, which paces them for you.
+- [ ] **Read the robot every tick** via `ctx.hardware.robot_wrapper.get_observation()` (the thread-safe wrapper, not `ctx.hardware.robot_wrapper.inner`), so `obs` stays fresh for the action post-processor.
+- [ ] **Call `engine.pump_query(obs_processed)` once at the end of every tick** — including starved ticks, and outside any `if action_dict is not None` guard. The text-query channel (`/vqa` answers, `/autosteer` turns) only advances through it, and putting it at the end keeps a multi-second generation out of the action path.
+- [ ] **Exit on both `ctx.runtime.shutdown_event.is_set()` and `cfg.duration`.** The shutdown event carries `Ctrl-C`, `/reset` and `/stop`.
+- [ ] **Let `send_next_action()` own the interpolator.** Call it; don't call `interpolator.add()` / `interpolator.get()` yourself. Use `interpolator.emitted_policy_action` to decide whether _this_ tick is the one that records.
+
+If your config declares `supports_interactive = True`, `run()` is called **once per segment**, so it must additionally:
+
+- [ ] **Never finalize the dataset in `run()`.** `finalize()`, executor shutdown and the final `push_to_hub` belong in `teardown()`. At most, save a partial tail episode when a segment ends.
+- [ ] **Keep cross-segment state on the instance**, not in `run()` locals — counters, latches, episode bookkeeping. The `CycleTimer` is deliberately the other way round (above).
+- [ ] **Never bind keyboard or stdin listeners.** stdin belongs to the command prompt. This is why `highlight`, `dagger` and `episodic` — all keystroke-driven — do _not_ declare `supports_interactive`.
+- [ ] **Be re-entrant after returning.** A second `run()` on the same instance must be as valid as the first; `reset_control_state()` is called on your behalf before each segment (engine reset, interpolator reset, cached observation dropped).
+
+One-shot strategies (`supports_interactive = False`, the default) are free to finalize on `run()` exit.
+
+> [!WARNING]
+> `self._engine` and `self._interpolator` are `None` until `_init_engine` has run. If you override `setup()`, call **exactly one** of `super().setup(ctx)` or `self._init_engine(ctx)` first — never both, since `_init_engine` also _starts_ the engine and is not idempotent. An `AttributeError` on `None` early in `run()` almost always means this call is missing.
+
+---
+
+## Which built-in should I copy?
+
+**Copy [`sentry.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/rollout/strategies/sentry.py).** At ~330 lines it is the smallest built-in that is simultaneously interactive-safe _and_ recording, and it is the only one that gets the hard parts right in plain sight:
+
+- `_dataset_poisoned` — a latch set when `save_episode()` fails mid-write. Rows and counters are committed before the failure-prone steps (video encode, metadata commit), so a failed save is **not** recoverable by discarding the buffer; the latch refuses further segments and blocks every Hub push, including one already queued.
+- `_checked_save_episode()` — the single choke point every save goes through: warn if a background upload is in flight, save under the lock, latch-and-re-raise on failure.
+- `_save_tail_episode()` — the partial-tail save in `run()`'s `finally` that makes `run()` restartable without finalizing the dataset, and returns early on an already-poisoned dataset so the original error propagates.
+
+For a non-recording loop, [`base.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/rollout/strategies/base.py) (~95 lines) is the minimal skeleton: it is the whole contract and nothing else.
+
+Do **not** start from `dagger.py`. It is ~800 lines of phase machine, teleop handover, keyboard/pedal listeners and two separate recording loops. It has no poison latch, and its keyboard listeners are exactly the thing an interactive strategy must not have — you would be inheriting the parts you don't need and none of the parts you do.
+
+---
+
+## Troubleshooting
+
+Most plugin failures surface as one of a small set of messages. Here is the map.
+
+### The CLI doesn't know your strategy
+
+```
+error: argument --strategy.type: invalid choice: 'patrol' (choose from 'base', 'sentry', 'highlight', 'episodic', 'dagger')
+```
+
+The choices are listed in **registration** order, not alphabetically — the built-ins in the order `rollout/configs.py` declares them, with any discovered third-party strategy appended. So the absence of `patrol` from that list is the whole diagnosis: your package was never imported, and `@register_subclass` never ran. In order of likelihood:
+
+- **The distribution name is hyphenated** or has no known prefix, so discovery skipped it silently. Rename it with underscores.
+- **The package isn't installed** in the environment that runs `lerobot-rollout` (a second venv, `pipx`, a stale editable install).
+- **The package raised on import.** `register_third_party_plugins` swallows that into a log line, so look for `Could not import third-party plugin: <name>` with a traceback. A `ModuleNotFoundError` there usually means the top-level package name doesn't match the distribution `Name` — the distribution name is what gets imported.
+
+Or skip discovery entirely with `--strategy.discover_packages_path=<package>`, which fails loudly instead of logging:
+
+```
+PluginLoadError: Failed to load plugin 'my_company.robotics.strategies'. Verify the path and
+installation: No module named 'my_company'
+Failed plugin CLI Arg: strategy.discover_packages_path
+```
+
+### The config is registered but the class isn't found
+
+Once `patrol` is a registered choice, `create_strategy` hands over to the naming-convention resolver; a resolution failure comes back as a `ValueError` whose message names the class it wanted and every module it looked in:
+
+```
+ValueError: Error creating strategy with config PatrolStrategyConfig(...): Could not locate
+device class 'PatrolStrategy' for config 'PatrolStrategyConfig'. Tried modules:
+['lerobot_strategy_patrol', 'lerobot_strategy_patrol.patrolstrategy',
+'lerobot_strategy_patrol.patrol']. Ensure your device class name is the config class name
+without 'Config' and that it's importable from one of those modules.
+```
+
+Compare `Tried modules:` with the candidate table above — very often the class sits in the config's own module, which is not on the list. Re-export it from the package `__init__.py` to satisfy candidate #1. Two related messages from the same resolver: `Config class name '…' does not end with 'Config'` (rename the config class) and `Failed to instantiate '…'` (the strategy must be constructible from the config alone: `def __init__(self, config)`). An exception raised by your own `__init__` surfaces the same way, chained as the `ValueError`'s cause with your traceback intact.
+
+Forgetting `@register_subclass` altogether fails earlier: from the CLI, draccus rejects the unknown `--strategy.type`; handed to `RolloutConfig` in Python, the first capability check that reads `.type` raises draccus's `ValueError: Cannot find choice name for <class …>`.
+
+### Capability declarations vs. the flags you passed
+
+All from `RolloutConfig.__post_init__`:
+
+| Message                                                                                        | Cause                                                                            |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `patrol strategy requires --dataset.repo_id to be set`                                         | `dataset_mode = "required"` and no (or empty) `--dataset.repo_id`.               |
+| `patrol strategy does not record data. Use dagger, episodic, highlight, sentry for recording.` | You passed a `--dataset.*` flag but left `dataset_mode = "none"` (the default).  |
+| `patrol strategy requires --teleop.type to be set`                                             | `requires_teleop = True` and no teleoperator.                                    |
+| `--interactive=true supports --strategy.type=base or sentry (got 'patrol').`                   | You passed `--interactive=true` without declaring `supports_interactive = True`. |
+
+The warning `patrol strategy forces streaming_encoding=True` is not an error — it is `requires_streaming_encoding()` doing its job.
+
+Three more come from `build_rollout_context`, at dataset-setup time (policy loaded, robot connected, nothing recorded yet):
+
+| Message                                                                                                                                          | Cause                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `Dataset names for rollout must start with 'rollout_'. Use --dataset.repo_id=<user>/rollout_<name> …`                                            | Rename the repo. Checked on the create path only — a resumed dataset keeps whatever name it has.                              |
+| `patrol strategy declares extra_dataset_features() that collide with the features derived from the robot and policy: […]. Extra columns must …`  | An `extra_dataset_features()` key already exists in the robot/policy schema (`action`, `observation.state`, …).               |
+| `Cannot resume '<repo_id>' with the patrol strategy: it records […], which the existing dataset does not have. Resume a dataset recorded by a …` | `--resume` onto a dataset whose on-disk schema has no such column. See [above](#what-extra_dataset_features-really-promises). |
+
+### Recorded frames are rejected
+
+`validate_frame` runs on every `dataset.add_frame()` (via the dataset writer) and rejects **missing** keys as well as extra ones. Each message below is prefixed with ``Feature mismatch in `frame` dictionary:``.
+
+| Message                                                                           | Cause                                                                                                                                         |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Missing features: {'patrol_leg'}`                                                | You declared a column in `extra_dataset_features()` but some code path records a frame without it. Every frame, every branch — no exceptions. |
+| `Extra features: {'patrol_leg'}`                                                  | The reverse: you record a key you never declared.                                                                                             |
+| `Missing features: {'task'}`                                                      | `task` is a mandatory special field on every frame. Use `engine.dispatched_task`.                                                             |
+| `The feature 'patrol_leg' of dtype 'int32' is not of the expected dtype 'int64'.` | Pass an exact-dtype numpy array: `np.array([self._leg], dtype=np.int64)`. A bare Python `int` is rejected too ("is not a 'np.ndarray'").      |
+| `The feature 'patrol_leg' of shape '()' does not have the expected shape '(1,)'.` | Shape must match the declaration exactly — `np.array([x])`, not `np.array(x)`.                                                                |
+
+### The engine isn't there
+
+An `AttributeError` on `None` (`'NoneType' object has no attribute 'resume'`, or similar on the interpolator) at the top of `run()` means `setup()` never attached the engine: you overrode `setup()` without calling `self._init_engine(ctx)` / `super().setup(ctx)` first.
+
+---
+
+## Contributing your strategy in-tree
+
+If your strategy turns out to be broadly useful, it can land in `src/lerobot/rollout/strategies/` like the five built-ins. Read the general [contribution guide](./contributing) first; the strategy-specific layer on top is small:
+
+- [ ] The config in `rollout/configs.py` with its `@RolloutStrategyConfig.register_subclass` and its capability declarations, re-exported from `rollout/__init__.py`.
+- [ ] The strategy in `rollout/strategies/<name>.py`, re-exported from `rollout/strategies/__init__.py`, plus an explicit branch in `create_strategy` (the built-ins are dispatched explicitly; the naming-convention fallback is for plugins).
+- [ ] A `--strategy.type=<name>` row in the `lerobot_rollout.py` module docstring and a section in [`docs/source/inference.mdx`](./inference#strategies).
+- [ ] Tests in `tests/test_rollout.py` — plus `tests/test_interactive_rollout.py` if it declares `supports_interactive`.
+- [ ] `run()` walks the checklist above; if it declares `supports_interactive`, the extra obligations too.
+
+---
+
+## Wrapping Up
+
+Once your strategy runs, everything else in the rollout stack comes along for free: both inference backends (`--inference.type=sync|rtc`), action interpolation, `torch.compile` warmup, `rerun`/`foxglove` telemetry, cadence reporting, Hub upload, and — if you declared it — interactive sessions.
+
+Don't hesitate to reach out to the community for help on our [Discord](https://discord.gg/s3KuuzsPFb) 🤗

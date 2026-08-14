@@ -26,6 +26,10 @@ Strategies
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
     --strategy.type=episodic   Episode-oriented recording with reset phases
+    --strategy.type=<custom>   Any strategy registered by an installed third-party
+                               ``lerobot_strategy_*`` package, or one loaded with
+                               ``--strategy.discover_packages_path=<package>``.
+                               See docs/source/bring_your_own_rollout_strategies.mdx
 
 Inference backends
 ------------------

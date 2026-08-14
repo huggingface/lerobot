@@ -22,7 +22,7 @@ This runs the policy for 30 seconds with no recording.
 
 ## Strategies
 
-Select a strategy with `--strategy.type=<name>`. Each strategy defines a different control loop with its own recording and interaction semantics.
+Select a strategy with `--strategy.type=<name>`. Each strategy defines a different control loop with its own recording and interaction semantics. The strategy registry is open: the built-ins below are the ones LeRobot ships, and an installed third-party package can register its own strategy under the same flag — see [Bring Your Own Rollout Strategy](./bring_your_own_rollout_strategies).
 
 ### Base (`--strategy.type=base`)
 
@@ -197,6 +197,23 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior.                                                                                 |
 | `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 
+### Third-party strategies (`--strategy.type=<custom>`)
+
+`--strategy.type` accepts any strategy registered in the environment, not only the five above. Install a package named `lerobot_strategy_<name>` (it is imported automatically before the CLI is parsed), or point `--strategy.discover_packages_path=<package>` at a package with any name, and its strategy becomes selectable exactly like a built-in:
+
+```bash
+pip install lerobot_strategy_patrol
+
+lerobot-rollout \
+    --strategy.type=patrol \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --duration=60
+```
+
+Everything documented on this page that is not specific to a built-in — dataset creation, `--teleop.type` and `--interactive` validation, the inference backends, cadence reporting — is driven by the capabilities the strategy's config declares, so it applies to custom strategies unchanged. See [Bring Your Own Rollout Strategy](./bring_your_own_rollout_strategies) for the naming rules, the capability declarations and the `run()` contract.
+
 ---
 
 ## Inference Backends
@@ -304,7 +321,7 @@ With `--use_torch_compile=true`, an instruction that tokenizes to a different le
 
 Sessions work over SSH and on headless machines — no display server needed.
 
-**Recording while interactive.** `--strategy.type=sentry` also accepts `--interactive=true` and records continuously while you steer: each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. Frames carry the task provenance of the action actually sent, so actions already queued or interpolated under the old task keep the old label.
+**Recording while interactive.** A recording strategy can be steered interactively too, as long as its config declares `supports_interactive`; among the built-ins that is `sentry`. `--strategy.type=sentry` records continuously while you steer: each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. Frames carry the task provenance of the action actually sent, so actions already queued or interpolated under the old task keep the old label.
 
 ```bash
 lerobot-rollout \
@@ -317,7 +334,7 @@ lerobot-rollout \
     --interactive=true
 ```
 
-The other recording strategies (episodic, DAgger, highlight) are not supported: they bind their own keyboard controls and finalize the dataset when `run()` exits, so they cannot be restarted segment by segment.
+`--interactive=true` is validated against that declaration rather than against a fixed list of strategies: it works with any strategy — built-in or third-party — whose config declares `supports_interactive`, which means honouring the restartable-`run()` contract (see [Bring Your Own Rollout Strategy](./bring_your_own_rollout_strategies)). Today the built-ins that declare it are `base` and `sentry`. The other built-in recording strategies (episodic, DAgger, highlight) do not: they bind their own keyboard controls and finalize the dataset when `run()` exits, so they cannot be restarted segment by segment.
 
 ### Programmatic control
 
