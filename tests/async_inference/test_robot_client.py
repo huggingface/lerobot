@@ -269,3 +269,19 @@ def test_robot_client_registers_builtin_robot_types():
             f"Ensure the corresponding module is imported in robot_client.py. "
             f"Known choices: {sorted(known_choices)}"
         )
+
+
+def test_robot_client_registers_builtin_camera_types():
+    """Importing robot_client must populate CameraConfig's ChoiceRegistry."""
+    import lerobot.async_inference.robot_client  # noqa: F401
+    from lerobot.cameras.configs import CameraConfig
+
+    known_choices = CameraConfig.get_known_choices()
+
+    expected_camera_types = ["opencv", "intelrealsense", "zmq"]
+    for camera_type in expected_camera_types:
+        assert camera_type in known_choices, (
+            f"Camera type '{camera_type}' is not registered in CameraConfig's ChoiceRegistry. "
+            f"Ensure the corresponding module is imported in robot_client.py. "
+            f"Known choices: {sorted(known_choices)}"
+        )
