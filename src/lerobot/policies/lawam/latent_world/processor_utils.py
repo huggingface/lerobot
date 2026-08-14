@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Qwen processor construction and latent placeholder-token configuration."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,12 +24,15 @@ from transformers import AutoProcessor
 
 @dataclass(frozen=True)
 class LatentWorldProcessorSpec:
+    """Portable inputs required to reconstruct the LaWAM VLM processor."""
+
     model_id: str
     placeholder_token: str
     cache_dir: str | None = None
 
 
 def build_latent_world_processor_spec(*, policy_cfg: Any, vlm_model_id: str) -> LatentWorldProcessorSpec:
+    """Build a processor specification from the native policy configuration."""
     return LatentWorldProcessorSpec(
         model_id=str(vlm_model_id),
         placeholder_token=str(policy_cfg.latent_action_placeholder_token),
@@ -40,6 +45,7 @@ def configure_latent_world_processor(
     *,
     placeholder_token: str,
 ) -> tuple[Any, Any, int]:
+    """Install the latent placeholder token and return its tokenizer ID."""
     if processor.chat_template is None and getattr(
         getattr(processor, "tokenizer", None), "chat_template", None
     ):
@@ -57,6 +63,7 @@ def configure_latent_world_processor(
 def load_latent_world_processor(
     spec: LatentWorldProcessorSpec,
 ) -> tuple[Any, Any, int]:
+    """Load and configure the Qwen processor described by a portable spec."""
     processor = AutoProcessor.from_pretrained(
         spec.model_id,
         cache_dir=spec.cache_dir,

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Tensor alignment, augmentation, and spatial preprocessing helpers for LaWAM."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -24,6 +26,7 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def align_feature_dim_with_mask(seq: torch.Tensor, target_dim: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Crop or right-pad feature channels and return a validity mask."""
     if seq.ndim != 2:
         raise ValueError(f"Expected [T, D] tensor, got shape={tuple(seq.shape)}")
     if target_dim < 0:
@@ -53,6 +56,7 @@ def align_feature_dim_with_mask(seq: torch.Tensor, target_dim: int) -> tuple[tor
 
 
 def sample_or_pad_sequence_with_mask(seq: torch.Tensor, target_len: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Right-pad a sequence to the target length and mark valid timesteps."""
     if seq.shape[0] == target_len:
         return seq, torch.ones((target_len,), dtype=torch.bool, device=seq.device)
     if seq.shape[0] > target_len:
@@ -75,6 +79,7 @@ def build_placeholder_masks(
     flow_queries: int,
     placeholder_id: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Split ordered placeholder tokens into latent-action and flow masks."""
     expected = int(act_queries + flow_queries)
     placeholder = input_ids == int(placeholder_id)
     order = placeholder.cumsum(dim=1)
@@ -84,6 +89,7 @@ def build_placeholder_masks(
 
 
 def apply_shared_color_jitter_uint8(frames_uint8: torch.Tensor, *, severity: float = 1.0) -> torch.Tensor:
+    """Apply one color-jitter transform consistently across a frame stack."""
     if frames_uint8.ndim != 4:
         raise ValueError(f"Expected 4D tensor [N, 3, H, W], got {tuple(frames_uint8.shape)}.")
     if frames_uint8.dtype != torch.uint8:
@@ -104,6 +110,7 @@ def apply_shared_color_jitter_uint8(frames_uint8: torch.Tensor, *, severity: flo
 
 
 def _crop_size_for_area_scale(height: int, width: int, area_scale: float) -> tuple[int, int]:
+    """Compute a bounded crop size for a requested image-area fraction."""
     if not (0.0 < float(area_scale) <= 1.0):
         raise ValueError(f"area_scale must be in (0, 1], got {area_scale}.")
     crop_h = max(1, int(round(height * float(area_scale) ** 0.5)))
@@ -114,6 +121,7 @@ def _crop_size_for_area_scale(height: int, width: int, area_scale: float) -> tup
 def apply_shared_random_resized_crop_uint8(
     frames_uint8: torch.Tensor, *, area_scale: float = 0.9
 ) -> torch.Tensor:
+    """Apply one random resized crop consistently across a frame stack."""
     if frames_uint8.ndim != 4:
         raise ValueError(f"Expected 4D tensor [N, 3, H, W], got {tuple(frames_uint8.shape)}.")
     if frames_uint8.dtype != torch.uint8:
@@ -142,6 +150,7 @@ def apply_shared_random_resized_crop_uint8(
 
 
 def apply_center_crop_90_uint8(frames_uint8: torch.Tensor) -> torch.Tensor:
+    """Center-crop each frame to 90 percent area and restore its size."""
     if frames_uint8.ndim != 4:
         raise ValueError(f"Expected 4D tensor [N, 3, H, W], got {tuple(frames_uint8.shape)}.")
     if frames_uint8.dtype != torch.uint8:
@@ -168,6 +177,7 @@ def apply_center_crop_90_uint8(frames_uint8: torch.Tensor) -> torch.Tensor:
 
 
 def imagenet_normalize_video_(tensor: torch.Tensor) -> torch.Tensor:
+    """Normalize a video batch in place with ImageNet channel statistics."""
     if tensor.ndim != 5 or int(tensor.shape[2]) != 3:
         raise ValueError(f"Expected video tensor with shape [B, T, 3, H, W], got {tuple(tensor.shape)}.")
     mean = tensor.new_tensor(IMAGENET_MEAN).view(1, 1, 3, 1, 1)
@@ -177,6 +187,7 @@ def imagenet_normalize_video_(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def imagenet_normalize_image_batch_(tensor: torch.Tensor) -> torch.Tensor:
+    """Normalize an image batch in place with ImageNet channel statistics."""
     if tensor.ndim != 4 or int(tensor.shape[1]) != 3:
         raise ValueError(f"Expected image tensor with shape [B, 3, H, W], got {tuple(tensor.shape)}.")
     mean = tensor.new_tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
@@ -191,6 +202,7 @@ def prepare_frame_spatial_uint8(
     *,
     apply_center_crop_90: bool = False,
 ) -> torch.Tensor:
+    """Convert an array frame to RGB uint8 and resize it for the LAM grid."""
     frame_chw_uint8 = _hwc_uint8_to_chw_tensor(_frame_to_hwc_uint8(frame))
     frame_chw_uint8 = _cap_source_aspect_video_uint8(frame_chw_uint8.unsqueeze(0))[0]
     if apply_center_crop_90:
@@ -202,6 +214,7 @@ def prepare_video_spatial_uint8(
     video: torch.Tensor,
     target_hw: tuple[int, int],
 ) -> torch.Tensor:
+    """Convert and resize a channel-first video for the LAM grid."""
     if video.ndim != 4 or int(video.shape[1]) != 3:
         raise ValueError(f"Expected video with shape [T, 3, H, W], got {tuple(video.shape)}.")
 
@@ -216,6 +229,7 @@ def prepare_video_spatial_uint8(
 
 
 def _frame_to_hwc_uint8(frame: np.ndarray) -> np.ndarray:
+    """Convert a grayscale or RGB array to contiguous HWC uint8 RGB."""
     frame_arr = np.asarray(frame)
     if frame_arr.ndim == 2:
         frame_arr = frame_arr[:, :, None]
@@ -237,12 +251,14 @@ def _frame_to_hwc_uint8(frame: np.ndarray) -> np.ndarray:
 
 
 def _hwc_uint8_to_chw_tensor(frame_uint8_hwc: np.ndarray) -> torch.Tensor:
+    """Convert a contiguous HWC uint8 array to a channel-first tensor."""
     return torch.from_numpy(frame_uint8_hwc).permute(2, 0, 1).contiguous()
 
 
 def _cap_source_aspect_video_uint8(
     videos_uint8: torch.Tensor, max_aspect: float = MAX_SOURCE_ASPECT
 ) -> torch.Tensor:
+    """Center-crop overly wide frame sequences to the maximum source aspect."""
     if videos_uint8.ndim == 4:
         flat_frames = videos_uint8
         restore_shape = tuple(videos_uint8.shape)
@@ -278,6 +294,7 @@ def _apply_default_spatial_preprocess_chw_uint8(
     frames_uint8: torch.Tensor,
     target_hw: tuple[int, int],
 ) -> torch.Tensor:
+    """Resize channel-first uint8 frames while preserving uint8 output."""
     single_frame = False
     if frames_uint8.ndim == 3:
         frames_uint8 = frames_uint8.unsqueeze(0)

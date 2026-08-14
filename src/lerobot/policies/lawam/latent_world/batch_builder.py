@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Inference batch construction for the native LaWAM backend."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -30,6 +32,8 @@ from .types import LatentWorldPolicyInferBatch, LatentWorldPolicyInferExample
 
 
 class LatentWorldPolicyInferBatchBuilder:
+    """Validate inference examples and assemble model-ready tensor batches."""
+
     DEFAULT_INFER_IMAGE_HW = (256, 256)
     _ALLOWED_INFER_KEYS = {
         "lang",
@@ -57,12 +61,14 @@ class LatentWorldPolicyInferBatchBuilder:
         self.enable_primary_random_resized_crop = bool(enable_primary_random_resized_crop)
 
     def _target_device(self) -> torch.device:
+        """Return the device that owns the policy backend parameters."""
         return next(self.policy_backend.parameters()).device
 
     @staticmethod
     def _move_batch_to_device(
         batch: LatentWorldPolicyInferBatch, device: torch.device
     ) -> LatentWorldPolicyInferBatch:
+        """Move tensor values in an inference batch to the target device."""
         moved: dict[str, torch.Tensor | None] = {}
         for key, value in batch.items():
             moved[key] = value.to(device=device, non_blocking=True) if torch.is_tensor(value) else value
@@ -71,6 +77,7 @@ class LatentWorldPolicyInferBatchBuilder:
     def build_infer_batch(
         self, examples: Sequence[LatentWorldPolicyInferExample]
     ) -> LatentWorldPolicyInferBatch:
+        """Build a validated, normalized native inference batch from examples."""
         state_dim = int(self.policy_cfg.flow_cfg.state_dim)
 
         image_views_batch: list[list[Image.Image]] = []
@@ -204,6 +211,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @staticmethod
     def _chw_uint8_to_pil(frame: torch.Tensor) -> Image.Image:
+        """Convert one channel-first uint8 tensor to an RGB PIL image."""
         if frame.ndim != 3 or int(frame.shape[0]) != 3:
             raise ValueError(f"Expected frame tensor with shape [3, H, W], got {tuple(frame.shape)}.")
         frame_hwc = frame.permute(1, 2, 0).contiguous().cpu().numpy()
@@ -211,6 +219,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @staticmethod
     def _extract_primary_frames(primary_image, *, ex_idx: int) -> list[np.ndarray]:
+        """Validate and return the primary camera frames for one example."""
         if not isinstance(primary_image, (list, tuple)):
             raise ValueError(
                 f"examples[{ex_idx}]['primary_image'] must be a list/tuple, got type={type(primary_image)}."
@@ -231,6 +240,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @staticmethod
     def _extract_wrist_frames(ex) -> list[np.ndarray]:
+        """Validate and return optional wrist camera frames for one example."""
         # Match training semantics: missing wrist views are represented as an empty view list.
         if "wrist_image" not in ex:
             return []
@@ -254,6 +264,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @staticmethod
     def _to_cpu_float_tensor(value, *, field_name: str, ex_idx: int) -> torch.Tensor:
+        """Convert a supported array-like field to a detached float tensor."""
         if torch.is_tensor(value):
             tensor = value.detach()
         elif isinstance(value, np.ndarray):
@@ -269,6 +280,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @classmethod
     def _to_2d_sequence_tensor(cls, value, *, field_name: str, ex_idx: int) -> torch.Tensor:
+        """Normalize a feature field to a two-dimensional time sequence."""
         tensor = cls._to_cpu_float_tensor(value, field_name=field_name, ex_idx=ex_idx)
         if tensor.ndim == 1:
             tensor = tensor.unsqueeze(0)
@@ -282,6 +294,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @classmethod
     def _to_2d_sequence_mask_tensor(cls, value, *, field_name: str, ex_idx: int) -> torch.Tensor:
+        """Normalize a mask field to a two-dimensional boolean sequence."""
         tensor = cls._to_cpu_float_tensor(value, field_name=field_name, ex_idx=ex_idx)
         if tensor.ndim == 1:
             tensor = tensor.unsqueeze(0)
@@ -295,6 +308,7 @@ class LatentWorldPolicyInferBatchBuilder:
 
     @staticmethod
     def _align_mask_tensor(mask: torch.Tensor, *, target_dim: int) -> torch.Tensor:
+        """Crop or right-pad a feature mask to the backend state width."""
         if mask.ndim != 2:
             raise ValueError(f"Expected mask tensor with shape [T, D], got {tuple(mask.shape)}.")
         curr_dim = int(mask.shape[1])

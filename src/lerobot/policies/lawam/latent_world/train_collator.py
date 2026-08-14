@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Training collation for multimodal LaWAM samples."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -44,10 +46,13 @@ from lerobot.policies.lawam.latent_world.vlm_adapter import (
 
 
 def valid_action_horizon_steps(*, window_size: int, horizon_sec: float, action_hz: float) -> int:
+    """Return the number of valid action steps inside the configured horizon."""
     return min(int(window_size), int(float(horizon_sec) * float(action_hz)))
 
 
 class LatentWorldTrainCollator:
+    """Convert raw LaWAM samples into aligned VLM, LAM, and flow tensors."""
+
     def __init__(
         self,
         *,
@@ -83,14 +88,17 @@ class LatentWorldTrainCollator:
         self._placeholder_token_id: int | None = None
 
     def train(self) -> LatentWorldTrainCollator:
+        """Enable training-time image augmentation."""
         self.training = True
         return self
 
     def eval(self) -> LatentWorldTrainCollator:
+        """Disable training-time image augmentation."""
         self.training = False
         return self
 
     def _ensure_processor(self) -> tuple[Any, int]:
+        """Lazily construct the Qwen processor and placeholder token ID."""
         if self._processor is None:
             processor, _, placeholder_token_id = load_latent_world_processor(self.processor_spec)
             self._processor = processor
@@ -101,6 +109,7 @@ class LatentWorldTrainCollator:
 
     @staticmethod
     def _to_wrist_view_list(wrist_images: torch.Tensor) -> list[torch.Tensor]:
+        """Convert stacked wrist tensors to the processor's view-list format."""
         # Match inference semantics: missing wrist views are represented as an empty view list.
         if int(wrist_images.shape[0]) == 0:
             return []
@@ -108,6 +117,7 @@ class LatentWorldTrainCollator:
 
     @staticmethod
     def _to_primary_view_list(primary_videos: torch.Tensor) -> list[torch.Tensor]:
+        """Extract the current frame from each primary camera video."""
         if primary_videos.ndim != 5 or int(primary_videos.shape[1]) < 1:
             raise ValueError(
                 "Expected primary_videos with shape [V, T, C, H, W] and T>=1, "
@@ -123,6 +133,7 @@ class LatentWorldTrainCollator:
         enable_random_resized_crop: bool,
         enable_color_jitter: bool,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply shared spatial and color augmentation across all camera views."""
         if primary_videos.ndim != 5:
             raise ValueError(
                 f"Expected primary_videos with shape [V, T, C, H, W], got {tuple(primary_videos.shape)}."
@@ -150,6 +161,7 @@ class LatentWorldTrainCollator:
         return processed_primary_videos, processed_wrist_images
 
     def __call__(self, features: Sequence[LatentWorldPolicyTrainRawSample]) -> LatentWorldPolicyTrainBatch:
+        """Collate raw samples into one masked, normalized LaWAM training batch."""
         if len(features) == 0:
             raise ValueError("LatentWorldTrainCollator received an empty feature list.")
 

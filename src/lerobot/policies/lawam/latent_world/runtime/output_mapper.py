@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Stable output mappings between the native backend and LeRobot adapter."""
+
 from __future__ import annotations
 
 import torch
 
 
 def map_policy_train_output(policy_output: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Map native training losses to the names consumed by the adapter."""
     return {
         "total_loss": policy_output["loss_total"],
         "loss_flow": policy_output["loss_flow"],
@@ -28,4 +31,5 @@ def map_policy_train_output(policy_output: dict[str, torch.Tensor]) -> dict[str,
 
 
 def map_policy_infer_output(actions: torch.Tensor) -> dict[str, object]:
+    """Convert normalized action tensors to the adapter's NumPy output."""
     return {"normalized_actions": actions.detach().cpu().numpy()}

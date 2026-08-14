@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Runtime orchestration for LaWAM training and inference."""
+
 from __future__ import annotations
 
 import math
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
 
 
 class LatentWorldPolicyRunner:
+    """Bridge prepared batches to the native backend and stable output contracts."""
+
     def __init__(
         self,
         *,
@@ -43,6 +47,7 @@ class LatentWorldPolicyRunner:
         self.infer_batch_builder = infer_batch_builder
 
     def train_step(self, batch: LatentWorldPolicyTrainBatch) -> dict[str, torch.Tensor]:
+        """Run one backend training step and normalize its loss dictionary."""
         policy_output = self.policy_backend.forward(batch=batch)
         return map_policy_train_output(policy_output)
 
@@ -54,6 +59,7 @@ class LatentWorldPolicyRunner:
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
     ) -> dict[str, Any]:
+        """Build an inference batch, predict actions, and validate the horizon."""
         if len(examples) == 0:
             raise ValueError("`infer_step` requires at least one example.")
         batch = self.infer_batch_builder.build_infer_batch(examples)

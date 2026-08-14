@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""LeRobot policy wrapper and data adapters for LaWAM."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -62,15 +64,18 @@ else:
 
 
 def _require_lawam_packages() -> None:
+    """Require the optional packages used by the LaWAM implementation."""
     require_package("transformers", extra="lawam")
     require_package("diffusers", extra="lawam")
 
 
 def _build_prompt_config() -> SimpleNamespace:
+    """Build the minimal prompt configuration consumed by the VLM adapter."""
     return SimpleNamespace(datasets=SimpleNamespace(vla_data={}))
 
 
 def _build_freeze_config(config: LaWAMConfig):
+    """Translate LeRobot freeze settings into the native LaWAM contract."""
     return parse_policy_freeze_config(
         {
             "freeze_vision_backbone": config.freeze_vision_backbone,
@@ -85,6 +90,7 @@ def _build_freeze_config(config: LaWAMConfig):
 
 
 def _build_lam_config(config: LaWAMConfig) -> dict[str, Any]:
+    """Translate LeRobot fields into the latent action model configuration."""
     return {
         "dim": config.lam_dim,
         "num_heads": config.lam_num_heads,
@@ -121,6 +127,7 @@ def _build_lam_config(config: LaWAMConfig) -> dict[str, Any]:
 
 
 def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
+    """Build the native LaWAM backend configuration from a LeRobot config."""
     _require_lawam_packages()
     flow_cfg = ConditionalFlowMatchingConfig(
         action_dim=int(config.flow_action_dim),
@@ -165,6 +172,8 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
 
 
 class LaWAMModel(nn.Module):
+    """Compose the native LaWAM backend, VLM adapter, and runtime helpers."""
+
     def __init__(self, config: LaWAMConfig) -> None:
         super().__init__()
         self.config = config
@@ -193,10 +202,12 @@ class LaWAMModel(nn.Module):
         )
 
     def forward(self, batch):
+        """Run one native LaWAM training step for a prepared batch."""
         return self.policy_runner.train_step(batch)
 
     @torch.inference_mode()
     def predict_action(self, examples, **kwargs):
+        """Predict normalized action chunks for prepared inference examples."""
         return self.policy_runner.infer_step(examples, **kwargs)
 
 
@@ -232,6 +243,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         self.reset()
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        """Save a portable checkpoint without machine-specific runtime paths."""
         runtime_config = self.config
         self.config = replace(
             runtime_config,
@@ -244,6 +256,7 @@ class LaWAMPolicy(PreTrainedPolicy):
             self.config = runtime_config
 
     def _build_train_collator(self):
+        """Build the native training collator from the instantiated backend."""
         policy_cfg = getattr(self.model, "policy_cfg", None)
         if policy_cfg is None:
             raise ValueError("Loaded LaWAM model does not expose `policy_cfg`; cannot build train collator.")
@@ -262,18 +275,22 @@ class LaWAMPolicy(PreTrainedPolicy):
         return collator.train()
 
     def reset(self) -> None:
+        """Clear the queued action chunk used by step-wise inference."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> dict:
+        """Return model parameters exposed to the LeRobot optimizer factory."""
         return self.model.parameters()
 
     @staticmethod
     def _is_wrist_image_key(key: str) -> bool:
+        """Return whether a feature key follows a supported wrist-camera convention."""
         key_lower = key.lower()
         leaf = key_lower.rsplit(".", 1)[-1]
         return "wrist" in key_lower or "eye_in_hand" in key_lower or leaf == "image2"
 
     def _image_feature_groups(self) -> tuple[list[str], list[str]]:
+        """Partition configured image features into primary and wrist views."""
         image_keys = list(self.config.image_features.keys())
         wrist_keys = (
             list(self.config.wrist_image_features)
@@ -292,6 +309,7 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     @staticmethod
     def _to_uint8_video(tensor: Tensor) -> Tensor:
+        """Convert one frame or video to contiguous channel-first uint8 data."""
         if tensor.ndim == 3:
             tensor = tensor.unsqueeze(0)
         if tensor.ndim != 4:
@@ -303,11 +321,13 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     @staticmethod
     def _to_uint8_frame(tensor: Tensor) -> Tensor:
+        """Convert an image tensor to one contiguous channel-first uint8 frame."""
         video = LaWAMPolicy._to_uint8_video(tensor)
         return video[0].contiguous()
 
     @staticmethod
     def _task_list(tasks: Any, batch_size: int, default_task: str) -> list[str]:
+        """Normalize scalar or batched task instructions into a string list."""
         if tasks is None:
             return [default_task] * batch_size
         if isinstance(tasks, str):
@@ -315,6 +335,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return [str(task) for task in tasks]
 
     def _state_dim(self) -> int:
+        """Return the state width expected by the native flow head."""
         policy_cfg = getattr(self.model, "policy_cfg", None)
         flow_cfg = getattr(policy_cfg, "flow_cfg", None)
         state_dim = getattr(flow_cfg, "state_dim", None)
@@ -325,6 +346,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return 1
 
     def _prepare_train_samples(self, batch: dict[str, Tensor]) -> list[dict[str, Any]]:
+        """Translate a LeRobot training batch into native LaWAM samples."""
         primary_keys, wrist_keys = self._image_feature_groups()
         first = batch[primary_keys[0]]
         batch_size = int(first.shape[0])
@@ -379,6 +401,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return samples
 
     def _move_batch_to_device(self, batch: Any) -> Any:
+        """Move tensor values in a prepared batch to the policy device."""
         device = torch.device(str(self.config.device))
         return {
             key: value.to(device=device, non_blocking=True) if torch.is_tensor(value) else value
@@ -386,6 +409,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         }
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
+        """Compute the LaWAM training loss and scalar logging values."""
         samples = self._prepare_train_samples(batch)
         lawam_batch = self._move_batch_to_device(self._collator(samples))
         output = self.model(lawam_batch)
@@ -410,6 +434,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return loss, logs
 
     def _prepare_infer_examples(self, batch: dict[str, Tensor]) -> list[dict[str, Any]]:
+        """Translate a LeRobot observation batch into native inference examples."""
         primary_keys, wrist_keys = self._image_feature_groups()
         first = batch[primary_keys[0]]
         batch_size = int(first.shape[0])
@@ -441,6 +466,7 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        """Predict a normalized action chunk for each observation in the batch."""
         del noise
         self.eval()
         examples = self._prepare_infer_examples(batch)
@@ -465,6 +491,7 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        """Return the next action, refilling the action queue when necessary."""
         del noise
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])

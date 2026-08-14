@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Typed sample and batch contracts shared by LaWAM adapters."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -27,6 +29,8 @@ ImageViews = Sequence[FrameArray]
 
 
 class LatentWorldPolicyTrainRawSample(TypedDict):
+    """Raw per-example fields accepted by the LaWAM training collator."""
+
     primary_videos: torch.Tensor
     wrist_images: torch.Tensor
     lang: str
@@ -37,6 +41,8 @@ class LatentWorldPolicyTrainRawSample(TypedDict):
 
 
 class LatentWorldPolicyInferExample(TypedDict, total=False):
+    """Validated user-facing fields accepted by the inference batch builder."""
+
     primary_image: Required[ImageViews]
     lang: Required[str]
     embodiment_id: Required[int]
@@ -47,6 +53,8 @@ class LatentWorldPolicyInferExample(TypedDict, total=False):
 
 
 class LatentWorldPolicyInferBatch(TypedDict):
+    """Tensor batch consumed by the native LaWAM inference backend."""
+
     pixel_values: torch.Tensor
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
@@ -61,6 +69,8 @@ class LatentWorldPolicyInferBatch(TypedDict):
 
 
 class LatentWorldPolicyTrainBatch(TypedDict):
+    """Tensor batch consumed by the native LaWAM training backend."""
+
     pixel_values: torch.Tensor
     input_ids: torch.Tensor
     attention_mask: torch.Tensor

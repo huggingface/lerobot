@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Configuration surface for the LeRobot LaWAM policy adapter."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -149,6 +151,7 @@ class LaWAMConfig(PreTrainedConfig):
     scheduler_decay_lr: float = 5e-7
 
     def __post_init__(self) -> None:
+        """Validate portable model identifiers and temporal settings."""
         super().__post_init__()
         try:
             validate_repo_id(self.base_vlm)
@@ -167,6 +170,7 @@ class LaWAMConfig(PreTrainedConfig):
             raise ValueError("`flow_horizon_sec` must be > 0.")
 
     def resolve_dataset_metadata(self, dataset_meta) -> None:
+        """Resolve action frequency and horizon from dataset metadata."""
         if self.action_hz is None:
             dataset_fps = getattr(dataset_meta, "fps", None)
             if dataset_fps is None:
@@ -187,6 +191,7 @@ class LaWAMConfig(PreTrainedConfig):
             )
 
     def resolve_runtime_config(self, dataset_meta=None) -> None:
+        """Resolve settings required before constructing the policy runtime."""
         if self.action_hz is None and dataset_meta is None:
             raise ValueError(
                 "LaWAM requires `policy.action_hz` when dataset metadata is unavailable. "
@@ -196,10 +201,12 @@ class LaWAMConfig(PreTrainedConfig):
 
     @property
     def base_vlm_source(self) -> str:
+        """Return the local VLM override or the portable Hub model ID."""
         return self.base_vlm_path or self.base_vlm
 
     @property
     def effective_action_horizon(self) -> int:
+        """Return the action count supported by the configured time horizon."""
         if self.action_hz is None:
             raise ValueError("`action_hz` must be resolved before computing the action horizon.")
         horizon = min(self.chunk_size, int(self.flow_horizon_sec * self.action_hz))
@@ -211,12 +218,14 @@ class LaWAMConfig(PreTrainedConfig):
         return horizon
 
     def validate_features(self) -> None:
+        """Ensure the policy has the visual inputs and action output it requires."""
         if not self.image_features:
             raise ValueError("LaWAM requires at least one visual input feature.")
         if self.action_feature is None:
             raise ValueError("LaWAM requires an action output feature.")
 
     def get_optimizer_preset(self) -> AdamWConfig:
+        """Build the default AdamW optimizer configuration for LaWAM."""
         return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -226,6 +235,7 @@ class LaWAMConfig(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
+        """Build the default cosine decay scheduler configuration for LaWAM."""
         return CosineDecayWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
@@ -235,13 +245,16 @@ class LaWAMConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
+        """Return the frame indices used to construct each visual observation."""
         return list(range(self.num_video_frames))
 
     @property
     def action_delta_indices(self) -> list[int]:
+        """Return action indices covering the effective prediction horizon."""
         horizon = self.chunk_size if self.action_hz is None else self.effective_action_horizon
         return list(range(horizon))
 
     @property
     def reward_delta_indices(self) -> None:
+        """Indicate that LaWAM does not request reward history from datasets."""
         return None

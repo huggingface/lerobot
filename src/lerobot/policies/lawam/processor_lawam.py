@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""LeRobot preprocessing and postprocessing pipelines for LaWAM."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -44,7 +46,10 @@ from .configuration_lawam import LaWAMConfig
 
 @ProcessorStepRegistry.register(name="lawam_clip_actions")
 class LaWAMClipActionsProcessorStep(ProcessorStep):
+    """Clamp normalized actions to the range expected by LaWAM."""
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Clamp an action transition to the normalized interval."""
         action = transition.get(TransitionKey.ACTION)
         if action is None:
             return transition
@@ -53,19 +58,24 @@ class LaWAMClipActionsProcessorStep(ProcessorStep):
         return transition
 
     def transform_features(self, features):
+        """Preserve feature declarations because clipping does not change shape."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return the serializable processor configuration."""
         return {}
 
 
 @ProcessorStepRegistry.register(name="lawam_pre_snap_gripper")
 class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
+    """Snap the normalized gripper channel to binary values before unnormalizing."""
+
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
         self.gripper_dim = gripper_dim
         self.threshold = threshold
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Snap the configured gripper channel when it is present."""
         action = transition.get(TransitionKey.ACTION)
         if action is None or action.shape[-1] <= self.gripper_dim:
             return transition
@@ -76,19 +86,24 @@ class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
         return transition
 
     def transform_features(self, features):
+        """Preserve feature declarations because snapping does not change shape."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return the gripper index and threshold for serialization."""
         return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
 
 @ProcessorStepRegistry.register(name="lawam_binarize_gripper")
 class LaWAMBinarizeGripperProcessorStep(ProcessorStep):
+    """Map the emitted gripper channel to the LIBERO minus-one/plus-one convention."""
+
     def __init__(self, gripper_dim: int = 6, threshold: float = 0.5):
         self.gripper_dim = gripper_dim
         self.threshold = threshold
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Binarize the configured gripper channel when it is present."""
         action = transition.get(TransitionKey.ACTION)
         if action is None or action.shape[-1] <= self.gripper_dim:
             return transition
@@ -101,18 +116,23 @@ class LaWAMBinarizeGripperProcessorStep(ProcessorStep):
         return transition
 
     def transform_features(self, features):
+        """Preserve feature declarations because binarization does not change shape."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return the gripper index and threshold for serialization."""
         return {"gripper_dim": self.gripper_dim, "threshold": self.threshold}
 
 
 @ProcessorStepRegistry.register(name="lawam_libero_state")
 class LaWAMLiberoStateProcessorStep(ProcessorStep):
+    """Convert LIBERO's eight-value observation state to the trained state layout."""
+
     def __init__(self, target_state_dim: int):
         self.target_state_dim = int(target_state_dim)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Drop LIBERO's redundant gripper state value when a seven-value state is expected."""
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None or OBS_STATE not in observation:
             return transition
@@ -130,13 +150,16 @@ class LaWAMLiberoStateProcessorStep(ProcessorStep):
         return transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return the target state width for serialization."""
         return {"target_state_dim": self.target_state_dim}
 
     def transform_features(self, features):
+        """Preserve declared features because runtime statistics define the target width."""
         return features
 
 
 def _stats_feature_dim(stats: dict[str, Any]) -> int | None:
+    """Infer a feature width from the first available statistics tensor."""
     for key in ("min", "max", "mean", "std", "q01", "q99"):
         values = stats.get(key)
         if values is not None:
@@ -151,6 +174,7 @@ def make_lawam_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    """Build LaWAM input normalization and action postprocessing pipelines."""
     features = {**config.input_features, **config.output_features}
     state_stats = dataset_stats.get(OBS_STATE) if dataset_stats is not None else None
     state_stats_dim = _stats_feature_dim(state_stats) if state_stats is not None else None
