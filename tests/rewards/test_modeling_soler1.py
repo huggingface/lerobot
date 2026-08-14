@@ -761,3 +761,60 @@ def test_explicit_default_task_is_supported(monkeypatch):
     reward = model.compute_reward(batch)
 
     torch.testing.assert_close(reward, torch.tensor([0.25]))
+
+
+@skip_if_package_missing("transformers")
+def test_unbatched_tchw_input_produces_one_trajectory_reward(monkeypatch):
+    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
+    from lerobot.rewards.soler1.processor_soler1 import (
+        make_soler1_pre_post_processors,
+    )
+
+    _patch_model(monkeypatch)
+
+    config = SOLER1Config(
+        device="cpu",
+        external_image_key="observation.images.front",
+        wrist_image_key=None,
+        downsample_to=None,
+    )
+    model = SOLER1RewardModel(config)
+    preprocessor, _ = make_soler1_pre_post_processors(config)
+
+    trajectory = torch.randint(
+        0,
+        256,
+        (3, 3, 32, 32),
+        dtype=torch.uint8,
+    )
+
+    batch = preprocessor(
+        {
+            config.external_image_key: trajectory,
+            config.task_key: "pick up the cube",
+        }
+    )
+
+    model.processor.completion_batches = [
+        ["<think>some progress</think><answer>25%</answer>"],
+        ["<think>more progress</think><answer>50%</answer>"],
+    ]
+
+    reward = model.compute_reward(batch)
+
+    assert reward.shape == (1,)
+    torch.testing.assert_close(reward, torch.tensor([0.5]))
+
+    # Restore the mocked completions because the first call consumed them.
+    model.processor.completion_batches = [
+        ["<think>some progress</think><answer>25%</answer>"],
+        ["<think>more progress</think><answer>50%</answer>"],
+    ]
+
+    dense_reward = model.compute_reward(batch, dense=True)
+
+    assert dense_reward.shape == (1, 3)
+    torch.testing.assert_close(
+        dense_reward,
+        torch.tensor([[0.0, 0.25, 0.5]]),
+    )
