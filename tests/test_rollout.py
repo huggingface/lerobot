@@ -371,7 +371,6 @@ def test_create_inference_engine_sync():
         preprocessor=MagicMock(),
         postprocessor=MagicMock(),
         robot_wrapper=MagicMock(robot_type="mock"),
-        hw_features={},
         dataset_features={},
         ordered_action_keys=["k"],
         task="test",
@@ -433,6 +432,95 @@ def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_ac
 
     assert aligned is features
     assert list(aligned) == feature_names
+
+
+def test_align_action_feature_order_matches_checkpoint(caplog):
+    """The action side must be reordered whenever the state side is.
+
+    ``dataset_features`` is the single spec both engines build frames from, so aligning
+    only ``observation.state`` leaves ``dataset_features[ACTION]["names"]`` in the robot's
+    enumeration order — and recorded episodes then carry action labels that disagree with
+    the checkpoint they were rolled out with.
+    """
+    from lerobot.rollout.context import _align_action_feature_order
+
+    features = {"joint_b.pos": float, "joint_a.pos": float}
+
+    aligned = _align_action_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+
+    assert list(aligned) == ["joint_a.pos", "joint_b.pos"]
+    assert "reordering actions" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "policy_action_names",
+    [
+        None,
+        ["joint_b.pos", "joint_a.pos"],  # already in this order
+        ["joint_a.pos"],  # subset
+        ["joint_a.pos", "gripper.pos"],  # different set
+    ],
+)
+def test_align_action_feature_order_is_noop_without_an_exact_name_match(policy_action_names):
+    from lerobot.rollout.context import _align_action_feature_order
+
+    features = {"joint_b.pos": float, "joint_a.pos": float}
+
+    aligned = _align_action_feature_order(features, policy_action_names)
+
+    assert aligned is features
+    assert list(aligned) == ["joint_b.pos", "joint_a.pos"]
+
+
+def test_assert_state_matches_action_order_rejects_a_permutation():
+    """A permuted state layout must fail loudly at context-build time.
+
+    Silently accepting it anchors every relative action on another joint's measurement,
+    which on mirrored bimanual arms diverges instead of merely offsetting.
+    """
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    dataset_features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["b.pos", "a.pos"]},
+    }
+
+    with pytest.raises(ValueError, match="state/action layouts disagree"):
+        _assert_state_matches_action_order(dataset_features, ["a.pos", "b.pos"])
+
+
+@pytest.mark.parametrize(
+    ("state_names", "ordered_action_keys"),
+    [
+        (["a.pos", "b.pos"], ["a.pos", "b.pos"]),  # aligned
+        (["a.pos", "b.pos", "x.vel"], ["a.pos", "b.pos"]),  # extra state channel
+        (["a.pos"], ["a.pos", "base.vel"]),  # policy commands a base the state omits
+    ],
+)
+def test_assert_state_matches_action_order_allows_non_permutations(state_names, ordered_action_keys):
+    """Only a genuine permutation is a bug; differing *sets* are legitimate.
+
+    LeKiwi-style robots carry state channels the policy does not command (and vice versa);
+    those cases are already surfaced by the ``_align_*`` helpers' warnings.
+    """
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    dataset_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (len(state_names),),
+            "names": state_names,
+        },
+    }
+
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
+
+
+def test_assert_state_matches_action_order_tolerates_missing_state():
+    """A policy with no state input (vision-only) must not trip the guard."""
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    _assert_state_matches_action_order({}, ["a.pos"])
+    _assert_state_matches_action_order({"observation.state": {"names": ["a.pos"]}}, [])
 
 
 def test_estimate_max_episode_seconds_no_video():

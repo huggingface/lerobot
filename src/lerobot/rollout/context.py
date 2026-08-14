@@ -48,6 +48,7 @@ from lerobot.processor import (
 )
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -173,6 +174,41 @@ def _align_action_feature_order(
         policy_action_names,
     )
     return {name: action_features_hw[name] for name in policy_action_names}
+
+
+def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
+    """Fail fast when the state layout disagrees with the order actions are dispatched in.
+
+    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    while ``build_dataset_frame`` builds ``observation.state`` from
+    ``dataset_features[OBS_STATE]["names"]``. For a relative-action checkpoint
+    ``AbsoluteActionsProcessorStep`` reconstructs ``action = delta + state`` by adding the
+    cached state *positionally*, so if the two orders are permutations of each other every
+    joint gets anchored on some other joint's measurement. On a bimanual robot with mirrored
+    arms that is a positive-feedback runaway rather than a fixed offset: the commanded target
+    moves away from the measured position as the joint tracks it, compounding every tick.
+
+    Only a genuine permutation is rejected. Robots whose state legitimately differs from the
+    action set (extra ``.vel`` state channels, a base the policy does not command) fall
+    through — those are already reported by the ``_align_*`` helpers' warnings.
+    """
+    state_ft = dataset_features.get(OBS_STATE)
+    if state_ft is None or not ordered_action_keys:
+        return
+    state_names = list(state_ft.get("names") or [])
+    if state_names == ordered_action_keys or set(state_names) != set(ordered_action_keys):
+        return
+    raise ValueError(
+        "Rollout state/action layouts disagree: observation.state is ordered\n"
+        f"  {state_names}\n"
+        "but actions are dispatched as\n"
+        f"  {ordered_action_keys}\n"
+        "These are permutations of each other, so relative-action anchoring would add each "
+        "joint's offset to a DIFFERENT joint's measurement (on mirrored bimanual arms this "
+        "diverges rather than merely offsetting). Check that policy.action_feature_names "
+        "matches the checkpoint's training dataset and that the state and action feature "
+        "alignment in build_rollout_context ran on both sides."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +485,7 @@ def build_rollout_context(
         list(policy_action_names) if policy_action_names else None,
         raw_action_keys,
     )
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active
     rename_map = cfg.rename_map
@@ -557,7 +594,6 @@ def build_rollout_context(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         robot_wrapper=robot_wrapper,
-        hw_features=hw_features,
         dataset_features=dataset_features,
         ordered_action_keys=ordered_action_keys,
         task=task_str,

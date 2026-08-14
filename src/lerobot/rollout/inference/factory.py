@@ -86,7 +86,6 @@ def create_inference_engine(
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
     robot_wrapper: ThreadSafeRobot,
-    hw_features: dict,
     dataset_features: dict,
     ordered_action_keys: list[str],
     task: str,

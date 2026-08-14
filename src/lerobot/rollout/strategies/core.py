@@ -355,7 +355,7 @@ def detect_unsafe_action_jumps(
     return violations
 
 
-_ACTION_ORDER_DEBUG_TICKS = int(os.environ.get("LEROBOT_DEBUG_ACTION_ORDER", "3"))
+_ACTION_ORDER_DEBUG_TICKS = int(os.environ.get("LEROBOT_DEBUG_ACTION_ORDER", "0"))
 _action_order_debug_seen = 0
 
 
