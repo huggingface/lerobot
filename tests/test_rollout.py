@@ -17,11 +17,13 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import logging
 import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -237,6 +239,408 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
 
 
 # ---------------------------------------------------------------------------
+# Strategy capability declarations
+#
+# `RolloutConfig.__post_init__` and `build_rollout_context` read these ClassVars
+# and hooks instead of `isinstance`-ing the concrete strategy config, so a
+# third-party strategy is arranged for exactly like a built-in one.
+# ---------------------------------------------------------------------------
+
+# type name -> (supports_interactive, records_data, requires_dataset, requires_teleop,
+#               requires_streaming_encoding() at default field values)
+_CAPABILITY_MATRIX = {
+    "base": (True, False, False, False, False),
+    "sentry": (True, True, True, False, True),
+    "highlight": (False, True, True, False, True),
+    "episodic": (False, True, True, False, False),
+    "dagger": (False, True, True, True, False),
+}
+
+
+@pytest.mark.parametrize(("type_name", "capabilities"), sorted(_CAPABILITY_MATRIX.items()))
+def test_builtin_strategy_capability_matrix(type_name, capabilities):
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    cfg = RolloutStrategyConfig.get_choice_class(type_name)()
+
+    assert (
+        cfg.supports_interactive,
+        cfg.records_data,
+        cfg.requires_dataset,
+        cfg.requires_teleop,
+        cfg.requires_streaming_encoding(),
+    ) == capabilities
+
+
+def test_strategy_capability_hooks_that_depend_on_fields():
+    from lerobot.rollout import (
+        BaseStrategyConfig,
+        DAggerStrategyConfig,
+        EpisodicStrategyConfig,
+        HighlightStrategyConfig,
+        SentryStrategyConfig,
+    )
+
+    # Only DAgger adds a column, and only in autonomous-recording mode does it
+    # write frames from inside the timed loop.
+    assert DAggerStrategyConfig().extra_dataset_features() == {
+        "intervention": {"dtype": "bool", "shape": (1,), "names": None}
+    }
+    assert DAggerStrategyConfig(record_autonomous=True).requires_streaming_encoding() is True
+    for cfg in (
+        BaseStrategyConfig(),
+        SentryStrategyConfig(),
+        HighlightStrategyConfig(),
+        EpisodicStrategyConfig(),
+    ):
+        assert cfg.extra_dataset_features() == {}
+
+    # Episode rotation by video-file size is opt-in, and only where the strategy
+    # exposes the knob.
+    assert SentryStrategyConfig(target_video_file_size_mb=42).video_file_size_mb() == 42
+    assert DAggerStrategyConfig(target_video_file_size_mb=7).video_file_size_mb() == 7
+    for cfg in (
+        BaseStrategyConfig(),
+        SentryStrategyConfig(),
+        HighlightStrategyConfig(),
+        EpisodicStrategyConfig(),
+        DAggerStrategyConfig(),
+    ):
+        assert cfg.video_file_size_mb() is None
+
+
+def _rollout_config(monkeypatch, **kwargs):
+    """Build a ``RolloutConfig`` directly, with no CLI parsing and no policy download.
+
+    ``get_path_arg`` is stubbed out (rather than ``sys.argv`` rewritten) so the
+    capability checks are exercised on their own: with no ``--policy.path`` the
+    config keeps the placeholder policy handed to it.
+    """
+    from lerobot.configs import parser
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    monkeypatch.setattr(parser, "get_path_arg", lambda _field_name: None)
+    kwargs.setdefault("robot", MockRobotConfig())
+    kwargs.setdefault("policy", SimpleNamespace(device="cpu"))
+    return RolloutConfig(**kwargs)
+
+
+def test_rollout_config_requires_a_dataset_repo_id_when_the_strategy_declares_it(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import SentryStrategyConfig
+
+    # Fails at parse time rather than after the hardware is already connected.
+    with pytest.raises(ValueError, match="sentry strategy requires --dataset.repo_id"):
+        _rollout_config(monkeypatch, strategy=SentryStrategyConfig())
+
+    # A --dataset.* flag without a repo_id is just as fatal.
+    with pytest.raises(ValueError, match="sentry strategy requires --dataset.repo_id"):
+        _rollout_config(monkeypatch, strategy=SentryStrategyConfig(), dataset=DatasetRecordConfig())
+
+
+def test_rollout_config_rejects_a_dataset_for_a_strategy_that_records_nothing(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import BaseStrategyConfig
+
+    with pytest.raises(ValueError, match="base strategy does not record data") as exc_info:
+        _rollout_config(
+            monkeypatch,
+            strategy=BaseStrategyConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        )
+
+    # The message points at the strategies that do record, read off the registry.
+    message = str(exc_info.value)
+    for name in ("dagger", "episodic", "highlight", "sentry"):
+        assert name in message, name
+
+
+def test_rollout_config_requires_teleop_when_the_strategy_declares_it(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import DAggerStrategyConfig
+
+    with pytest.raises(ValueError, match="dagger strategy requires --teleop.type"):
+        _rollout_config(
+            monkeypatch,
+            strategy=DAggerStrategyConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        )
+
+
+def test_rollout_config_rejects_requires_dataset_without_records_data(monkeypatch):
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    # Not registered on the ChoiceRegistry: an incoherent declaration must be
+    # caught by construction alone, before anything looks up a type name.  The
+    # check therefore sits at the very top of the capability section — above the
+    # `requires_teleop` check — and reports the class name, not `strategy.type`.
+    @dataclasses.dataclass
+    class _IncoherentStrategyConfig(RolloutStrategyConfig):
+        records_data: ClassVar[bool] = False
+        requires_dataset: ClassVar[bool] = True
+
+    with pytest.raises(ValueError, match="declares requires_dataset=True with records_data=False"):
+        _rollout_config(monkeypatch, strategy=_IncoherentStrategyConfig())
+
+
+def test_rollout_config_reports_an_incoherent_declaration_ahead_of_the_teleop_check(monkeypatch):
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    # The case that pinned the ordering: this config is *also* missing its teleop, and
+    # the teleop check interpolates `self.strategy.type`, which raises draccus's
+    # "Cannot find choice name" for a config that was never registered.  Ordered the
+    # other way round, the author of a broken declaration gets that instead of being
+    # told what is actually wrong with it.
+    @dataclasses.dataclass
+    class _IncoherentTeleopStrategyConfig(RolloutStrategyConfig):
+        records_data: ClassVar[bool] = False
+        requires_dataset: ClassVar[bool] = True
+        requires_teleop: ClassVar[bool] = True
+
+    with pytest.raises(ValueError, match="declares requires_dataset=True with records_data=False"):
+        _rollout_config(monkeypatch, strategy=_IncoherentTeleopStrategyConfig())
+
+
+def test_rollout_config_forces_streaming_encoding_only_where_the_strategy_asks(monkeypatch, caplog):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import EpisodicStrategyConfig, SentryStrategyConfig
+
+    # Sentry writes frames from inside the timed loop, so a blocking encode would
+    # collapse the cadence: streaming encoding is forced on its behalf.
+    with caplog.at_level(logging.WARNING, logger="lerobot.rollout.configs"):
+        cfg = _rollout_config(
+            monkeypatch,
+            strategy=SentryStrategyConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test", streaming_encoding=False),
+        )
+    assert cfg.dataset.streaming_encoding is True
+    assert "sentry strategy forces streaming_encoding=True" in caplog.text
+
+    # Episodic saves between episodes, so the user's choice stands.
+    cfg = _rollout_config(
+        monkeypatch,
+        strategy=EpisodicStrategyConfig(),
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test", streaming_encoding=False),
+    )
+    assert cfg.dataset.streaming_encoding is False
+
+
+def test_rollout_config_lets_dagger_backfill_num_episodes_from_the_dataset(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import DAggerStrategyConfig
+    from tests.mocks.mock_teleop import MockTeleopConfig
+
+    cfg = _rollout_config(
+        monkeypatch,
+        strategy=DAggerStrategyConfig(),
+        teleop=MockTeleopConfig(),
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test", num_episodes=7),
+    )
+    assert cfg.strategy.num_episodes == 7
+
+    # An explicit --strategy.num_episodes is never overwritten.
+    cfg = _rollout_config(
+        monkeypatch,
+        strategy=DAggerStrategyConfig(num_episodes=2),
+        teleop=MockTeleopConfig(),
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test", num_episodes=7),
+    )
+    assert cfg.strategy.num_episodes == 2
+
+
+def test_dagger_resolve_defaults_without_a_dataset_raises():
+    from lerobot.rollout import DAggerStrategyConfig
+
+    with pytest.raises(ValueError, match="num_episodes must be set"):
+        DAggerStrategyConfig().resolve_defaults(None)
+
+
+# ---------------------------------------------------------------------------
+# Dataset wiring in `build_rollout_context`
+#
+# `extra_dataset_features()` is merged into the features derived from the robot and
+# the policy above the resume/create split, and guarded on both sides.  Driven
+# through the real `build_rollout_context` (real robot mock, real processor
+# pipelines, real feature aggregation) and stopped at the first statement after the
+# dataset block, so the guards are exercised against a schema nobody hand-wrote.
+# ---------------------------------------------------------------------------
+
+
+class _StopBuildError(Exception):
+    """Sentinel: the build reached the statement after the dataset block."""
+
+
+@pytest.fixture
+def register_strategy_config():
+    """Register an ad-hoc strategy config on the live registry, unregistering it after.
+
+    Both `context.py` guards interpolate ``cfg.strategy.type`` into their message, so
+    the config under test has to be registered: an unregistered subclass raises
+    draccus's "Cannot find choice name" from the f-string instead.
+    """
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    registered: list[str] = []
+
+    def _register(name: str, extra_features: dict) -> RolloutStrategyConfig:
+        @RolloutStrategyConfig.register_subclass(name)
+        @dataclasses.dataclass
+        class _Config(RolloutStrategyConfig):
+            records_data: ClassVar[bool] = True
+            requires_dataset: ClassVar[bool] = True
+
+            def extra_dataset_features(self) -> dict:
+                return dict(extra_features)
+
+        registered.append(name)
+        return _Config()
+
+    yield _register
+
+    # `get_known_choices()` hands back the live registry dict — see the third-party
+    # fixture below for why the entry has to be popped.
+    for name in registered:
+        RolloutStrategyConfig.get_known_choices().pop(name, None)
+
+
+def _drive_dataset_setup(monkeypatch, strategy, *, resume=False, existing_features=None) -> dict:
+    """Run `build_rollout_context` up to the dataset block and stop just after it.
+
+    Only the three things that need a machine (or a network) are replaced: the policy
+    checkpoint, ``LeRobotDataset.resume``/``.create``, and ``rename_stats`` — the first
+    statement after the dataset block, which raises `_StopBuildError` so the processor and
+    inference stacks are never assembled.  Everything the guards read is real: the
+    features come from `MockRobot`'s own observation/action features through the
+    default processor pipelines and `aggregate_pipeline_dataset_features`.
+
+    Returns a dict recording what the dataset block did: the ``features`` handed to
+    ``LeRobotDataset.create``, the ``resumed`` dataset, and ``past_dataset_block`` once
+    the sentinel fired.  A guard's ``ValueError`` propagates to the caller.
+    """
+    import lerobot.rollout.context as rollout_context
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import SyncInferenceConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    captured: dict = {}
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _cfg: MagicMock())
+
+    def _fake_resume(repo_id, **_kwargs):
+        dataset = SimpleNamespace(
+            repo_id=repo_id,
+            num_episodes=3,
+            meta=SimpleNamespace(features=dict(existing_features or {}), stats={}),
+        )
+        captured["resumed"] = dataset
+        return dataset
+
+    def _fake_create(repo_id, _fps, **kwargs):
+        captured["features"] = kwargs["features"]
+        return SimpleNamespace(
+            repo_id=repo_id, num_episodes=0, meta=SimpleNamespace(features=kwargs["features"], stats={})
+        )
+
+    monkeypatch.setattr(
+        rollout_context, "LeRobotDataset", SimpleNamespace(resume=_fake_resume, create=_fake_create)
+    )
+
+    def _stop(*_args, **_kwargs):
+        raise _StopBuildError
+
+    monkeypatch.setattr(rollout_context, "rename_stats", _stop)
+
+    cfg = SimpleNamespace(
+        inference=SyncInferenceConfig(),
+        policy=SimpleNamespace(type="mock", pretrained_path="user/policy", input_features={}),
+        use_torch_compile=False,
+        device="cpu",
+        robot=MockRobotConfig(),
+        teleop=None,
+        dataset=DatasetRecordConfig(repo_id="user/rollout_ctx", single_task="task"),
+        strategy=strategy,
+        resume=resume,
+        rename_map={},
+        fps=30.0,
+        task="task",
+        compile_warmup_inferences=1,
+    )
+    try:
+        rollout_context.build_rollout_context(cfg, threading.Event())
+    except _StopBuildError:
+        captured["past_dataset_block"] = True
+    return captured
+
+
+def test_context_rejects_extra_features_that_collide_with_the_derived_schema(
+    monkeypatch, register_strategy_config
+):
+    # A strategy cannot claim a column the frame builders own: `build_dataset_frame`
+    # would overwrite it, so the declaration is refused before the dataset exists.
+    strategy = register_strategy_config(
+        "collider", {"action": {"dtype": "float32", "shape": (1,), "names": None}}
+    )
+
+    with pytest.raises(ValueError, match=r"collide with the features derived from") as exc_info:
+        _drive_dataset_setup(monkeypatch, strategy)
+
+    message = str(exc_info.value)
+    assert "collider strategy declares extra_dataset_features()" in message
+    assert "['action']" in message
+
+
+def test_context_merges_extra_features_into_the_created_dataset(monkeypatch, register_strategy_config):
+    lap = {"lap": {"dtype": "int64", "shape": (1,), "names": None}}
+    strategy = register_strategy_config("lapper", lap)
+
+    captured = _drive_dataset_setup(monkeypatch, strategy)
+
+    # The declared column reaches `LeRobotDataset.create` alongside the features
+    # derived from the robot and policy, so it becomes a real dataset column.
+    assert captured["past_dataset_block"]
+    assert captured["features"]["lap"] == lap["lap"]
+    assert {"action", "observation.state"} <= set(captured["features"])
+
+
+def test_context_rejects_a_resume_whose_dataset_lacks_the_declared_columns(
+    monkeypatch, register_strategy_config
+):
+    strategy = register_strategy_config("lapper", {"lap": {"dtype": "int64", "shape": (1,), "names": None}})
+
+    # `LeRobotDataset.resume` takes no features — it reads its schema off the on-disk
+    # metadata — so the merged schema and the dataset can disagree.  Without this
+    # guard the run would die on its first recorded frame, robot connected and engine
+    # running, with `validate_frame` pointing at the frame instead of at --resume.
+    with pytest.raises(ValueError, match=r"Cannot resume 'user/rollout_ctx' with the lapper strategy"):
+        _drive_dataset_setup(
+            monkeypatch,
+            strategy,
+            resume=True,
+            existing_features={"action": {}, "observation.state": {}},
+        )
+
+
+def test_context_accepts_a_resume_whose_dataset_already_has_the_declared_columns(
+    monkeypatch, register_strategy_config
+):
+    strategy = register_strategy_config("lapper", {"lap": {"dtype": "int64", "shape": (1,), "names": None}})
+
+    # Past the guard and on to the pre/post processors, with the resumed dataset kept.
+    captured = _drive_dataset_setup(
+        monkeypatch,
+        strategy,
+        resume=True,
+        existing_features={"action": {}, "observation.state": {}, "lap": {}},
+    )
+
+    assert captured["past_dataset_block"]
+    # Resume keeps the repo_id it was given (no date-time stamp)...
+    assert captured["resumed"].repo_id == "user/rollout_ctx"
+    # ...and never falls through to `create`.
+    assert "features" not in captured
+
+
+# ---------------------------------------------------------------------------
 # RolloutRingBuffer
 # ---------------------------------------------------------------------------
 
@@ -337,6 +741,8 @@ def test_create_strategy_dispatches():
         DAggerStrategyConfig,
         EpisodicStrategy,
         EpisodicStrategyConfig,
+        HighlightStrategy,
+        HighlightStrategyConfig,
         SentryStrategy,
         SentryStrategyConfig,
         create_strategy,
@@ -344,6 +750,7 @@ def test_create_strategy_dispatches():
 
     assert isinstance(create_strategy(BaseStrategyConfig()), BaseStrategy)
     assert isinstance(create_strategy(SentryStrategyConfig()), SentryStrategy)
+    assert isinstance(create_strategy(HighlightStrategyConfig()), HighlightStrategy)
     assert isinstance(create_strategy(DAggerStrategyConfig()), DAggerStrategy)
     assert isinstance(create_strategy(EpisodicStrategyConfig()), EpisodicStrategy)
 
@@ -355,6 +762,526 @@ def test_create_strategy_unknown_raises():
     cfg.type = "bogus"
     with pytest.raises(ValueError, match="Unknown strategy type"):
         create_strategy(cfg)
+
+
+def test_create_strategy_unknown_lists_the_registered_names():
+    from lerobot.rollout import create_strategy
+
+    cfg = MagicMock()
+    cfg.type = "bogus"
+    with pytest.raises(ValueError, match="Unknown strategy type") as exc_info:
+        create_strategy(cfg)
+
+    # The registry is open, so the error has to say what *is* available rather
+    # than point at a hard-coded list of five.
+    message = str(exc_info.value)
+    assert "Registered: " in message
+    for name in ("base", "dagger", "episodic", "highlight", "sentry"):
+        assert name in message, name
+    # This error only fires for a config that was never registered, so it says how to
+    # register one.  It is raised *before* resolution is attempted, so it deliberately
+    # carries no resolution failure to bury the real advice under.
+    assert "register_subclass" in message
+    assert "Resolution error: " not in message
+
+
+# ---------------------------------------------------------------------------
+# Third-party strategies (bring your own rollout strategy)
+#
+# A temp package on sys.path stands in for a `pip install lerobot_strategy_*`
+# distribution: the config in one module, the implementation importable from the
+# package root.  `make_device_from_device_class` never searches the config's own
+# module, so the lookup always goes through candidate #1, the config module's parent
+# package; these fixtures split the two modules to exercise that path explicitly (a
+# single-file strategy resolves too, as long as the package `__init__` re-exports the
+# class — which is what the shipped example does, see the end of this section).
+# ---------------------------------------------------------------------------
+
+_STRATEGY_PKG = "lerobot_strategy_patrol"
+
+_PATROL_CONFIG_SOURCE = """
+from dataclasses import dataclass
+from typing import ClassVar
+
+from lerobot.rollout.configs import RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("patrol")
+@dataclass
+class PatrolStrategyConfig(RolloutStrategyConfig):
+    supports_interactive: ClassVar[bool] = True
+    waypoints: int = 3
+"""
+
+_PATROL_STRATEGY_SOURCE = """
+from lerobot.rollout.strategies import RolloutStrategy
+
+
+class PatrolStrategy(RolloutStrategy):
+    def run(self, ctx):
+        pass
+
+    def teardown(self, ctx):
+        pass
+"""
+
+_PATROL_INIT_SOURCE = """
+from .config_patrol import PatrolStrategyConfig
+from .patrol import PatrolStrategy
+
+__all__ = ["PatrolStrategy", "PatrolStrategyConfig"]
+"""
+
+
+@pytest.fixture
+def strategy_pkg(tmp_path):
+    """Write a throwaway `lerobot_strategy_*` package, import it, and undo all of that."""
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    packages: list[str] = []
+    registered: list[str] = []
+
+    def _make(pkg_name: str, modules: dict[str, str], *, registers: tuple[str, ...] = ()):
+        pkg = tmp_path / pkg_name
+        pkg.mkdir()
+        for filename, source in modules.items():
+            (pkg / filename).write_text(source)
+        if str(tmp_path) not in sys.path:
+            sys.path.insert(0, str(tmp_path))
+        packages.append(pkg_name)
+        registered.extend(registers)
+        return importlib.import_module(pkg_name)
+
+    try:
+        yield _make
+    finally:
+        if str(tmp_path) in sys.path:
+            sys.path.remove(str(tmp_path))
+        # `get_known_choices()` hands back the live registry dict, so the entry has
+        # to be popped: leaving it behind would make the name a valid
+        # --strategy.type for every later test in the session, and re-running this
+        # fixture would hit draccus's duplicate-name guard with the stale class.
+        for name in registered:
+            RolloutStrategyConfig.get_known_choices().pop(name, None)
+        for pkg_name in packages:
+            for name in [n for n in sys.modules if n == pkg_name or n.startswith(f"{pkg_name}.")]:
+                del sys.modules[name]
+        importlib.invalidate_caches()
+
+
+@pytest.fixture
+def patrol_strategy_pkg(strategy_pkg):
+    return strategy_pkg(
+        _STRATEGY_PKG,
+        {
+            "__init__.py": _PATROL_INIT_SOURCE,
+            "config_patrol.py": _PATROL_CONFIG_SOURCE,
+            "patrol.py": _PATROL_STRATEGY_SOURCE,
+        },
+        registers=("patrol",),
+    )
+
+
+def test_create_strategy_resolves_a_third_party_strategy(patrol_strategy_pkg):
+    from lerobot.rollout import create_strategy
+    from lerobot.rollout.configs import RolloutStrategyConfig
+    from lerobot.rollout.strategies import RolloutStrategy
+
+    # Registered by importing the package, exactly as `register_third_party_plugins()`
+    # (or --strategy.discover_packages_path=...) does before draccus parses.
+    assert "patrol" in RolloutStrategyConfig.get_known_choices()
+    config = RolloutStrategyConfig.get_choice_class("patrol")(waypoints=5)
+    assert config.type == "patrol"
+
+    strategy = create_strategy(config)
+
+    # Resolved by naming convention through the factory's fallback — no branch in
+    # `create_strategy` mentions this strategy.
+    assert type(strategy) is patrol_strategy_pkg.PatrolStrategy
+    assert isinstance(strategy, RolloutStrategy)
+    assert strategy.config is config
+
+
+def test_third_party_strategy_declarations_drive_rollout_config(monkeypatch, patrol_strategy_pkg):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    config = RolloutStrategyConfig.get_choice_class("patrol")()
+
+    # The capability declarations are read off the third-party class just like a
+    # built-in one: this one records nothing, so a dataset is rejected...
+    with pytest.raises(ValueError, match="patrol strategy does not record data"):
+        _rollout_config(
+            monkeypatch, strategy=config, dataset=DatasetRecordConfig(repo_id="user/rollout_test")
+        )
+
+    # ...and it opts into interactive mode without LeRobot knowing its name.
+    cfg = _rollout_config(monkeypatch, strategy=config, interactive=True)
+    assert cfg.strategy is config
+
+
+_MISNAMED_PKG = "lerobot_strategy_wander"
+
+_MISNAMED_CONFIG_SOURCE = """
+from dataclasses import dataclass
+
+from lerobot.rollout.configs import RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("wander")
+@dataclass
+class WanderStrategyConfig(RolloutStrategyConfig):
+    radius_m: float = 1.0
+"""
+
+# The class the naming convention asks for is `WanderStrategy`; this one is called
+# something else, so no candidate module has it.
+_MISNAMED_IMPL_SOURCE = """
+from lerobot.rollout.strategies import RolloutStrategy
+
+
+class WanderRollout(RolloutStrategy):
+    def run(self, ctx):
+        pass
+
+    def teardown(self, ctx):
+        pass
+"""
+
+_MISNAMED_INIT_SOURCE = """
+from .config_wander import WanderStrategyConfig
+from .wander import WanderRollout
+
+__all__ = ["WanderRollout", "WanderStrategyConfig"]
+"""
+
+_FORGOT_PKG = "lerobot_strategy_forgot"
+
+# Everything is named right — only the `@RolloutStrategyConfig.register_subclass(...)`
+# decorator is missing.  The class would resolve fine by convention, so nothing but an
+# explicit registration check catches this.
+_FORGOT_CONFIG_SOURCE = """
+from dataclasses import dataclass
+
+from lerobot.rollout.configs import RolloutStrategyConfig
+
+
+@dataclass
+class ForgotStrategyConfig(RolloutStrategyConfig):
+    stride: int = 1
+"""
+
+_FORGOT_IMPL_SOURCE = """
+from lerobot.rollout.strategies import RolloutStrategy
+
+
+class ForgotStrategy(RolloutStrategy):
+    def run(self, ctx):
+        pass
+
+    def teardown(self, ctx):
+        pass
+"""
+
+_FORGOT_INIT_SOURCE = """
+from .config_forgot import ForgotStrategyConfig
+from .forgot import ForgotStrategy
+
+__all__ = ["ForgotStrategy", "ForgotStrategyConfig"]
+"""
+
+_BOOM_PKG = "lerobot_strategy_boom"
+
+_BOOM_CONFIG_SOURCE = """
+from dataclasses import dataclass
+
+from lerobot.rollout.configs import RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("boom")
+@dataclass
+class BoomStrategyConfig(RolloutStrategyConfig):
+    port: str = "/dev/ttyACM9"
+"""
+
+_BOOM_IMPL_SOURCE = """
+from lerobot.rollout.strategies import RolloutStrategy
+
+
+class BoomError(RuntimeError):
+    pass
+
+
+class BoomStrategy(RolloutStrategy):
+    def __init__(self, config):
+        raise BoomError(f"motor bus at {config.port} not found")
+
+    def run(self, ctx):
+        pass
+
+    def teardown(self, ctx):
+        pass
+"""
+
+_BOOM_INIT_SOURCE = """
+from .boom import BoomError, BoomStrategy
+from .config_boom import BoomStrategyConfig
+
+__all__ = ["BoomError", "BoomStrategy", "BoomStrategyConfig"]
+"""
+
+
+def test_create_strategy_reports_a_misnamed_implementation_class(strategy_pkg):
+    from lerobot.rollout import create_strategy
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    pkg = strategy_pkg(
+        _MISNAMED_PKG,
+        {
+            "__init__.py": _MISNAMED_INIT_SOURCE,
+            "config_wander.py": _MISNAMED_CONFIG_SOURCE,
+            "wander.py": _MISNAMED_IMPL_SOURCE,
+        },
+        registers=("wander",),
+    )
+    config = RolloutStrategyConfig.get_choice_class("wander")()
+
+    # The config *is* registered, so this is not a dispatch problem and must not be
+    # dressed up as one: "Unknown strategy type" would send the author looking for a
+    # missing `register_subclass` they already wrote.  The resolution error names the
+    # class it wanted and every module it looked in, which is the actionable part.
+    with pytest.raises(ImportError) as exc_info:
+        create_strategy(config)
+
+    message = str(exc_info.value)
+    assert "Could not locate device class 'WanderStrategy'" in message
+    assert "Tried modules" in message
+    assert _MISNAMED_PKG in message
+    assert "Unknown strategy type" not in message
+    # The class that *is* there is simply not the one the convention names.
+    assert pkg.WanderRollout is not None
+
+
+def test_create_strategy_propagates_an_exception_from_the_strategy_constructor(strategy_pkg):
+    from lerobot.rollout import create_strategy
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    pkg = strategy_pkg(
+        _BOOM_PKG,
+        {
+            "__init__.py": _BOOM_INIT_SOURCE,
+            "config_boom.py": _BOOM_CONFIG_SOURCE,
+            "boom.py": _BOOM_IMPL_SOURCE,
+        },
+        registers=("boom",),
+    )
+    config = RolloutStrategyConfig.get_choice_class("boom")()
+
+    # A registered strategy that fails in its own `__init__` (a port that is not there,
+    # a missing dependency) surfaces the plugin's own exception, type and message
+    # intact — wrapping it in ValueError would bury the only useful line.
+    with pytest.raises(pkg.BoomError, match=r"motor bus at /dev/ttyACM9 not found") as exc_info:
+        create_strategy(config)
+
+    assert type(exc_info.value) is pkg.BoomError
+    assert "Unknown strategy type" not in str(exc_info.value)
+
+
+def test_create_strategy_rejects_an_unregistered_config_that_would_resolve(strategy_pkg):
+    from lerobot.rollout import create_strategy
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    pkg = strategy_pkg(
+        _FORGOT_PKG,
+        {
+            "__init__.py": _FORGOT_INIT_SOURCE,
+            "config_forgot.py": _FORGOT_CONFIG_SOURCE,
+            "forgot.py": _FORGOT_IMPL_SOURCE,
+        },
+    )
+    config = pkg.ForgotStrategyConfig()
+
+    assert "forgot" not in RolloutStrategyConfig.get_known_choices()
+
+    # `ForgotStrategy` is named exactly as the convention wants, so resolution *would*
+    # succeed.  Returning it anyway would be worse than useless: the type can never be
+    # selected from the CLI, and the first thing to read `.type` downstream would fail
+    # with draccus's opaque "Cannot find choice name" instead. Refuse here, where the
+    # message can name the missing decorator.
+    with pytest.raises(ValueError, match="Unknown strategy type") as exc_info:
+        create_strategy(config)
+
+    assert "register_subclass" in str(exc_info.value)
+
+
+def test_registered_third_party_strategy_does_not_leak_between_tests():
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    # Guards the fixture's teardown itself: without it every later test would see a
+    # "patrol" choice registered from a temp directory that no longer exists.
+    known = RolloutStrategyConfig.get_known_choices()
+    for name in ("patrol", "wander", "boom"):
+        assert name not in known, name
+
+
+# ---------------------------------------------------------------------------
+# The shipped example (examples/rollout/custom_strategy)
+#
+# It is what a user copies, and nothing else in the repo imports it, so this is the
+# only thing keeping it wired to the APIs it borrows: the import alone fails if any
+# of `lerobot.rollout`'s re-exports (`send_next_action`, `safe_push_to_hub`, ...)
+# moves or disappears.
+# ---------------------------------------------------------------------------
+
+_EXAMPLE_PKG = "examples.rollout.custom_strategy"
+
+
+@pytest.fixture
+def custom_strategy_example():
+    from lerobot.configs import parser
+    from lerobot.rollout.configs import RolloutStrategyConfig
+
+    def _forget():
+        # Registration is an import side effect, so the module has to be dropped
+        # together with its registry entry for either to be re-established.
+        RolloutStrategyConfig.get_known_choices().pop("patrol", None)
+        for name in [n for n in sys.modules if n == _EXAMPLE_PKG or n.startswith(f"{_EXAMPLE_PKG}.")]:
+            del sys.modules[name]
+
+    _forget()
+    try:
+        # The mechanism `--strategy.discover_packages_path=examples.rollout.custom_strategy`
+        # uses.  `examples/` ships no `__init__.py`, so it resolves as a namespace
+        # package from the repo root — which is on sys.path under pytest, but skip
+        # rather than fail anywhere it is not.
+        parser.load_plugin(_EXAMPLE_PKG)
+    except Exception as exc:  # PluginLoadError, or an ImportError from the walk
+        _forget()
+        pytest.skip(f"{_EXAMPLE_PKG} is not importable in this layout: {exc}")
+    try:
+        yield sys.modules[_EXAMPLE_PKG]
+    finally:
+        _forget()
+
+
+def test_example_strategy_resolves_through_the_factory(custom_strategy_example):
+    from lerobot.rollout import create_strategy
+    from lerobot.rollout.configs import RolloutStrategyConfig
+    from lerobot.rollout.strategies import RolloutStrategy
+
+    assert "patrol" in RolloutStrategyConfig.get_known_choices()
+    config = custom_strategy_example.PatrolStrategyConfig()
+    assert config.type == "patrol"
+
+    strategy = create_strategy(config)
+
+    # Resolved by naming convention: the config lives in `patrol.py`, and the package
+    # `__init__` re-export is what makes candidate #1 (the parent package) hold
+    # `PatrolStrategy`.  Rename either and this is where it shows up.
+    assert type(strategy) is custom_strategy_example.PatrolStrategy
+    assert isinstance(strategy, RolloutStrategy)
+    assert strategy.config is config
+
+
+def test_example_strategy_capability_declarations(custom_strategy_example):
+    config = custom_strategy_example.PatrolStrategyConfig()
+
+    # The docstrings promise each of these to whoever copies the file.
+    assert (
+        config.supports_interactive,
+        config.records_data,
+        config.requires_dataset,
+        config.requires_teleop,
+        config.requires_streaming_encoding(),
+    ) == (True, True, True, False, True)
+    assert config.extra_dataset_features() == {
+        custom_strategy_example.patrol.LAP: {"dtype": "int64", "shape": (1,), "names": None}
+    }
+
+
+def test_example_strategy_resolve_defaults(custom_strategy_example):
+    from lerobot.configs.dataset import DatasetRecordConfig
+
+    config_cls = custom_strategy_example.PatrolStrategyConfig
+
+    # lap_duration_s falls back to --dataset.episode_time_s...
+    config = config_cls()
+    config.resolve_defaults(DatasetRecordConfig(repo_id="user/rollout_patrol", episode_time_s=30))
+    assert config.lap_duration_s == 30
+
+    # ...and an explicit value is kept.
+    config = config_cls(lap_duration_s=12.0)
+    config.resolve_defaults(DatasetRecordConfig(repo_id="user/rollout_patrol", episode_time_s=30))
+    assert config.lap_duration_s == 12.0
+
+    # Everything unresolvable fails at parse time, before any hardware is touched.
+    with pytest.raises(ValueError, match="laps_per_episode must be >= 1"):
+        config_cls(laps_per_episode=0).resolve_defaults(DatasetRecordConfig(repo_id="user/rollout_patrol"))
+    with pytest.raises(ValueError, match="lap_duration_s or --dataset.episode_time_s"):
+        config_cls().resolve_defaults(None)
+    with pytest.raises(ValueError, match="lap_duration_s must be > 0"):
+        config_cls(lap_duration_s=0).resolve_defaults(None)
+
+
+# ---------------------------------------------------------------------------
+# RolloutStrategy base class (the extension point's own contract)
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_engine_and_interpolator_raise_before_setup():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+
+    strategy = BaseStrategy(BaseStrategyConfig())
+
+    # A missing `_init_engine` used to surface as an AttributeError on None deep
+    # inside the tick loop; the guarded properties name the missing call instead.
+    with pytest.raises(RuntimeError, match=r"_init_engine"):
+        _ = strategy.engine
+    with pytest.raises(RuntimeError, match=r"_init_engine"):
+        _ = strategy.interpolator
+
+
+def test_setup_is_concrete_and_attaches_the_engine():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import RolloutStrategy
+
+    # Only run/teardown are left abstract, so a third-party strategy that needs no
+    # setup of its own does not have to write one.
+    assert RolloutStrategy.__abstractmethods__ == frozenset({"run", "teardown"})
+
+    class _MinimalStrategy(RolloutStrategy):
+        def run(self, ctx):
+            pass
+
+        def teardown(self, ctx):
+            pass
+
+    engine = MagicMock()
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(cfg=SimpleNamespace(interpolation_multiplier=3)),
+        policy=SimpleNamespace(inference=engine),
+    )
+    strategy = _MinimalStrategy(BaseStrategyConfig())
+
+    strategy.setup(ctx)
+
+    assert strategy.engine is engine
+    assert strategy.interpolator.multiplier == 3
+    engine.start.assert_called_once()
+
+    # A strategy with its own setup gets the same via `super().setup(ctx)`.
+    class _ExtendedStrategy(_MinimalStrategy):
+        def setup(self, ctx):
+            super().setup(ctx)
+            self.listener_started = True
+
+    extended = _ExtendedStrategy(BaseStrategyConfig())
+    extended.setup(ctx)
+
+    assert extended.listener_started
+    assert extended.engine is engine
+    assert extended.interpolator is not strategy.interpolator
 
 
 # ---------------------------------------------------------------------------

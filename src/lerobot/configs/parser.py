@@ -182,6 +182,14 @@ def load_plugin(plugin_path: str) -> None:
     def iter_namespace(ns_pkg: ModuleType) -> Iterable[ModuleInfo]:
         return pkgutil.iter_modules(ns_pkg.__path__, ns_pkg.__name__ + ".")
 
+    # A plain module has no ``__path__``; importing it above already ran its
+    # registrations, so the only thing left is to say why we cannot walk it.
+    if not hasattr(package_module, "__path__"):
+        raise PluginLoadError(
+            f"Failed to load plugin '{plugin_path}': it is a module, not a package. "
+            "discover_packages_path needs a package (a directory with an __init__.py)."
+        )
+
     try:
         for _finder, pkg_name, _ispkg in iter_namespace(package_module):
             importlib.import_module(pkg_name)

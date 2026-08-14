@@ -99,7 +99,7 @@ class HighlightStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
         engine.resume()
         play_sounds = cfg.play_sounds

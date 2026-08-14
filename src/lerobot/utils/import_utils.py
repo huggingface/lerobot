@@ -196,11 +196,16 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     candidates = [c for c in candidates if not (c in seen or seen.add(c))]
 
     tried: list[str] = []
+    # A candidate can fail to import because it does not exist (expected — we are
+    # guessing module names) or because it exists and its own imports are broken.  The
+    # second case is the actionable one, so keep the reasons for the final message.
+    import_errors: list[str] = []
     for candidate in candidates:
         tried.append(candidate)
         try:
             module = importlib.import_module(candidate)
-        except ImportError:
+        except ImportError as e:
+            import_errors.append(f"{candidate}: {e}")
             continue
 
         if hasattr(module, device_class_name):
@@ -213,10 +218,11 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
                         f"Failed to instantiate '{device_class_name}' from module '{candidate}': {e}"
                     ) from e
 
+    reasons = f" Import errors: {'; '.join(import_errors)}." if import_errors else ""
     raise ImportError(
         f"Could not locate device class '{device_class_name}' for config '{config_name}'. "
         f"Tried modules: {tried}. Ensure your device class name is the config class name without "
-        f"'Config' and that it's importable from one of those modules."
+        f"'Config' and that it's importable from one of those modules.{reasons}"
     )
 
 
@@ -226,7 +232,12 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', or 'lerobot_env_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_', or 'lerobot_strategy_'
+    and imports them.
+
+    The distribution name must also be a legal module name, because it is imported
+    verbatim: a hyphenated 'lerobot-robot-foo' matches no prefix, so it is skipped with a
+    WARNING naming the underscored form it needs.
     """
     prefixes = (
         "lerobot_robot_",
@@ -234,6 +245,8 @@ def register_third_party_plugins() -> None:
         "lerobot_teleoperator_",
         "lerobot_policy_",
         "lerobot_env_",
+        # Rollout strategies for `lerobot-rollout --strategy.type=<name>`.
+        "lerobot_strategy_",
     )
     imported: list[str] = []
     failed: list[str] = []
@@ -253,5 +266,15 @@ def register_third_party_plugins() -> None:
             continue
         if dist_name.startswith(prefixes):
             attempt_import(dist_name)
+        elif dist_name.replace("-", "_").startswith(prefixes):
+            # The distribution name is imported verbatim, so a hyphenated one can never
+            # be.  Silently skipping it leaves the author with nothing but draccus's
+            # "invalid choice" further down, so name the problem here.
+            logging.warning(
+                "Skipping '%s': a LeRobot plugin distribution must be named with "
+                "underscores (e.g. '%s') because the distribution name is imported as-is.",
+                dist_name,
+                dist_name.replace("-", "_"),
+            )
 
     logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)

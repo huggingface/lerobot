@@ -43,16 +43,64 @@ logger = logging.getLogger(__name__)
 class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     """Abstract base for rollout strategy configurations.
 
-    Use ``--strategy.type=<name>`` on the CLI to select a strategy.
+    Use ``--strategy.type=<name>`` on the CLI to select a strategy.  The registry is
+    open: a third-party package can register its own strategy and drive it from the
+    same CLI — see ``docs/source/bring_your_own_rollout_strategies.mdx``.
+
+    A strategy declares what the engine must arrange on its behalf through the
+    capability ClassVars and hooks below, so that nothing outside the strategy needs
+    to know its concrete type.  Anything expressed here works identically for
+    built-in and third-party strategies.
     """
 
     # Whether the strategy honours the restartable-run() contract that
     # ``--interactive=true`` requires (see ``RolloutStrategy``).
     supports_interactive: ClassVar[bool] = False
 
+    # Whether the strategy writes frames to a dataset.  When True,
+    # ``build_rollout_context`` creates the dataset from ``--dataset.*`` and hands it
+    # over as ``ctx.data.dataset``; when False, passing any ``--dataset.*`` flag is
+    # rejected.
+    records_data: ClassVar[bool] = False
+
+    # Whether ``--dataset.repo_id`` is mandatory.  Implies ``records_data``.
+    requires_dataset: ClassVar[bool] = False
+
+    # Whether ``--teleop.type`` is mandatory (human-in-the-loop strategies).
+    requires_teleop: ClassVar[bool] = False
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+    def requires_streaming_encoding(self) -> bool:
+        """Whether ``--dataset.streaming_encoding`` must be forced on.
+
+        Return True when frames are written from inside the timed control loop:
+        without streaming encoding the encode blocks the loop and the cadence
+        collapses.  A method rather than a ClassVar because the answer can depend on
+        the strategy's own fields — see :class:`DAggerStrategyConfig`.
+        """
+        return False
+
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """Extra dataset columns this strategy records, merged into the dataset features.
+
+        ``validate_frame`` rejects missing keys as well as extra ones, so every frame
+        the strategy records must carry every key declared here.
+        """
+        return {}
+
+    def video_file_size_mb(self) -> int | None:
+        """Target video-file size driving episode rotation, or None for the dataset default."""
+        return None
+
+    def resolve_defaults(self, dataset_cfg: DatasetRecordConfig | None) -> None:
+        """Fill unset strategy fields from the dataset config, once, after validation.
+
+        Called from ``RolloutConfig.__post_init__`` after the capability checks above
+        have passed.  Raise ``ValueError`` for a field that cannot be resolved.
+        """
 
 
 @RolloutStrategyConfig.register_subclass("base")
@@ -77,12 +125,21 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     """
 
     supports_interactive: ClassVar[bool] = True
+    records_data: ClassVar[bool] = True
+    requires_dataset: ClassVar[bool] = True
 
     upload_every_n_episodes: int = 5
     # Target video file size in MB for episode rotation.  Episodes are
     # saved once the estimated video duration would exceed this limit.
     # Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when set to None.
     target_video_file_size_mb: int | None = None
+
+    def requires_streaming_encoding(self) -> bool:
+        """Always: frames are written from inside the control loop."""
+        return True
+
+    def video_file_size_mb(self) -> int | None:
+        return self.target_video_file_size_mb
 
 
 @RolloutStrategyConfig.register_subclass("highlight")
@@ -96,10 +153,17 @@ class HighlightStrategyConfig(RolloutStrategyConfig):
     again.
     """
 
+    records_data: ClassVar[bool] = True
+    requires_dataset: ClassVar[bool] = True
+
     ring_buffer_seconds: float = 10.0
     ring_buffer_max_memory_mb: int = 1024
     save_key: str = "s"
     push_key: str = "h"
+
+    def requires_streaming_encoding(self) -> bool:
+        """Always: the ring buffer is flushed while the policy is still running."""
+        return True
 
 
 @dataclass
@@ -146,6 +210,9 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     - else, the robot is moved smoothly to the position of the teleop leader.
     """
 
+    records_data: ClassVar[bool] = True
+    requires_dataset: ClassVar[bool] = True
+
     # This only applies if there are no teleop leaders specified.
     # When True (default), moves the robot back to the joint positions captured at startup.
     # Otherwise, leave the robot in its current position.
@@ -188,6 +255,13 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     blocked while a correction is in progress.
     """
 
+    records_data: ClassVar[bool] = True
+    # TODO(Steven): DAgger shouldn't require a dataset (user may want to just
+    # rollout+intervene without recording), but for now we require it to simplify the
+    # implementation.  Flipping this to False is all it takes on the config side.
+    requires_dataset: ClassVar[bool] = True
+    requires_teleop: ClassVar[bool] = True
+
     # Number of correction episodes to collect (corrections-only mode).
     # When None, falls back to ``--dataset.num_episodes``.
     num_episodes: int | None = None
@@ -212,6 +286,38 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
         if self.input_device not in ("keyboard", "pedal"):
             raise ValueError(f"DAgger input_device must be 'keyboard' or 'pedal', got '{self.input_device}'")
 
+    def requires_streaming_encoding(self) -> bool:
+        """Only when the autonomous phase is recorded too — corrections are saved between phases."""
+        return self.record_autonomous
+
+    def extra_dataset_features(self) -> dict[str, dict]:
+        """Tag every frame with whether it came from a human correction."""
+        return {"intervention": {"dtype": "bool", "shape": (1,), "names": None}}
+
+    def video_file_size_mb(self) -> int | None:
+        return self.target_video_file_size_mb
+
+    def resolve_defaults(self, dataset_cfg: DatasetRecordConfig | None) -> None:
+        """Resolve ``num_episodes`` from the dataset config, and hint at streaming encoding."""
+        if not self.record_autonomous and dataset_cfg is not None and not dataset_cfg.streaming_encoding:
+            logger.info(
+                "Streaming encoding is disabled for DAgger corrections-only mode. "
+                "Consider enabling it for faster episode saving: "
+                "--dataset.streaming_encoding=true --dataset.encoder_threads=2"
+            )
+
+        if self.num_episodes is not None:
+            return
+        if dataset_cfg is None:
+            raise ValueError(
+                "DAgger num_episodes must be set either via --strategy.num_episodes or --dataset.num_episodes"
+            )
+        self.num_episodes = dataset_cfg.num_episodes
+        logger.info(
+            "DAgger num_episodes not set — using --dataset.num_episodes=%d",
+            self.num_episodes,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Top-level rollout config
@@ -234,13 +340,15 @@ class RolloutConfig:
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
 
-    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic)
+    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic, or
+    # any name a third-party package registered on RolloutStrategyConfig)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
     inference: InferenceEngineConfig = field(default_factory=SyncInferenceConfig)
 
-    # Dataset (required for sentry, highlight, dagger; None for base)
+    # Dataset (required by strategies declaring ``requires_dataset``; must be None for
+    # strategies that do not declare ``records_data``)
     dataset: DatasetRecordConfig | None = None
 
     # Runtime
@@ -297,26 +405,34 @@ class RolloutConfig:
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
 
-        # --- Strategy-specific validation ---
-        if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
-            raise ValueError("DAgger strategy requires --teleop.type to be set")
+        # --- Strategy-capability validation ---
+        # Everything here reads the strategy's declarations rather than its concrete
+        # type, so a third-party strategy is validated exactly like a built-in one.
+        # First: a declaration that contradicts itself.  Reported off the class name, and
+        # ahead of every check that interpolates ``self.strategy.type``, so it still fires
+        # for a strategy whose config was never registered.
+        if self.strategy.requires_dataset and not self.strategy.records_data:
+            raise ValueError(
+                f"{type(self.strategy).__name__} declares requires_dataset=True with "
+                "records_data=False; a strategy that needs a dataset must also record to it."
+            )
 
-        # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene without recording), but for now we require it to simplify the implementation.
-        needs_dataset = isinstance(
-            self.strategy,
-            (
-                SentryStrategyConfig,
-                HighlightStrategyConfig,
-                DAggerStrategyConfig,
-                EpisodicStrategyConfig,
-            ),
-        )
-        if needs_dataset and (self.dataset is None or not self.dataset.repo_id):
+        if self.strategy.requires_teleop and self.teleop is None:
+            raise ValueError(f"{self.strategy.type} strategy requires --teleop.type to be set")
+
+        if self.strategy.requires_dataset and (self.dataset is None or not self.dataset.repo_id):
             raise ValueError(f"{self.strategy.type} strategy requires --dataset.repo_id to be set")
 
-        if isinstance(self.strategy, BaseStrategyConfig) and self.dataset is not None:
+        if not self.strategy.records_data and self.dataset is not None:
+            recorders = ", ".join(
+                sorted(
+                    name
+                    for name, choice_cls in RolloutStrategyConfig.get_known_choices().items()
+                    if choice_cls.records_data
+                )
+            )
             raise ValueError(
-                "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
+                f"{self.strategy.type} strategy does not record data. Use {recorders} for recording."
             )
 
         # Interactive mode calls strategy.run() once per segment, so only strategies
@@ -336,48 +452,19 @@ class RolloutConfig:
         if self.autosteer_interval_s < 0:
             raise ValueError(f"--autosteer_interval_s must be >= 0 (got {self.autosteer_interval_s}).")
 
-        # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop
+        # A strategy that writes frames from inside the timed control loop cannot afford
+        # a blocking encode: force streaming encoding on its behalf.
         if (
-            isinstance(self.strategy, SentryStrategyConfig)
-            and self.dataset is not None
+            self.dataset is not None
+            and self.strategy.requires_streaming_encoding()
             and not self.dataset.streaming_encoding
         ):
-            logger.warning("Sentry mode forces streaming_encoding=True")
+            logger.warning("%s strategy forces streaming_encoding=True", self.strategy.type)
             self.dataset.streaming_encoding = True
 
-        # Highlight writes frames while the policy is still running, so streaming is mandatory.
-        if (
-            isinstance(self.strategy, HighlightStrategyConfig)
-            and self.dataset is not None
-            and not self.dataset.streaming_encoding
-        ):
-            logger.warning("Highlight mode forces streaming_encoding=True")
-            self.dataset.streaming_encoding = True
-
-        # DAgger: streaming is mandatory only when the autonomous phase is also recorded.
-        if isinstance(self.strategy, DAggerStrategyConfig) and self.dataset is not None:
-            if self.strategy.record_autonomous and not self.dataset.streaming_encoding:
-                logger.warning("DAgger with record_autonomous=True forces streaming_encoding=True")
-                self.dataset.streaming_encoding = True
-            elif not self.strategy.record_autonomous and not self.dataset.streaming_encoding:
-                logger.info(
-                    "Streaming encoding is disabled for DAgger corrections-only mode. "
-                    "Consider enabling it for faster episode saving: "
-                    "--dataset.streaming_encoding=true --dataset.encoder_threads=2"
-                )
-
-        # DAgger: resolve num_episodes from dataset config when not explicitly set.
-        if isinstance(self.strategy, DAggerStrategyConfig) and self.strategy.num_episodes is None:
-            if self.dataset is not None:
-                self.strategy.num_episodes = self.dataset.num_episodes
-                logger.info(
-                    "DAgger num_episodes not set — using --dataset.num_episodes=%d",
-                    self.strategy.num_episodes,
-                )
-            else:
-                raise ValueError(
-                    "DAgger num_episodes must be set either via --strategy.num_episodes or --dataset.num_episodes"
-                )
+        # Last: let the strategy fill any of its own fields left unset (e.g. DAgger's
+        # num_episodes falling back to --dataset.num_episodes).
+        self.strategy.resolve_defaults(self.dataset)
 
         # --- Policy loading ---
         if self.robot is None:

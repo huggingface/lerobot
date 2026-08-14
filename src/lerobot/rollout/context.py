@@ -52,7 +52,7 @@ from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .configs import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig
+from .configs import RolloutConfig
 from .inference import (
     InferenceEngine,
     RTCInferenceConfig,
@@ -436,8 +436,22 @@ def build_rollout_context(
 
     # --- 5. Dataset -------------
     dataset = None
-    if cfg.dataset is not None and not isinstance(cfg.strategy, BaseStrategyConfig):
+    if cfg.dataset is not None and cfg.strategy.records_data:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
+        # Merged above the resume/create split so ``ctx.data.dataset_features`` describes
+        # the same schema on both paths.  ``LeRobotDataset.resume`` takes no features —
+        # a resumed dataset's schema comes from its on-disk metadata — so the resume
+        # branch below has to check the columns are already there instead.
+        extra_features = cfg.strategy.extra_dataset_features()
+        clashes = sorted(set(extra_features) & set(dataset_features))
+        if clashes:
+            raise ValueError(
+                f"{cfg.strategy.type} strategy declares extra_dataset_features() that "
+                f"collide with the features derived from the robot and policy: {clashes}. "
+                "Extra columns must use names of their own (and must not start with "
+                "'observation.' or 'action', which the frame builders own)."
+            )
+        dataset_features.update(extra_features)
         if cfg.resume:
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
@@ -452,14 +466,19 @@ def build_rollout_context(
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
                 * len(robot.cameras if hasattr(robot, "cameras") else []),
             )
+            # ``add_frame`` validates against the resumed dataset's own metadata, and
+            # rejects extra keys.  Without this check a strategy with extra columns
+            # would only fail on its first recorded frame — robot connected, engine
+            # running — with an error pointing at the frame instead of at --resume.
+            missing = sorted(set(extra_features) - set(dataset.meta.features))
+            if missing:
+                raise ValueError(
+                    f"Cannot resume '{cfg.dataset.repo_id}' with the {cfg.strategy.type} "
+                    f"strategy: it records {missing}, which the existing dataset does not "
+                    "have. Resume a dataset recorded by a strategy declaring the same "
+                    "extra_dataset_features(), or start a new one."
+                )
         else:
-            if isinstance(cfg.strategy, DAggerStrategyConfig):
-                dataset_features["intervention"] = {
-                    "dtype": "bool",
-                    "shape": (1,),
-                    "names": None,
-                }
-
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):
                 raise ValueError(
@@ -467,7 +486,7 @@ def build_rollout_context(
                     "Use --dataset.repo_id=<user>/rollout_<name> for policy deployment datasets."
                 )
             cfg.dataset.stamp_repo_id()
-            target_video_mb = getattr(cfg.strategy, "target_video_file_size_mb", None)
+            target_video_mb = cfg.strategy.video_file_size_mb()
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
                 cfg.dataset.fps,

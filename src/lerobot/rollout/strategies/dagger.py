@@ -339,7 +339,7 @@ class DAggerStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
         correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
@@ -516,7 +516,7 @@ class DAggerStrategy(RolloutStrategy):
         interpolator = self._interpolator
         features = ctx.data.dataset_features
 
-        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
         correction_stride = interpolator.multiplier
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds

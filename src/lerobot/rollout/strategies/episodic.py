@@ -112,7 +112,7 @@ class EpisodicStrategy(RolloutStrategy):
 
         # One timer for the whole session: episodes get their own cadence line, and
         # the run summary averages across them without the untimed reset phases.
-        timer = CycleTimer(fps, self._interpolator.multiplier)
+        timer = CycleTimer(fps, self._interpolator.multiplier, report=ctx.runtime.cadence_report)
 
         with VideoEncodingManager(dataset):
             try:
