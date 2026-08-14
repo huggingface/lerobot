@@ -35,7 +35,7 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
+from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
@@ -151,12 +151,12 @@ class RTCInferenceEngine(InferenceEngine):
         # relative-action anchor. The `prefix="observation"` filter ignores the action
         # entries in the combined dict.
         self._obs_features = dataset_features
-        # The model emits actions in `dataset_features[ACTION]` order (the order it was
-        # trained on); the robot expects them in `ordered_action_keys` order. Sync remaps
-        # by NAME via `make_robot_action` + reindex (sync.py) before returning; RTC must do
-        # the SAME, otherwise the engine-agnostic strategy (`send_next_action`) maps the raw
-        # model-order tensor onto `ordered_action_keys` positionally and mis-assigns joints
-        # whenever the two orders differ — a per-joint permutation that drives the arm wrong.
+        # Kept for the layout log below (and as the documented contract): the policy emits its
+        # action dimensions in THIS order, and `send_next_action` labels the tensor returned by
+        # `get_action` positionally with these same keys. So no name round-trip happens in
+        # `get_action` — relabelling via `dataset_features[ACTION]["names"]` (raw robot order)
+        # and reindexing here would apply a permutation whenever the robot's action order
+        # differs from the checkpoint's, silently swapping joints.
         self._ordered_action_keys = ordered_action_keys
         state_ft = dataset_features.get("observation.state")
         if state_ft is not None:
@@ -331,8 +331,11 @@ class RTCInferenceEngine(InferenceEngine):
             # writer: fail loudly rather than corrupt dispatched_task and frame labels.
             raise RuntimeError("RTC action queue returned an action without task provenance")
         self._set_dispatched_task(task)
-        action_dict = make_robot_action(action, self._obs_features)
-        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+        # Returned in the policy's own dimension order (see ``SyncInferenceEngine.get_action``):
+        # ``send_next_action`` labels it positionally with ``ordered_action_keys``, so no
+        # name round-trip here — one would permute the joints when the robot's action order
+        # differs from the checkpoint's.
+        return action
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
@@ -355,7 +358,7 @@ class RTCInferenceEngine(InferenceEngine):
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Run the policy's text head.  Called on the RTC thread (see ``_rtc_loop``)."""
-        obs_batch = build_dataset_frame(self._hw_features, obs_processed, prefix="observation")
+        obs_batch = build_dataset_frame(self._obs_features, obs_processed, prefix="observation")
         # Live task, read without consuming the task-changed edge: that belongs to the
         # chunk path.
         task = self.task

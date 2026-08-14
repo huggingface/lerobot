@@ -23,7 +23,7 @@ from copy import copy
 import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy, unpack_action_output
-from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
+from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline, RelativeActionsProcessorStep
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -47,8 +47,9 @@ class SyncInferenceEngine(InferenceEngine):
     """Inline synchronous inference: compute one action per call.
 
     ``get_action`` runs the full policy pipeline (pre/post-processor +
-    ``select_action``) on the given observation frame and returns a
-    CPU action tensor reordered to match the dataset action keys.
+    ``select_action``) on the given observation frame and returns a CPU action
+    tensor in the policy's own dimension order, i.e. the order ``ordered_action_keys``
+    names — which is how ``send_next_action`` labels it.
     """
 
     def __init__(
@@ -231,13 +232,16 @@ class SyncInferenceEngine(InferenceEngine):
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 
-        # Reorder to match dataset action ordering so the caller can treat
-        # the returned tensor uniformly across backends.
-        action_dict = make_robot_action(action_tensor, self._dataset_features)
+        # Returned in the policy's own dimension order, which is exactly what
+        # ``ordered_action_keys`` names (see ``_resolve_action_key_order``) and what
+        # ``send_next_action`` labels the tensor with positionally.  Relabelling through
+        # ``dataset_features[ACTION]["names"]`` (raw robot order) and reindexing to
+        # ``ordered_action_keys`` would apply a permutation whenever the robot's action
+        # order differs from the checkpoint's — silently swapping joints.
         # ``task`` is the pre-inference snapshot: a /subtask landing mid-inference must
         # not relabel this action.
         self._set_dispatched_task(task)
-        return torch.tensor([action_dict[k] for k in self._ordered_action_keys])
+        return action_tensor
 
     # ------------------------------------------------------------------
     # Text queries

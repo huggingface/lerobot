@@ -638,6 +638,7 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
         display_ip=None,
         display_port=None,
         use_torch_compile=False,
+        max_action_jump_deg=None,
     )
     robot = MagicMock()
     calls = {"n": 0}
