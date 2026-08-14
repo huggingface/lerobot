@@ -81,17 +81,21 @@ def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
 
 
 def _normalize_prev_actions_length(prev_actions: torch.Tensor, target_steps: int) -> torch.Tensor:
-    """Pad or truncate RTC prefix actions to a fixed length for stable compiled inference."""
+    """Pad (holding the last action) or truncate RTC prefix actions to a fixed length.
+
+    Zero-padding would decode to the dataset mean inside the RTC guided region.
+    """
     if prev_actions.ndim != 2:
         raise ValueError(f"Expected 2D [T, A] tensor, got shape={tuple(prev_actions.shape)}")
-    steps, action_dim = prev_actions.shape
+    steps, _ = prev_actions.shape
     if steps == target_steps:
         return prev_actions
     if steps > target_steps:
         return prev_actions[:target_steps]
-    padded = torch.zeros((target_steps, action_dim), dtype=prev_actions.dtype, device=prev_actions.device)
-    padded[:steps] = prev_actions
-    return padded
+    if steps == 0:
+        raise ValueError("Cannot pad an empty prefix: no last action to hold.")
+    hold = prev_actions[-1:].expand(target_steps - steps, -1)
+    return torch.cat([prev_actions, hold], dim=0)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +341,8 @@ class RTCInferenceEngine(InferenceEngine):
             policy_device = torch.device(self._device)
 
             warmup_required = max(1, self._compile_warmup_inferences) if self._use_torch_compile else 0
+            # Excluded from the latency tracker: cold starts spike it.
+            latency_warmup_required = max(1, warmup_required)
             inference_count = 0
             consecutive_errors = 0
 
@@ -426,7 +432,7 @@ class RTCInferenceEngine(InferenceEngine):
                         inference_count += 1
                         consecutive_errors = 0
                         is_warmup = self._use_torch_compile and inference_count <= warmup_required
-                        if is_warmup:
+                        if inference_count <= latency_warmup_required:
                             latency_tracker.reset()
                         else:
                             latency_tracker.add(new_latency)

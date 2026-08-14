@@ -676,6 +676,48 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
 
 
 # ---------------------------------------------------------------------------
+# RTC prefix padding
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_prev_actions_length_holds_the_last_action():
+    """Padding must repeat the last action, not fill with zeros.
+
+    Zero in normalized action space decodes to the dataset mean, which lands inside the RTC
+    guided region and yanks the spliced action toward a neutral pose.
+    """
+    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
+
+    prev = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+    padded = _normalize_prev_actions_length(prev, target_steps=4)
+
+    assert padded.shape == (4, 2)
+    torch.testing.assert_close(padded[:2], prev)
+    torch.testing.assert_close(padded[2:], prev[-1:].expand(2, -1))
+
+
+@pytest.mark.parametrize(("steps", "target"), [(4, 4), (6, 4)])
+def test_normalize_prev_actions_length_passes_through_or_truncates(steps, target):
+    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
+
+    prev = torch.arange(steps * 2, dtype=torch.float32).reshape(steps, 2)
+
+    result = _normalize_prev_actions_length(prev, target_steps=target)
+
+    assert result.shape == (target, 2)
+    torch.testing.assert_close(result, prev[:target])
+
+
+def test_normalize_prev_actions_length_rejects_an_empty_prefix():
+    """There is no last action to hold, so this must fail rather than invent one."""
+    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
+
+    with pytest.raises(ValueError, match="Cannot pad an empty prefix"):
+        _normalize_prev_actions_length(torch.empty(0, 2), target_steps=4)
+
+
+# ---------------------------------------------------------------------------
 # Recording cadence with interpolation
 # ---------------------------------------------------------------------------
 
