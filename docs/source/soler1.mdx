@@ -1,6 +1,6 @@
 # SOLE-R1
 
-SOLE-R1 is an video-language reward model that predicts robot
+SOLE-R1 is a video-language reward model that predicts robot
 task progress from visual observations and a natural-language goal. It reasons
 over the first, previous, and current observations and generates:
 
@@ -61,8 +61,6 @@ cfg = make_reward_model_config(
 reward_model = make_reward_model(cfg)
 preprocessor, _ = make_reward_pre_post_processors(cfg)
 ```
-
-The default checkpoint is `Philip-MIT/SOLE-R1-8B`.
 
 ### Inputs
 
@@ -169,13 +167,8 @@ for episode_index in tqdm(range(dataset.num_episodes)):
     start = int(episode["dataset_from_index"])
     end = int(episode["dataset_to_index"])
 
-    if end <= start:
-        continue
-
     samples = [dataset[index] for index in range(start, end)]
-    frames = torch.stack(
-        [sample[cfg.external_image_key] for sample in samples]
-    )
+    frames = torch.stack([sample[cfg.external_image_key] for sample in samples])
 
     task = samples[0].get("task")
     if not isinstance(task, str) or not task:
@@ -183,20 +176,10 @@ for episode_index in tqdm(range(dataset.num_episodes)):
             f"Episode {episode_index} does not contain a task description"
         )
 
-    batch = preprocessor(
-        {
-            cfg.external_image_key: frames,
-            cfg.task_key: task,
-        }
-    )
+    batch = preprocessor({cfg.external_image_key: frames, cfg.task_key: task,})
 
     with torch.no_grad():
-        progress = (
-            model.compute_reward(batch, dense=True)
-            .squeeze(0)
-            .cpu()
-            .numpy()
-        )
+        progress = (model.compute_reward(batch, dense=True).squeeze(0).cpu().numpy())
 
     for frame_index, value in enumerate(progress):
         all_indices.append(start + frame_index)
