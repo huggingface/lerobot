@@ -51,26 +51,43 @@ def _torch_dtype(name: str) -> torch.dtype:
     raise ValueError(f"Unknown torch dtype: {name!r}")
 
 
-def reduce_remaining_time(pred_value: Tensor, *, batch_size: int) -> Tensor:
+def reduce_remaining_time(
+    pred_value: Tensor,
+    *,
+    batch_size: int,
+    slot_counts: Tensor | list[int] | None = None,
+) -> Tensor:
     """Average head ensembles and select each sample's final value slot."""
     values = pred_value.float()
     if values.ndim == 1:
-        if values.numel() % batch_size:
-            raise ValueError(
-                f"Cannot split {values.numel()} RynnValue predictions across batch size {batch_size}"
-            )
-        values = values.view(batch_size, -1)
+        flattened = values
     elif values.ndim == 2:
         # Ensemble output is (num_heads, batch_size * num_slots). A single-head
         # checkpoint uses the same shape with num_heads=1.
-        if values.shape[1] % batch_size:
-            raise ValueError(
-                f"Cannot split RynnValue output shape {tuple(values.shape)} across batch size {batch_size}"
-            )
-        values = values.view(values.shape[0], batch_size, -1).mean(dim=0)
+        flattened = values.mean(dim=0)
     else:
         raise ValueError(f"Unexpected RynnValue prediction shape: {tuple(values.shape)}")
-    return values[:, -1]
+
+    if slot_counts is not None:
+        counts = torch.as_tensor(slot_counts, device=flattened.device, dtype=torch.long)
+        if counts.ndim != 1 or counts.numel() != batch_size:
+            raise ValueError(f"Expected {batch_size} RynnValue slot counts, got shape {tuple(counts.shape)}")
+        if torch.any(counts < 1):
+            raise ValueError(
+                f"Each RynnValue sample must contain at least one value slot, got {counts.tolist()}"
+            )
+        if int(counts.sum()) != flattened.numel():
+            raise ValueError(
+                f"RynnValue slot counts sum to {int(counts.sum())}, "
+                f"but the model returned {flattened.numel()} predictions"
+            )
+        return flattened[counts.cumsum(dim=0) - 1]
+
+    if flattened.numel() % batch_size:
+        raise ValueError(
+            f"Cannot split RynnValue output shape {tuple(values.shape)} across batch size {batch_size}"
+        )
+    return flattened.view(batch_size, -1)[:, -1]
 
 
 class RynnValueRewardModel(PreTrainedRewardModel):
@@ -142,9 +159,23 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         pred_value = outputs.value.pred_value
         if pred_value is None:
             raise RuntimeError("RynnValue checkpoint did not produce absolute temporal values")
+
+        slot_counts = None
+        value_token_id = getattr(self.model.config, "value_token_id", None)
+        value_token_repeat = int(getattr(self.model.config, "value_token_repeat", 1))
+        if value_token_id is not None:
+            token_counts = inputs["input_ids"].eq(value_token_id).sum(dim=1)
+            if torch.any(token_counts.remainder(value_token_repeat)):
+                raise RuntimeError(
+                    f"RynnValue value-token counts {token_counts.tolist()} are not divisible "
+                    f"by value_token_repeat={value_token_repeat}"
+                )
+            slot_counts = token_counts.div(value_token_repeat, rounding_mode="floor")
+
         remaining_time = reduce_remaining_time(
             pred_value,
             batch_size=int(inputs["input_ids"].shape[0]),
+            slot_counts=slot_counts,
         )
         reward = -remaining_time if self.config.reward_output == "potential" else remaining_time
         return reward.to(self.config.device or "cpu")

@@ -190,6 +190,40 @@ def test_reduce_remaining_time_averages_heads_and_selects_final_slot():
     assert torch.equal(reduce_remaining_time(predictions, batch_size=2), torch.tensor([2.0, 1.0]))
 
 
+def test_reduce_remaining_time_supports_uneven_sample_slot_counts():
+    predictions = torch.tensor(
+        [
+            [9.0, 8.0, 3.0],
+            [7.0, 6.0, 1.0],
+        ]
+    )
+    remaining_time = reduce_remaining_time(predictions, batch_size=2, slot_counts=[1, 2])
+    assert torch.equal(remaining_time, torch.tensor([8.0, 2.0]))
+
+
+def test_compute_reward_uses_value_tokens_to_split_uneven_samples():
+    native_config = _FakeNativeConfig()
+    native_config.value_token_id = 99
+    native_config.value_token_repeat = 2
+    native_model = _FakeRynnValueModel(
+        pred_value=torch.tensor([[8.0, 5.0, 1.0]]),
+        config=native_config,
+    )
+    model = RynnValueRewardModel(
+        RynnValueConfig(device="cpu", reward_output="remaining_time"),
+        model=native_model,
+    )
+    batch = _encoded_batch(batch_size=2)
+    batch[f"{RYNNVALUE_FEATURE_PREFIX}input_ids"] = torch.tensor(
+        [
+            [99, 99, 0, 0],
+            [99, 99, 99, 99],
+        ]
+    )
+
+    assert torch.equal(model.compute_reward(batch), torch.tensor([8.0, 1.0]))
+
+
 def test_compute_reward_returns_negative_remaining_time(monkeypatch):
     _patch_checkpoint_load(monkeypatch)
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
