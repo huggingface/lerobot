@@ -31,7 +31,7 @@ def default_init():
 
 
 class LinearValueHead(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int, device=None, dtype=torch.float32) -> None:
+    def __init__(self, input_dim: int, output_dim: int, device=None, dtype=None) -> None:
         super().__init__()
         self.proj = nn.Linear(input_dim, output_dim, device=device, dtype=dtype)
         self.apply(default_init())
@@ -107,7 +107,7 @@ class BroValueHead(nn.Module):
         depth: int = 2,
         activation: str = "relu",
         device=None,
-        dtype=torch.float32,
+        dtype=None,
     ) -> None:
         super().__init__()
         self.proj = BroNet(

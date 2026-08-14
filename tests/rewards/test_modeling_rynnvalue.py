@@ -146,6 +146,19 @@ def test_bro_head_preserves_prefix_shape():
     assert head(torch.zeros(3, 12)).shape == (3, 256)
 
 
+def test_bro_head_inherits_active_model_dtype():
+    previous_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        head = BroValueHead(input_dim=12, output_dim=256, hidden_dims=16, depth=2)
+    finally:
+        torch.set_default_dtype(previous_dtype)
+
+    hidden_states = torch.zeros(3, 12, dtype=torch.bfloat16)
+    assert next(head.parameters()).dtype == torch.bfloat16
+    assert head(hidden_states).dtype == torch.bfloat16
+
+
 def test_grouped_query_tokens_are_concatenated():
     hidden = torch.arange(24, dtype=torch.float32).reshape(4, 6)
     concatenated, prefix = RynnValueLangModel._concat_slot_tokens(
