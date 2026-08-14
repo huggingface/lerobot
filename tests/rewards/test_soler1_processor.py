@@ -79,13 +79,12 @@ def _transition(
     }
 
 
-def test_to_btchw_uint8_adds_time_dimension_to_bchw():
-    images = torch.ones(
-        2,
-        3,
-        4,
-        4,
-        dtype=torch.uint8,
+def test_to_btchw_uint8_adds_batch_dimension_to_tchw():
+    images = torch.stack(
+        [
+            torch.full((3, 4, 4), 10, dtype=torch.uint8),
+            torch.full((3, 4, 4), 20, dtype=torch.uint8),
+        ]
     )
 
     result = _to_btchw_uint8(
@@ -93,8 +92,10 @@ def test_to_btchw_uint8_adds_time_dimension_to_bchw():
         image_key="image",
     )
 
-    assert result.shape == (2, 1, 3, 4, 4)
+    assert result.shape == (1, 2, 3, 4, 4)
     assert result.dtype == torch.uint8
+    assert torch.all(result[:, 0] == 10)
+    assert torch.all(result[:, 1] == 20)
 
 
 def test_to_btchw_uint8_preserves_btchw():
@@ -657,3 +658,57 @@ def test_downsampling_happens_before_composite_construction():
 
     assert torch.all(previous_column == 30)
     assert torch.all(current_column == 50)
+
+
+def test_to_btchw_uint8_accepts_batched_single_frames_with_time_dimension():
+    images = torch.ones(
+        2,
+        1,
+        3,
+        4,
+        4,
+        dtype=torch.uint8,
+    )
+
+    result = _to_btchw_uint8(
+        images,
+        image_key="image",
+    )
+
+    assert result.shape == (2, 1, 3, 4, 4)
+    assert result.dtype == torch.uint8
+
+
+def test_unbatched_tchw_trajectory_is_one_trajectory():
+    step = SOLER1CompositeProcessorStep(
+        external_image_key=EXTERNAL_KEY,
+        downsample_to=None,
+    )
+
+    trajectory = torch.stack(
+        [
+            torch.full((3, 4, 4), 10, dtype=torch.uint8),
+            torch.full((3, 4, 4), 20, dtype=torch.uint8),
+            torch.full((3, 4, 4), 30, dtype=torch.uint8),
+        ]
+    )
+
+    output = step(_transition(trajectory))
+    observation = output[TransitionKey.OBSERVATION]
+
+    composites = observation[SOLER1_COMPOSITE_IMAGE_KEY]
+    sample_indices = observation[SOLER1_SAMPLE_INDICES_KEY]
+    original_length = observation[SOLER1_ORIGINAL_LENGTH_KEY]
+
+    assert composites.shape == (
+        1,
+        3,
+        3,
+        FRAME_SIZE,
+        COMPOSITE_WIDTH,
+    )
+    torch.testing.assert_close(
+        sample_indices,
+        torch.tensor([0, 1, 2]),
+    )
+    assert original_length.item() == 3

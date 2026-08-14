@@ -93,47 +93,62 @@ def _to_btchw_uint8(
     *,
     image_key: str,
 ) -> Tensor:
-    """Supported input shapes are:
+    """Convert camera frames to a CPU ``(B,T,C,H,W)`` uint8 tensor.
 
-    - ``(T,C,H,W)`` or ``(T,H,W,C)`` for an unbatched trajectory;
-    - ``(B,T,C,H,W)`` or ``(B,T,H,W,C)`` for batched trajectories.
+    Supported input shapes are:
 
-    LeRobot normally supplies channels-first tensors. Channels-last inputs
-    are accepted for direct NumPy-style use.
+    - ``(T,C,H,W)``: unbatched channels-first trajectory;
+    - ``(T,H,W,C)``: unbatched channels-last trajectory;
+    - ``(B,T,C,H,W)``: batched channels-first trajectories;
+    - ``(B,T,H,W,C)``: batched channels-last trajectories.
+
+    A four-dimensional tensor always represents one unbatched trajectory.
+    Batched single-frame inputs must include an explicit time dimension and
+    use ``(B,1,C,H,W)`` or ``(B,1,H,W,C)``.
+
+    Floating-point inputs whose values are in ``[0,1]`` are scaled to
+    ``[0,255]``. Single-channel images are expanded to RGB.
     """
-
     tensor = images.detach().cpu() if isinstance(images, Tensor) else torch.as_tensor(images)
 
     if tensor.ndim == 4:
-        if tensor.shape[-1] in (1, 3):
-            # Unbatched channels-last trajectory: (T,H,W,C).
+        # Rank-four inputs always represent one unbatched trajectory.
+        if tensor.shape[1] in (1, 3):
+            # (T,C,H,W) -> (1,T,C,H,W)
+            tensor = tensor.unsqueeze(0)
+        elif tensor.shape[-1] in (1, 3):
+            # (T,H,W,C) -> (1,T,C,H,W)
             tensor = tensor.permute(0, 3, 1, 2).unsqueeze(0)
-        elif tensor.shape[1] in (1, 3):
-            # Backward-compatible batched single frames: (B,C,H,W).
-            tensor = tensor.unsqueeze(1)
         else:
             raise ValueError(
                 f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
             )
     elif tensor.ndim == 5:
-        if tensor.shape[-1] in (1, 3):
+        if tensor.shape[2] in (1, 3):
+            # Already (B,T,C,H,W).
+            pass
+        elif tensor.shape[-1] in (1, 3):
+            # (B,T,H,W,C) -> (B,T,C,H,W)
             tensor = tensor.permute(0, 1, 4, 2, 3)
-        elif tensor.shape[2] not in (1, 3):
+        else:
             raise ValueError(
                 f"SOLE-R1 expected {image_key!r} to have 1 or 3 channels; got shape {tuple(tensor.shape)}"
             )
     else:
         raise ValueError(
             f"SOLE-R1 expected {image_key!r} to have shape "
-            "(T,H,W,C) or (B,T,H,W,C); "
+            "(T,C,H,W), (T,H,W,C), (B,T,C,H,W), or (B,T,H,W,C); "
             f"got {tuple(tensor.shape)}"
         )
 
-    if tensor.shape[2] == 1:
-        tensor = tensor.repeat(1, 1, 3, 1, 1)
+    if tensor.shape[0] < 1:
+        raise ValueError("SOLE-R1 requires at least one trajectory per batch")
 
     if tensor.shape[1] < 1:
         raise ValueError("SOLE-R1 requires at least one frame per trajectory")
+
+    if tensor.shape[2] == 1:
+        tensor = tensor.repeat(1, 1, 3, 1, 1)
 
     if tensor.is_floating_point():
         tensor = tensor.float()
