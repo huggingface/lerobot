@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import contextlib
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
@@ -354,6 +355,58 @@ def detect_unsafe_action_jumps(
     return violations
 
 
+_ACTION_ORDER_DEBUG_TICKS = int(os.environ.get("LEROBOT_DEBUG_ACTION_ORDER", "3"))
+_action_order_debug_seen = 0
+
+
+def _log_action_order_debug(
+    features: dict, ordered_keys: list[str], action_dict: dict, obs_raw: dict
+) -> None:
+    """Dump the joint-by-joint state/command mapping for the first N ticks.
+
+    Enable with ``LEROBOT_DEBUG_ACTION_ORDER=<n>``.  Localises an ordering bug that static
+    analysis cannot: with the robot near rest every commanded target should sit within a few
+    units of the measured position, so a joint whose command instead matches some *other*
+    joint's measurement pins the permutation precisely.
+    """
+    global _action_order_debug_seen
+    if _action_order_debug_seen >= _ACTION_ORDER_DEBUG_TICKS:
+        return
+    _action_order_debug_seen += 1
+
+    state_names = (features.get(f"{OBS_STR}.state") or {}).get("names") or []
+    action_names = (features.get("action") or {}).get("names") or []
+    logger.info(
+        "ACTION-ORDER DEBUG tick %d\n  dataset_features[state].names : %s\n"
+        "  dataset_features[action].names: %s\n  ordered_action_keys          : %s\n"
+        "  state==action order: %s | action==ordered: %s",
+        _action_order_debug_seen,
+        state_names,
+        action_names,
+        ordered_keys,
+        list(state_names) == list(action_names),
+        list(action_names) == list(ordered_keys),
+    )
+    rows = []
+    for key in ordered_keys:
+        measured = obs_raw.get(key)
+        commanded = action_dict.get(key)
+        if measured is None or commanded is None:
+            continue
+        delta = commanded - measured
+        # Name the joint whose measurement the command actually matches; when that is not
+        # this joint, its name IS the permutation.
+        best = min(
+            (k for k in ordered_keys if obs_raw.get(k) is not None),
+            key=lambda k: abs(commanded - obs_raw[k]),
+        )
+        rows.append(
+            f"    {key:22s} measured={measured:+9.3f} commanded={commanded:+9.3f} "
+            f"delta={delta:+8.3f} closest_to={best}{'' if best == key else '   <-- MISMATCH'}"
+        )
+    logger.info("  per-joint mapping:\n%s", "\n".join(rows))
+
+
 def send_next_action(
     obs_processed: dict,
     obs_raw: dict,
@@ -400,6 +453,8 @@ def send_next_action(
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
+
+    _log_action_order_debug(features, ordered_keys, action_dict, obs_raw)
 
     # Safety net: refuse to command a single-step joint jump larger than the configured
     # limit and stop the rollout. Catches chunk-splice / bad-chunk slams before they reach
