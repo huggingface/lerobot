@@ -143,6 +143,38 @@ def _align_state_feature_order(
     return reordered
 
 
+def _align_action_feature_order(
+    action_features_hw: dict[str, type], policy_action_names: list[str] | None
+) -> dict[str, type]:
+    """Order action features to match the checkpoint's joint order.
+
+    The action-side counterpart of :func:`_align_state_feature_order`, and it must be applied
+    whenever that one is: ``dataset_features`` is the single spec both engines build frames
+    from, so aligning only ``observation.state`` leaves it internally inconsistent — state in
+    checkpoint order, ``dataset_features[ACTION]["names"]`` still in the robot's enumeration
+    order. Anything pairing the two by index then mixes joints (a bimanual robot enumerating
+    ``left_*`` first against a checkpoint trained ``right_*`` first swaps the arms outright),
+    and recorded episodes get action names that disagree with the checkpoint they were
+    rolled out with.
+
+    No-ops unless the names are the same set in a different order, so a robot whose action
+    features legitimately differ from the checkpoint's (e.g. extra ``.vel`` keys) is untouched.
+    """
+    if not policy_action_names:
+        return action_features_hw
+
+    raw_names = list(action_features_hw)
+    if set(raw_names) != set(policy_action_names) or raw_names == policy_action_names:
+        return action_features_hw
+
+    logger.warning(
+        "Robot action order %s differs from checkpoint joint order %s; reordering actions",
+        raw_names,
+        policy_action_names,
+    )
+    return {name: action_features_hw[name] for name in policy_action_names}
+
+
 # ---------------------------------------------------------------------------
 # Sub-contexts
 # ---------------------------------------------------------------------------
@@ -390,6 +422,12 @@ def build_rollout_context(
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
     action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    # Align the action side with the same rule used for the state above, so
+    # ``dataset_features`` is internally consistent (see ``_align_action_feature_order``).
+    action_features_hw = _align_action_feature_order(
+        action_features_hw,
+        list(policy_action_names) if policy_action_names else None,
+    )
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
