@@ -90,7 +90,6 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         "unnormalize.",  # Must come after unnormalize_* patterns
         "input_normalizer.",
         "output_normalizer.",
-        "normalalize_inputs.",
         "unnormalize_outputs.",
         "normalize_targets.",
         "unnormalize_targets.",
