@@ -48,6 +48,7 @@ from lerobot.processor import (
 )
 from lerobot.robots import make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -180,6 +181,45 @@ def _align_state_feature_order(
         policy_action_names,
     )
     return reordered
+
+
+def _align_action_feature_order(
+    action_features_hw: dict[str, type], policy_action_names: list[str] | None
+) -> dict[str, type]:
+    """Order action features to match the checkpoint's joint order."""
+    if not policy_action_names:
+        return action_features_hw
+
+    raw_names = list(action_features_hw)
+    if set(raw_names) != set(policy_action_names) or raw_names == policy_action_names:
+        return action_features_hw
+
+    logger.warning(
+        "Robot action order %s differs from checkpoint joint order %s; reordering actions",
+        raw_names,
+        policy_action_names,
+    )
+    return {name: action_features_hw[name] for name in policy_action_names}
+
+
+def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
+    """Reject a state layout that is a permutation of the action dispatch order.
+
+    ``send_next_action`` labels the action tensor positionally with ``ordered_action_keys``,
+    so a permuted ``observation.state`` commands every joint with another joint's value.
+    Differing *sets* are legitimate (extra ``.vel`` channels, an uncommanded base) and pass.
+    """
+    state_ft = dataset_features.get(OBS_STATE)
+    if state_ft is None or not ordered_action_keys:
+        return
+    state_names = list(state_ft.get("names") or [])
+    if state_names == ordered_action_keys or set(state_names) != set(ordered_action_keys):
+        return
+    raise ValueError(
+        f"observation.state order {state_names} is a permutation of the action dispatch order "
+        f"{ordered_action_keys}; every joint would be commanded with another joint's value. "
+        "Check policy.action_feature_names against the checkpoint's training dataset."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +472,11 @@ def build_rollout_context(
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
     action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+    # Align the action side by the same rule used for the state above.
+    action_features_hw = _align_action_feature_order(
+        action_features_hw,
+        list(policy_action_names) if policy_action_names else None,
+    )
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
@@ -453,6 +498,7 @@ def build_rollout_context(
         list(policy_action_names) if policy_action_names else None,
         raw_action_keys,
     )
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active
     rename_map = cfg.rename_map
@@ -561,7 +607,6 @@ def build_rollout_context(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         robot_wrapper=robot_wrapper,
-        hw_features=hw_features,
         dataset_features=dataset_features,
         ordered_action_keys=ordered_action_keys,
         task=task_str,
