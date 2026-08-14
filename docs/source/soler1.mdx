@@ -1,6 +1,6 @@
 # SOLE-R1
 
-SOLE-R1 is an inference-only video-language reward model that predicts robot
+SOLE-R1 is an video-language reward model that predicts robot
 task progress from visual observations and a natural-language goal. It reasons
 over the first, previous, and current observations and generates:
 
@@ -32,33 +32,39 @@ uv sync --extra soler1
 
 GPU inference is strongly recommended.
 
-## Configuration
+## Usage
 
-Use `sole-r1` as the reward-model type. Python modules and class names use
-`soler1` and `SOLER1`, respectively.
+### Load the reward model directly
 
 ```python
-from lerobot.rewards import (
-    make_reward_model,
-    make_reward_model_config,
-    make_reward_pre_post_processors,
-)
+from lerobot.rewards.soler1 import SOLER1Config, SOLER1RewardModel
 
-config = make_reward_model_config(
+cfg = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.top",
+    wrist_image_key="observation.images.wrist"
+)
+reward_model = SOLER1RewardModel(cfg)
+```
+
+### Use the reward factory
+
+```python
+from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
+
+cfg = make_reward_model_config(
     "sole-r1",
     device="cuda",
     external_image_key="observation.images.top",
-    wrist_image_key=None,
-    downsample_to=10,
+    wrist_image_key="observation.images.wrist",
 )
-
-reward_model = make_reward_model(config)
-preprocessor, postprocessor = make_reward_pre_post_processors(config)
+reward_model = make_reward_model(cfg)
+preprocessor, _ = make_reward_pre_post_processors(cfg)
 ```
 
 The default checkpoint is `Philip-MIT/SOLE-R1-8B`.
 
-## Inputs
+### Inputs
 
 SOLE-R1 supports an external camera, a wrist camera, or both. At least one
 camera key must be configured.
@@ -82,7 +88,11 @@ first | previous | current
 With two cameras, the external-camera row is placed above the wrist-camera
 row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
 
-## Compute a reward
+### Compute rewards (sparse or dense)
+
+`compute_reward(batch, dense=True)` returns progress for every original
+trajectory timestep. If `downsample_to` is set, SOLE-R1 evaluates only the
+sampled anchors and linearly interpolates between them.
 
 ```python
 import torch
@@ -97,13 +107,19 @@ frames = torch.randint(
 
 batch = preprocessor(
     {
-        config.external_image_key: frames,
-        config.task_key: "pick up the red cube",
+        cfg.external_image_key: frames,
+        cfg.wrist_image_key: frames,
+        cfg.task_key: "pick up the red cube",
     }
 )
 
+# Sparse reward taken from last timestep
 reward = reward_model.compute_reward(batch)
 print(reward.shape)  # (1,)
+
+# Dense reward for all timesteps
+rewards = reward_model.compute_reward(batch, dense=True)
+print(rewards.shape) # (1, 8)
 ```
 
 The first sampled timestep is defined as `0%`. Later timesteps are evaluated
@@ -113,15 +129,9 @@ predicted progress.
 With the default `reward_scale=0.01`, a generated progress value of `75%`
 produces a reward of `0.75`.
 
-## Dense offline dataset labeling
+## Offline dataset labeling
 
-`compute_reward(batch, dense=True)` returns progress for every original
-trajectory timestep. If `downsample_to` is set, SOLE-R1 evaluates only the
-sampled anchors and linearly interpolates between them.
-
-The following labels a LeRobot dataset and writes the same
-`progress_sparse` parquet column consumed by RA-BC and the progress-video
-overlay tools:
+Write a soler1_progress.parquet for RA-BC training and overlay videos:
 
 ```python
 from pathlib import Path
@@ -133,24 +143,20 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.rewards import (
-    make_reward_model,
-    make_reward_model_config,
-    make_reward_pre_post_processors,
-)
+from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
 
 dataset_repo_id = "lerobot/libero_10_image"
 output_path = Path("soler1_progress.parquet")
 
-config = make_reward_model_config(
+cfg = make_reward_model_config(
     "sole-r1",
     device="cuda",
     external_image_key="observation.images.top",
     wrist_image_key=None,
     downsample_to=10,
 )
-model = make_reward_model(config).eval()
-preprocessor, _ = make_reward_pre_post_processors(config)
+model = make_reward_model(cfg).eval()
+preprocessor, _ = make_reward_pre_post_processors(cfg)
 dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
 
 all_indices = []
@@ -168,7 +174,7 @@ for episode_index in tqdm(range(dataset.num_episodes)):
 
     samples = [dataset[index] for index in range(start, end)]
     frames = torch.stack(
-        [sample[config.external_image_key] for sample in samples]
+        [sample[cfg.external_image_key] for sample in samples]
     )
 
     task = samples[0].get("task")
@@ -179,8 +185,8 @@ for episode_index in tqdm(range(dataset.num_episodes)):
 
     batch = preprocessor(
         {
-            config.external_image_key: frames,
-            config.task_key: task,
+            cfg.external_image_key: frames,
+            cfg.task_key: task,
         }
     )
 
@@ -211,7 +217,7 @@ table = pa.table(
 ).replace_schema_metadata(
     {
         b"reward_model_type": b"sole-r1",
-        b"model_name": config.model_name.encode(),
+        b"model_name": cfg.model_name.encode(),
     }
 )
 
@@ -223,7 +229,7 @@ To render an overlay:
 
 ```bash
 uv run examples/dataset/create_progress_videos.py \
-    --repo-id lerobot/libero_10_image \
+    --repo-id lerobot/libero_10 \
     --episode 0 \
     --progress-file soler1_progress.parquet \
     --gif
@@ -234,7 +240,7 @@ uv run examples/dataset/create_progress_videos.py \
 SOLE-R1 can return a binary trajectory-level success value:
 
 ```python
-config = make_reward_model_config(
+cfg = make_reward_model_config(
     "sole-r1",
     device="cuda",
     reward_output="success",
@@ -251,7 +257,7 @@ By default, if a completion cannot be parsed, SOLE-R1 reuses the preceding
 progress value. To make malformed output an error:
 
 ```python
-config = make_reward_model_config(
+cfg = make_reward_model_config(
     "sole-r1",
     fallback_to_previous=False,
 )
@@ -277,8 +283,26 @@ reward_model = SOLER1RewardModel.from_pretrained("soler1_config")
 ## Limitations
 
 - The integration implements inference only.
-- Predictions are autoregressive across trajectory timesteps, so a malformed
-  or inaccurate prediction can affect later predictions.
-- Dense output between sampled anchors is linearly interpolated.
-- SOLE-R1 should be validated in the target environment before being used as
-  a closed-loop reward source.
+- Predictions are autoregressive across trajectory timesteps, so a malformed or inaccurate prediction can affect later predictions.
+
+## References
+
+- [SOLE-R1 project page](https://philip-mit.github.io/sole-r1/)
+- [SOLE-R1 paper](https://arxiv.org/abs/2603.28730)
+- [Original SOLE-R1 code](https://github.com/Philip-MIT/sole-r1-model)
+- [Checkpoint](https://huggingface.co/Philip-MIT/SOLE-R1-8B)
+
+## Citation
+
+```bibtex
+@article{schroeder2026sole,
+  title={SOLE-R1: Video-Language Reasoning as the Sole Reward for On-Robot Reinforcement Learning},
+  author={Schroeder, Philip and Weng, Thomas and Schmeckpeper, Karl and Rosen, Eric and Hart, Stephen and Biza, Ondrej},
+  journal={arXiv preprint arXiv:2603.28730},
+  year={2026}
+}
+```
+
+## License
+
+The original SOLE-R1 codebase is MIT-licensed. The LeRobot port follows the LeRobot Apache 2.0 license.
