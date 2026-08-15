@@ -61,7 +61,7 @@ SOLER1_ORIGINAL_LENGTH_KEY = f"{SOLER1_FEATURE_PREFIX}original_length"
 
 def _sample_frame_indices(
     trajectory_length: int,
-    downsample_to: int | None,
+    num_samples: int | None,
 ) -> Tensor:
     """Return uniformly spaced frame indices.
 
@@ -72,10 +72,10 @@ def _sample_frame_indices(
     if trajectory_length < 1:
         raise ValueError("SOLE-R1 requires at least one frame per trajectory")
 
-    if downsample_to is not None and downsample_to < 1:
-        raise ValueError(f"downsample_to must be >= 1 or None, got {downsample_to}")
+    if num_samples is not None and num_samples < 1:
+        raise ValueError(f"num_samples must be >= 1 or None, got {num_samples}")
 
-    if downsample_to is None or trajectory_length <= downsample_to:
+    if num_samples is None or trajectory_length <= num_samples:
         return torch.arange(
             trajectory_length,
             dtype=torch.long,
@@ -84,7 +84,7 @@ def _sample_frame_indices(
     return torch.linspace(
         0,
         trajectory_length - 1,
-        steps=downsample_to,
+        steps=num_samples,
     ).long()
 
 
@@ -414,7 +414,7 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
 
     external_image_key: str | None = None
     wrist_image_key: str | None = None
-    downsample_to: int | None = 10
+    num_samples: int | None = 10
 
     def reset(self) -> None:
         """No-op because complete trajectories are processed per call."""
@@ -476,7 +476,7 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
 
         sample_indices = _sample_frame_indices(
             original_length,
-            self.downsample_to,
+            self.num_samples,
         )
         sampled_indices = sample_indices.tolist()
 
@@ -581,7 +581,7 @@ class SOLER1CompositeProcessorStep(ProcessorStep):
         return {
             "external_image_key": self.external_image_key,
             "wrist_image_key": self.wrist_image_key,
-            "downsample_to": self.downsample_to,
+            "num_samples": self.num_samples,
         }
 
 
@@ -611,7 +611,7 @@ def make_soler1_pre_post_processors(
             SOLER1CompositeProcessorStep(
                 external_image_key=config.external_image_key,
                 wrist_image_key=config.wrist_image_key,
-                downsample_to=config.downsample_to,
+                num_samples=config.num_samples,
             ),
         ],
         name=POLICY_PREPROCESSOR_DEFAULT_NAME,

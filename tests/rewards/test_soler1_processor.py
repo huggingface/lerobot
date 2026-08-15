@@ -514,27 +514,27 @@ def test_get_config():
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
         wrist_image_key=WRIST_KEY,
-        downsample_to=10,
+        num_samples=10,
     )
 
     assert step.get_config() == {
         "external_image_key": EXTERNAL_KEY,
         "wrist_image_key": WRIST_KEY,
-        "downsample_to": 10,
+        "num_samples": 10,
     }
 
 
-def test_get_config_preserves_custom_downsample_to():
+def test_get_config_preserves_custom_num_samples():
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
         wrist_image_key=None,
-        downsample_to=5,
+        num_samples=5,
     )
 
     assert step.get_config() == {
         "external_image_key": EXTERNAL_KEY,
         "wrist_image_key": None,
-        "downsample_to": 5,
+        "num_samples": 5,
     }
 
 
@@ -595,7 +595,7 @@ def test_wrist_only_trajectory_composites():
 def test_downsampling_happens_before_composite_construction():
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
-        downsample_to=3,
+        num_samples=3,
     )
 
     # Original indices: 0, 1, 2, 3, 4
@@ -682,7 +682,7 @@ def test_to_btchw_uint8_accepts_batched_single_frames_with_time_dimension():
 def test_unbatched_tchw_trajectory_is_one_trajectory():
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
-        downsample_to=None,
+        num_samples=None,
     )
 
     trajectory = torch.stack(
