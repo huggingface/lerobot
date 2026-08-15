@@ -31,6 +31,17 @@ def test_too_few_video_frames_raises() -> None:
         )
 
 
+def test_freeze_qwen_warns_about_fixed_embodied_action_readouts(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="lerobot.policies.vla_jepa.configuration_vla_jepa"):
+        config = VLAJEPAConfig(freeze_qwen=True)
+
+    assert not config.enable_world_model
+    assert "freeze_qwen=True" in caplog.text
+    assert "<|embodied_action|>" in caplog.text
+    assert "source checkpoint" in caplog.text
+    assert "domain shift" in caplog.text
+
+
 def test_validate_features_no_image_raises() -> None:
     config = VLAJEPAConfig(
         input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(STATE_DIM,))},
