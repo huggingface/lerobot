@@ -64,20 +64,21 @@ All checkpoints use `Qwen/Qwen3-VL-2B-Instruct` as the language backbone.
 
 Key parameters in `VLAJEPAConfig`:
 
-| Parameter                 | Default | Description                                                                                                                                                                     |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chunk_size`              | 7       | Number of actions predicted per inference call                                                                                                                                  |
-| `n_action_steps`          | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                      |
-| `num_video_frames`        | 8       | Video clip length fed to the world model                                                                                                                                        |
-| `enable_world_model`      | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                 |
-| `world_model_loss_weight` | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                  |
-| `num_inference_timesteps` | 4       | Euler integration steps for action denoising                                                                                                                                    |
-| `freeze_qwen`             | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                     |
-| `reinit_modules`          | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment)) |
-| `gripper_dim`             | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                     |
-| `gripper_threshold`       | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                     |
-| `pre_snap_gripper_action` | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                       |
-| `binarize_gripper_action` | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                   |
+| Parameter                    | Default | Description                                                                                                                                                                                                     |
+| ---------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`                 | 7       | Number of actions predicted per inference call                                                                                                                                                                  |
+| `n_action_steps`             | 7       | Steps executed from the predicted chunk before re-planning                                                                                                                                                      |
+| `num_video_frames`           | 8       | Video clip length fed to the world model                                                                                                                                                                        |
+| `enable_world_model`         | `True`  | Whether to load and train the V-JEPA2 predictor                                                                                                                                                                 |
+| `world_model_loss_weight`    | 0.1     | Weight of the JEPA prediction loss relative to the action loss                                                                                                                                                  |
+| `causal_world_model_context` | `False` | Encode the world-model context causally (one prefix-only V-JEPA2 pass per context position) so bidirectional attention can't leak future frames into the predictor input. Costs `t_enc_ctx` extra encoder calls |
+| `num_inference_timesteps`    | 4       | Euler integration steps for action denoising                                                                                                                                                                    |
+| `freeze_qwen`                | `False` | Freeze the Qwen3-VL backbone and only train the action head                                                                                                                                                     |
+| `reinit_modules`             | `None`  | Key prefixes allowed to be randomly re-initialised on load (for cross-embodiment transfer, see [Fine-tuning on a different embodiment](#fine-tuning-on-a-different-embodiment))                                 |
+| `gripper_dim`                | 6       | Index of the gripper dimension in the action vector (e.g. 6 for a 7-DoF arm with gripper as the last joint)                                                                                                     |
+| `gripper_threshold`          | 0.5     | Threshold used by `pre_snap_gripper_action` and `binarize_gripper_action` to binarize the gripper dimension                                                                                                     |
+| `pre_snap_gripper_action`    | `True`  | Snap the gripper dim to {0, 1} before unnormalization. Set to `False` for robots without a binary gripper                                                                                                       |
+| `binarize_gripper_action`    | `True`  | Binarize the gripper dim to {-1, 1} after unnormalization. Set to `False` for robots without a binary gripper                                                                                                   |
 
 ---
 
