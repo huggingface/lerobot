@@ -86,10 +86,10 @@ first | previous | current
 With two cameras, the external-camera row is placed above the wrist-camera
 row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
 
-### Compute reward (sparse)
+### Compute rewards (sparse or dense)
 
 `compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every
-trajectory timestep. If `downsample_to` is set, SOLE-R1 evaluates only the
+trajectory timestep. If `num_samples` is set, SOLE-R1 evaluates only the
 uniformly downsampled frames and linearly interpolates between them to fill in rewards for all trajectory timesteps.
 
 ```python
@@ -129,84 +129,20 @@ produces a reward of `0.75`.
 
 ## Offline dataset labeling
 
-Write a soler1_progress.parquet for RA-BC training and overlay videos:
+Use the included command to compute one SOLE-R1 progress value for every
+timestep in the selected episodes:
 
-```python
-from pathlib import Path
+````bash
+uv run python -m lerobot.rewards.soler1.compute_rabc_weights \
+    --dataset-repo-id lerobot/libero_10 \
+    --external-image-key observation.images.side \
+    --num-samples 10 \
+    --device cuda \
+    --output-path soler1_progress.parquet
 
-import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
-import torch
-from tqdm import tqdm
-
-from lerobot.datasets import LeRobotDataset
-from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
-
-dataset_repo_id = "lerobot/libero_10"
-output_path = Path("soler1_progress.parquet")
-
-cfg = make_reward_model_config(
-    "sole-r1",
-    device="cuda",
-    external_image_key="observation.images.top",
-    wrist_image_key=None,
-    downsample_to=10,
-)
-model = make_reward_model(cfg).eval()
-preprocessor, _ = make_reward_pre_post_processors(cfg)
-dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
-
-all_indices = []
-all_episode_indices = []
-all_frame_indices = []
-all_progress = []
-
-for episode_index in tqdm(range(dataset.num_episodes)):
-    episode = dataset.meta.episodes[episode_index]
-    start = int(episode["dataset_from_index"])
-    end = int(episode["dataset_to_index"])
-
-    samples = [dataset[index] for index in range(start, end)]
-    frames = torch.stack([sample[cfg.external_image_key] for sample in samples])
-
-    task = samples[0].get("task")
-    if not isinstance(task, str) or not task:
-        raise KeyError(
-            f"Episode {episode_index} does not contain a task description"
-        )
-
-    batch = preprocessor({cfg.external_image_key: frames, cfg.task_key: task,})
-
-    with torch.no_grad():
-        progress = (model.compute_progress(batch).squeeze(0).cpu().numpy())
-
-    for frame_index, value in enumerate(progress):
-        all_indices.append(start + frame_index)
-        all_episode_indices.append(episode_index)
-        all_frame_indices.append(frame_index)
-        all_progress.append(float(value))
-
-table = pa.table(
-    {
-        "index": np.asarray(all_indices, dtype=np.int64),
-        "episode_index": np.asarray(
-            all_episode_indices,
-            dtype=np.int64,
-        ),
-        "frame_index": np.asarray(all_frame_indices, dtype=np.int64),
-        "progress_sparse": np.asarray(all_progress, dtype=np.float32),
-    }
-).replace_schema_metadata(
-    {
-        b"reward_model_type": b"sole-r1",
-        b"model_name": cfg.model_name.encode(),
-    }
-)
-
-pq.write_table(table, output_path)
-print(f"Saved {len(table)} labels to {output_path}")
-```
+By default, SOLE-R1 evaluates 10 uniformly spaced anchor frames and
+interpolates the resulting progress values across the complete trajectory.
+Use --num-samples 0 to run inference at every timestep.
 
 To render an overlay:
 
@@ -216,7 +152,7 @@ uv run examples/dataset/create_progress_videos.py \
     --episode 0 \
     --progress-file soler1_progress.parquet \
     --gif
-```
+````
 
 ## Success output
 

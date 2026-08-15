@@ -51,7 +51,7 @@ class SOLER1Config(RewardModelConfig):
         reward_output: ``"progress"`` or ``"success"``.
         success_threshold: Threshold applied to scaled final progress when
             ``reward_output="success"``.
-        downsample_to: Maximum number of uniformly spaced frames processed
+        num_samples: Maximum number of uniformly spaced frames processed
             per trajectory. ``None`` processes every frame.
     """
 
@@ -67,7 +67,7 @@ class SOLER1Config(RewardModelConfig):
     wrist_image_key: str | None = None
     task_key: str = "task"
     default_task: str | None = None
-    downsample_to: int | None = 10
+    num_samples: int | None = 10
 
     max_new_tokens: int = 600
     temperature: float = 1.0
@@ -124,8 +124,8 @@ class SOLER1Config(RewardModelConfig):
             raise ValueError(f"reward_output must be 'progress' or 'success', got {self.reward_output!r}")
         if self.external_image_key is None and self.wrist_image_key is None:
             raise ValueError("SOLE-R1 requires at least one of external_image_key or wrist_image_key")
-        if self.downsample_to is not None and self.downsample_to < 1:
-            raise ValueError(f"downsample_to must be >= 1 or None, got {self.downsample_to}")
+        if self.num_samples is not None and self.num_samples < 1:
+            raise ValueError(f"num_samples must be >= 1 or None, got {self.num_samples}")
 
         if self.external_image_key is not None:
             self.input_features.setdefault(

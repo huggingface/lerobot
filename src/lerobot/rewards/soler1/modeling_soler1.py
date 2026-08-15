@@ -134,10 +134,6 @@ _ANSWER_PATTERN = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 
-_PERCENT_PATTERN = re.compile(
-    r"([-+]?\d+(?:\.\d+)?)\s*%",
-    flags=re.IGNORECASE,
-)
 
 _THINK_PATTERN = re.compile(
     r"<think>\s*(.*?)\s*</think>",
@@ -246,41 +242,25 @@ def _parse_progress(
     minimum: float,
     maximum: float,
 ) -> float | None:
-    """Parse and clamp a SOLE-R1 progress percentage.
-
-    The preferred format is ``<answer>42%</answer>``. If the answer
-    tags are absent, the final percentage in the completion is used.
-    """
-
+    """Parse and clamp a SOLE-R1 ``<answer>progress%</answer>`` value."""
     answer_matches = list(_ANSWER_PATTERN.finditer(completion))
-
-    if answer_matches:
-        value_text = answer_matches[-1].group(1)
-    else:
-        percentage_matches = list(_PERCENT_PATTERN.finditer(completion))
-
-        if not percentage_matches:
-            logger.warning(
-                "Could not parse SOLE-R1 progress from completion: %r",
-                completion,
-            )
-            return None
-
-        value_text = percentage_matches[-1].group(1)
-
-    try:
-        value = float(value_text)
-    except ValueError:
+    if not answer_matches:
         logger.warning(
-            "Could not convert SOLE-R1 progress value %r to float.",
-            value_text,
+            "Could not parse a tagged SOLE-R1 answer from completion: %r",
+            completion,
         )
         return None
 
-    return min(
-        maximum,
-        max(minimum, value),
-    )
+    try:
+        value = float(answer_matches[-1].group(1))
+    except ValueError:
+        logger.warning(
+            "Could not convert SOLE-R1 progress value to float: %r",
+            answer_matches[-1].group(1),
+        )
+        return None
+
+    return min(maximum, max(minimum, value))
 
 
 def extract_reasoning_trace(

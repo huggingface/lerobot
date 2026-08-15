@@ -24,6 +24,10 @@ from lerobot.rewards.factory import (
     get_reward_model_class,
     make_reward_model_config,
 )
+from lerobot.rewards.soler1.compute_rabc_weights import (
+    _resolve_task,
+    compute_episode_progress,
+)
 from lerobot.rewards.soler1.configuration_soler1 import SOLER1Config
 from lerobot.rewards.soler1.modeling_soler1 import _parse_progress
 from lerobot.rewards.soler1.processor_soler1 import (
@@ -254,7 +258,7 @@ def test_parse_progress():
             minimum=-100.0,
             maximum=100.0,
         )
-        == 35.0
+        is None
     )
 
     assert (
@@ -745,7 +749,7 @@ def test_unbatched_tchw_input_produces_one_trajectory_reward(monkeypatch):
         device="cpu",
         external_image_key="observation.images.front",
         wrist_image_key=None,
-        downsample_to=None,
+        num_samples=None,
     )
     model = SOLER1RewardModel(config)
     preprocessor, _ = make_soler1_pre_post_processors(config)
@@ -805,7 +809,7 @@ def test_public_api_and_factories(monkeypatch):
         device="cpu",
         external_image_key="observation.images.top",
         wrist_image_key="observation.images.wrist",
-        downsample_to=None,
+        num_samples=None,
     )
 
     assert isinstance(cfg, SOLER1Config)
@@ -818,3 +822,76 @@ def test_public_api_and_factories(monkeypatch):
     assert isinstance(factory_model, SOLER1RewardModel)
     assert preprocessor is not None
     assert postprocessor is not None
+
+
+class _FakeEpisodeDataset:
+    def __init__(self, image_key: str) -> None:
+        self.image_key = image_key
+        self.samples = [
+            {
+                image_key: torch.full(
+                    (3, 8, 8),
+                    frame_index,
+                    dtype=torch.uint8,
+                ),
+                "task": "pick up the cube",
+            }
+            for frame_index in range(4)
+        ]
+
+    def __getitem__(self, index: int):
+        return self.samples[index]
+
+
+class _FakeProgressModel:
+    def compute_progress(self, batch):
+        assert "observation.images.front" in batch
+        assert batch["task"] == "pick up the cube"
+        return torch.tensor([[0.0, 0.2, 0.5, 0.8]])
+
+
+def test_compute_episode_progress_returns_one_value_per_frame():
+    image_key = "observation.images.front"
+    config = SOLER1Config(
+        device="cpu",
+        external_image_key=image_key,
+        wrist_image_key=None,
+        num_samples=None,
+    )
+    dataset = _FakeEpisodeDataset(image_key)
+
+    progress = compute_episode_progress(
+        model=_FakeProgressModel(),
+        preprocessor=lambda batch: batch,
+        dataset=dataset,
+        config=config,
+        start=0,
+        end=4,
+        task="pick up the cube",
+    )
+
+    assert progress.shape == (4,)
+    assert progress.tolist() == pytest.approx([0.0, 0.2, 0.5, 0.8])
+
+
+def test_resolve_task_uses_dataset_task_and_default():
+    assert (
+        _resolve_task(
+            {"task": "open the drawer"},
+            task_key="task",
+            default_task=None,
+        )
+        == "open the drawer"
+    )
+
+    assert (
+        _resolve_task(
+            {},
+            task_key="task",
+            default_task="perform the task",
+        )
+        == "perform the task"
+    )
+
+    with pytest.raises(KeyError, match="task description"):
+        _resolve_task({}, task_key="task", default_task=None)
