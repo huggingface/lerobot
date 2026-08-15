@@ -22,29 +22,22 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
-    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
-    UnnormalizerProcessorStep,
-    policy_action_to_transition,
-    transition_to_policy_action,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_LANGUAGE_UNCOND_ATTENTION_MASK,
     OBS_LANGUAGE_UNCOND_TOKENS,
     OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
 from .configuration_pi05 import PI05Config
@@ -88,12 +81,10 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
 
-        # Build unconditional prompts for CFG (same state but original task without advantage)
         if self.cfg_enabled:
             base_tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("base_task")
             if base_tasks is None:
                 base_tasks = tasks
-
             if isinstance(base_tasks, str):
                 base_tasks = [base_tasks] * len(tasks)
 
@@ -101,9 +92,7 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
             for i, base_task in enumerate(base_tasks):
                 cleaned_text = base_task.strip().replace("_", " ").replace("\n", " ")
                 state_str = " ".join(map(str, discretized_states[i]))
-                uncond_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-                uncond_prompts.append(uncond_prompt)
-
+                uncond_prompts.append(f"Task: {cleaned_text}, State: {state_str};\nAction: ")
             transition[TransitionKey.COMPLEMENTARY_DATA]["uncond_task"] = uncond_prompts
 
         return transition
@@ -131,10 +120,9 @@ def make_pi05_pre_post_processors(
     1. Renaming features to match pretrained configurations.
     2. Normalizing input and output features based on dataset statistics.
     3. Adding a batch dimension.
-    4. (Optional) Rendering language annotations via recipe YAML.
-    5. (Optional) Flattening rendered messages into the task string.
-    6. Tokenizing the text prompt using the PaliGemma tokenizer.
-    7. Moving all data to the specified device.
+    4. Appending a newline character to the task description for tokenizer compatibility.
+    5. Tokenizing the text prompt using the PaliGemma tokenizer.
+    6. Moving all data to the specified device.
 
     The post-processing pipeline handles the model's output by:
     1. Moving data to the CPU.
@@ -143,6 +131,8 @@ def make_pi05_pre_post_processors(
     Args:
         config: The configuration object for the PI0 policy.
         dataset_stats: A dictionary of statistics for normalization.
+        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
+        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
@@ -154,32 +144,31 @@ def make_pi05_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
-        AddBatchDimensionProcessorStep(),
+        steps.rename_observations,  # To mimic the same processor as pretrained one
+        steps.add_batch_dim,
         relative_step,
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
+        steps.normalize,
     ]
 
-    # Insert language rendering steps when a recipe is configured (e.g. RECAP advantage)
     if config.recipe_path is not None:
         from lerobot.configs.recipe import load_recipe
         from lerobot.processor.render_messages_processor import RenderMessagesStep
         from lerobot.processor.rendered_messages_to_task import RenderedMessagesToTaskStep
 
-        recipe = load_recipe(config.recipe_path)
-        input_steps.append(RenderMessagesStep(recipe=recipe))
-        input_steps.append(RenderedMessagesToTaskStep())
+        input_steps.extend(
+            [
+                RenderMessagesStep(recipe=load_recipe(config.recipe_path)),
+                RenderedMessagesToTaskStep(),
+            ]
+        )
 
     cfg_enabled = config.cfg_beta > 1.0
-
     input_steps.extend(
         [
             Pi05PrepareStateTokenizerProcessorStep(
@@ -194,8 +183,6 @@ def make_pi05_pre_post_processors(
             ),
         ]
     )
-
-    # Add unconditional prompt tokenizer for CFG inference
     if cfg_enabled:
         input_steps.append(
             TokenizerProcessorStep(
@@ -208,26 +195,12 @@ def make_pi05_pre_post_processors(
                 output_mask_key=OBS_LANGUAGE_UNCOND_ATTENTION_MASK,
             )
         )
-
-    input_steps.append(DeviceProcessorStep(device=config.device))
+    input_steps.append(steps.to_device)
 
     output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
+        steps.unnormalize,
         AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
-        DeviceProcessorStep(device="cpu"),
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

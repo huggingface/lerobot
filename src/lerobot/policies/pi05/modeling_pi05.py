@@ -16,7 +16,6 @@
 
 import builtins
 import logging
-import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
@@ -29,7 +28,6 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
-    from transformers.cache_utils import DynamicCache
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
 
@@ -41,7 +39,6 @@ if TYPE_CHECKING or _transformers_available:
     )
 else:
     CONFIG_MAPPING = None
-    DynamicCache = None
     modeling_gemma = None
     PiGemmaForCausalLM = None
     _gated_residual = None
@@ -54,9 +51,17 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_TOKENS,
     OBS_LANGUAGE_UNCOND_ATTENTION_MASK,
     OBS_LANGUAGE_UNCOND_TOKENS,
-    OPENPI_ATTENTION_MASK_VALUE,
 )
 
+from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.vla_utils import (
+    clone_past_key_values,
+    create_sinusoidal_pos_embedding,
+    make_att_2d_masks,
+    pad_vector,
+    prepare_attention_masks_4d,
+    resize_with_pad_torch,
+)
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
@@ -66,187 +71,6 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
-
-
-def get_safe_dtype(target_dtype, device_type):
-    """Get a safe dtype for the given device type."""
-    if device_type == "mps" and target_dtype == torch.float64:
-        return torch.float32
-    if device_type == "cpu":
-        # CPU doesn't support bfloat16, use float32 instead
-        if target_dtype == torch.bfloat16:
-            return torch.float32
-        if target_dtype == torch.float64:
-            return torch.float64
-    return target_dtype
-
-
-def create_sinusoidal_pos_embedding(  # see openpi `create_sinusoidal_pos_embedding` (exact copy)
-    time: torch.Tensor, dimension: int, min_period: float, max_period: float, device="cpu"
-) -> Tensor:
-    """Computes sine-cosine positional embedding vectors for scalar positions."""
-    if dimension % 2 != 0:
-        raise ValueError(f"dimension ({dimension}) must be divisible by 2")
-
-    if time.ndim != 1:
-        raise ValueError("The time tensor is expected to be of shape `(batch_size, )`.")
-
-    dtype = get_safe_dtype(torch.float64, device.type)
-    fraction = torch.linspace(0.0, 1.0, dimension // 2, dtype=dtype, device=device)
-    period = min_period * (max_period / min_period) ** fraction
-
-    # Compute the outer product
-    scaling_factor = 1.0 / period * 2 * math.pi
-    sin_input = scaling_factor[None, :] * time[:, None]
-    return torch.cat([torch.sin(sin_input), torch.cos(sin_input)], dim=1)
-
-
-def sample_beta(alpha, beta, bsize, device):  # see openpi `sample_beta` (exact copy)
-    # Beta sampling uses _sample_dirichlet which isn't implemented for MPS, so sample on CPU
-    alpha_t = torch.tensor(alpha, dtype=torch.float32)
-    beta_t = torch.tensor(beta, dtype=torch.float32)
-    dist = torch.distributions.Beta(alpha_t, beta_t)
-    return dist.sample((bsize,)).to(device)
-
-
-def make_att_2d_masks(pad_masks, att_masks):  # see openpi `make_att_2d_masks` (exact copy)
-    """Copied from big_vision.
-
-    Tokens can attend to valid inputs tokens which have a cumulative mask_ar
-    smaller or equal to theirs. This way `mask_ar` int[B, N] can be used to
-    setup several types of attention, for example:
-
-      [[1 1 1 1 1 1]]: pure causal attention.
-
-      [[0 0 0 1 1 1]]: prefix-lm attention. The first 3 tokens can attend between
-          themselves and the last 3 tokens have a causal attention. The first
-          entry could also be a 1 without changing behaviour.
-
-      [[1 0 1 0 1 0 0 1 0 0]]: causal attention between 4 blocks. Tokens of a
-          block can attend all previous blocks and all tokens on the same block.
-
-    Args:
-      input_mask: bool[B, N] true if its part of the input, false if padding.
-      mask_ar: int32[B, N] mask that's 1 where previous tokens cannot depend on
-        it and 0 where it shares the same attention mask as the previous token.
-    """
-    if att_masks.ndim != 2:
-        raise ValueError(att_masks.ndim)
-    if pad_masks.ndim != 2:
-        raise ValueError(pad_masks.ndim)
-
-    cumsum = torch.cumsum(att_masks, dim=1)
-    att_2d_masks = cumsum[:, None, :] <= cumsum[:, :, None]
-    pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
-    return att_2d_masks & pad_2d_masks
-
-
-def clone_past_key_values(past_key_values):
-    """Clone the DynamicCache returned by prefix prefill for compiled denoising."""
-    return DynamicCache(
-        tuple(
-            (keys.clone(), values.clone(), sliding_window) for keys, values, sliding_window in past_key_values
-        )
-    )
-
-
-def cat_past_key_values(kv_a, kv_b):
-    """Concatenate two DynamicCaches along the batch dimension for batched CFG."""
-    return DynamicCache(
-        tuple(
-            (
-                torch.cat([ka, kb], dim=0),
-                torch.cat([va, vb], dim=0),
-                sw_a,
-            )
-            for (ka, va, sw_a), (kb, vb, _sw_b) in zip(kv_a, kv_b, strict=True)
-        )
-    )
-
-
-def pad_vector(vector, new_dim):
-    """Pad the last dimension of a vector to new_dim with zeros.
-
-    Can be (batch_size x sequence_length x features_dimension)
-    or (batch_size x features_dimension)
-    """
-    if vector.shape[-1] >= new_dim:
-        return vector
-    return F.pad(vector, (0, new_dim - vector.shape[-1]))
-
-
-def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
-    images: torch.Tensor,
-    height: int,
-    width: int,
-    mode: str = "bilinear",
-) -> torch.Tensor:
-    """PyTorch version of resize_with_pad. Resizes an image to a target height and width without distortion
-    by padding with black. If the image is float32, it must be in the range [-1, 1].
-
-    Args:
-        images: Tensor of shape [*b, h, w, c] or [*b, c, h, w]
-        height: Target height
-        width: Target width
-        mode: Interpolation mode ('bilinear', 'nearest', etc.)
-
-    Returns:
-        Resized and padded tensor with same shape format as input
-    """
-    # Check if input is in channels-last format [*b, h, w, c] or channels-first [*b, c, h, w]
-    if images.shape[-1] <= 4:  # Assume channels-last format
-        channels_last = True
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-        images = images.permute(0, 3, 1, 2)  # [b, h, w, c] -> [b, c, h, w]
-    else:
-        channels_last = False
-        if images.dim() == 3:
-            images = images.unsqueeze(0)  # Add batch dimension
-
-    batch_size, channels, cur_height, cur_width = images.shape
-
-    # Calculate resize ratio
-    ratio = max(cur_width / width, cur_height / height)
-    resized_height = int(cur_height / ratio)
-    resized_width = int(cur_width / ratio)
-
-    # Resize
-    resized_images = F.interpolate(
-        images,
-        size=(resized_height, resized_width),
-        mode=mode,
-        align_corners=False if mode == "bilinear" else None,
-    )
-
-    # Handle dtype-specific clipping
-    if images.dtype == torch.uint8:
-        resized_images = torch.round(resized_images).clamp(0, 255).to(torch.uint8)
-    elif images.dtype == torch.float32:
-        resized_images = resized_images.clamp(0.0, 1.0)
-    else:
-        raise ValueError(f"Unsupported image dtype: {images.dtype}")
-
-    # Calculate padding
-    pad_h0, remainder_h = divmod(height - resized_height, 2)
-    pad_h1 = pad_h0 + remainder_h
-    pad_w0, remainder_w = divmod(width - resized_width, 2)
-    pad_w1 = pad_w0 + remainder_w
-
-    # Pad
-    constant_value = 0 if images.dtype == torch.uint8 else 0.0
-    padded_images = F.pad(
-        resized_images,
-        (pad_w0, pad_w1, pad_h0, pad_h1),  # left, right, top, bottom
-        mode="constant",
-        value=constant_value,
-    )
-
-    # Convert back to original format if needed
-    if channels_last:
-        padded_images = padded_images.permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
-
-    return padded_images
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -645,26 +469,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         return func(*args, **kwargs)
 
-    def _prepare_attention_masks_4d(self, att_2d_masks):
-        """Helper method to prepare 4D attention masks for transformer."""
-        att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-
     def sample_noise(self, shape, device):
-        return torch.normal(
-            mean=0.0,
-            std=1.0,
-            size=shape,
-            dtype=torch.float32,
-            device=device,
-        )
+        return sample_noise(shape, device)
 
     def sample_time(self, bsize, device):
-        time_beta = sample_beta(
-            self.config.time_sampling_beta_alpha, self.config.time_sampling_beta_beta, bsize, device
+        return sample_time_beta(
+            bsize,
+            device,
+            alpha=self.config.time_sampling_beta_alpha,
+            beta=self.config.time_sampling_beta_beta,
+            scale=self.config.time_sampling_scale,
+            offset=self.config.time_sampling_offset,
         )
-        time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
-        return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
         self, images, img_masks, tokens, masks
@@ -710,8 +526,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        embs = []
-        pad_masks = []
         att_masks = []
 
         # Embed timestep using sine-cosine positional encoding
@@ -737,23 +551,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return F.silu(x)
 
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        action_time_emb = action_emb
         adarms_cond = time_emb
 
-        embs.append(action_time_emb)
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+        bsize, action_time_dim = action_emb.shape[:2]
+        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks, adarms_cond
+        return action_emb, pad_masks, att_masks, adarms_cond
 
     def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
@@ -777,7 +585,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+        att_2d_masks_4d = prepare_attention_masks_4d(att_2d_masks)
 
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
             (_, suffix_out), _ = self.paligemma_with_expert.forward(
@@ -817,13 +625,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         uncond_masks=None,
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
-        """Do a full inference forward and compute the action.
-
-        When cfg_beta > 1.0 and uncond_tokens/uncond_masks are provided, performs
-        Classifier-Free Guidance: VLM runs twice (conditioned + unconditional), action
-        expert runs twice per denoising step, and velocities are interpolated via
-        v = v_uncond + cfg_beta * (v_cond - v_uncond).
-        """
+        """Do a full inference forward, optionally with classifier-free guidance."""
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -839,14 +641,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        cfg_enabled = self.config.cfg_beta > 1.0 and uncond_tokens is not None and uncond_masks is not None
-
-        # Prefill VLM for conditioned prompt
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        prefix_att_2d_masks_4d = prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
@@ -857,69 +656,48 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
-        # Prefill VLM for unconditional prompt (CFG)
+        cfg_enabled = self.config.cfg_beta > 1.0 and uncond_tokens is not None and uncond_masks is not None
         if cfg_enabled:
-            uncond_prefix_embs, uncond_prefix_pad_masks, uncond_prefix_att_masks = self.embed_prefix(
+            uncond_embs, uncond_pad_masks, uncond_att_masks = self.embed_prefix(
                 images, img_masks, uncond_tokens, uncond_masks
             )
-            uncond_prefix_att_2d_masks = make_att_2d_masks(uncond_prefix_pad_masks, uncond_prefix_att_masks)
-            uncond_prefix_position_ids = torch.cumsum(uncond_prefix_pad_masks, dim=1) - 1
-            uncond_prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(uncond_prefix_att_2d_masks)
-
+            uncond_att_2d_masks = make_att_2d_masks(uncond_pad_masks, uncond_att_masks)
+            uncond_position_ids = torch.cumsum(uncond_pad_masks, dim=1) - 1
             _, uncond_past_key_values = self.paligemma_with_expert.forward(
-                attention_mask=uncond_prefix_att_2d_masks_4d,
-                position_ids=uncond_prefix_position_ids,
+                attention_mask=prepare_attention_masks_4d(uncond_att_2d_masks),
+                position_ids=uncond_position_ids,
                 past_key_values=None,
-                inputs_embeds=[uncond_prefix_embs, None],
+                inputs_embeds=[uncond_embs, None],
                 use_cache=True,
             )
 
-        dt = -1.0 / num_steps
+        def denoise(input_x_t, current_timestep):
+            v_cond = self.denoise_step(
+                prefix_pad_masks=prefix_pad_masks,
+                past_key_values=past_key_values,
+                x_t=input_x_t,
+                timestep=current_timestep,
+            )
+            if not cfg_enabled:
+                return v_cond
+            v_uncond = self.denoise_step(
+                prefix_pad_masks=uncond_pad_masks,
+                past_key_values=uncond_past_key_values,
+                x_t=input_x_t,
+                timestep=current_timestep,
+            )
+            return v_uncond + self.config.cfg_beta * (v_cond - v_uncond)
 
-        x_t = noise
-        for step in range(num_steps):
-            time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-
-            def denoise_step_partial_call(input_x_t, current_timestep=time_tensor):
-                if cfg_enabled:
-                    return self.denoise_step_cfg_batched(
-                        cond_prefix_pad_masks=prefix_pad_masks,
-                        cond_past_key_values=past_key_values,
-                        uncond_prefix_pad_masks=uncond_prefix_pad_masks,
-                        uncond_past_key_values=uncond_past_key_values,
-                        x_t=input_x_t,
-                        timestep=current_timestep,
-                    )
-                return self.denoise_step(
-                    prefix_pad_masks=prefix_pad_masks,
-                    past_key_values=past_key_values,
-                    x_t=input_x_t,
-                    timestep=current_timestep,
-                )
-
-            if self._rtc_enabled():
-                inference_delay = kwargs.get("inference_delay")
-                prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
-                )
-            else:
-                v_t = denoise_step_partial_call(x_t)
-
-            x_t = x_t + dt * v_t
-
-            if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
-
-        return x_t
+        return euler_integrate(
+            denoise,
+            noise,
+            num_steps,
+            rtc_processor=self.rtc_processor,
+            rtc_enabled=self._rtc_enabled(),
+            inference_delay=kwargs.get("inference_delay"),
+            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+            execution_horizon=kwargs.get("execution_horizon"),
+        )
 
     def denoise_step(
         self,
@@ -942,7 +720,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        full_att_2d_masks_4d = prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
         past_key_values = clone_past_key_values(past_key_values)
@@ -960,86 +738,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out.to(dtype=torch.float32)
         return self.action_out_proj(suffix_out)
 
-    def denoise_step_cfg_batched(
-        self,
-        cond_prefix_pad_masks,
-        cond_past_key_values,
-        uncond_prefix_pad_masks,
-        uncond_past_key_values,
-        x_t,
-        timestep,
-    ):
-        """Batched CFG denoising: runs cond + uncond in a single forward pass.
-
-        Concatenates cond and uncond inputs along the batch dimension, runs one
-        action expert forward (2x batch), then splits and applies CFG interpolation.
-        This is ~1.5x faster than two sequential denoise_step calls due to better
-        GPU utilization (inspired by Qwen2.5-Omni DiT / diffusers batched CFG).
-        """
-        # Embed suffix once (same x_t and timestep for both branches)
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
-
-        bsize = cond_prefix_pad_masks.shape[0]
-        suffix_len = suffix_pad_masks.shape[1]
-        cond_prefix_len = cond_prefix_pad_masks.shape[1]
-        uncond_prefix_len = uncond_prefix_pad_masks.shape[1]
-
-        # Build attention masks for cond branch
-        cond_prefix_2d = cond_prefix_pad_masks[:, None, :].expand(bsize, suffix_len, cond_prefix_len)
-        cond_suffix_att_2d = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        cond_full_att = torch.cat([cond_prefix_2d, cond_suffix_att_2d], dim=2)
-        cond_prefix_offsets = torch.sum(cond_prefix_pad_masks, dim=-1)[:, None]
-        cond_position_ids = cond_prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        # Build attention masks for uncond branch
-        uncond_prefix_2d = uncond_prefix_pad_masks[:, None, :].expand(bsize, suffix_len, uncond_prefix_len)
-        uncond_suffix_att_2d = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        uncond_full_att = torch.cat([uncond_prefix_2d, uncond_suffix_att_2d], dim=2)
-        uncond_prefix_offsets = torch.sum(uncond_prefix_pad_masks, dim=-1)[:, None]
-        uncond_position_ids = uncond_prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-
-        # Concatenate on batch dim: [cond_batch; uncond_batch]
-        batched_full_att = torch.cat([cond_full_att, uncond_full_att], dim=0)
-        batched_full_att_4d = self._prepare_attention_masks_4d(batched_full_att)
-        batched_position_ids = torch.cat([cond_position_ids, uncond_position_ids], dim=0)
-        batched_suffix_embs = torch.cat([suffix_embs, suffix_embs], dim=0)
-        batched_adarms_cond = torch.cat([adarms_cond, adarms_cond], dim=0)
-
-        # Concatenate KV caches on batch dim
-        batched_past_kv = cat_past_key_values(
-            clone_past_key_values(cond_past_key_values),
-            clone_past_key_values(uncond_past_key_values),
-        )
-
-        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
-
-        # Single forward pass for both branches
-        outputs_embeds, _ = self.paligemma_with_expert.forward(
-            attention_mask=batched_full_att_4d,
-            position_ids=batched_position_ids,
-            past_key_values=batched_past_kv,
-            inputs_embeds=[None, batched_suffix_embs],
-            use_cache=False,
-            adarms_cond=[None, batched_adarms_cond],
-        )
-
-        suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-        v_all = self.action_out_proj(suffix_out)
-
-        # Split: first half = cond, second half = uncond
-        v_cond, v_uncond = v_all.chunk(2, dim=0)
-
-        # CFG interpolation: v = v_uncond + beta * (v_cond - v_uncond)
-        return v_uncond + self.config.cfg_beta * (v_cond - v_uncond)
-
 
 class PI05Policy(PreTrainedPolicy):
     """PI05 Policy for LeRobot."""
 
     config_class = PI05Config
     name = "pi05"
+
+    def supports_rtc(self) -> bool:
+        return True
 
     def __init__(
         self,
@@ -1369,10 +1076,8 @@ class PI05Policy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-
-        # CFG: pass unconditional tokens if available
-        uncond_tokens = batch.get(f"{OBS_LANGUAGE_UNCOND_TOKENS}")
-        uncond_masks = batch.get(f"{OBS_LANGUAGE_UNCOND_ATTENTION_MASK}")
+        uncond_tokens = batch.get(OBS_LANGUAGE_UNCOND_TOKENS)
+        uncond_masks = batch.get(OBS_LANGUAGE_UNCOND_ATTENTION_MASK)
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(

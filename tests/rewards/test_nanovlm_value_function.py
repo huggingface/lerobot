@@ -7,6 +7,7 @@ from PIL import Image
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
 from lerobot.rewards.nanovlm_value_function.configuration_nanovlm_value_function import (
     NanoVLMVFConfig,
@@ -17,7 +18,6 @@ from lerobot.rewards.nanovlm_value_function.processor_nanovlm_value_function imp
     NANOVLM_INPUT_IDS,
     NanoVLMNativeProcessorStep,
 )
-from lerobot.types import TransitionKey
 
 CAMERA = "observation.images.top"
 

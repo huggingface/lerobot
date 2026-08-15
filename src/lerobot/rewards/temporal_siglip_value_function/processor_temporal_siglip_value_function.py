@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import FeatureType
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -25,7 +26,6 @@ from lerobot.rewards.distributional_value_function.processor_distributional_valu
     DistributionalVFPrepareTaskPromptStep,
     resize_with_pad_torch,
 )
-from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,

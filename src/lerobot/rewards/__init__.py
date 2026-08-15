@@ -27,6 +27,7 @@ from .nanovlm_value_function.configuration_nanovlm_value_function import (
 )
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig as RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
 from .temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
     TemporalSiglipVFConfig as TemporalSiglipVFConfig,
@@ -39,6 +40,7 @@ __all__ = [
     "NanoVLMVFConfig",
     "RewardClassifierConfig",
     "RobometerConfig",
+    "RynnValueConfig",
     "SARMConfig",
     "TOPRewardConfig",
     "TemporalSiglipVFConfig",

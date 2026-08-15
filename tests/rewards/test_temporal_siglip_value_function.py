@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.factory import get_reward_model_class, make_reward_model_config
 from lerobot.rewards.temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
     TemporalSiglipVFConfig,
@@ -11,7 +12,6 @@ from lerobot.rewards.temporal_siglip_value_function.configuration_temporal_sigli
 from lerobot.rewards.temporal_siglip_value_function.processor_temporal_siglip_value_function import (
     TemporalSiglipImageProcessorStep,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 CAMERAS = ("observation.images.top", "observation.images.left", "observation.images.right")

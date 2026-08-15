@@ -9,10 +9,10 @@ pytest.importorskip("transformers", reason="transformers is required for PI05")
 import torch  # noqa: E402
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pi05 import PI05Config, make_pi05_pre_post_processors  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.processor.rendered_messages_to_task import RenderedMessagesToTaskStep  # noqa: E402
-from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import (  # noqa: E402
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,

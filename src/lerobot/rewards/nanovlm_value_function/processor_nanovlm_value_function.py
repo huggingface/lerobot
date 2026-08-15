@@ -10,6 +10,7 @@ import torch
 from torchvision.transforms.functional import to_pil_image
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -23,7 +24,6 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_batch,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_nanovlm_value_function import NanoVLMVFConfig

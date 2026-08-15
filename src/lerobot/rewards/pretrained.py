@@ -16,20 +16,18 @@ import abc
 import builtins
 import logging
 import os
-from importlib.resources import files
+import warnings
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import packaging
-import safetensors
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs.rewards import RewardModelConfig
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 
 if TYPE_CHECKING:
@@ -62,6 +60,22 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        """Serialize this reward model's parameters (and config) into `save_directory`.
+
+        Safe to call on every rank: replicas carry identical weights, so only the main process
+        writes (sharded reward models are rejected at config validation — no collective gather).
+
+        Args:
+            save_directory (Path): Target directory for the reward model config (`config.json`)
+                and `model.safetensors`.
+        """
+        from lerobot.distributed.utils import is_main_process
+
+        # save_checkpoint calls this on every rank; replicas carry identical
+        # weights, so the main process is the only writer. Sharded reward models are rejected
+        # at config validation, so no collective gather is needed here.
+        if not is_main_process():
+            return
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
         save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
@@ -129,29 +143,13 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
-
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = load_model_as_safetensor(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
         if missing_keys:
             logging.warning(f"Missing key(s) when loading model: {missing_keys}")
         if unexpected_keys:
             logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
-
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
         return model
 
     def get_optim_params(self):
@@ -192,53 +190,22 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         """
         return type(self).forward is not PreTrainedRewardModel.forward
 
-    def push_model_to_hub(self, cfg: "TrainPipelineConfig"):
-        api = HfApi()
-        repo_id = api.create_repo(
-            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
-        ).repo_id
+    def push_model_to_hub(self, cfg: "TrainPipelineConfig") -> None:
+        """Publish this reward model to the Hub.
 
-        # Push the files to the repo in a single commit
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
+        Deprecated: use :func:`lerobot.common.train_utils.publish_trained_model` instead.
 
-            self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+        Args:
+            cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and
+                used to render the model card.
+        """
+        from lerobot.common.train_utils import publish_trained_model
 
-            card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
-            )
-            card.save(str(saved_path / "README.md"))
-
-            cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
-
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload reward model weights, train config and readme",
-                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-                ignore_patterns=["*.tmp", "*.log"],
-            )
-
-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
-
-    def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
-    ) -> ModelCard:
-        card_data = ModelCardData(
-            license=license or "apache-2.0",
-            library_name="lerobot",
-            pipeline_tag="robotics",
-            tags=list(set(tags or []).union({"robotics", "lerobot", "reward-model", model_type})),
-            model_name=model_type,
-            datasets=dataset_repo_id,
+        warnings.warn(
+            "PreTrainedRewardModel.push_model_to_hub is deprecated and will be removed in a "
+            "future version. Use lerobot.common.train_utils.publish_trained_model(cfg, model, "
+            "preprocessor, postprocessor, dataset_meta) instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-
-        template_card = (
-            files("lerobot.templates")
-            .joinpath("lerobot_rewardmodel_modelcard_template.md")
-            .read_text(encoding="utf-8")
-        )
-        card = ModelCard.from_template(card_data, template_str=template_card)
-        card.validate()
-        return card
+        publish_trained_model(cfg, self, None, None, None)

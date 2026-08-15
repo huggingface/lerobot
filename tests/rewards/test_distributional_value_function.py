@@ -21,10 +21,10 @@ import torch
 
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.distributional_value_function.configuration_distributional_value_function import (
     DistributionalVFConfig,
 )
-from lerobot.types import TransitionKey
 from lerobot.utils.constants import OBS_IMAGES
 from tests.utils import skip_if_package_missing
 

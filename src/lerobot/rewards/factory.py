@@ -30,6 +30,7 @@ from .distributional_value_function.configuration_distributional_value_function 
 from .nanovlm_value_function.configuration_nanovlm_value_function import NanoVLMVFConfig
 from .pretrained import PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig
+from .rynnvalue.configuration_rynnvalue import RynnValueConfig
 from .sarm.configuration_sarm import SARMConfig
 from .temporal_siglip_value_function.configuration_temporal_siglip_value_function import (
     TemporalSiglipVFConfig,
@@ -46,7 +47,7 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
     Args:
         name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "robometer", "topreward".
+              "sarm", "robometer", "topreward", and "rynnvalue".
 
     Returns:
         The reward model class corresponding to the given name.
@@ -88,6 +89,10 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
         )
 
         return NanoVLMVFRewardModel
+    elif name == "rynnvalue":
+        from lerobot.rewards.rynnvalue.modeling_rynnvalue import RynnValueRewardModel
+
+        return RynnValueRewardModel
     else:
         try:
             return _get_reward_model_cls_from_name(name=name)
@@ -104,7 +109,7 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
     Args:
         reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "robometer", "topreward".
+                     "reward_classifier", "sarm", "robometer", "topreward", and "rynnvalue".
         **kwargs: Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
@@ -127,6 +132,8 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
         return TemporalSiglipVFConfig(**kwargs)
     elif reward_type == "nanovlm_value_function":
         return NanoVLMVFConfig(**kwargs)
+    elif reward_type == "rynnvalue":
+        return RynnValueConfig(**kwargs)
     else:
         try:
             config_cls = RewardModelConfig.get_choice_class(reward_type)
@@ -226,6 +233,13 @@ def make_reward_pre_post_processors(
         from lerobot.rewards.topreward.processor_topreward import make_topreward_pre_post_processors
 
         return make_topreward_pre_post_processors(
+            config=reward_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+    elif isinstance(reward_cfg, RynnValueConfig):
+        from lerobot.rewards.rynnvalue.processor_rynnvalue import make_rynnvalue_pre_post_processors
+
+        return make_rynnvalue_pre_post_processors(
             config=reward_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )

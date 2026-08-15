@@ -9,10 +9,10 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 import torch  # noqa: E402
 
 from lerobot.configs.recipe import MessageTurn, TrainingRecipe  # noqa: E402
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.processor.render_messages_processor import RenderMessagesStep  # noqa: E402
 from lerobot.processor.rendered_messages_to_task import RenderedMessagesToTaskStep  # noqa: E402
-from lerobot.types import TransitionKey  # noqa: E402
 
 
 def test_rendered_messages_to_task_noops_without_messages():

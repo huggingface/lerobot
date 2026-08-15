@@ -23,7 +23,7 @@ import pytest
 
 pytest.importorskip("rerun", reason="rerun-sdk is required (install lerobot[viz])")
 
-from lerobot.types import TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
 
