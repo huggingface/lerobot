@@ -67,7 +67,7 @@ class SOLER1Config(RewardModelConfig):
     wrist_image_key: str | None = None
     task_key: str = "task"
     default_task: str | None = None
-    num_samples: int | None = 10
+    num_samples: int | None = 30
 
     max_new_tokens: int = 600
     temperature: float = 1.0

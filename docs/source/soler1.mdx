@@ -135,13 +135,13 @@ timestep in the selected episodes:
 ```bash
 uv run python -m lerobot.rewards.soler1.compute_rabc_weights \
     --dataset-repo-id lerobot/libero_10 \
-    --external-image-key observation.images.side \
-    --num-samples 10 \
+    --external-image-key observation.images.image \
+    --num-samples 30 \
     --device cuda \
     --output-path soler1_progress.parquet
 ```
 
-By default, SOLE-R1 evaluates 10 uniformly spaced anchor frames and
+By default, SOLE-R1 evaluates 30 uniformly spaced anchor frames and
 interpolates the resulting progress values across the complete trajectory.
 Use --num-samples 0 to run inference at every timestep.
 
@@ -151,6 +151,7 @@ To render an overlay:
 uv run examples/dataset/create_progress_videos.py \
     --repo-id lerobot/libero_10 \
     --episode 0 \
+    --camera-key observation.images.image \
     --progress-file soler1_progress.parquet \
     --gif
 ```
