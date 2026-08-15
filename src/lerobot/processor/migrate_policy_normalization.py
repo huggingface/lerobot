@@ -471,6 +471,20 @@ def load_model_from_hub(
     return state_dict, config, train_config
 
 
+def _is_tuple_type(declared_type: Any) -> bool:
+    if typing.get_origin(declared_type) is tuple:
+        return True
+    return any(typing.get_origin(arg) is tuple for arg in typing.get_args(declared_type))
+
+
+def _coerce_tuple_fields(config: Any) -> None:
+    type_hints = typing.get_type_hints(type(config))
+    for field in dataclasses.fields(config):
+        value = getattr(config, field.name)
+        if isinstance(value, list) and _is_tuple_type(type_hints.get(field.name, field.type)):
+            setattr(config, field.name, tuple(value))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Migrate policy models with normalization layers to new pipeline system"
@@ -591,17 +605,7 @@ def main():
     # Create policy configuration using the factory
     print(f"Creating {policy_type} policy configuration...")
     policy_config = make_policy_config(policy_type, **cleaned_config)
-
-    type_hints = typing.get_type_hints(type(policy_config))
-    for field in dataclasses.fields(policy_config):
-        value = getattr(policy_config, field.name)
-        if not isinstance(value, list):
-            continue
-        declared_type = type_hints.get(field.name, field.type)
-        for candidate in typing.get_args(declared_type) or (declared_type,):
-            if typing.get_origin(candidate) is tuple:
-                setattr(policy_config, field.name, tuple(value))
-                break
+    _coerce_tuple_fields(policy_config)
 
     # Create policy instance using the factory
     print(f"Instantiating {policy_type} policy...")
