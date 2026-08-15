@@ -945,6 +945,69 @@ def run_one(
     return task_group, task_id, metrics
 
 
+def _make_threaded_task_runner(
+    policy,
+    env_preprocessor,
+    env_postprocessor,
+    preprocessor,
+    postprocessor,
+    **shared_run_one_kwargs: Any,
+) -> Callable[[str, int, Any], tuple[str, int, dict]]:
+    """
+    Builds a `(task_group, task_id, env) -> (task_group, task_id, metrics)` callable for parallel tasks.
+
+    `run_one` drives `policy.reset()` followed by repeated `policy.select_action()` calls. Every supported
+    policy class keeps its rollout state (action queues, ACT's temporal ensembler, RTC processor state, ...)
+    directly on the policy instance, so sharing one `policy` object across `ThreadPoolExecutor` workers lets
+    one task's `reset()` clobber another task's in-flight queue mid-rollout, silently corrupting both (see
+    https://github.com/huggingface/lerobot/issues/4327 — every task returns near-0% success with no error).
+
+    Each worker thread lazily deep-copies the policy and processors the first time it runs a task, and reuses
+    that copy for every later task scheduled on the same thread. This bounds the extra memory to one copy per
+    worker thread (`max_parallel_tasks` copies total), not one per task.
+    """
+    thread_local = threading.local()
+
+    def _thread_context():
+        ctx = getattr(thread_local, "eval_ctx", None)
+        if ctx is None:
+            try:
+                ctx = (
+                    deepcopy(policy),
+                    deepcopy(env_preprocessor),
+                    deepcopy(env_postprocessor),
+                    deepcopy(preprocessor),
+                    deepcopy(postprocessor),
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    "eval_policy_all(max_parallel_tasks>1) gives each worker thread its own deep copy of "
+                    "the policy, because rollout state (action queues, temporal ensembling, ...) lives on "
+                    "the policy instance and cannot be shared safely across threads. This policy failed to "
+                    f"deep-copy: {e!r}. Set max_parallel_tasks=1 to evaluate it sequentially instead."
+                ) from e
+            thread_local.eval_ctx = ctx
+        return ctx
+
+    def _run(task_group: str, task_id: int, env: Any) -> tuple[str, int, dict]:
+        th_policy, th_env_preprocessor, th_env_postprocessor, th_preprocessor, th_postprocessor = (
+            _thread_context()
+        )
+        return run_one(
+            task_group,
+            task_id,
+            env,
+            policy=th_policy,
+            env_preprocessor=th_env_preprocessor,
+            env_postprocessor=th_env_postprocessor,
+            preprocessor=th_preprocessor,
+            postprocessor=th_postprocessor,
+            **shared_run_one_kwargs,
+        )
+
+    return _run
+
+
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
@@ -970,6 +1033,11 @@ def eval_policy_all(
     accumulates per-group and overall statistics, and returns the same aggregate metrics
     schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
     plus per-task infos.
+
+    With `max_parallel_tasks > 1`, each worker thread evaluates against its own deep copy of `policy`
+    and the processors (see `_make_threaded_task_runner`), since rollout state such as action queues
+    lives on the policy instance and cannot be shared across threads without corrupting it. This costs
+    one extra copy of the policy's memory per worker thread.
     """
     start_t = time.time()
 
@@ -1051,10 +1119,29 @@ def eval_policy_all(
                             prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
                             prefetch_thread.start()
         else:
+            # Each worker thread gets its own deep copy of the policy and processors (see
+            # `_make_threaded_task_runner`) instead of the `task_runner` above, which binds the single
+            # shared `policy` object and would let concurrent tasks corrupt each other's rollout state.
+            threaded_task_runner = _make_threaded_task_runner(
+                policy,
+                env_preprocessor,
+                env_postprocessor,
+                preprocessor,
+                postprocessor,
+                n_episodes=n_episodes,
+                max_episodes_rendered=max_episodes_rendered,
+                videos_dir=videos_dir,
+                return_episode_data=return_episode_data,
+                start_seed=start_seed,
+                recording_dir=recording_dir,
+                env_features=env_features,
+                recording_repo_id=recording_repo_id,
+                recording_private=recording_private,
+            )
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
                 fut2meta = {}
                 for task_group, task_id, env in tasks:
-                    fut = executor.submit(task_runner, task_group, task_id, env)
+                    fut = executor.submit(threaded_task_runner, task_group, task_id, env)
                     fut2meta[fut] = (task_group, task_id, env)
                 for fut in cf.as_completed(fut2meta):
                     tg, tid, env = fut2meta[fut]
