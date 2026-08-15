@@ -132,13 +132,14 @@ produces a reward of `0.75`.
 Use the included command to compute one SOLE-R1 progress value for every
 timestep in the selected episodes:
 
-````bash
+```bash
 uv run python -m lerobot.rewards.soler1.compute_rabc_weights \
     --dataset-repo-id lerobot/libero_10 \
     --external-image-key observation.images.side \
     --num-samples 10 \
     --device cuda \
     --output-path soler1_progress.parquet
+```
 
 By default, SOLE-R1 evaluates 10 uniformly spaced anchor frames and
 interpolates the resulting progress values across the complete trajectory.
@@ -152,7 +153,7 @@ uv run examples/dataset/create_progress_videos.py \
     --episode 0 \
     --progress-file soler1_progress.parquet \
     --gif
-````
+```
 
 ## Success output
 
