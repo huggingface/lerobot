@@ -332,7 +332,15 @@ def create_composite_frame(
     previous_wrist_frame: Tensor | None = None,
     current_wrist_frame: Tensor | None = None,
 ) -> Tensor:
-    """Create one complete SOLE-R1 composite image."""
+    """Build SOLE-R1 composites after downsampling raw trajectories.
+
+    Camera inputs may use ``(T,C,H,W)``, ``(T,H,W,C)``,
+    ``(B,T,C,H,W)``, or ``(B,T,H,W,C)``.
+
+    Downsampling is applied before composite construction. Each composite contains
+    the first frame, previous sampled frame, and current sampled frame. The output
+    shape is ``(B,S,C,H,W)``.
+    """
 
     external_frames = (
         first_external_frame,

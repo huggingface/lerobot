@@ -355,10 +355,7 @@ def test_dense_progress_returns_one_value_per_timestep(
         ["<answer>55%</answer>"],
     ]
 
-    rewards = model.compute_reward(
-        _batch(trajectory_length=3),
-        dense=True,
-    )
+    rewards = model.compute_progress(_batch(trajectory_length=3))
 
     assert rewards.shape == (1, 3)
     assert rewards.tolist()[0] == pytest.approx([0.0, 0.42, 0.55])
@@ -386,12 +383,11 @@ def test_dense_progress_supports_multiple_trajectories(
         ],
     ]
 
-    rewards = model.compute_reward(
+    rewards = model.compute_progress(
         _batch(
             batch_size=2,
             trajectory_length=3,
-        ),
-        dense=True,
+        )
     )
 
     assert rewards.shape == (2, 3)
@@ -415,7 +411,6 @@ def test_dense_false_returns_only_final_progress(monkeypatch):
 
     reward = model.compute_reward(
         _batch(trajectory_length=3),
-        dense=False,
     )
 
     assert reward.shape == (1,)
@@ -448,12 +443,11 @@ def test_dense_success_checks_only_final_progress(monkeypatch):
         ],
     ]
 
-    rewards = model.compute_reward(
+    rewards = model.compute_progress(
         _batch(
             batch_size=2,
             trajectory_length=3,
         ),
-        dense=True,
     )
 
     # Final progress values are 0.40 and 0.60. The intermediate
@@ -511,9 +505,8 @@ def test_invalid_completion_falls_back_to_previous(
         ["invalid output"],
     ]
 
-    rewards = model.compute_reward(
+    rewards = model.compute_progress(
         _batch(trajectory_length=3),
-        dense=True,
     )
 
     assert rewards.shape == (1, 3)
@@ -652,27 +645,6 @@ def test_soler1_is_not_trainable(monkeypatch):
 
 
 @skip_if_package_missing("transformers")
-def test_unbatched_trajectory_returns_unbatched_rewards(monkeypatch):
-    from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel
-
-    _patch_model(monkeypatch)
-    model = SOLER1RewardModel(SOLER1Config(device="cpu"))
-    model.processor.completion_batches = [
-        ["<answer>20%</answer>"],
-        ["<answer>50%</answer>"],
-    ]
-
-    batch = _batch(trajectory_length=3)
-    batch[SOLER1_COMPOSITE_IMAGE_KEY] = batch[SOLER1_COMPOSITE_IMAGE_KEY].squeeze(0)
-    batch["task"] = "pick up the cube"
-
-    dense = model.compute_reward(batch, dense=True)
-
-    assert dense.shape == (3,)
-    assert dense.tolist() == pytest.approx([0.0, 0.2, 0.5])
-
-
-@skip_if_package_missing("transformers")
 def test_dense_progress_interpolates_sampled_predictions(
     monkeypatch,
 ):
@@ -693,10 +665,7 @@ def test_dense_progress_interpolates_sampled_predictions(
     batch[SOLER1_SAMPLE_INDICES_KEY] = torch.tensor([0, 2, 4])
     batch[SOLER1_ORIGINAL_LENGTH_KEY] = torch.tensor(5)
 
-    rewards = model.compute_reward(
-        batch,
-        dense=True,
-    )
+    rewards = model.compute_progress(batch)
 
     assert rewards.shape == (1, 5)
     assert rewards.tolist()[0] == pytest.approx([0.0, 0.1, 0.2, 0.4, 0.6])
@@ -811,10 +780,41 @@ def test_unbatched_tchw_input_produces_one_trajectory_reward(monkeypatch):
         ["<think>more progress</think><answer>50%</answer>"],
     ]
 
-    dense_reward = model.compute_reward(batch, dense=True)
+    dense_reward = model.compute_progress(batch)
 
     assert dense_reward.shape == (1, 3)
     torch.testing.assert_close(
         dense_reward,
         torch.tensor([[0.0, 0.25, 0.5]]),
     )
+
+
+@skip_if_package_missing("transformers")
+def test_public_api_and_factories(monkeypatch):
+    from lerobot.rewards import (
+        make_reward_model,
+        make_reward_model_config,
+        make_reward_pre_post_processors,
+    )
+    from lerobot.rewards.soler1 import SOLER1Config, SOLER1RewardModel
+
+    _patch_model(monkeypatch)
+
+    cfg = make_reward_model_config(
+        "sole-r1",
+        device="cpu",
+        external_image_key="observation.images.top",
+        wrist_image_key="observation.images.wrist",
+        downsample_to=None,
+    )
+
+    assert isinstance(cfg, SOLER1Config)
+
+    direct_model = SOLER1RewardModel(cfg)
+    factory_model = make_reward_model(cfg)
+    preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
+
+    assert isinstance(direct_model, SOLER1RewardModel)
+    assert isinstance(factory_model, SOLER1RewardModel)
+    assert preprocessor is not None
+    assert postprocessor is not None
