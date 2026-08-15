@@ -28,6 +28,7 @@ from gymnasium.wrappers.vector import RecordEpisodeStatistics
 from lerobot.env_server import EnvClient, RemoteVectorEnv
 from lerobot.envs import EnvClientConfig
 from lerobot.sim import SimConfig
+from lerobot.sim.integrations import simulator_required
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
@@ -294,6 +295,20 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
         LocalVectorEnv(SimConfig(type="some_sim", task="reach"))
     with pytest.raises(RuntimeError, match=expected):
         LocalVectorEnv(SimConfig(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
+
+
+def test_missing_simulator_libero_on_non_linux_explains_platform_marker(monkeypatch):
+    libero_sim_type = "libero"
+    libero_package = "hf-libero"
+    libero_platform_marker = "sys_platform == 'linux'"
+    monkeypatch.setattr(sys, "platform", sys.platform.upper())
+
+    with pytest.raises(ModuleNotFoundError) as exc_info, simulator_required(libero_sim_type):
+        raise ModuleNotFoundError(f"No module named '{libero_sim_type}'", name=libero_sim_type)
+
+    message = str(exc_info.value)
+    assert libero_package in message
+    assert libero_platform_marker in message
 
 
 class _NativeEnv:

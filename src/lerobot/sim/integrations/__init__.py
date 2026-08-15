@@ -28,8 +28,16 @@ observation.
 """
 
 import contextlib
+import sys
 from collections.abc import Iterator
 from importlib.metadata import metadata
+
+_LIBERO_SIM_TYPE = "libero"
+_LINUX_PLATFORM = "linux"
+_LIBERO_NON_LINUX_INSTALL = (
+    "the 'lerobot[libero]' extra omits 'hf-libero' because its "
+    "sys_platform == 'linux' marker does not match; use Linux"
+)
 
 
 @contextlib.contextmanager
@@ -43,10 +51,13 @@ def simulator_required(sim_type: str) -> Iterator[None]:
     except ModuleNotFoundError as error:
         if not error.name or error.name.startswith("lerobot"):
             raise
-        extras = metadata("lerobot").get_all("Provides-Extra") or []
-        install = (
-            f"pip install 'lerobot[{sim_type}]'" if sim_type.replace("_", "-") in extras else "install it"
-        )
+        if sim_type == _LIBERO_SIM_TYPE and sys.platform != _LINUX_PLATFORM:
+            install = _LIBERO_NON_LINUX_INSTALL
+        else:
+            extras = metadata("lerobot").get_all("Provides-Extra") or []
+            install = (
+                f"pip install 'lerobot[{sim_type}]'" if sim_type.replace("_", "-") in extras else "install it"
+            )
         message = f"The {sim_type} simulator is not installed ('{error.name}' is missing): {install}"
         # Plain Gymnasium envs have no Docker image; every other simulator does.
         if sim_type == "envhub":
