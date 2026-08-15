@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import abc
-import importlib
+import importlib.util
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -317,6 +317,19 @@ class HILSerlRobotEnvConfig(EnvConfig):
         return {}
 
 
+# The LIBERO simulator ships in the `hf-libero` package, which carries a
+# `sys_platform == 'linux'` marker in the `lerobot[libero]` extra. On non-Linux
+# platforms `pip install 'lerobot[libero]'` resolves cleanly but silently omits it,
+# so the failure would otherwise surface much later as a cryptic ModuleNotFoundError
+# from deep inside the `lerobot.envs.libero` import. See #4388.
+LIBERO_SIMULATOR_MISSING_MSG = (
+    "The LIBERO simulator is not installed. LIBERO is Linux-only: the 'hf-libero' "
+    "package carries a sys_platform == 'linux' marker, so `pip install 'lerobot[libero]'` "
+    "resolves cleanly but silently omits the simulator on non-Linux platforms. "
+    "Install it on Linux (or in a Linux container) to run LIBERO environments."
+)
+
+
 @EnvConfig.register_subclass("libero")
 @dataclass
 class LiberoEnv(EnvConfig):
@@ -426,6 +439,12 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        # Fail fast at env-construction time with an actionable message when the
+        # simulator was silently omitted (e.g. a non-Linux install), instead of
+        # letting a cryptic ModuleNotFoundError surface from the import below (#4388).
+        if importlib.util.find_spec("libero") is None:
+            raise ModuleNotFoundError(LIBERO_SIMULATOR_MISSING_MSG)
+
         from .libero import create_libero_envs
 
         if self.task is None:
