@@ -443,7 +443,7 @@ def test_dense_success_checks_only_final_progress(monkeypatch):
         ],
     ]
 
-    rewards = model.compute_progress(
+    rewards = model.compute_reward(
         _batch(
             batch_size=2,
             trajectory_length=3,
