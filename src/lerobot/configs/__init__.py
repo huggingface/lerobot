@@ -44,6 +44,7 @@ from .video import (
     depth_encoder_defaults,
     encoder_config_from_video_info,
     infer_depth_unit,
+    is_depth_map,
     rgb_encoder_defaults,
 )
 
@@ -75,6 +76,7 @@ __all__ = [
     # Factories
     "encoder_config_from_video_info",
     "infer_depth_unit",
+    "is_depth_map",
     # Constants
     "DEFAULT_DEPTH_UNIT",
     "DEPTH_METER_UNIT",

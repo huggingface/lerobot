@@ -211,6 +211,23 @@ class VLAJEPAModel(nn.Module):
             )
         return embodied_action_tokens, action_tokens
 
+    def _causal_video_embeddings(self, video_pixels: Tensor, tubelet_size: int, num_positions: int) -> Tensor:
+        """Encode `num_positions` leading temporal positions from only their own raw-frame prefix.
+
+        A single V-JEPA2 pass over the full clip lets bidirectional attention leak future frames
+        into every position's embedding, including the context positions used as predictor input
+        (#4153). Running one prefix-only pass per context position keeps position i blind to frames
+        after it, at the cost of `num_positions` encoder calls instead of one.
+        """
+        positions = []
+        for position in range(num_positions):
+            prefix = self.video_encoder.get_vision_features(
+                pixel_values_videos=video_pixels[:, : (position + 1) * tubelet_size]
+            )
+            tokens_per_position = prefix.shape[1] // (position + 1)
+            positions.append(prefix[:, -tokens_per_position:])
+        return torch.cat(positions, dim=1)
+
     def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
         """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
         # Match the world model's expected view count: pad with the first view, or trim extras.
@@ -231,12 +248,12 @@ class VLAJEPAModel(nn.Module):
             do_rescale=False,
         )["pixel_values_videos"]  # [B*V, T, C, H, W]
 
+        tubelet_size = self.video_encoder.config.tubelet_size
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
             # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
             video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
 
-        tubelet_size = self.video_encoder.config.tubelet_size
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
         if t_enc_total < 2:
@@ -245,7 +262,15 @@ class VLAJEPAModel(nn.Module):
         # Shift-by-one JEPA split: input_states = positions 0..T-2, gt_states = positions 1..T-1
         t_enc_ctx = t_enc_total - 1
         tokens_per_frame = video_embeddings.shape[1] // t_enc_total
-        input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
+        if self.config.causal_world_model_context:
+            # The shared pass above lets bidirectional attention leak future frames into the context
+            # positions used as predictor input (#4153). Recompute input_states causally instead;
+            # gt_states keeps the full-pass embeddings (a target encoder seeing full context is fine).
+            with torch.no_grad():
+                input_states = self._causal_video_embeddings(video_pixels, tubelet_size, t_enc_ctx)
+                input_states = torch.cat(torch.chunk(input_states, chunks=v, dim=0), dim=2)
+        else:
+            input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
         gt_states = video_embeddings[:, tokens_per_frame:, :]
 
         expected_actions = t_enc_ctx * self.config.num_action_tokens_per_timestep

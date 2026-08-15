@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,8 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_STATE
+
+logger = logging.getLogger(__name__)
 
 
 @PreTrainedConfig.register_subclass("vla_jepa")
@@ -84,6 +87,8 @@ class VLAJEPAConfig(PreTrainedConfig):
     world_model_loss_weight: float = 0.1
     jepa_tubelet_size: int = 2  # must match the encoder (e.g. 2 for vjepa2-vitl-fpc64-256)
     repeated_diffusion_steps: int = 8  # independent noise draws per batch item (CogACT-style)
+    # If True, encode the world-model context causally instead of slicing it from the leaky shared pass (#4153).
+    causal_world_model_context: bool = False
 
     resize_images_to: tuple[int, int] | None = None
     binarize_gripper_action: bool = True
@@ -107,6 +112,14 @@ class VLAJEPAConfig(PreTrainedConfig):
         if self.freeze_qwen and self.enable_world_model:
             # freezing qwen backbone makes world model training irrelevant since no grad flows
             self.enable_world_model = False
+        if self.freeze_qwen:
+            logger.warning(
+                "freeze_qwen=True: action-head conditioning is read from %s positions at the last "
+                "decoder layer. These learned readouts stay fixed from the source checkpoint and "
+                "cannot adapt to a new embodiment while the Qwen backbone is frozen, so conditioning "
+                "quality may degrade under domain shift.",
+                self.embodied_action_token,
+            )
         if self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
         if self.num_video_frames < 2 * self.jepa_tubelet_size:
