@@ -83,7 +83,7 @@ SYSTEM_PROMPT = (
     "Your reasoning process MUST BE enclosed within <think></think> tags and "
     "should include detailed reasoning. "
     "Your final answer MUST BE enclosed within <answer></answer> tags and "
-    "should be an integer, positive or negative, representing the current "
+    "should be a integer (positive or negative) representing current "
     "task progress percentage. "
     "Example output format: "
     "<think>[detailed reasoning process]</think>"
@@ -107,7 +107,6 @@ EXTERNAL_AND_WRIST_PROMPT = (
 EXTERNAL_ONLY_PROMPT = (
     "Here is an image containing multiple camera views of a robot attempting "
     "to complete a task. "
-    "The views are from an external camera. "
     "The views from the very first timestep are shown to the left. "
     "The views from the previous timestep are shown in the middle. "
     "The views from the current timestep are shown to the right. "
@@ -456,6 +455,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             images=images,
             padding=True,
             padding_side="left",
+            add_special_tokens=False,
             return_tensors="pt",
         )
 
@@ -503,32 +503,53 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         return generation_kwargs
 
+    def compute_reward(self, batch: dict[str, Any]) -> Tensor:
+        """Return one final reward per trajectory.
+
+        Returns:
+            Tensor of shape ``(B,)``.
+        """
+        return self._compute_rewards(batch, dense=False)
+
+    def compute_progress(self, batch: dict[str, Any]) -> Tensor:
+        """Return scaled progress for every original trajectory timestep.
+
+        Sampled anchor predictions are linearly interpolated back to the original
+        trajectory length.
+
+        Returns:
+            Tensor of shape ``(B, T)``.
+        """
+        if self.config.reward_output != "progress":
+            raise ValueError(
+                "compute_progress() requires reward_output='progress'; "
+                "use compute_reward() for binary success output."
+            )
+
+        return self._compute_rewards(batch, dense=True)
+
     @torch.no_grad()
-    def compute_reward(
+    def _compute_rewards(
         self,
         batch: dict[str, Any],
         *,
         dense: bool = False,
     ) -> Tensor:
-        """Compute SOLE-R1 rewards for one or more trajectories.
+        """Generate SOLE-R1 progress for one or more batched trajectories.
 
-        The first sampled timestep is assigned 0% progress. Every subsequent
-        prediction is generated sequentially because SOLE-R1 conditions the
-        current estimate on the previous predicted progress.
+        The first sampled timestep is assigned 0% progress. Subsequent predictions
+        are generated sequentially because each prediction conditions on the
+        preceding predicted progress.
 
         Args:
             batch: Output of ``SOLER1CompositeProcessorStep``. Composite images
-                have shape ``(B, S, C, H, W)``. Direct unbatched calls may use
-                ``(S, C, H, W)``.
-            dense: When ``False``, return the final reward for each trajectory,
-                matching LeRobot's standard reward-model API. When ``True`` and
-                ``reward_output="progress"``, interpolate sampled predictions
-                back to every original trajectory timestep.
+                must have shape ``(B, S, C, H, W)``.
+            dense: Whether to interpolate sampled progress predictions back to
+                every original trajectory timestep.
 
         Returns:
-            With ``dense=False``, a tensor of shape ``(B,)``. With dense progress,
-            a tensor of shape ``(B, T)``. A direct unbatched call drops the leading
-            batch dimension.
+            A tensor of shape ``(B,)`` when ``dense=False`` or ``(B, T)`` when
+            ``dense=True``.
         """
 
         if SOLER1_COMPOSITE_IMAGE_KEY not in batch:
@@ -543,10 +564,6 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         if not isinstance(composites, Tensor):
             composites = torch.as_tensor(composites)
-
-        unbatched = composites.ndim == 4
-        if unbatched:
-            composites = composites.unsqueeze(0)
 
         self._validate_composite_shape(composites)
 
@@ -625,6 +642,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
         # Sampled positions are evaluated sequentially because position
         # s is conditioned on the prediction at sampled position s - 1.
+        self.eval()
         for sampled_position in range(
             1,
             sampled_length,
@@ -647,7 +665,6 @@ class SOLER1RewardModel(PreTrainedRewardModel):
 
             input_length = encoded["input_ids"].shape[1]
 
-            self.model.eval()
             generated_ids = self.model.generate(
                 **encoded,
                 **self._generation_kwargs(),
@@ -733,7 +750,7 @@ class SOLER1RewardModel(PreTrainedRewardModel):
             dense=dense,
         )
 
-        return rewards.squeeze(0) if unbatched else rewards
+        return rewards
 
     def _format_rewards(
         self,

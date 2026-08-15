@@ -44,7 +44,7 @@ cfg = SOLER1Config(
     external_image_key="observation.images.top",
     wrist_image_key="observation.images.wrist"
 )
-reward_model = SOLER1RewardModel(cfg)
+reward_model = SOLER1RewardModel(cfg).to(cfg.device).eval()
 ```
 
 ### Use the reward factory
@@ -86,11 +86,11 @@ first | previous | current
 With two cameras, the external-camera row is placed above the wrist-camera
 row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
 
-### Compute rewards (sparse or dense)
+### Compute reward (sparse)
 
-`compute_reward(batch, dense=True)` returns progress for every original
+`compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every
 trajectory timestep. If `downsample_to` is set, SOLE-R1 evaluates only the
-sampled anchors and linearly interpolates between them.
+uniformly downsampled frames and linearly interpolates between them to fill in rewards for all trajectory timesteps.
 
 ```python
 import torch
@@ -116,8 +116,8 @@ reward = reward_model.compute_reward(batch)
 print(reward.shape)  # (1,)
 
 # Dense reward for all timesteps
-rewards = reward_model.compute_reward(batch, dense=True)
-print(rewards.shape) # (1, 8)
+progress = reward_model.compute_progress(batch)
+print(progress.shape)  # (1, 8)
 ```
 
 The first sampled timestep is defined as `0%`. Later timesteps are evaluated
@@ -143,7 +143,7 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
 
-dataset_repo_id = "lerobot/libero_10_image"
+dataset_repo_id = "lerobot/libero_10"
 output_path = Path("soler1_progress.parquet")
 
 cfg = make_reward_model_config(
@@ -179,7 +179,7 @@ for episode_index in tqdm(range(dataset.num_episodes)):
     batch = preprocessor({cfg.external_image_key: frames, cfg.task_key: task,})
 
     with torch.no_grad():
-        progress = (model.compute_reward(batch, dense=True).squeeze(0).cpu().numpy())
+        progress = (model.compute_progress(batch).squeeze(0).cpu().numpy())
 
     for frame_index, value in enumerate(progress):
         all_indices.append(start + frame_index)
@@ -220,7 +220,7 @@ uv run examples/dataset/create_progress_videos.py \
 
 ## Success output
 
-SOLE-R1 can return a binary trajectory-level success value:
+SOLE-R1 will return a binary trajectory-level success value from `compute_reward` if the following configuration is set:
 
 ```python
 cfg = make_reward_model_config(
