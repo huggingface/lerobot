@@ -592,10 +592,6 @@ def main():
     print(f"Creating {policy_type} policy configuration...")
     policy_config = make_policy_config(policy_type, **cleaned_config)
 
-    # config.json was loaded via plain json.load(), so JSON arrays became lists even for
-    # fields declared as tuples (e.g. DiffusionConfig.crop_shape). draccus later fails to
-    # re-encode those as JSON ("Couldn't encode <item>") because the runtime value doesn't
-    # match the declared tuple type. Coerce them back before the config is saved.
     type_hints = typing.get_type_hints(type(policy_config))
     for field in dataclasses.fields(policy_config):
         value = getattr(policy_config, field.name)
