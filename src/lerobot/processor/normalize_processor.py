@@ -184,6 +184,12 @@ class _NormalizationMixin:
         the plain feature name (e.g. `'action'`). A prefixed key is remapped onto the
         feature name when exactly one candidate exists.
 
+        Candidates are matched on the `'.buffer.'` marker rather than on the feature name
+        alone: every legacy normalization buffer is named `'buffer_<feature>'`, so a
+        dataset-scoped key always carries `'.buffer.'` between the dataset and the feature.
+        Matching the bare suffix would also accept an unrelated feature that merely ends
+        with the same segment (e.g. `'observation.state'` for the key `'state'`).
+
         Raises:
             ValueError: If several datasets provide stats for the same feature. Picking
                 one of them would silently apply the wrong statistics, so the caller has
@@ -195,7 +201,9 @@ class _NormalizationMixin:
         for key in sorted(required):
             if key in self._tensor_stats:
                 continue
-            candidates = sorted(k for k in self._tensor_stats if k.endswith(f".{key}") and k not in required)
+            candidates = sorted(
+                k for k in self._tensor_stats if k.endswith(f".buffer.{key}") and k not in required
+            )
             if len(candidates) == 1:
                 self._tensor_stats[key] = self._tensor_stats.pop(candidates[0])
             elif len(candidates) > 1:

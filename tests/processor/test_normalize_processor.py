@@ -2169,6 +2169,31 @@ def test_load_state_dict_resolves_single_dataset_prefix():
     torch.testing.assert_close(unnormalized, torch.tensor([11.0, 11.0, 11.0]))
 
 
+def test_load_state_dict_does_not_resolve_across_unrelated_feature_suffix(caplog):
+    """A longer feature name ending with a shorter one must not be mistaken for its stats.
+
+    Candidates are matched on the `.buffer.` marker that every legacy normalization buffer
+    carries, so `observation.state` is not a candidate for a feature named `state`.
+    """
+    features = {"state": PolicyFeature(FeatureType.STATE, (3,))}
+    norm_map = {FeatureType.STATE: NormalizationMode.MEAN_STD}
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats={})
+
+    # Not a dataset-prefixed buffer for `state` — it is a different feature entirely.
+    state_dict = {
+        "observation.state.mean": torch.tensor([10.0, 10.0, 10.0]),
+        "observation.state.std": torch.tensor([2.0, 2.0, 2.0]),
+    }
+
+    with caplog.at_level(logging.WARNING):
+        normalizer.load_state_dict(state_dict)
+
+    # `state` stays unresolved rather than silently adopting `observation.state`'s values.
+    assert "state" not in normalizer._tensor_stats
+    assert "observation.state" in normalizer._tensor_stats
+    assert "state" in caplog.text
+
+
 def test_load_state_dict_raises_on_ambiguous_dataset_prefixes():
     unnormalizer = _action_only_step(UnnormalizerProcessorStep)
     state_dict = _prefixed_action_state_dict(["so100", "so100-blue", "so100-red"])
