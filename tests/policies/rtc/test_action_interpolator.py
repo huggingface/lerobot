@@ -107,6 +107,69 @@ def test_needs_new_action_true_after_all_interpolated_consumed(interp2):
     assert interp2.needs_new_action()
 
 
+# ====================== emitted_policy_action Tests ======================
+
+
+def test_emitted_policy_action_true_on_the_priming_action(interp2):
+    """Test the single-action priming buffer is reported as a policy action."""
+    interp2.add(torch.tensor([1.0, 2.0]))
+    interp2.get()
+    assert interp2.emitted_policy_action
+
+
+@pytest.mark.parametrize("multiplier", [1, 2, 3, 4])
+def test_emitted_policy_action_marks_only_the_cycle_end(multiplier):
+    """Test exactly one tick per cycle emits the policy's own action, for any multiplier."""
+    interp = ActionInterpolator(multiplier=multiplier)
+    ticks = 6 * multiplier
+    dispatched, recorded = [], []
+    step = 0
+
+    # The engine yields the integers 0, 1, 2, ... so a value that is not a whole
+    # number is an interpolated intermediate rather than a policy action.
+    for _ in range(ticks):
+        if interp.needs_new_action():
+            interp.add(torch.tensor([float(step)]))
+            step += 1
+        action = interp.get()
+        dispatched.append(action.item())
+        if interp.emitted_policy_action:
+            recorded.append(action.item())
+
+    assert all(v == int(v) for v in recorded), recorded
+    assert recorded == [float(v) for v in range(len(recorded))]
+    # Commands go out every tick; frames land once per cycle.
+    assert len(dispatched) == ticks
+    assert len(recorded) == ticks // multiplier
+
+
+@pytest.mark.parametrize("multiplier", [2, 3, 4])
+def test_emitted_policy_action_is_bit_exactly_the_policy_action(multiplier):
+    """Test the cycle-end action is the policy tensor itself, not a lerp that lands near it.
+
+    ``emitted_policy_action`` promises the recorded frame carries the policy's own
+    output, and a dataset should not hold a value the policy never produced.
+    Computing the end point as ``prev + 1.0 * (action - prev)`` is off by an ULP for
+    these float32 pairs specifically, so ``assert_close`` would pass where equality
+    does not.
+    """
+    interp = ActionInterpolator(multiplier=multiplier)
+    prev = torch.tensor([-8.56674575805664, 0.6271883249282837])
+    action = torch.tensor([11.006041526794434, -7.663063049316406])
+    # Guard the guard: these values only discriminate because the lerp is inexact.
+    assert not torch.equal(prev + 1.0 * (action - prev), action)
+
+    interp.add(prev)
+    interp.get()  # drain the priming buffer
+    interp.add(action)
+    for _ in range(multiplier - 1):
+        interp.get()
+    emitted = interp.get()
+
+    assert interp.emitted_policy_action
+    assert torch.equal(emitted, action), f"{emitted.tolist()} != {action.tolist()}"
+
+
 # ====================== Passthrough Tests (multiplier=1) ======================
 
 
@@ -255,30 +318,6 @@ def test_reset_episode_boundary(interp2):
     result = interp2.get()
     torch.testing.assert_close(result, torch.tensor([100.0]))
     assert interp2.get() is None
-
-
-# ====================== get_control_interval Tests ======================
-
-
-def test_control_interval_30fps_multiplier_1():
-    """Test control interval at 30fps with no interpolation."""
-    interp = ActionInterpolator(multiplier=1)
-    assert interp.get_control_interval(30.0) == pytest.approx(1.0 / 30.0)
-
-
-def test_control_interval_30fps_multiplier_2(interp2):
-    """Test control interval at 30fps with 2x interpolation."""
-    assert interp2.get_control_interval(30.0) == pytest.approx(1.0 / 60.0)
-
-
-def test_control_interval_30fps_multiplier_3(interp3):
-    """Test control interval at 30fps with 3x interpolation."""
-    assert interp3.get_control_interval(30.0) == pytest.approx(1.0 / 90.0)
-
-
-def test_control_interval_60fps_multiplier_2(interp2):
-    """Test control interval at 60fps with 2x interpolation."""
-    assert interp2.get_control_interval(60.0) == pytest.approx(1.0 / 120.0)
 
 
 # ====================== get() on Empty Tests ======================

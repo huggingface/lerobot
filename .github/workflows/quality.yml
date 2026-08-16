@@ -43,12 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v6
         with:
           python-version: '3.12'
 
@@ -56,3 +56,41 @@ jobs:
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd  # v3.0.1
         with:
           extra_args: --all-files --show-diff-on-failure --color=always
+
+  # This job runs the examples in our docstrings and validates the doctest allowlist.
+  # See docs/source/writing_docstrings.mdx for the standard these enforce.
+  doc-checks:
+    name: Run Documentation Checks (Doctests)
+    runs-on: ubuntu-latest
+    env:
+      # Examples that need a physical robot, a serial port or a Hub download are skipped by content.
+      # Everything else has to actually run. See src/lerobot/utils/doctest_utils.py.
+      SKIP_HARDWARE_DOCTEST: "1"
+      SKIP_CUDA_DOCTEST: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          version: "0.11.30"
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra test --extra dataset
+
+      - name: Check the doctest list is sorted and its paths exist
+        run: make check-doctest-list
+
+      - name: Check documented arguments match their signatures
+        run: make check-docstrings
+
+      - name: Check docstring coverage has not regressed
+        run: uv run --with interrogate interrogate --config=pyproject.toml
+
+      - name: Run doctests
+        run: make doctest

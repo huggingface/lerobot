@@ -44,6 +44,17 @@ Usage examples
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
 
+    # Interactive session: the robot stays idle until /start is typed, then /subtask,
+    # /vqa, /autosteer, /reset and /stop drive the run from stdin. With
+    # --strategy.type=sentry it also records, labeling frames with their task.
+    lerobot-rollout \\
+        --strategy.type=base \\
+        --policy.path=lerobot/act_koch_real \\
+        --robot.type=koch_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --task="pick up cube" \\
+        --interactive=true
+
     # Base mode — RTC inference for slow VLAs (Pi0, Pi0.5, SmolVLA)
     lerobot-rollout \\
         --strategy.type=base \\
@@ -145,6 +156,9 @@ Usage examples
         --dataset.rgb_encoder.vcodec=h264 \\
         --dataset.rgb_encoder.preset=fast \\
         --dataset.rgb_encoder.extra_options={"tune": "film", "profile:v": "high", "bf": 2}
+
+    # Stream to Foxglove instead of Rerun:
+    # add --display_mode=foxglove, then connect the Foxglove app to ws://127.0.0.1:8765.
 """
 
 import logging
@@ -162,6 +176,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     omx_follower,
     openarm_follower,
     reachy2,
@@ -169,7 +184,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
+from lerobot.rollout import (
+    InteractiveSession,
+    LinkedEvent,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -190,7 +211,7 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
-from lerobot.utils.visualization_utils import init_rerun
+from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +222,20 @@ def rollout(cfg: RolloutConfig):
     init_logging()
 
     if cfg.display_data:
-        logger.info("Initializing Rerun visualization (ip=%s, port=%s)", cfg.display_ip, cfg.display_port)
-        init_rerun(session_name="rollout", ip=cfg.display_ip, port=cfg.display_port)
+        logger.info(
+            "Initializing %s visualization (ip=%s, port=%s)",
+            cfg.display_mode,
+            cfg.display_ip,
+            cfg.display_port,
+        )
+        init_visualization(cfg.display_mode, session_name="rollout", ip=cfg.display_ip, port=cfg.display_port)
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
+    if cfg.interactive:
+        # /reset and /stop end the control loop via the local flag; process signals still
+        # propagate through the parent event.
+        shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
     ctx = build_rollout_context(cfg, shutdown_event)
@@ -221,12 +251,18 @@ def rollout(cfg: RolloutConfig):
 
     try:
         strategy.setup(ctx)
-        logger.info("Rollout setup complete, starting rollout...")
-        strategy.run(ctx)
+        if cfg.interactive:
+            logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
+            InteractiveSession(strategy, ctx).run()
+        else:
+            logger.info("Rollout setup complete, starting rollout...")
+            strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
         strategy.teardown(ctx)
+        if cfg.display_data:
+            shutdown_visualization(cfg.display_mode)
 
     logger.info("Rollout finished")
 
