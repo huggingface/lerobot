@@ -117,7 +117,7 @@ lerobot-rollout \
     --strategy.num_episodes=20 \
     --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
     --robot.type=bi_openarm_follower \
-    --teleop.type=openarm_mini \
+    --teleop.type=bi_openarm_mini \
     --dataset.repo_id=${HF_USER}/rollout_hil_data \
     --dataset.single_task="Fold the T-shirt"
 ```
@@ -149,13 +149,14 @@ lerobot-rollout \
 
 Foot pedal input is also supported via `--strategy.input_device=pedal`. Configure pedal codes with `--strategy.pedal.*` flags.
 
-| Flag                                 | Description                                             |
-| ------------------------------------ | ------------------------------------------------------- |
-| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)   |
-| `--strategy.record_autonomous`       | Record autonomous frames too (default: false)           |
-| `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)               |
-| `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard) |
-| `--teleop.type`                      | **Required.** Teleoperator type                         |
+| Flag                                 | Description                                                                                                                                                    |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--strategy.num_episodes`            | Number of correction episodes to record (default: 10)                                                                                                          |
+| `--strategy.record_autonomous`       | Record autonomous frames too (default: false)                                                                                                                  |
+| `--strategy.upload_every_n_episodes` | Push to Hub every N episodes (default: 5)                                                                                                                      |
+| `--strategy.input_device`            | Input device: `keyboard` or `pedal` (default: keyboard)                                                                                                        |
+| `--strategy.smooth_handover`         | Smoothly hand control over at pause / correction start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
+| `--teleop.type`                      | **Required.** Teleoperator type                                                                                                                                |
 
 ### Episodic (`--strategy.type=episodic`)
 
@@ -186,14 +187,15 @@ Teleop is optional — if omitted the robot holds its position during the reset 
 | `←` (left)  | Discard episode and re-record it |
 | `ESC`       | Stop the recording session       |
 
-| Flag                                            | Description                                                                |
-| ----------------------------------------------- | -------------------------------------------------------------------------- |
-| `--dataset.num_episodes`                        | Number of episodes to record                                               |
-| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                              |
-| `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                    |
-| `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                    |
-| `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes        |
-| `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior. |
+| Flag                                            | Description                                                                                                                                                |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.num_episodes`                        | Number of episodes to record                                                                                                                               |
+| `--dataset.episode_time_s`                      | Duration of each recording episode in seconds                                                                                                              |
+| `--dataset.reset_time_s`                        | Duration of the reset phase between episodes in seconds                                                                                                    |
+| `--teleop.type`                                 | Optional. Teleoperator to drive the robot during resets                                                                                                    |
+| `--strategy.reset_to_initial_position`          | Whether to reset the robot to its initial position between episodes                                                                                        |
+| `--strategy.smooth_leader_to_follower_handover` | Whether to turn on or off the leader -> follower smooth handover behavior.                                                                                 |
+| `--strategy.smooth_handover`                    | Smoothly hand control to the teleop at reset start (default: true). Disable for clutch-style teleops that re-reference at the current robot pose on engage |
 
 ---
 
@@ -239,6 +241,121 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
 ---
 
+## Interactive Sessions
+
+Add `--interactive=true` to drive the rollout from the terminal instead of starting immediately. Hardware connects and the policy loads as usual, but **the robot stays still until you type `/start`** — useful when you want to position the scene first, re-instruct the policy between attempts, or run several takes without paying the load time again.
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+| Command             | Action                                                                                                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | Start (or restart) the policy control loop                                                                                                                                         |
+| `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
+| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
+| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
+| `/stop`             | End the session and run the normal shutdown routines                                                                                                                               |
+| `/help`             | List the commands                                                                                                                                                                  |
+
+```text
+> /start
+Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
+> /subtask put the cube in the box
+Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /vqa is the cube inside the box?
+Asked: 'is the cube inside the box?' — answering from the next observation...
+Q: is the cube inside the box?
+A: No — the cube is on the table to the left of the box.
+> /reset
+Task restored to 'pick up the cube'
+Resetting — returning the robot to its initial position...
+Robot reset — holding at initial position. /start to run.
+> /stop
+```
+
+Lines starting with `>` are what you type; the session renders no prompt of its own.
+
+`Ctrl-C` still shuts down as usual, and closing stdin (`Ctrl-D`, or the end of a piped script) ends the session — so a piped script must keep stdin open for the intended duration:
+
+```bash
+(printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
+```
+
+**`/subtask`** applies from the next inference. With `--inference.type=sync` the precomputed chunk actions are dropped, so the switch lands on the next control tick; with `rtc` the new chunk is blended over the previous chunk's leftover prefix, so it lands within one inference and the motion stays continuous (with `--inference.rtc.enabled=false` the queued chunk drains first, delaying the switch by up to one chunk).
+
+With `--use_torch_compile=true`, an instruction that tokenizes to a different length can trigger a recompilation, pausing inference for as long as the original warm-up took — leave compilation off if you expect to re-instruct often.
+
+`/vqa` and `/autosteer` need a policy with a text head (an implementation of `PreTrainedPolicy.generate_text()`); no built-in LeRobot policy ships one yet, so both commands are refused unless yours does.
+
+**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Text generation is far slower than a control tick, so the robot drains its queued actions and then holds position until the answer lands, and that time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
+
+**`/autosteer`** hands the policy a goal and asks it for the next subtask every `--autosteer_interval_s` seconds (default 10), applying each one through the same path as `/subtask` and announcing it in the chat. Every query is a full text generation, so the interval is a cost knob: lower values re-plan sooner but spend more of the loop generating text instead of acting. Plan progress lives in the policy, not the rollout, so the plan dies with the segment; the sequencer also stops on `/reset`, `/subtask`, `/autosteer off`, and the first planning failure.
+
+**Logs below ERROR are muted while the session runs** so routine output doesn't interleave with what you're typing; errors and fatal inference failures still show, and normal logging resumes when the session ends. The [cadence summaries](#cadence-reporting) are printed in the chat instead, and running without `--interactive` gets you the live log back.
+
+Sessions work over SSH and on headless machines — no display server needed.
+
+**Recording while interactive.** `--strategy.type=sentry` also accepts `--interactive=true` and records continuously while you steer: each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. Frames carry the task provenance of the action actually sent, so actions already queued or interpolated under the old task keep the old label.
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_cube_sessions \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+The other recording strategies (episodic, DAgger, highlight) are not supported: they bind their own keyboard controls and finalize the dataset when `run()` exits, so they cannot be restarted segment by segment.
+
+### Programmatic control
+
+`RolloutController` exposes the same operations as a library API — thread-safe `start()` / `reset()` / `stop()` / `set_task()` plus a `RolloutEvent` callback, with no stdin, printing or log muting attached:
+
+```python
+from threading import Event, Thread
+
+from lerobot.rollout import (
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+    build_rollout_context,
+    create_strategy,
+)
+
+parent = Event()  # your application's shutdown signal
+ctx = build_rollout_context(cfg, LinkedEvent(parent))  # loads policy, connects robot
+strategy = create_strategy(cfg.strategy)
+strategy.setup(ctx)
+
+controller = RolloutController(strategy, ctx, on_event=print)  # or your own observer
+serve_thread = Thread(target=controller.serve)  # serve() blocks; run it where you like
+serve_thread.start()
+
+controller.start()                        # robot starts executing the policy
+controller.set_task("grab the red cube")  # re-instruct mid-run
+controller.reset()                        # stop movement, return home, stay warm
+controller.stop()                         # end serve()
+
+serve_thread.join()
+strategy.teardown(ctx)  # teardown stays with the caller
+```
+
+`RolloutController` requires the context's shutdown event to be a `LinkedEvent`, built as above: the controller ends run segments through its local flag, while your `parent` event still forces a full shutdown. Set `play_sounds=False` unless you want the vocal announcements.
+
+---
+
 ## Common Flags
 
 | Flag                              | Description                                                       | Default |
@@ -247,16 +364,45 @@ See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 | `--robot.type`                    | **Required.** Robot type (e.g. `so100_follower`, `koch_follower`) | --      |
 | `--robot.port`                    | Serial port for the robot                                         | --      |
 | `--robot.cameras`                 | Camera configuration (JSON dict)                                  | --      |
-| `--fps`                           | Control loop frequency                                            | 30      |
-| `--duration`                      | Run time in seconds (0 = infinite)                                | 0       |
+| `--fps`                           | Policy inference and dataset recording frequency                  | 30      |
+| `--duration`                      | Run time in seconds (0 = infinite; per segment if interactive)    | 0       |
 | `--device`                        | Torch device (`cpu`, `cuda`, `mps`)                               | auto    |
 | `--task`                          | Task description (used when no dataset is provided)               | --      |
 | `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
 | `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
-| `--interpolation_multiplier`      | Action interpolation factor                                       | 1       |
+| `--interpolation_multiplier`      | Robot commands per policy action (control at `fps × N` Hz)        | 1       |
+| `--interactive`                   | Chat session on stdin; robot idles until `/start` (base, sentry)  | false   |
 | `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
 | `--resume`                        | Resume a previous recording session                               | false   |
 | `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+
+---
+
+## Cadence Reporting
+
+Every strategy reports what its control loop actually achieved, as do `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` — they all pace through the same timer. Each saved episode gets a one-line digest, and when the loop ends — including on `Ctrl-C` — a block covering the whole run:
+
+```
+Cadence (episode 1): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/598 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence (episode 2): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/599 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slot, 33.3 ms cycle budget): 2400 ticks, 1197 cycles judged
+  effective cadence: 29.84 Hz policy / 59.67 Hz commands over 40.2 s measured
+  cycles over the 33.3 ms work budget: 12/1197 (1.0%) — work mean 18.7 ms, worst 48.1 ms
+  ticks over their 16.7 ms slot: 40/2400 (costs interpolation smoothness only)
+  loop-body steps (share of measured work):
+    observe      mean   3.13 ms · worst   9.00 ms ·  31.7% of work · 2400 calls
+    process_obs  mean   0.50 ms · worst   1.00 ms ·   5.1% of work · 2400 calls
+    infer        mean   5.18 ms · worst  40.00 ms ·  52.4% of work · 2400 calls
+    send         mean   0.40 ms · worst   0.40 ms ·   4.1% of work · 2400 calls
+    record       mean   0.67 ms · worst 620.00 ms ·   6.8% of work · 2402 calls
+  pacing headroom: 7.4 ms slept per tick on average (max 13.0 ms) — near zero means the loop is saturated
+```
+
+Read it top-down: **effective cadence** is what you got against `--fps`, **cycles over budget** is how often the loop could not hold it, the **step breakdown** says where the time went, and **pacing headroom** near zero means there is nothing left to absorb a slow tick. A high `infer` share points at the policy or the device; a high `observe` share points at the cameras. A step's `worst` far above its `mean` is a one-off — above, `record` is 0.67 ms per frame and the 620 ms outlier is the blocking `save_episode` that closed an episode.
+
+A _cycle_ here is one policy action's worth of ticks (`--interpolation_multiplier` of them). Only whole cycles over the `1/fps` budget can cost you frames; a single tick overrunning its slot only makes the interpolated motion less smooth, which is why the two are counted separately. Without interpolation a cycle is a single tick, so the report drops the distinction and counts ticks throughout.
+
+In [interactive sessions](#interactive-sessions) each `/start` segment owns its own timer, so the report lands in the chat once per segment (`/reset`, `/stop`, or `--duration`) rather than once per process.
 
 ---
 

@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Sequence
@@ -42,11 +41,18 @@ from pathlib import Path
 from typing import Any, TypedDict, TypeVar, cast
 
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file, save_file
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvAction, EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.hub import HubMixin
 
@@ -206,6 +212,10 @@ class ProcessorStep(ABC):
         """
         return None
 
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save non-tensor assets and map constructor arguments to relative paths."""
+        return {}
+
     def reset(self) -> None:
         """Resets the internal state of the processor step, if any."""
         return None
@@ -281,6 +291,11 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
     before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
+    _serialized_state_filenames: tuple[str | None, ...] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     def __call__(self, data: TInput) -> TOutput:
         """Processes input data through the full pipeline.
@@ -338,30 +353,108 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             transition = processor_step(transition)
             yield transition
 
-    def _save_pretrained(self, save_directory: Path, **kwargs):
-        """Internal method to comply with `HubMixin`'s saving mechanism.
+    def _get_sanitized_name(self) -> str:
+        """Return a filename-safe version of the pipeline name.
 
-        This method does the actual saving work and is called by HubMixin.save_pretrained.
+        Returns:
+            The lower-cased pipeline name with non-alphanumeric characters replaced by underscores.
         """
-        config_filename = kwargs.pop("config_filename", None)
+        return re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
 
-        # Sanitize the pipeline name to create a valid filename prefix.
-        sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
+    @staticmethod
+    def _get_state_filename(
+        *,
+        step_index: int,
+        registry_name: str | None,
+        sanitized_name: str,
+    ) -> str:
+        """Return the safetensors filename for one stateful processor step.
 
-        if config_filename is None:
-            config_filename = f"{sanitized_name}.json"
+        Args:
+            step_index: The index of the processor step in this pipeline.
+            registry_name: The registered processor step name, if available.
+            sanitized_name: The filename-safe pipeline name.
 
-        config: dict[str, Any] = {
+        Returns:
+            The state filename used by the existing disk serialization format.
+        """
+        if registry_name:
+            return f"{sanitized_name}_step_{step_index}_{registry_name}.safetensors"
+
+        return f"{sanitized_name}_step_{step_index}.safetensors"
+
+    @staticmethod
+    def _get_state_key(state_filename: str) -> str:
+        """Return the in-memory state key for a serialized state filename.
+
+        Args:
+            state_filename: The `.safetensors` filename from the serialized config.
+
+        Returns:
+            The state key used by the in-memory pipeline state dictionary.
+        """
+        return state_filename.removesuffix(".safetensors")
+
+    @staticmethod
+    def _get_state_filenames_from_config(loaded_config: dict[str, Any]) -> tuple[str | None, ...]:
+        """Return serialized state filenames in step order.
+
+        Args:
+            loaded_config: A validated processor pipeline config.
+
+        Returns:
+            A tuple containing each step's serialized state filename, or None for stateless steps.
+        """
+        return tuple(step_entry.get("state_file") for step_entry in loaded_config["steps"])
+
+    def _get_state_filenames_for_loading(self) -> tuple[str | None, ...]:
+        """Return expected state filenames in step order for `load_state_dict()`.
+
+        Returns:
+            The preserved serialized state filenames when available, otherwise filenames derived from
+            current non-empty step state.
+        """
+        if self._serialized_state_filenames is not None and len(self._serialized_state_filenames) == len(
+            self.steps
+        ):
+            return self._serialized_state_filenames
+
+        sanitized_name = self._get_sanitized_name()
+        state_filenames: list[str | None] = []
+
+        for step_index, processor_step in enumerate(self.steps):
+            step_state_dict = processor_step.state_dict()
+            if not step_state_dict:
+                state_filenames.append(None)
+                continue
+
+            registry_name = getattr(processor_step.__class__, "_registry_name", None)
+            state_filenames.append(
+                self._get_state_filename(
+                    step_index=step_index,
+                    registry_name=registry_name,
+                    sanitized_name=sanitized_name,
+                )
+            )
+
+        return tuple(state_filenames)
+
+    def get_config(self) -> dict[str, Any]:
+        """Return the JSON-serializable pipeline configuration.
+
+        Returns:
+            A dictionary with the same content that `save_pretrained()` writes as JSON.
+        """
+        sanitized_name = self._get_sanitized_name()
+        pipeline_config: dict[str, Any] = {
             "name": self.name,
             "steps": [],
         }
 
-        # Iterate through each step to build its configuration entry.
         for step_index, processor_step in enumerate(self.steps):
             registry_name = getattr(processor_step.__class__, "_registry_name", None)
-
             step_entry: dict[str, Any] = {}
-            # Prefer registry name for portability, otherwise fall back to full class path.
+
             if registry_name:
                 step_entry["registry_name"] = registry_name
             else:
@@ -369,31 +462,126 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     f"{processor_step.__class__.__module__}.{processor_step.__class__.__name__}"
                 )
 
-            # Save step configuration if `get_config` is implemented.
-            if hasattr(processor_step, "get_config"):
-                step_entry["config"] = processor_step.get_config()
+            step_entry["config"] = processor_step.get_config()
 
-            # Save step state if `state_dict` is implemented and returns a non-empty dict.
-            if hasattr(processor_step, "state_dict"):
-                state = processor_step.state_dict()
-                if state:
-                    # Clone tensors to avoid modifying the original state.
-                    cloned_state = {key: tensor.clone() for key, tensor in state.items()}
+            step_state_dict = processor_step.state_dict()
+            if step_state_dict:
+                step_entry["state_file"] = self._get_state_filename(
+                    step_index=step_index,
+                    registry_name=registry_name,
+                    sanitized_name=sanitized_name,
+                )
 
-                    # Create a unique filename for the state file.
-                    if registry_name:
-                        state_filename = f"{sanitized_name}_step_{step_index}_{registry_name}.safetensors"
-                    else:
-                        state_filename = f"{sanitized_name}_step_{step_index}.safetensors"
+            pipeline_config["steps"].append(step_entry)
 
-                    save_file(cloned_state, os.path.join(str(save_directory), state_filename))
-                    step_entry["state_file"] = state_filename
+        return pipeline_config
 
-            config["steps"].append(step_entry)
+    def state_dict(self) -> dict[str, dict[str, torch.Tensor]]:
+        """Return pipeline state tensors grouped by state key.
 
-        # Write the main configuration JSON file.
-        with open(os.path.join(str(save_directory), config_filename), "w") as file_pointer:
-            json.dump(config, file_pointer, indent=2)
+        Returns:
+            A dictionary mapping suffixless state keys to cloned step state dictionaries.
+        """
+        sanitized_name = self._get_sanitized_name()
+        pipeline_state_dict: dict[str, dict[str, torch.Tensor]] = {}
+
+        for step_index, processor_step in enumerate(self.steps):
+            step_state_dict = processor_step.state_dict()
+            if not step_state_dict:
+                continue
+
+            registry_name = getattr(processor_step.__class__, "_registry_name", None)
+            state_filename = self._get_state_filename(
+                step_index=step_index,
+                registry_name=registry_name,
+                sanitized_name=sanitized_name,
+            )
+            state_key = self._get_state_key(state_filename)
+            pipeline_state_dict[state_key] = {
+                tensor_name: tensor.clone() for tensor_name, tensor in step_state_dict.items()
+            }
+
+        return pipeline_state_dict
+
+    def load_state_dict(
+        self,
+        state_dict: dict[str, dict[str, torch.Tensor]],
+    ) -> None:
+        """Load pipeline state tensors into the existing steps.
+
+        Args:
+            state_dict: A dictionary mapping suffixless state keys to step state dictionaries.
+
+        Raises:
+            KeyError: If loading finds missing expected state or unexpected extra state.
+        """
+        expected_state_filenames = self._get_state_filenames_for_loading()
+        used_state_keys: set[str] = set()
+
+        for step_index, (processor_step, state_filename) in enumerate(
+            zip(self.steps, expected_state_filenames, strict=True)
+        ):
+            if state_filename is None:
+                continue
+
+            state_key = self._get_state_key(state_filename)
+            if state_key not in state_dict:
+                raise KeyError(
+                    f"Missing state key '{state_key}' for processor step {step_index}. "
+                    f"Available state keys: {sorted(state_dict.keys())}"
+                )
+
+            processor_step.load_state_dict(state_dict[state_key])
+            used_state_keys.add(state_key)
+
+        unexpected_state_keys = set(state_dict) - used_state_keys
+        if unexpected_state_keys:
+            expected_state_key_set = {
+                self._get_state_key(state_filename)
+                for state_filename in expected_state_filenames
+                if state_filename is not None
+            }
+            raise KeyError(
+                f"Unexpected processor state keys: {sorted(unexpected_state_keys)}. "
+                f"Expected state keys: {sorted(expected_state_key_set)}"
+            )
+
+    def _save_pretrained(self, save_directory: Path, **kwargs) -> None:
+        """Internal method to comply with `HubMixin`'s saving mechanism.
+
+        This method does the actual saving work and is called by HubMixin.save_pretrained.
+        """
+        config_filename = kwargs.pop("config_filename", None)
+        sanitized_name = self._get_sanitized_name()
+
+        if config_filename is None:
+            config_filename = f"{sanitized_name}.json"
+
+        pipeline_config = self.get_config()
+        pipeline_state_dict = self.state_dict()
+
+        for processor_step, step_entry in zip(self.steps, pipeline_config["steps"], strict=True):
+            artifacts = processor_step.save_artifacts(save_directory)
+            if artifacts:
+                for config_key, relative_path in artifacts.items():
+                    artifact_path = Path(relative_path)
+                    if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                        raise ValueError(
+                            f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                        )
+                    if not (save_directory / artifact_path).exists():
+                        raise FileNotFoundError(
+                            f"Processor step did not save declared artifact '{relative_path}'"
+                        )
+                    step_entry["config"][config_key] = artifact_path.as_posix()
+                step_entry["artifacts"] = artifacts
+
+        for state_key, step_state_dict in pipeline_state_dict.items():
+            state_filename = f"{state_key}.safetensors"
+            save_file(step_state_dict, save_directory / state_filename)
+
+        with open(save_directory / config_filename, "w") as file_pointer:
+            json.dump(pipeline_config, file_pointer, indent=2)
 
     def save_pretrained(
         self,
@@ -552,6 +740,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ProcessorMigrationError: If the model requires migration to processor format.
         """
         model_id = str(pretrained_model_name_or_path)
+        model_path = Path(model_id)
+        is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {
             "force_download": force_download,
             "resume_download": resume_download,
@@ -570,19 +760,67 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # 3. Build steps with overrides
         steps, validated_overrides = cls._build_steps_with_overrides(
-            loaded_config, overrides or {}, model_id, base_path, hub_download_kwargs
+            loaded_config,
+            overrides or {},
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+            is_local_source,
         )
 
         # 4. Validate that all overrides were used
         cls._validate_overrides_used(validated_overrides, loaded_config)
 
         # 5. Construct and return the final pipeline instance
-        return cls(
+        pipeline = cls(
             steps=steps,
             name=loaded_config.get("name", "DataProcessorPipeline"),
             to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
             to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
         )
+        pipeline._serialized_state_filenames = cls._get_state_filenames_from_config(loaded_config)
+        return pipeline
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        *,
+        state_dict: dict[str, dict[str, torch.Tensor]] | None = None,
+        overrides: dict[str, Any] | None = None,
+        to_transition: Callable[[TInput], EnvTransition] | None = None,
+        to_output: Callable[[EnvTransition], TOutput] | None = None,
+    ) -> DataProcessorPipeline[TInput, TOutput]:
+        """Build a pipeline from an in-memory config and optional state tensors.
+
+        Args:
+            config: A config dictionary with the same structure as the saved processor JSON.
+            state_dict: Optional in-memory pipeline state grouped by suffixless state key.
+            overrides: Optional constructor overrides keyed by registry name or class name.
+            to_transition: Optional converter from input data to `EnvTransition`.
+            to_output: Optional converter from `EnvTransition` to output data.
+
+        Returns:
+            A processor pipeline built from the config and optional state.
+        """
+        cls._validate_loaded_config("<in-memory config>", config, "<in-memory config>")
+
+        steps, remaining_override_keys = cls._build_steps_from_config(config, overrides or {})
+        cls._validate_overrides_used(remaining_override_keys, config)
+
+        pipeline = cls(
+            steps=steps,
+            name=config.get("name", "DataProcessorPipeline"),
+            to_transition=to_transition or cast(Callable[[TInput], EnvTransition], batch_to_transition),
+            to_output=to_output or cast(Callable[[EnvTransition], TOutput], transition_to_batch),
+        )
+        pipeline._serialized_state_filenames = cls._get_state_filenames_from_config(config)
+
+        if state_dict is not None:
+            pipeline.load_state_dict(state_dict)
+
+        return pipeline
 
     @classmethod
     def _load_config(
@@ -661,14 +899,19 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     return json.load(f), Path(config_path).parent
 
             except Exception as e:
+                if cls._hub_model_requires_migration(model_id, hub_download_kwargs):
+                    revision = hub_download_kwargs.get("revision")
+                    cls._suggest_processor_migration(
+                        model_id,
+                        f"Config file '{config_filename}' not found on the Hugging Face Hub",
+                        revision=revision if isinstance(revision, str) else None,
+                    )
                 raise FileNotFoundError(
                     f"Could not find '{config_filename}' on the HuggingFace Hub at '{model_id}'"
                 ) from e
 
     @classmethod
-    def _validate_loaded_config(
-        cls, model_id: str, loaded_config: dict[str, Any], config_filename: str
-    ) -> None:
+    def _validate_loaded_config(cls, model_id: str, loaded_config: Any, config_filename: str) -> None:
         """Validate that a config was loaded and is a valid processor config.
 
         This method validates processor config format with intelligent migration detection:
@@ -688,7 +931,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Args:
             model_id: The model identifier (used for migration detection)
-            loaded_config: The loaded config dictionary (guaranteed non-None)
+            loaded_config: The loaded config value to validate (may be non-dict)
             config_filename: The config filename that was loaded (for error messages)
 
         Raises:
@@ -702,9 +945,14 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     model_id,
                     f"Config file '{config_filename}' is not a valid processor configuration",
                 )
+            loaded_config_description = (
+                list(loaded_config.keys())
+                if isinstance(loaded_config, dict)
+                else type(loaded_config).__name__
+            )
             raise ValueError(
                 f"Config file '{config_filename}' is not a valid processor configuration. "
-                f"Expected a config with 'steps' field, but got: {list(loaded_config.keys())}"
+                f"Expected a config with 'steps' field, but got: {loaded_config_description}"
             )
 
     @classmethod
@@ -714,13 +962,20 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any],
         model_id: str,
         base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build all processor steps with overrides and state loading.
 
         This method orchestrates the complete step construction pipeline:
 
         **For each step in loaded_config["steps"]**:
+
+        0. **Artifact Resolution** (via _resolve_artifact_paths):
+           - Resolve declared relative artifact paths against a local checkpoint
+           - Download declared artifacts when loading the pipeline from the Hub
+           - Reject absolute paths and path traversal before step construction
 
         1. **Class Resolution** (via _resolve_step_class):
            - **If "registry_name" exists**: Look up in ProcessorStepRegistry
@@ -738,7 +993,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         3. **State Loading** (via _load_step_state):
            - **If step has "state_file"**: Load tensor state from .safetensors
            - **Local first**: Check base_path/state_file.safetensors
-           - **Hub fallback**: Download state file if not found locally
+           - **Hub fallback**: Download state file if the pipeline was loaded from the Hub
            - **Optional**: Only load if step has load_state_dict method
 
         4. **Override Tracking**:
@@ -755,7 +1010,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             overrides: User-provided parameter overrides (keyed by class/registry name)
             model_id: The model identifier (needed for Hub state file downloads)
             base_path: Local directory path for finding state files
+            config_filename: Processor config path, used as the repository-relative
+                base for state files and declared artifacts.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Returns:
             Tuple of (instantiated_steps_list, unused_override_keys)
@@ -766,26 +1024,108 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             ImportError: If a step class cannot be imported or found in registry
             ValueError: If a step cannot be instantiated with its configuration
         """
-        steps: list[ProcessorStep] = []
-        override_keys = set(overrides.keys())
+        loaded_config = deepcopy(loaded_config)
+        cls._resolve_artifact_paths(
+            loaded_config,
+            model_id,
+            base_path,
+            config_filename,
+            hub_download_kwargs,
+        )
+        steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
+
+        for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):
+            cls._load_step_state(
+                step_instance,
+                step_entry,
+                model_id,
+                base_path,
+                config_filename,
+                hub_download_kwargs,
+                is_local_source,
+            )
+
+        return steps, remaining_override_keys
+
+    @classmethod
+    def _resolve_artifact_paths(
+        cls,
+        loaded_config: dict[str, Any],
+        model_id: str,
+        base_path: Path | None,
+        config_filename: str,
+        hub_download_kwargs: dict[str, Any],
+    ) -> None:
+        """Resolve declared relative processor artifacts before step construction.
+
+        Args:
+            loaded_config: Mutable processor configuration containing step artifact declarations.
+            model_id: Local checkpoint path or Hub model identifier.
+            base_path: Local directory containing the resolved processor configuration.
+            config_filename: Processor config path, whose parent is the artifact root on the Hub.
+            hub_download_kwargs: Authentication, revision, and cache arguments for Hub downloads.
+
+        Raises:
+            ValueError: If a declared artifact path is absolute or escapes the checkpoint.
+            FileNotFoundError: If a declared artifact cannot be found locally or downloaded.
+        """
+        is_local = Path(model_id).is_dir() or Path(model_id).is_file()
 
         for step_entry in loaded_config["steps"]:
-            # 1. Get step class and key
+            artifacts = step_entry.get("artifacts", {})
+            for config_key, relative_path in artifacts.items():
+                artifact_path = Path(relative_path)
+                if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                    raise ValueError(
+                        f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
+                    )
+
+                resolved_path = base_path / artifact_path if base_path is not None else artifact_path
+                if not resolved_path.exists() and not is_local:
+                    repository_path = Path(config_filename).parent / artifact_path
+                    snapshot_download(
+                        repo_id=model_id,
+                        repo_type="model",
+                        allow_patterns=f"{repository_path.as_posix()}/**",
+                        **hub_download_kwargs,
+                    )
+
+                if not resolved_path.exists():
+                    step_name = step_entry.get("registry_name", step_entry.get("class", "unknown"))
+                    raise FileNotFoundError(
+                        f"Missing processor artifact '{relative_path}' for step '{step_name}' "
+                        f"next to '{config_filename}'. Checkpoint artifacts are incomplete."
+                    )
+                step_entry["config"][config_key] = str(resolved_path)
+
+    @classmethod
+    def _build_steps_from_config(
+        cls,
+        loaded_config: dict[str, Any],
+        overrides: dict[str, Any],
+    ) -> tuple[list[ProcessorStep], set[str]]:
+        """Build processor steps from config without loading tensor state.
+
+        Args:
+            loaded_config: The loaded processor configuration.
+            overrides: User-provided constructor overrides keyed by step key.
+
+        Returns:
+            A tuple containing instantiated steps and override keys that did not match a step.
+        """
+        processor_steps: list[ProcessorStep] = []
+        remaining_override_keys = set(overrides.keys())
+
+        for step_entry in loaded_config["steps"]:
             step_class, step_key = cls._resolve_step_class(step_entry)
+            processor_step = cls._instantiate_step(step_entry, step_class, step_key, overrides)
 
-            # 2. Instantiate step with overrides
-            step_instance = cls._instantiate_step(step_entry, step_class, step_key, overrides)
+            if step_key in remaining_override_keys:
+                remaining_override_keys.discard(step_key)
 
-            # 3. Load step state if available
-            cls._load_step_state(step_instance, step_entry, model_id, base_path, hub_download_kwargs)
+            processor_steps.append(processor_step)
 
-            # 4. Track used overrides
-            if step_key in override_keys:
-                override_keys.discard(step_key)
-
-            steps.append(step_instance)
-
-        return steps, override_keys
+        return processor_steps, remaining_override_keys
 
     @classmethod
     def _resolve_step_class(cls, step_entry: dict[str, Any]) -> tuple[type[ProcessorStep], str]:
@@ -917,7 +1257,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         step_entry: dict[str, Any],
         model_id: str,
         base_path: Path | None,
+        config_filename: str,
         hub_download_kwargs: dict[str, Any],
+        is_local_source: bool = False,
     ) -> None:
         """Load state dictionary for a processor step if available.
 
@@ -936,7 +1278,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
            - **Use case**: Loading from local saved model directory
 
         2. **Hub download fallback**: Download state file from repository
-           - **When triggered**: Local file not found or base_path is None
+           - **When triggered**: Local file not found and the pipeline source is a Hub repo
            - **Process**: Use hf_hub_download with same parameters as config
            - **Example**: Download "normalize_step_0.safetensors" from "user/repo"
            - **Result**: Downloaded to local cache, path returned
@@ -956,7 +1298,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_entry: The step configuration dictionary (may contain "state_file")
             model_id: The model identifier (used for Hub downloads if needed)
             base_path: Local directory path for finding state files (None for Hub-only)
+            config_filename: Processor config path, whose parent is used to resolve
+                repository-relative state files on the Hub.
             hub_download_kwargs: Parameters for hf_hub_download (tokens, cache, etc.)
+            is_local_source: Whether model_id resolved to a local directory or config file.
 
         Note:
             This method modifies step_instance in-place and returns None.
@@ -970,11 +1315,17 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         # Try local file first
         if base_path and (base_path / state_filename).exists():
             state_path = str(base_path / state_filename)
+        elif is_local_source:
+            state_path = base_path / state_filename if base_path else Path(state_filename)
+            raise FileNotFoundError(
+                f"State file '{state_filename}' was not found for local processor pipeline "
+                f"'{model_id}' at '{state_path}'."
+            )
         else:
             # Download from Hub
             state_path = hf_hub_download(
                 repo_id=model_id,
-                filename=state_filename,
+                filename=(Path(config_filename).parent / state_filename).as_posix(),
                 repo_type="model",
                 **hub_download_kwargs,
             )
@@ -1096,7 +1447,63 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
-    def _is_processor_config(cls, config: dict) -> bool:
+    def _hub_model_requires_migration(cls, model_id: str, hub_download_kwargs: dict[str, Any]) -> bool:
+        """Check whether a Hub repository contains a legacy LeRobot policy config.
+
+        A missing processor file is not sufficient evidence by itself: the repository
+        may be private, unavailable, or unrelated to LeRobot. This method therefore
+        fetches the policy's ``config.json`` and checks for the feature declarations
+        that identify a LeRobot policy checkpoint. Any lookup or parsing failure is
+        ignored so the original processor-file error remains visible.
+
+        Args:
+            model_id: Hugging Face Hub model repository ID.
+            hub_download_kwargs: Authentication, cache, and revision arguments used
+                for the original processor lookup.
+
+        Returns:
+            True when the repository has a legacy LeRobot policy configuration.
+        """
+        try:
+            config_path = hf_hub_download(
+                repo_id=model_id,
+                filename="config.json",
+                repo_type="model",
+                **hub_download_kwargs,
+            )
+            with open(config_path) as f:
+                config = json.load(f)
+        except Exception:
+            # This is a best-effort diagnostic called while handling the original
+            # processor lookup failure, which must remain the visible error.
+            return False
+
+        feature_types = {feature_type.value for feature_type in FeatureType}
+
+        def is_policy_feature_mapping(features: Any) -> bool:
+            return (
+                isinstance(features, dict)
+                and bool(features)
+                and all(
+                    isinstance(name, str)
+                    and isinstance(feature, dict)
+                    and feature.get("type") in feature_types
+                    and isinstance(feature.get("shape"), list)
+                    and all(isinstance(dimension, int) for dimension in feature["shape"])
+                    for name, feature in features.items()
+                )
+            )
+
+        return (
+            isinstance(config, dict)
+            and isinstance(config.get("type"), str)
+            and bool(config["type"])
+            and is_policy_feature_mapping(config.get("input_features"))
+            and is_policy_feature_mapping(config.get("output_features"))
+        )
+
+    @classmethod
+    def _is_processor_config(cls, config: Any) -> bool:
         """Check if config follows DataProcessorPipeline format.
 
         This method validates the processor configuration structure:
@@ -1147,6 +1554,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Returns:
             True if config follows valid DataProcessorPipeline format, False otherwise
         """
+        if not isinstance(config, dict):
+            return False
+
         # Must have a "steps" field with a list of step configurations
         if not isinstance(config.get("steps"), list):
             return False
@@ -1165,7 +1575,13 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return True
 
     @classmethod
-    def _suggest_processor_migration(cls, model_path: str | Path, original_error: str) -> None:
+    def _suggest_processor_migration(
+        cls,
+        model_path: str | Path,
+        original_error: str,
+        *,
+        revision: str | None = None,
+    ) -> None:
         """Raise migration error when we detect JSON files but no processor configs.
 
         This method is called when migration detection determines that a model
@@ -1200,6 +1616,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         Args:
             model_path: Path to the model directory needing migration
             original_error: The error that triggered migration detection (for context)
+            revision: Optional Hub revision containing the legacy checkpoint.
 
         Raises:
             ProcessorMigrationError: Always raised (this method never returns normally)
@@ -1207,6 +1624,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         migration_command = (
             f"python src/lerobot/processor/migrate_policy_normalization.py --pretrained-path {model_path}"
         )
+        if revision is not None:
+            migration_command += f" --revision {revision}"
 
         raise ProcessorMigrationError(model_path, migration_command, original_error)
 

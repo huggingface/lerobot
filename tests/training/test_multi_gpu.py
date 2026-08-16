@@ -21,8 +21,10 @@ This module tests multi-GPU training functionality with accelerate.
 These tests are designed to run on machines with 2+ GPUs and are executed
 in the nightly CI workflow.
 
-The tests automatically generate accelerate configs and launch training
-with subprocess to properly test the distributed training environment.
+The tests launch `lerobot-train` through `accelerate launch` in a subprocess to properly test the
+distributed training environment. Accelerate is used as a plain launcher only: the topology comes
+from `--parallelism.*` flags, never from an accelerate YAML config (see
+`lerobot.distributed.factory.guard_against_env_interference`).
 """
 
 import os
@@ -58,41 +60,25 @@ def download_dataset(repo_id, episodes):
     print(f"Dataset {repo_id} downloaded successfully")
 
 
-def run_accelerate_training(config_args, num_processes=4, temp_dir=None):
+def run_accelerate_training(config_args, num_processes=4):
     """
     Helper function to run training with accelerate launch.
+
+    `accelerate launch` is used as a plain launcher (no `--config_file`): it only sets the
+    rendezvous env vars, and the layout — DDP by default, FSDP with `--parallelism.dp_shard` —
+    comes from `config_args`.
 
     Args:
         config_args: List of config arguments to pass to lerobot_train.py
         num_processes: Number of processes (GPUs) to use
-        temp_dir: Temporary directory for outputs
 
     Returns:
         subprocess.CompletedProcess result
     """
-
-    config_path = Path(temp_dir) / "accelerate_config.yaml"
-
-    # Write YAML config
-    with open(config_path, "w") as f:
-        f.write("compute_environment: LOCAL_MACHINE\n")
-        f.write("distributed_type: MULTI_GPU\n")
-        f.write("mixed_precision: 'no'\n")
-        f.write(f"num_processes: {num_processes}\n")
-        f.write("use_cpu: false\n")
-        f.write("gpu_ids: all\n")
-        f.write("downcast_bf16: 'no'\n")
-        f.write("machine_rank: 0\n")
-        f.write("main_training_function: main\n")
-        f.write("num_machines: 1\n")
-        f.write("rdzv_backend: static\n")
-        f.write("same_network: true\n")
-
     cmd = [
         "accelerate",
         "launch",
-        "--config_file",
-        str(config_path),
+        f"--num_processes={num_processes}",
         "-m",
         "lerobot.scripts.lerobot_train",
     ] + config_args
@@ -134,14 +120,14 @@ class TestMultiGPUTraining:
                 f"--output_dir={output_dir}",
                 "--batch_size=4",
                 "--steps=10",
-                "--eval_freq=-1",
+                "--env_eval_freq=-1",
                 "--log_freq=5",
                 "--save_freq=10",
                 "--seed=42",
                 "--num_workers=0",
             ]
 
-            result = run_accelerate_training(config_args, num_processes=4, temp_dir=temp_dir)
+            result = run_accelerate_training(config_args, num_processes=4)
 
             # Check that training completed successfully
             assert result.returncode == 0, (
@@ -177,14 +163,14 @@ class TestMultiGPUTraining:
                 f"--output_dir={output_dir}",
                 "--batch_size=4",
                 "--steps=20",
-                "--eval_freq=-1",
+                "--env_eval_freq=-1",
                 "--log_freq=5",
                 "--save_freq=10",
                 "--seed=42",
                 "--num_workers=0",
             ]
 
-            result = run_accelerate_training(config_args, num_processes=2, temp_dir=temp_dir)
+            result = run_accelerate_training(config_args, num_processes=2)
 
             assert result.returncode == 0, (
                 f"Training failed:\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
@@ -211,3 +197,67 @@ class TestMultiGPUTraining:
                 # Verify optimizer state exists
                 optimizer_state = training_state_dir / "optimizer_state.safetensors"
                 assert optimizer_state.exists(), f"No optimizer state in checkpoint {checkpoint_dir}"
+
+    def test_fsdp_optimizer_save_and_resume(self):
+        """
+        Test that FSDP saves the sharded optimizer state and can resume from it.
+
+        Trains a few steps under FSDP2 (`--parallelism.dp_shard=2`), verifies the DCP optimizer
+        shards are written next to the rest of the training state, then resumes from the
+        checkpoint for more steps and checks it completes without shape/key errors in the
+        resharding optimizer load path.
+        """
+        # Pre-download dataset to avoid race conditions
+        download_dataset("lerobot/pusht", episodes=[0])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "outputs"
+
+            config_args = [
+                "--dataset.repo_id=lerobot/pusht",
+                "--dataset.episodes=[0]",
+                "--policy.type=act",
+                "--policy.device=cuda",
+                "--policy.push_to_hub=false",
+                f"--output_dir={output_dir}",
+                "--parallelism.dp_shard=2",
+                "--batch_size=4",
+                "--steps=10",
+                "--env_eval_freq=-1",
+                "--log_freq=5",
+                "--save_freq=10",
+                "--seed=42",
+                "--num_workers=0",
+            ]
+
+            result = run_accelerate_training(config_args, num_processes=2)
+            assert result.returncode == 0, (
+                f"FSDP training failed:\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+            )
+
+            # Under sharding the optimizer state is written as DCP shards (proves the save
+            # collective ran); the model artifact stays a gathered model.safetensors at the
+            # default --checkpoint_format=safetensors.
+            checkpoint_dir = output_dir / "checkpoints" / "last"
+            training_state_dir = checkpoint_dir / "training_state"
+            optimizer_shards = training_state_dir / "optimizer_0"
+            assert optimizer_shards.is_dir(), f"FSDP optimizer shards not saved in {training_state_dir}"
+            assert any(optimizer_shards.iterdir()), f"FSDP optimizer shard dir is empty: {optimizer_shards}"
+            assert (checkpoint_dir / "pretrained_model" / "model.safetensors").exists(), (
+                f"Gathered model weights not saved in {checkpoint_dir}"
+            )
+
+            # Resume from the checkpoint for more steps. A successful run proves the DCP optimizer
+            # load accepts the saved state and reshards it without shape/key errors. The topology
+            # is restored from train_config.json, so --parallelism.* is not repeated here.
+            resume_config = checkpoint_dir / "pretrained_model" / "train_config.json"
+            resume_args = [
+                f"--config_path={resume_config}",
+                "--resume=true",
+                "--steps=20",
+            ]
+            resume_result = run_accelerate_training(resume_args, num_processes=2)
+            assert resume_result.returncode == 0, (
+                f"FSDP resume failed:\nSTDOUT:\n{resume_result.stdout}\n\nSTDERR:\n{resume_result.stderr}"
+            )
+            assert "End of training" in resume_result.stdout or "End of training" in resume_result.stderr

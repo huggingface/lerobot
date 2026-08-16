@@ -15,18 +15,15 @@
 # limitations under the License.
 
 import pytest
+import torch
 
+import lerobot.utils.logging_utils as logging_utils
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 
 
 @pytest.fixture
 def mock_metrics():
     return {"loss": AverageMeter("loss", ":.3f"), "accuracy": AverageMeter("accuracy", ":.2f")}
-
-
-class MockAccelerator:
-    def __init__(self, num_processes: int):
-        self.num_processes = num_processes
 
 
 def test_average_meter_initialization():
@@ -87,14 +84,14 @@ def test_metrics_tracker_step(mock_metrics):
     assert tracker.epochs == tracker.samples / 1000
 
 
-def test_metrics_tracker_initialization_with_accelerator(mock_metrics):
+def test_metrics_tracker_initialization_with_dp_world(mock_metrics):
     tracker = MetricsTracker(
         batch_size=32,
         num_frames=1000,
         num_episodes=50,
         metrics=mock_metrics,
         initial_step=10,
-        accelerator=MockAccelerator(num_processes=2),
+        dp_world_size=2,
     )
     assert tracker.steps == 10
     assert tracker.samples == 10 * 32 * 2
@@ -102,14 +99,14 @@ def test_metrics_tracker_initialization_with_accelerator(mock_metrics):
     assert tracker.epochs == tracker.samples / 1000
 
 
-def test_metrics_tracker_step_with_accelerator(mock_metrics):
+def test_metrics_tracker_step_with_dp_world(mock_metrics):
     tracker = MetricsTracker(
         batch_size=32,
         num_frames=1000,
         num_episodes=50,
         metrics=mock_metrics,
         initial_step=5,
-        accelerator=MockAccelerator(num_processes=2),
+        dp_world_size=2,
     )
     tracker.step()
     assert tracker.steps == 6
@@ -157,3 +154,88 @@ def test_metrics_tracker_reset_averages(mock_metrics):
     tracker.reset_averages()
     assert tracker.loss.avg == 0.0
     assert tracker.accuracy.avg == 0.0
+
+
+def test_average_meter_invalid_reduction():
+    with pytest.raises(ValueError):
+        AverageMeter("loss", reduction="median")
+
+
+def test_average_meter_reduction_stored():
+    meter = AverageMeter("updt_s", reduction="max")
+    assert meter.reduction == "max"
+
+
+def test_metrics_tracker_reduce_across_ranks_outside_distributed():
+    metrics = {"update_s": AverageMeter("update_s", reduction="max")}
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.update_s = 0.5
+    tracker.reduce_across_ranks()  # no-op without an initialized process group
+    assert tracker.update_s.avg == 0.5
+
+
+def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
+    captured = {}
+
+    def fake_all_reduce(tensor, op):
+        captured["op"] = op
+        captured["values"] = tensor.clone()
+        # Pretend the slowest rank reported 0.9 instead of this rank's 0.4.
+        tensor.fill_(0.9)
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 4)
+    monkeypatch.setattr(logging_utils.dist, "all_reduce", fake_all_reduce)
+
+    metrics = {
+        "loss": AverageMeter("loss"),  # reduction="none" -> not touched
+        "update_s": AverageMeter("update_s", reduction="max"),
+    }
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.loss = 1.0
+    tracker.update_s = 0.4
+    tracker.reduce_across_ranks()
+
+    assert captured["op"] == logging_utils.dist.ReduceOp.MAX
+    assert torch.allclose(captured["values"], torch.tensor([0.4], device=captured["values"].device))
+    assert tracker.update_s.avg == pytest.approx(0.9)
+    # Metrics without a reduction stay untouched.
+    assert tracker.loss.avg == 1.0
+    # Invariant: avg == sum / count must hold after reduce, so subsequent .update() calls
+    # accumulate against the cluster view rather than the stale per-rank sum.
+    meter = tracker.update_s
+    assert meter.sum / meter.count == pytest.approx(meter.avg)
+
+
+def test_metrics_tracker_update_metrics_registers_and_averages():
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics={})
+    tracker.update_metrics({"latent_loss": 0.2, "action_loss": 0.4})
+    tracker.update_metrics({"latent_loss": 0.4, "action_loss": 0.6})
+
+    # New keys are auto-registered as mean-reduced meters and averaged over the window.
+    assert tracker.metrics["latent_loss"].reduction == "mean"
+    assert tracker.metrics["latent_loss"].avg == pytest.approx(0.3)
+    assert tracker.metrics["action_loss"].avg == pytest.approx(0.5)
+    assert tracker.to_dict()["latent_loss"] == pytest.approx(0.3)
+
+
+def test_metrics_tracker_update_metrics_skips_non_numeric():
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics={})
+    tracker.update_metrics({"loss": 0.5, "head_mode": "sparse", "enabled": True})
+
+    # strings and bools ignored
+    assert "loss" in tracker.metrics
+    assert "head_mode" not in tracker.metrics
+    assert "enabled" not in tracker.metrics
+
+
+def test_metrics_tracker_update_metrics_does_not_override_caller_meter():
+    # A policy that echoes "loss" in its output dict must not overwrite the caller-owned,
+    # already-aggregated loss meter.
+    metrics = {"loss": AverageMeter("loss", ":.3f", reduction="mean")}
+    tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.loss = 1.0  # caller-set optimized loss
+    tracker.update_metrics({"loss": 99.0, "latent_loss": 0.2})
+
+    assert tracker.metrics["loss"].avg == pytest.approx(1.0)  # snapshot ignored
+    assert tracker.metrics["latent_loss"].avg == pytest.approx(0.2)

@@ -47,6 +47,8 @@ class ACTPolicy(PreTrainedPolicy):
 
     config_class = ACTConfig
     name = "act"
+    # FSDP2 wrap units: one unit per transformer layer of both stacks.
+    _fsdp_wrap_modules = ["ACTEncoderLayer", "ACTDecoderLayer"]
 
     def __init__(
         self,
@@ -148,7 +150,7 @@ class ACTPolicy(PreTrainedPolicy):
         l1_loss = (abs_err * valid_mask).sum() / num_valid.clamp_min(1)
 
         loss_dict = {"l1_loss": l1_loss.item()}
-        if self.config.use_vae:
+        if self.config.use_vae and log_sigma_x2_hat is not None:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.

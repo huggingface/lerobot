@@ -11,31 +11,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
 import dataclasses
 import logging
 import os
-from importlib.resources import files
+import warnings
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
-import packaging
-import safetensors
-from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
+from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
+from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.constants import ACTION
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.import_utils import _peft_available, require_package
 
 from .utils import log_model_loading_keys
 
+if TYPE_CHECKING or _peft_available:
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
+else:
+    PEFT_TYPE_TO_CONFIG_MAPPING = None
+    PeftType = None
+    get_peft_model = None
+
+if TYPE_CHECKING:
+    from lerobot.configs.train import TrainPipelineConfig
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
 T = TypeVar("T", bound="PreTrainedPolicy")
+
+# Pinned far above any policy's total size so save_torch_state_dict always emits exactly one
+# `model.safetensors` (no shards, no index) — a constant, not a computed byte count.
+_SINGLE_FILE_SHARD_SIZE = "1TB"
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -49,6 +65,26 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     config_class: None
     name: None
+
+    # --- declarative parallelism/acceleration surface ----------------------------------------
+    # Module CLASS names forming the FSDP2 wrap units (and, once wired, the activation-
+    # checkpointing units). Resolved onto the accelerate plugin right before
+    # `accelerator.prepare()` by `lerobot.distributed.set_fsdp_wrap_modules`; sharded training
+    # with no wrap source anywhere fails loudly instead of silently wrapping only the root.
+    _fsdp_wrap_modules: ClassVar[list[str] | None] = None
+    # Non-`forward` entry points that must trigger FSDP2 unshard/reshard hooks when called on a
+    # sharded policy (registered post-prepare via `torch.distributed.fsdp
+    # .register_fsdp_forward_method`); calling them unregistered crashes on mixed Tensor/DTensor.
+    _fsdp_forward_methods: ClassVar[tuple[str, ...]] = ("select_action", "predict_action_chunk")
+    # Capability gate for the (future) activation-checkpointing wiring.
+    supports_gradient_checkpointing: ClassVar[bool] = False
+    # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
+    # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
+    _cp_plan: ClassVar[dict[str, Any] | None] = None
+    # Attribute names `drop_queued_actions` clears: a `populate_queues`-style `_queues` dict
+    # and a bare `_action_queue` deque. A chunking policy using another name must extend this
+    # ClassVar (or override the method), otherwise dropping the queue silently does nothing.
+    _action_queue_attrs: ClassVar[tuple[str, ...]] = ("_queues", "_action_queue")
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -66,11 +102,46 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
         if not getattr(cls, "name", None):
             raise TypeError(f"Class {cls.__name__} must define 'name'")
+        # The rollout stack gates text queries on supports_text_generation(), so a
+        # generate_text() override without it is unreachable. Compared through the MRO, so an
+        # override inherited from a conforming parent counts.
+        if (
+            cls.generate_text is not PreTrainedPolicy.generate_text
+            and cls.supports_text_generation is PreTrainedPolicy.supports_text_generation
+        ):
+            raise TypeError(
+                f"{cls.__name__} provides generate_text() but not supports_text_generation(). "
+                "Override supports_text_generation() too (returning True, or a "
+                "checkpoint-conditional value), otherwise the text head is never used."
+            )
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        self.config._save_pretrained(save_directory)
+        """Serialize this policy's parameters (and config) into `save_directory`.
+
+        Sharding is handled internally: under FSDP2 the full state dict is gathered through a
+        COLLECTIVE, so when the policy is sharded this method (via `save_pretrained`) must be
+        called on EVERY rank — a rank-0-gated call deadlocks. File writes happen on the main
+        process only, in all layouts (single, DDP, sharded).
+
+        Args:
+            save_directory (Path): Target directory for the policy config (`config.json`) and the
+                safetensors weight file(s).
+        """
+        # Lazy imports: the persistence layer pulls in lerobot.distributed only when saving.
+        from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
+        from lerobot.distributed.utils import is_main_process
+
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+        if is_sharded_module(model_to_save):
+            logging.info("Gathering the full state dict from all ranks (sharded policy).")
+        state_dict = full_model_state_dict(model_to_save)  # collective when sharded; {} off-main
+        if not state_dict or not is_main_process():
+            # Sharded: the gather materializes on the main rank only (emptiness check).
+            # Non-sharded multi-rank (DDP): every rank holds a full dict — the explicit rank
+            # gate prevents N ranks racing on the same files. Single process: never taken.
+            return
+        self.config._save_pretrained(save_directory)
+        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=_SINGLE_FILE_SHARD_SIZE)
 
     @classmethod
     def from_pretrained(
@@ -135,26 +206,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        # Create base kwargs
-        kwargs = {"strict": strict}
-
-        # Add device parameter for newer versions that support it
-        if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
-            kwargs["device"] = map_location
-
-        # Load the model with appropriate kwargs
-        missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = load_model_as_safetensor(
+            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+        )
         log_model_loading_keys(missing_keys, unexpected_keys)
-
-        # For older versions, manually move to device if needed
-        if "device" not in kwargs and map_location != "cpu":
-            logging.warning(
-                "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                " This means that the model is loaded on 'cpu' first and then copied to the device."
-                " This leads to a slower loading time."
-                " Please update safetensors to version 0.4.3 or above for improved performance."
-            )
-            model.to(map_location)
         return model
 
     @abc.abstractmethod
@@ -171,6 +226,44 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Does things like clearing caches.
         """
         raise NotImplementedError
+
+    def drop_queued_actions(self) -> None:
+        """Discard actions precomputed by earlier ``select_action`` calls.
+
+        Forces a fresh forward pass on the next ``select_action`` so a mid-episode conditioning
+        change (e.g. a new instruction) takes effect at once instead of after the queue drains.
+        Unlike :meth:`reset`, the rest of the episode state is kept.  Call it from the thread
+        that calls ``select_action``.  Clears the queues named in :attr:`_action_queue_attrs`;
+        a policy that keeps no action queue inherits a no-op.
+        """
+        for attr in self._action_queue_attrs:
+            queue = getattr(self, attr, None)
+            if isinstance(queue, dict):
+                # populate_queues-style dict: clear only ACTION, not the observation history.
+                if ACTION in queue:
+                    queue[ACTION].clear()
+            elif queue is not None:
+                queue.clear()
+
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
+
+    def supports_text_generation(self) -> bool:
+        """Whether this policy implements :meth:`generate_text` (override both together)."""
+        return False
+
+    def generate_text(self, batch: dict[str, Any]) -> str:
+        """Run the policy's text head on a preprocessed observation batch.
+
+        The request rides on ``batch`` as complementary data (:data:`~lerobot.utils.constants.QUERY_KIND`
+        / ``QUERY_TEXT``); a ``next_subtask`` reply is fed straight into ``set_task``, so it must be
+        exactly one subtask, not a plan or a numbered list.  Returns the generated text, and must not
+        mutate action-producing state (queues, observation history).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no text head — it cannot answer questions or plan subtasks."
+        )
 
     # TODO(aliberts, rcadene): split into 'forward' and 'compute_loss'?
     @abc.abstractmethod
@@ -208,70 +301,47 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
         peft_model=None,
-    ):
-        api = HfApi()
-        repo_id = api.create_repo(
-            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
-        ).repo_id
+        state_dict: dict[str, Tensor] | None = None,
+        dataset_meta: LeRobotDatasetMetadata | None = None,
+    ) -> None:
+        """Publish this policy to the Hub.
 
-        # Push the files to the repo in a single commit
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
+        Deprecated: use :func:`lerobot.common.train_utils.publish_trained_model` instead, which
+        also publishes the pre/post-processors alongside the model.
 
-            if peft_model is not None:
-                # Since PEFT just forwards calls to `push_model_to_hub`, `self` is not the PeftModel wrapper
-                # but the actual policy which is why we need the PEFT model passed to us to save the adapter.
-                # That also means that we need to store the policy config ourselves since PEFT can't.
-                peft_model.save_pretrained(saved_path)
-                self.config.save_pretrained(saved_path)
-            else:
-                self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+        Args:
+            cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and
+                used to render the model card.
+            peft_model: The PEFT wrapper when training adapters, whose weights replace the full
+                model weights in the published repo. Defaults to None.
+            state_dict (dict[str, Tensor] | None): Ignored; weights are now gathered internally
+                when the policy is sharded. Defaults to None.
+            dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata for the model card,
+                if available. Defaults to None.
+        """
+        from lerobot.common.train_utils import publish_trained_model
 
-            card = self.generate_model_card(
-                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
-            )
-            card.save(str(saved_path / "README.md"))
-
-            cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
-
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload policy weights, train config and readme",
-                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-                ignore_patterns=["*.tmp", "*.log"],
-            )
-
-            logging.info(f"Model pushed to {commit_info.repo_url.url}")
-
-    def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
-    ) -> ModelCard:
-        base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
-
-        card_data = ModelCardData(
-            license=license or "apache-2.0",
-            library_name="lerobot",
-            pipeline_tag="robotics",
-            tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
-            model_name=model_type,
-            datasets=dataset_repo_id,
-            base_model=base_model,
+        warnings.warn(
+            "PreTrainedPolicy.push_model_to_hub is deprecated and will be removed in a future "
+            "version. Use lerobot.common.train_utils.publish_trained_model(cfg, model, "
+            "preprocessor, postprocessor, dataset_meta) instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-
-        template_card = (
-            files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text(encoding="utf-8")
-        )
-        card = ModelCard.from_template(card_data, template_str=template_card)
-        card.validate()
-        return card
+        if state_dict is not None:
+            warnings.warn(
+                "The `state_dict` argument is ignored: sharded weights are gathered internally "
+                "when the policy is saved.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        publish_trained_model(cfg, self, None, None, dataset_meta, peft_model=peft_model)
 
     def wrap_with_peft(
         self,
         peft_config=None,
         peft_cli_overrides: dict | None = None,
-    ) -> "PreTrainedPolicy":
+    ) -> PreTrainedPolicy:
         """
         Wrap this policy with PEFT adapters for parameter-efficient fine-tuning.
 
@@ -285,7 +355,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             peft_cli_overrides: Optional dict of CLI overrides (method_type, target_modules, r, etc.)
                 These are merged with policy defaults to build the final config.
         """
-        from peft import get_peft_model
+        require_package("peft", extra="peft")
 
         # If user provided a complete config, use it directly (with overrides)
         if peft_config is not None:
@@ -356,7 +426,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         Returns:
             Preprocessed dict with renamed keys and init_type mapped to method-specific key.
         """
-        from peft import PeftType
+        require_package("peft", extra="peft")
 
         cli_overrides = cli_overrides.copy()
 
@@ -381,7 +451,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _build_peft_config(self, cli_overrides: dict):
         """Build a PEFT config from policy defaults and CLI overrides."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Determine PEFT method type (default to LORA)
         method_type_str = cli_overrides.get("method_type") or "lora"
@@ -408,7 +478,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def _apply_peft_cli_overrides(self, peft_config, cli_overrides: dict):
         """Apply CLI overrides to an existing PEFT config."""
-        from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+        require_package("peft", extra="peft")
 
         # Get method type from existing config or CLI override
         method_type_str = cli_overrides.get("method_type")

@@ -49,7 +49,6 @@ def test_log_dict_expands_list_metrics_with_custom_step():
     logger.log_dict({"env_step": 42, "loss_per_dim": (1.0, 2.5)}, custom_step_key="env_step")
 
     assert wandb.logged == [
-        ({"train/env_step": 42}, None),
         ({"train/loss_per_dim_0": 1.0, "train/env_step": 42}, None),
         ({"train/loss_per_dim_1": 2.5, "train/env_step": 42}, None),
     ]

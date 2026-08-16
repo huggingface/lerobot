@@ -22,28 +22,19 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
-    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
-    UnnormalizerProcessorStep,
-    policy_action_to_transition,
-    transition_to_policy_action,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import (
-    OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
-)
+from lerobot.utils.constants import OBS_STATE
 
 from .configuration_pi05 import PI05Config
 
@@ -57,6 +48,10 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
+    # MEM section III-D represents proprioception with a linear projection into the
+    # backbone instead of discretized prompt tokens, so the state is carried once.
+    # Set from `PI05Config.use_proprioceptive_memory`; stock PI0.5 keeps it in the prompt.
+    include_state_in_prompt: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -71,16 +66,22 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         # TODO: check if this necessary
         state = deepcopy(state)
 
-        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
-        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+        discretized_states = None
+        if self.include_state_in_prompt:
+            # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
+            # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+            prompt_state = state[:, -1] if state.ndim == 3 else state
+            state_np = prompt_state.cpu().numpy()
+            discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
-            state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            if discretized_states is None:
+                full_prompt = f"Task: {cleaned_text};\nAction: "
+            else:
+                state_str = " ".join(map(str, discretized_states[i]))
+                full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
             full_prompts.append(full_prompt)
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
@@ -135,45 +136,33 @@ def make_pi05_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
-        AddBatchDimensionProcessorStep(),
+        steps.rename_observations,  # To mimic the same processor as pretrained one
+        steps.add_batch_dim,
         relative_step,
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
+        steps.normalize,
+        Pi05PrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            include_state_in_prompt=not config.use_proprioceptive_memory,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
         ),
-        DeviceProcessorStep(device=config.device),
+        steps.to_device,
     ]
 
     output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
+        steps.unnormalize,
         AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
-        DeviceProcessorStep(device="cpu"),
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

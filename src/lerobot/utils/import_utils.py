@@ -72,7 +72,16 @@ def is_package_available(
 def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        # Despite being installed, torchcodec may not be loadable at runtime.
+        try:
+            importlib.import_module("torchcodec")
+            return "torchcodec"
+        except (ImportError, OSError, RuntimeError) as e:
+            logger.warning(
+                f"{e}\n'torchcodec' is installed but cannot be loaded (see the error above). "
+                "Falling back to 'pyav' as a default decoder."
+            )
+            return "pyav"
     else:
         logger.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
@@ -129,6 +138,7 @@ _placo_available = is_package_available("placo")
 _hidapi_available = is_package_available("hidapi", import_name="hid")
 
 # Data / serialization
+_datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
 
@@ -216,9 +226,15 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', or 'lerobot_policy_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', or 'lerobot_env_' and imports them.
     """
-    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
+    prefixes = (
+        "lerobot_robot_",
+        "lerobot_camera_",
+        "lerobot_teleoperator_",
+        "lerobot_policy_",
+        "lerobot_env_",
+    )
     imported: list[str] = []
     failed: list[str] = []
 

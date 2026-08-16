@@ -26,6 +26,7 @@ OBS_IMAGES = OBS_IMAGE + "s"
 OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+OBS_LANGUAGE_CAUSAL_MARKS = OBS_LANGUAGE + ".causal_marks"
 OBS_LANGUAGE_SUBTASK = OBS_STR + ".subtask"
 OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
 OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
@@ -34,10 +35,19 @@ ACTION = "action"
 ACTION_PREFIX = ACTION + "."
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
+ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+SUCCESS = "next.success"
 INFO = "info"
+
+# Complementary-data keys describing a text-generation request, set by the rollout
+# inference engines before the preprocessor runs so a processor step can format the
+# prompt: QUERY_KIND is what is being asked for ("vqa", "next_subtask", ...) and
+# QUERY_TEXT the request itself.  Absent on ordinary action inference.
+QUERY_KIND = "query_kind"
+QUERY_TEXT = "query_text"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

@@ -14,23 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterable
+from copy import deepcopy
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import packaging.version
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, sync_bucket
+from huggingface_hub.utils import WeakFileLock
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
 from .compute_stats import aggregate_stats
-from .feature_utils import create_empty_dataset_info
+from .depth_utils import MM_PER_METRE
+from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
 from .io_utils import (
     get_file_size_in_mb,
     load_episodes,
@@ -70,6 +75,9 @@ class LeRobotDatasetMetadata:
         revision: str | None = None,
         force_cache_sync: bool = False,
         metadata_buffer_size: int = 10,
+        *,
+        repo_type: Literal["dataset", "bucket"] = "dataset",
+        token: str | bool | None = None,
     ):
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -91,29 +99,53 @@ class LeRobotDatasetMetadata:
                 even when local files exist.
             metadata_buffer_size: Number of episode metadata records to buffer
                 in memory before flushing to parquet.
+            repo_type: Repository type: "dataset" (default) or "bucket" for an
+                HF Storage Bucket streamed over hf://buckets/.
+            token: Authentication token used for Hub requests. Pass a string
+                token, ``True`` to require the locally stored token, ``False``
+                to disable authentication, or ``None`` to use the Hugging Face
+                Hub default.
         """
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+
         self.repo_id = repo_id
+        self.repo_type = repo_type
         self.revision = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
-        self.root = self._requested_root if self._requested_root is not None else HF_LEROBOT_HOME / repo_id
+        if self._requested_root is not None:
+            self.root = self._requested_root
+        elif self.repo_type == "bucket":
+            self.root = HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--"))
+        else:
+            self.root = HF_LEROBOT_HOME / repo_id
         self._pq_writer = None
         self.latest_episode = None
         self._metadata_buffer: list[dict] = []
         self._metadata_buffer_size = metadata_buffer_size
         self._finalized = False
 
-        try:
-            if force_cache_sync or (
-                self._requested_root is None and has_legacy_hub_download_metadata(self.root)
-            ):
-                raise FileNotFoundError
-            self._load_metadata()
-        except (FileNotFoundError, NotADirectoryError):
-            if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
+        metadata_lock = contextlib.nullcontext()
+        if self.repo_type == "bucket":
+            self.root.parent.mkdir(parents=True, exist_ok=True)
+            metadata_lock = WeakFileLock(self.root.parent / f".{self.root.name}.lock")
 
-            self._pull_from_repo(allow_patterns="meta/")
-            self._load_metadata()
+        with metadata_lock:
+            try:
+                if force_cache_sync or (
+                    self._requested_root is None and has_legacy_hub_download_metadata(self.root)
+                ):
+                    raise FileNotFoundError
+                self._load_metadata()
+            except (FileNotFoundError, NotADirectoryError):
+                if self.repo_type != "bucket" and is_valid_version(self.revision):
+                    if token is None:
+                        self.revision = get_safe_version(self.repo_id, self.revision)
+                    else:
+                        self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+
+                self._pull_from_repo(allow_patterns="meta/", token=token)
+                self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
         """Write all buffered episode metadata to parquet file."""
@@ -142,6 +174,12 @@ class LeRobotDatasetMetadata:
             self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
+        else:
+            # Column order in `combined_dict` follows the source episode dict's insertion
+            # order, which can differ between batches (e.g. episodes originally stored in
+            # different parquet shards with different column orders). Realign to the
+            # writer's established schema so `write_table` doesn't reject a reordered match.
+            table = table.select(self._pq_writer.schema.names)
 
         self._pq_writer.write_table(table)
 
@@ -176,8 +214,8 @@ class LeRobotDatasetMetadata:
     def _load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-        self.tasks = load_tasks(self.root)
-        self.episodes = load_episodes(self.root)
+        self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
+        self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
 
     def ensure_readable(self) -> None:
@@ -217,7 +255,20 @@ class LeRobotDatasetMetadata:
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
+        *,
+        token: str | bool | None = None,
     ) -> None:
+        if self.repo_type == "bucket":
+            self.root.mkdir(parents=True, exist_ok=True)
+            sync_bucket(
+                f"hf://buckets/{self.repo_id}/meta",
+                str(self.root / "meta"),
+                delete=True,
+                quiet=True,
+                token=token,
+            )
+            return
+        token_kwargs = {} if token is None else {"token": token}
         if self._requested_root is None:
             self.root = Path(
                 snapshot_download(
@@ -227,6 +278,7 @@ class LeRobotDatasetMetadata:
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=allow_patterns,
                     ignore_patterns=ignore_patterns,
+                    **token_kwargs,
                 )
             )
             return
@@ -239,12 +291,15 @@ class LeRobotDatasetMetadata:
             local_dir=self._requested_root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            **token_kwargs,
         )
         self.root = self._requested_root
 
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
+        if self.repo_type == "bucket":
+            return f"hf://buckets/{self.repo_id}"
         return f"hf://datasets/{self.repo_id}"
 
     @property
@@ -336,6 +391,45 @@ class LeRobotDatasetMetadata:
     def video_keys(self) -> list[str]:
         """Keys to access visual modalities stored as videos."""
         return [key for key, ft in self.features.items() if ft["dtype"] == "video"]
+
+    @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth-map modalities stored as videos or images.
+
+        A depth key is a feature whose ``info`` dict carries ``"is_depth_map": True``
+        (or the legacy ``"video.is_depth_map"`` inside ``info`` or ``video_info``).
+        """
+
+        return [key for key, ft in self.features.items() if is_depth_map(ft)]
+
+    def rescale_depth_stats(self, output_unit: str) -> None:
+        """Rescale depth feature stats in place from their recorded unit to ``output_unit``.
+
+        Depth stats are stored in the unit the frames were recorded in
+        (``features[key]["info"]["depth_unit"]``), while frames are returned in
+        ``output_unit`` on read. This converts the unit-bearing stat entries so
+        stats match the frames consumers see.
+        """
+        missing_unit_keys = [
+            key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
+        ]
+        if missing_unit_keys:
+            logging.warning(
+                f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
+                f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
+                f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
+                f"in the feature info (meta/info.json) to enable conversion."
+            )
+        if self.stats is None:
+            return
+        for key in self.depth_keys:
+            stored_unit = (self.features[key].get("info") or {}).get("depth_unit")
+            if stored_unit is None or stored_unit == output_unit or key not in self.stats:
+                continue
+            factor = MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else 1.0 / MM_PER_METRE
+            self.stats[key] = {
+                stat: value if stat == "count" else value * factor for stat, value in self.stats[key].items()
+            }
 
     @property
     def camera_keys(self) -> list[str]:
@@ -580,29 +674,51 @@ class LeRobotDatasetMetadata:
     def update_video_info(
         self,
         video_key: str | None = None,
-        camera_encoder: VideoEncoderConfig | None = None,
+        video_encoder: VideoEncoderConfig | None = None,
+        preserve_keys: Iterable[str] | None = None,
     ) -> None:
-        """Populate per-feature video info in ``info.json``.
+        """Populate or refresh per-feature video info in ``info.json``.
 
         Warning: this function writes info from first episode videos, implicitly assuming that all videos have
         been encoded the same way. Also, this means it assumes the first episode exists.
 
+        Always re-probes the videos and overwrites existing info for every recomputed
+        key. ``preserve_keys`` lists keys whose existing values must be kept (e.g.
+        data-intrinsic entries like ``is_depth_map`` and depth quantization params)
+        instead of being recomputed.
+
         Args:
             video_key: If provided, only update this video key. Otherwise update
                 all video keys in the dataset.
-            camera_encoder: Encoder configuration used to produce the
+            video_encoder: Encoder configuration used to produce the
                 videos. When provided, its fields are recorded as
                 ``video.<field>`` entries alongside the stream-derived
                 ``video.*`` entries (see :func:`get_video_info`).
+            preserve_keys: Keys whose existing values are kept instead of being
+                recomputed. ``None`` (default) recomputes every key.
         """
         if video_key is not None and video_key not in self.video_keys:
             raise ValueError(f"Video key {video_key} not found in dataset")
 
         video_keys = [video_key] if video_key is not None else self.video_keys
+        preserve_set = set(preserve_keys or ())
         for key in video_keys:
-            if not self.features[key].get("info", None):
-                video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
-                self.info.features[key]["info"] = get_video_info(video_path, camera_encoder=camera_encoder)
+            feature = self.info.features[key]
+            existing = feature.get("info") or {}
+            video_path = self.root / self.video_path.format(video_key=key, chunk_index=0, file_index=0)
+            new_info = get_video_info(video_path, video_encoder=video_encoder)
+            # Drop preserved keys so the existing values win on merge.
+            new_info = {k: v for k, v in new_info.items() if k not in preserve_set}
+            feature["info"] = {**existing, **new_info}
+            # Migrate any legacy depth marker (in ``info`` or a separate ``video_info`` dict)
+            # to the canonical ``is_depth_map`` key.
+            video_info = feature.get("video_info")
+            had_legacy = "video.is_depth_map" in feature["info"] or (
+                isinstance(video_info, dict) and "video.is_depth_map" in video_info
+            )
+            canonicalize_depth_marker(feature)
+            if had_legacy:
+                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,
@@ -709,7 +825,7 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        features = {**features, **DEFAULT_FEATURES}
+        features = {**deepcopy(features), **DEFAULT_FEATURES}
         _validate_feature_names(features)
 
         obj.tasks = None

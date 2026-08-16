@@ -24,7 +24,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     add_features,
     convert_image_to_video_dataset,
@@ -37,7 +37,9 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
-from tests.datasets.test_video_encoding import _add_frames, require_h264, require_libsvtav1
+from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
+from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
+from tests.fixtures.dataset_factories import add_frames
 
 
 @pytest.fixture
@@ -302,40 +304,45 @@ def test_merge_empty_list(tmp_path):
         merge_datasets([], output_repo_id="merged", output_dir=tmp_path)
 
 
-def test_add_features_with_values(sample_dataset, tmp_path):
-    """Test adding a feature with pre-computed values."""
+@pytest.mark.parametrize(
+    "values, feature_shape, expected_item_shape",
+    [
+        (np.random.randn(50).astype(np.float32), (1,), ()),
+        (np.random.randn(50, 1).astype(np.float32), (1,), ()),
+        (np.random.randn(50, 7).astype(np.float32), (7,), (7,)),
+        (np.random.randn(50, 1, 4).astype(np.float32), (1, 4), (1, 4)),
+    ],
+    ids=["scalar_1d", "scalar_2d", "vector", "matrix"],
+)
+def test_add_features_with_values(sample_dataset, tmp_path, values, feature_shape, expected_item_shape):
+    """Test adding a pre-computed feature across supported per-frame shapes."""
     num_frames = sample_dataset.meta.total_frames
-    reward_values = np.random.randn(num_frames, 1).astype(np.float32)
+    assert len(values) == num_frames
 
-    feature_info = {
-        "dtype": "float32",
-        "shape": (1,),
-        "names": None,
-    }
-    features = {
-        "reward": (reward_values, feature_info),
-    }
+    feature_info = {"dtype": "float32", "shape": feature_shape, "names": None}
+    features = {"new_feature": (values, feature_info)}
 
     with (
         patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
     ):
         mock_get_safe_version.return_value = "v3.0"
-        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+        mock_snapshot_download.return_value = str(tmp_path / "with_feature")
 
         new_dataset = add_features(
             dataset=sample_dataset,
             features=features,
-            output_dir=tmp_path / "with_reward",
+            output_dir=tmp_path / "with_feature",
         )
 
-    assert "reward" in new_dataset.meta.features
-    assert new_dataset.meta.features["reward"] == feature_info
+    assert "new_feature" in new_dataset.meta.features
+    assert new_dataset.meta.features["new_feature"] == feature_info
 
     assert len(new_dataset) == num_frames
     sample_item = new_dataset[0]
-    assert "reward" in sample_item
-    assert isinstance(sample_item["reward"], torch.Tensor)
+    assert "new_feature" in sample_item
+    assert isinstance(sample_item["new_feature"], torch.Tensor)
+    assert tuple(sample_item["new_feature"].shape) == expected_item_shape
 
 
 def test_add_features_with_callable(sample_dataset, tmp_path):
@@ -1123,9 +1130,61 @@ def test_modify_tasks_default_with_overrides(sample_dataset):
             assert ep_data["tasks"][0] == default_task
 
 
+def test_modify_tasks_replacements(sample_dataset):
+    """Test replacing task strings based on their current values."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+    )
+
+    assert len(modified_dataset.meta.tasks) == 2
+    assert "Pick the cube" in modified_dataset.meta.tasks.index
+    assert "Place the cube" in modified_dataset.meta.tasks.index
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Place the cube"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+
+
+def test_modify_tasks_replacements_with_episode_overrides(sample_dataset):
+    """Test that explicit episode overrides take precedence over replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        task_replacements={
+            "task_0": "Pick the cube",
+            "task_1": "Place the cube",
+        },
+        episode_tasks={1: "Inspect the cube"},
+    )
+
+    assert modified_dataset.meta.episodes[0]["tasks"][0] == "Pick the cube"
+    assert modified_dataset.meta.episodes[1]["tasks"][0] == "Inspect the cube"
+    assert modified_dataset.meta.episodes[3]["tasks"][0] == "Place the cube"
+    assert len(modified_dataset.meta.tasks) == 3
+
+
+def test_modify_tasks_default_task_and_replacements(sample_dataset):
+    """Test that new_task acts as the default for episodes not matched by task_replacements."""
+    modified_dataset = modify_tasks(
+        sample_dataset,
+        new_task="Default task",
+        task_replacements={"task_0": "Pick the cube"},
+    )
+
+    for ep_idx in range(5):
+        expected_task = "Pick the cube" if ep_idx % 2 == 0 else "Default task"
+        assert modified_dataset.meta.episodes[ep_idx]["tasks"][0] == expected_task
+    assert len(modified_dataset.meta.tasks) == 2
+
+
 def test_modify_tasks_no_task_specified(sample_dataset):
     """Test error when no task is specified."""
-    with pytest.raises(ValueError, match="Must specify at least one of new_task or episode_tasks"):
+    with pytest.raises(
+        ValueError, match="Must specify at least one of new_task, episode_tasks, or task_replacements"
+    ):
         modify_tasks(sample_dataset)
 
 
@@ -1133,6 +1192,12 @@ def test_modify_tasks_invalid_episode_indices(sample_dataset):
     """Test error with invalid episode indices."""
     with pytest.raises(ValueError, match="Invalid episode indices"):
         modify_tasks(sample_dataset, episode_tasks={10: "Task", 20: "Task"})
+
+
+def test_modify_tasks_invalid_task_replacements(sample_dataset):
+    """Test error when task replacements refer to unknown task strings."""
+    with pytest.raises(ValueError, match="Task replacements reference unknown tasks"):
+        modify_tasks(sample_dataset, task_replacements={"missing_task": "New task"})
 
 
 def test_modify_tasks_updates_info_json(sample_dataset):
@@ -1251,7 +1316,7 @@ def test_convert_image_to_video_dataset(tmp_path):
             dataset=source_dataset,
             output_dir=output_dir,
             repo_id="lerobot/pusht_video",
-            camera_encoder=VideoEncoderConfig(
+            rgb_encoder=RGBEncoderConfig(
                 vcodec="libsvtav1",
                 pix_fmt="yuv420p",
                 g=2,
@@ -1332,7 +1397,129 @@ def test_convert_image_to_video_dataset_subset_episodes(tmp_path):
             shutil.rmtree(output_dir)
 
 
+@require_libsvtav1
+@require_hevc
+def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_factory):
+    """Depth image features convert to depth videos using the depth encoder.
+
+    Mirrors :func:`test_convert_image_to_video_dataset` but with a small local
+    image dataset that mixes an RGB camera with a depth camera, so the
+    ``depth_keys`` → ``depth_encoder`` routing and ``is_depth_map`` preservation
+    are exercised end-to-end.
+    """
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "observation.images.cam": {
+            "dtype": "image",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.images.depth": {
+            "dtype": "image",
+            "shape": (64, 96, 1),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": True},
+        },
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "img_ds",
+        features=features,
+        use_videos=False,
+    )
+
+    add_frames(source_dataset, num_frames=4)
+    source_dataset.save_episode()
+    source_dataset.finalize()
+
+    # Source is an image dataset with the depth marker on the depth camera.
+    assert len(source_dataset.meta.video_keys) == 0
+    assert "observation.images.depth" in source_dataset.meta.depth_keys
+
+    output_dir = tmp_path / "video_ds"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(output_dir)
+
+        # Use non-default quantization params so the persisted metadata must
+        # come from the depth encoder (not RGB encoder defaults).
+        depth_encoder = DepthEncoderConfig(
+            vcodec="hevc",
+            pix_fmt="gray12le",
+            g=2,
+            crf=30,
+            depth_min=0.05,
+            depth_max=8.0,
+            shift=2.0,
+            use_log=False,
+        )
+        video_dataset = convert_image_to_video_dataset(
+            dataset=source_dataset,
+            output_dir=output_dir,
+            repo_id="dummy/depth_video",
+            rgb_encoder=RGBEncoderConfig(vcodec="libsvtav1", pix_fmt="yuv420p", g=2, crf=30),
+            depth_encoder=depth_encoder,
+            num_workers=1,
+        )
+
+    # Both cameras are now videos, and the depth marker survived the conversion.
+    assert "observation.images.cam" in video_dataset.meta.video_keys
+    assert "observation.images.depth" in video_dataset.meta.video_keys
+    assert "observation.images.depth" in video_dataset.meta.depth_keys
+    assert "observation.images.cam" not in video_dataset.meta.depth_keys
+
+    depth_path = video_dataset.root / video_dataset.meta.get_video_file_path(0, "observation.images.depth")
+    assert depth_path.exists(), f"Depth video file should exist: {depth_path}"
+
+    # The persisted depth-video metadata must carry the depth quantization params
+    # from the depth encoder (so frames dequantize correctly on read), and the RGB
+    # camera must not be marked as a depth map.
+    persisted_info = load_info(video_dataset.root)
+    depth_info = persisted_info.features["observation.images.depth"]["info"]
+    assert depth_info["is_depth_map"] is True
+    assert DepthEncoderConfig.from_video_info(depth_info) == depth_encoder
+
+    cam_info = persisted_info.features["observation.images.cam"]["info"]
+    assert cam_info.get("is_depth_map") is False
+    assert "video.codec" in cam_info
+
+
 # ─── reencode_dataset ─────────────────────────────────────────────────
+
+
+@require_hevc
+def test_reencode_dataset_depth_uses_depth_encoder(tmp_path, empty_lerobot_dataset_factory):
+    """Depth videos are re-encoded with the depth encoder and keep their depth metadata.
+
+    Depth-focused companion to :func:`test_reencode_dataset_multi_key_multiprocessing`.
+    """
+    initial_cfg = DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=2, crf=30)
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        features=DUMMY_DEPTH_FEATURES,
+        use_videos=True,
+        depth_encoder=initial_cfg,
+    )
+
+    add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert DUMMY_DEPTH_KEY in dataset.meta.depth_keys
+
+    target_cfg = DepthEncoderConfig(vcodec="hevc", pix_fmt="gray12le", g=6, crf=23)
+    result = reencode_dataset(dataset, depth_encoder=target_cfg, num_workers=0)
+
+    assert result is dataset
+
+    persisted_info = load_info(dataset.root)
+    depth_info = persisted_info.features[DUMMY_DEPTH_KEY].get("info", {})
+    # Re-encode applied the new codec parameters to the depth video ...
+    assert DepthEncoderConfig.from_video_info(depth_info) == target_cfg
+    # ... while preserving the depth marker.
+    assert depth_info["is_depth_map"] is True
 
 
 @require_libsvtav1
@@ -1342,29 +1529,29 @@ def test_reencode_dataset_multi_key_multiprocessing(
 ):
     """Re-encode a two-camera dataset with num_workers=2 and verify metadata refresh."""
     features = features_factory(use_videos=True)
-    initial_cfg = VideoEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
+    initial_cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
     dataset = empty_lerobot_dataset_factory(
         root=tmp_path / "ds",
         features=features,
         use_videos=True,
-        camera_encoder=initial_cfg,
+        rgb_encoder=initial_cfg,
     )
 
-    _add_frames(dataset, num_frames=4)
+    add_frames(dataset, num_frames=4)
     dataset.save_episode()
-    _add_frames(dataset, num_frames=4)
+    add_frames(dataset, num_frames=4)
     dataset.save_episode()
     dataset.finalize()
 
     assert len(dataset.meta.video_keys) == 2
 
-    target_cfg = VideoEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
+    target_cfg = RGBEncoderConfig(vcodec="h264", g=6, crf=23, pix_fmt="yuv420p")
 
-    result = reencode_dataset(dataset, camera_encoder=target_cfg, num_workers=2)
+    result = reencode_dataset(dataset, rgb_encoder=target_cfg, num_workers=2)
 
     assert result is dataset
 
     persisted_info = load_info(dataset.root)
     for vk in dataset.meta.video_keys:
-        persisted_encoder = VideoEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
+        persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
