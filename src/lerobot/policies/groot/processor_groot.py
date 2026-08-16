@@ -482,6 +482,7 @@ def make_groot_pre_post_processors_from_pretrained(
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -520,6 +521,7 @@ def make_groot_pre_post_processors_from_pretrained(
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=trust_remote_code,
     )
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
     _apply_groot_action_decode_transform(postprocessor, config.action_decode_transform)

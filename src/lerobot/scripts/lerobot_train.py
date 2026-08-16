@@ -663,6 +663,7 @@ def train(cfg: TrainPipelineConfig) -> None:
         processor_pretrained_path = None
 
     processor_kwargs = ProcessorConfigKwargs()
+    processor_kwargs["trust_remote_code"] = cfg.trust_remote_code
     processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = processor_dataset_stats

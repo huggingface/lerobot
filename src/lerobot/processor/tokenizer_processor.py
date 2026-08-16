@@ -356,7 +356,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
     action_tokenizer_name: str | None = None
     action_tokenizer_input_object: Any | None = None
-    trust_remote_code: bool = True
+    trust_remote_code: bool = False
     max_action_tokens: int = 256
     fast_skip_tokens: int = 128
     paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
