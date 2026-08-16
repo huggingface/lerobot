@@ -371,10 +371,15 @@ strategy.teardown(ctx)  # teardown stays with the caller
 | `--display_data`                  | Stream telemetry to Rerun visualization                           | false   |
 | `--display_ip` / `--display_port` | Remote Rerun server address                                       | --      |
 | `--interpolation_multiplier`      | Robot commands per policy action (control at `fps × N` Hz)        | 1       |
+| `--interpolation_rotation_dims`   | Flat `(wx, wy, wz)` action-dimension triplets that use exact SLERP | `[]`    |
 | `--interactive`                   | Chat session on stdin; robot idles until `/start` (base, sentry)  | false   |
 | `--use_torch_compile`             | Enable `torch.compile` for inference                              | false   |
 | `--resume`                        | Resume a previous recording session                               | false   |
 | `--play_sounds`                   | Vocal synthesis for events                                        | true    |
+
+For an action whose dimensions 3–5 are a rotation vector, combine interpolation with
+`--interpolation_rotation_dims='[3,4,5]'`. Multiple rotations use additional triplets, for example
+`'[3,4,5,10,11,12]'`; incomplete triplets and indices outside the action tensor are rejected.
 
 ---
 

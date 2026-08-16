@@ -599,7 +599,7 @@ def test_queue_interpolator_delay_skips_stale_actions():
     torch.testing.assert_close(first_action, torch.tensor([103.0, 103.0]))
 
 
-# ====================== SLERP / rotvec_indices Tests ======================
+# ====================== SLERP / rotation_dims Tests ======================
 
 
 def test_antipodal_rotvec_no_sweep():
@@ -614,7 +614,7 @@ def test_antipodal_rotvec_no_sweep():
     a0 = torch.tensor([0.1, 0.2, 0.3, +1.45, -0.14, +2.34, 0.5])  # ||rotvec|| ≈ 2.74
     a1 = torch.tensor([0.2, 0.3, 0.4, -1.72, -0.38, -2.31, 0.6])  # antipodal twin, ||rotvec|| ≈ 2.93
 
-    interp = ActionInterpolator(multiplier=5, rotvec_indices=[3])
+    interp = ActionInterpolator(multiplier=5, rotation_dims=[3, 4, 5])
     interp.add(a0)
     interp.get()  # first step: passthrough, no previous
 
@@ -637,11 +637,11 @@ def test_antipodal_rotvec_no_sweep():
 
 
 def test_slerp_non_rotvec_dims_remain_linear():
-    """Position and gripper dims must still be linearly interpolated when rotvec_indices is set."""
+    """Position and gripper dims remain linearly interpolated when rotation_dims is set."""
     a0 = torch.tensor([0.0, 0.0, 0.0, +1.45, -0.14, +2.34, 0.0])
     a1 = torch.tensor([1.0, 2.0, 3.0, -1.72, -0.38, -2.31, 1.0])
 
-    interp = ActionInterpolator(multiplier=2, rotvec_indices=[3])
+    interp = ActionInterpolator(multiplier=2, rotation_dims=[3, 4, 5])
     interp.add(a0)
     interp.get()
 
@@ -663,7 +663,7 @@ def test_slerp_non_antipodal_rotvec_close_to_linear():
     a0 = torch.tensor([0.0, 0.0, 0.3])  # small rotation around z
     a1 = torch.tensor([0.0, 0.0, 0.6])  # slightly larger rotation around z
 
-    interp_slerp = ActionInterpolator(multiplier=4, rotvec_indices=[0])
+    interp_slerp = ActionInterpolator(multiplier=4, rotation_dims=[0, 1, 2])
     interp_linear = ActionInterpolator(multiplier=4)
 
     for interp in (interp_slerp, interp_linear):
