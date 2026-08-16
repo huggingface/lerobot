@@ -312,13 +312,24 @@ def make_policy(
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
         features = env_to_policy_features(env_cfg)
 
+    if rename_map:
+        features = {rename_map.get(key, key): feature for key, feature in features.items()}
+
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
-        action_names = ds_meta.features.get(ACTION, {}).get("names")
+        raw_action_feature = next(
+            (
+                feature
+                for raw_key, feature in ds_meta.features.items()
+                if (rename_map or {}).get(raw_key, raw_key) == ACTION
+            ),
+            None,
+        )
+        action_names = raw_action_feature.get("names") if raw_action_feature is not None else None
         if action_names is not None:
             cfg.action_feature_names = list(action_names)
     if ds_meta is not None:
