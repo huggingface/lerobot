@@ -482,6 +482,7 @@ def make_groot_pre_post_processors_from_pretrained(
     postprocessor_overrides: dict[str, Any] | None = None,
     preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -517,6 +518,7 @@ def make_groot_pre_post_processors_from_pretrained(
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=trust_remote_code,
     )
     _reconnect_groot_relative_absolute_steps(preprocessor, postprocessor)
     _reconnect_groot_n1_7_pack_decode_steps(preprocessor, postprocessor)
@@ -533,6 +535,7 @@ def _load_groot_processor_pipelines(
     postprocessor_overrides: dict[str, Any],
     preprocessor_config_filename: str,
     postprocessor_config_filename: str,
+    trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -547,6 +550,7 @@ def _load_groot_processor_pipelines(
         overrides=preprocessor_overrides,
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
+        trust_remote_code=trust_remote_code,
     )
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
@@ -555,7 +559,9 @@ def _load_groot_processor_pipelines(
         overrides=postprocessor_overrides,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
+        trust_remote_code=trust_remote_code,
     )
+    return preprocessor, postprocessor
     return preprocessor, postprocessor
 
 

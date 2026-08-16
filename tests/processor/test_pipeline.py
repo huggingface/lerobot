@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -2449,8 +2450,52 @@ def _create_temp_model_dir(config_dict: dict) -> str:
     return model_dir
 
 
-def test_rce_attempt_blocked():
-    """Test 1: Malicious external module import attempt (e.g. subprocess.Popen) is blocked."""
+def test_rce_pre_import_gate_blocks_execution():
+    """Test that untrusted external module import is blocked before module-level side effects execute."""
+    temp_pkg_dir = tempfile.mkdtemp()
+    marker_file = os.path.join(temp_pkg_dir, "PWNED_ON_IMPORT")
+    module_name = "malicious_unimported_processor_mod"
+
+    # Create a python module with top-level side effect
+    module_file = os.path.join(temp_pkg_dir, f"{module_name}.py")
+    with open(module_file, "w") as f:
+        f.write(
+            f"import pathlib\npathlib.Path({repr(marker_file)}).touch()\nclass MaliciousStep:\n    pass\n"
+        )
+
+    sys.path.insert(0, temp_pkg_dir)
+    try:
+        malicious_config = {
+            "name": "malicious-processor",
+            "steps": [
+                {
+                    "class": f"{module_name}.MaliciousStep",
+                    "config": {},
+                }
+            ],
+        }
+        model_dir = _create_temp_model_dir(malicious_config)
+
+        with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+            DataProcessorPipeline.from_pretrained(
+                model_dir,
+                config_filename="processor.json",
+                trust_remote_code=False,
+            )
+
+        # Crucial check: the module was never imported, so the top-level marker file was NOT created
+        assert not os.path.exists(marker_file), (
+            "Security vulnerability! Module was imported and top-level side effect executed."
+        )
+        assert module_name not in sys.modules
+    finally:
+        if temp_pkg_dir in sys.path:
+            sys.path.remove(temp_pkg_dir)
+        sys.modules.pop(module_name, None)
+
+
+def test_rce_subclass_guard_blocks_non_processor_step():
+    """Test that non-ProcessorStep classes in loaded modules are blocked by the subclass guard."""
     marker_dir = tempfile.mkdtemp()
     marker_file = os.path.join(marker_dir, "LEROBOT_PWNED")
 
@@ -2482,6 +2527,90 @@ def test_rce_attempt_blocked():
     assert "not a valid ProcessorStep subclass" in str(exc_info.value)
     assert not os.path.exists(marker_file), (
         "Security vulnerability! Code executed and marker file was created."
+    )
+
+
+def test_nested_step_trust_remote_code_rejected_when_pipeline_safe():
+    """Test that a step requesting trust_remote_code=True is rejected when pipeline has trust_remote_code=False."""
+    config = {
+        "name": "nested-rtc-processor",
+        "steps": [
+            {
+                "registry_name": "action_tokenizer_processor",
+                "config": {
+                    "action_tokenizer_name": "attacker/processor",
+                    "paligemma_tokenizer_name": "attacker/tokenizer",
+                    "trust_remote_code": True,
+                },
+            }
+        ],
+    }
+
+    model_dir = _create_temp_model_dir(config)
+
+    # 1. from_pretrained defaults to trust_remote_code=False -> must reject
+    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
+        DataProcessorPipeline.from_pretrained(
+            model_dir,
+            config_filename="processor.json",
+            trust_remote_code=False,
+        )
+
+    # 2. from_config with default trust_remote_code=False -> must reject
+    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
+        DataProcessorPipeline.from_config(config)
+
+    # 3. from_config with overrides requesting trust_remote_code=True -> must reject if outer flag is False
+    safe_config = {
+        "name": "nested-rtc-processor",
+        "steps": [
+            {
+                "registry_name": "action_tokenizer_processor",
+                "config": {
+                    "action_tokenizer_name": "attacker/processor",
+                    "paligemma_tokenizer_name": "attacker/tokenizer",
+                },
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="requested `trust_remote_code=True` in its configuration"):
+        DataProcessorPipeline.from_config(
+            safe_config,
+            overrides={"action_tokenizer_processor": {"trust_remote_code": True}},
+            trust_remote_code=False,
+        )
+
+
+@patch("lerobot.processor.tokenizer_processor.AutoProcessor")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_nested_step_trust_remote_code_allowed_when_pipeline_opts_in(mock_tokenizer, mock_processor):
+    """Test that a step requesting trust_remote_code=True is permitted when pipeline passes trust_remote_code=True."""
+    mock_processor.from_pretrained.return_value = MagicMock()
+    mock_tokenizer.from_pretrained.return_value = MagicMock()
+
+    config = {
+        "name": "nested-rtc-processor",
+        "steps": [
+            {
+                "registry_name": "action_tokenizer_processor",
+                "config": {
+                    "action_tokenizer_name": "attacker/processor",
+                    "paligemma_tokenizer_name": "attacker/tokenizer",
+                    "trust_remote_code": True,
+                },
+            }
+        ],
+    }
+
+    pipeline = DataProcessorPipeline.from_config(config, trust_remote_code=True)
+    assert len(pipeline.steps) == 1
+    assert pipeline.steps[0].trust_remote_code is True
+    mock_processor.from_pretrained.assert_called_once_with("attacker/processor", trust_remote_code=True)
+    mock_tokenizer.from_pretrained.assert_called_once_with(
+        "attacker/tokenizer",
+        trust_remote_code=True,
+        add_eos_token=True,
+        add_bos_token=False,
     )
 
 

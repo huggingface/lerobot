@@ -1128,7 +1128,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         for step_entry in loaded_config["steps"]:
             step_class, step_key = cls._resolve_step_class(step_entry, trust_remote_code=trust_remote_code)
-            processor_step = cls._instantiate_step(step_entry, step_class, step_key, overrides)
+            processor_step = cls._instantiate_step(
+                step_entry, step_class, step_key, overrides, trust_remote_code=trust_remote_code
+            )
 
             if step_key in remaining_override_keys:
                 remaining_override_keys.discard(step_key)
@@ -1237,6 +1239,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         step_class: type[ProcessorStep],
         step_key: str,
         overrides: dict[str, Any],
+        trust_remote_code: bool = False,
     ) -> ProcessorStep:
         """Instantiate a single processor step with config overrides.
 
@@ -1269,17 +1272,27 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_class: The step class to instantiate (already resolved)
             step_key: The key used for overrides ("registry_name" or class name)
             overrides: User-provided parameter overrides (keyed by step_key)
+            trust_remote_code: Whether to allow steps requesting remote code execution.
 
         Returns:
             The instantiated processor step (ready for use)
 
         Raises:
-            ValueError: If step cannot be instantiated, with detailed error context
+            ValueError: If step cannot be instantiated or requests trust_remote_code without caller consent
         """
+        saved_cfg = step_entry.get("config", {})
+        step_overrides = overrides.get(step_key, {})
+        merged_cfg = {**saved_cfg, **step_overrides}
+
+        if not trust_remote_code and merged_cfg.get("trust_remote_code", False):
+            step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
+            raise ValueError(
+                f"Processor step '{step_name}' requested `trust_remote_code=True` in its configuration, "
+                f"but the pipeline was loaded with `trust_remote_code=False`. "
+                f"Pass `trust_remote_code=True` to `from_pretrained()` or `from_config()` if you trust the source of this configuration."
+            )
+
         try:
-            saved_cfg = step_entry.get("config", {})
-            step_overrides = overrides.get(step_key, {})
-            merged_cfg = {**saved_cfg, **step_overrides}
             return step_class(**merged_cfg)
         except Exception as e:
             step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))

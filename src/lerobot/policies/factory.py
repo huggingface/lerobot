@@ -198,6 +198,7 @@ def make_pre_post_processors(
                 postprocessor_config_filename=kwargs.get(
                     "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
                 ),
+                trust_remote_code=trust_remote_code,
             )
 
         preprocessor = PolicyProcessorPipeline.from_pretrained(

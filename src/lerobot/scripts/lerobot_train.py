@@ -118,6 +118,7 @@ def _make_eval_envs(cfg: TrainPipelineConfig) -> Iterator[dict[str, dict[int, An
         cfg.env,
         n_envs=cfg.eval.batch_size,
         use_async_envs=cfg.eval.use_async_envs,
+        trust_remote_code=cfg.trust_remote_code,
     )
     try:
         yield envs
@@ -497,6 +498,7 @@ def train(cfg: TrainPipelineConfig):
     processor_pretrained_path = active_cfg.pretrained_path
 
     processor_kwargs = ProcessorConfigKwargs()
+    processor_kwargs["trust_remote_code"] = cfg.trust_remote_code
     processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = processor_dataset_stats
