@@ -105,20 +105,18 @@ dataset = [
     # (e.g. uv → torch==2.7.1 + torchcodec==0.11) produces an environment
     # where `import torchcodec` fails with
     # `undefined symbol: torch_dtype_float4_e2m1fn_x2` (#4393).
-    # The dataset extra therefore raises the torch floor to match the official
-    # compatibility table:
+    # Raise the torch/torchvision floor only on platforms that actually
+    # install torchcodec; PyAV-only platforms (macOS x86_64, Windows ARM64,
+    # linux armv7l) keep the core ranges.
+    # Compatibility table:
     # https://github.com/meta-pytorch/torchcodec#compatibility-with-torch-versions
-    "torch>=2.11,<2.12.0",
-    "torchvision>=0.26.0,<0.27.0",
-
-    # NOTE: torchcodec wheel availability matrix (PyPI):
-    #   - linux x86_64/amd64 + macOS arm64 : wheels since 0.3.0.
-    #   - win32 x86_64                     : wheels since 0.7.0.
-    #   - linux aarch64/arm64              : wheels since 0.11.0.
-    #   - macOS x86_64 (Intel) and linux armv7l: no wheels → PyAV fallback.
-    # Pin 0.11.x on every platform that has a wheel so the resolver cannot
-    # pair a 2.7-era torchcodec with torch 2.11, or 0.11 with torch 2.7.
-    "torchcodec>=0.11.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64')) or (sys_platform == 'darwin' and platform_machine == 'arm64') or sys_platform == 'win32'",
+    #
+    # Wheels (PyPI 0.11.x): linux x86_64/AMD64 + aarch64/arm64, macOS arm64,
+    # Windows x86_64/AMD64. No wheels for macOS x86_64 or Windows ARM64.
+    # Keep these three markers identical so the ABI tuple stays scoped together.
+    "torch>=2.11,<2.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64')) or (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'x86_64'))",
+    "torchvision>=0.26.0,<0.27.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64')) or (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'x86_64'))",
+    "torchcodec>=0.11.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'arm64')) or (sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'x86_64'))",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [

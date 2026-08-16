@@ -16,13 +16,49 @@ import importlib.util
 import tomllib
 from pathlib import Path
 
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+
+# Platforms with a torchcodec 0.11.x wheel vs PyAV-only fallbacks.
+TORCHCODEC_WHEEL_PLATFORMS = [
+    ("linux", "x86_64", True),
+    ("linux", "AMD64", True),
+    ("linux", "aarch64", True),
+    ("linux", "arm64", True),
+    ("darwin", "arm64", True),
+    ("win32", "AMD64", True),
+    ("win32", "x86_64", True),
+    ("darwin", "x86_64", False),
+    ("win32", "ARM64", False),
+    ("linux", "armv7l", False),
+]
 
 
 def _dataset_extra_pins() -> list[str]:
     with PYPROJECT.open("rb") as fh:
         return list(tomllib.load(fh)["project"]["optional-dependencies"]["dataset"])
+
+
+def _abi_requirements() -> dict[str, Requirement]:
+    reqs = {}
+    for pin in _dataset_extra_pins():
+        req = Requirement(pin)
+        if req.name in {"torch", "torchvision", "torchcodec"}:
+            reqs[req.name] = req
+    return reqs
+
+
+def _marker_env(sys_platform: str, platform_machine: str) -> dict[str, str]:
+    env = default_environment()
+    env["sys_platform"] = sys_platform
+    env["platform_machine"] = platform_machine
+    env["os_name"] = "nt" if sys_platform == "win32" else "posix"
+    env["platform_system"] = {"linux": "Linux", "darwin": "Darwin", "win32": "Windows"}[sys_platform]
+    return env
 
 
 def _load_import_utils():
@@ -34,15 +70,21 @@ def _load_import_utils():
     return module
 
 
-def test_dataset_extra_raises_torch_floor_to_torchcodec_abi():
-    """lerobot[dataset] must not resolve torch 2.7 with torchcodec 0.11 (#4393)."""
-    pins = _dataset_extra_pins()
-    assert any(pin.startswith("torch>=2.11") for pin in pins), pins
-    assert any(pin.startswith("torchvision>=0.26") for pin in pins), pins
-    torchcodec_pins = [pin for pin in pins if pin.startswith("torchcodec>=")]
-    assert torchcodec_pins, pins
-    for pin in torchcodec_pins:
-        assert pin.startswith("torchcodec>=0.11.0"), pin
+def test_dataset_extra_scopes_torch_abi_tuple_to_torchcodec_wheels():
+    """Stricter torch/torchvision/torchcodec pins share one wheel-platform marker (#4393)."""
+    reqs = _abi_requirements()
+    assert set(reqs) == {"torch", "torchvision", "torchcodec"}
+    assert reqs["torch"].specifier == SpecifierSet(">=2.11,<2.12.0")
+    assert reqs["torchvision"].specifier == SpecifierSet(">=0.26.0,<0.27.0")
+    assert reqs["torchcodec"].specifier == SpecifierSet(">=0.11.0,<0.12.0")
+
+    assert reqs["torch"].marker is not None
+    assert reqs["torch"].marker == reqs["torchvision"].marker == reqs["torchcodec"].marker
+
+    for sys_platform, platform_machine, expect_wheel in TORCHCODEC_WHEEL_PLATFORMS:
+        env = _marker_env(sys_platform, platform_machine)
+        matched = reqs["torchcodec"].marker.evaluate(env)
+        assert matched is expect_wheel, (sys_platform, platform_machine, matched)
 
 
 def test_get_safe_default_video_backend_falls_back_when_torchcodec_unloadable(monkeypatch, caplog):
