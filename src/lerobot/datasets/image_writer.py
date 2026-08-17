@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 def safe_stop_image_writer(func):
+    """Decorator: on an exception from `func`, stop the `dataset` kwarg's image writer before re-raising."""
+
     def wrapper(*args, **kwargs):
+        """Call `func`; on any exception, stop `kwargs["dataset"].writer.image_writer` before re-raising."""
         try:
             return func(*args, **kwargs)
         except BaseException:
@@ -126,8 +129,7 @@ def save_kwargs_for_path(fpath: Path, compress_level: int) -> dict:
 
 
 def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
-    """
-    Saves a NumPy array or PIL Image to a file.
+    """Saves a NumPy array or PIL Image to a file.
 
     This function handles both NumPy arrays and PIL Image objects, converting
     the former to a PIL Image before saving. It includes error handling for
@@ -138,7 +140,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
     Args:
         image (np.ndarray | PIL.Image.Image): The image data to save.
         fpath (Path): The destination file path for the image.
-        compress_level (int, optional): The compression level for the saved
+        compress_level (int, optional, *optional*, defaults to 1): The compression level for the saved
             image, as used by PIL.Image.save(). Defaults to 1.
             Refer to: https://github.com/huggingface/lerobot/pull/2135
             for more details on the default value rationale.
@@ -163,6 +165,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
 
 
 def worker_thread_loop(queue: queue.Queue):
+    """Pop `(image_array, fpath, compress_level)` items from `queue` and write each until a `None` sentinel."""
     while True:
         item = queue.get()
         if item is None:
@@ -174,6 +177,7 @@ def worker_thread_loop(queue: queue.Queue):
 
 
 def worker_process(queue: queue.Queue, num_threads: int):
+    """Run `num_threads` `worker_thread_loop` threads against `queue` and block until they all exit."""
     threads = []
     for _ in range(num_threads):
         t = threading.Thread(target=worker_thread_loop, args=(queue,))
@@ -185,9 +189,9 @@ def worker_process(queue: queue.Queue, num_threads: int):
 
 
 class AsyncImageWriter:
-    """
-    This class abstract away the initialisation of processes or/and threads to
-    save images on disk asynchronously, which is critical to control a robot and record data
+    """This class abstracts away the initialisation of processes or/and threads.
+
+    It saves images on disk asynchronously, which is critical to control a robot and record data
     at a high frame rate.
 
     When `num_processes=0`, it creates a threads pool of size `num_threads`.
@@ -197,6 +201,15 @@ class AsyncImageWriter:
     The optimal number of processes and threads depends on your computer capabilities.
     We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
+
+    Args:
+        num_processes (`int`, *optional*, defaults to 0): Number of worker subprocesses. `0` uses
+            threads only (in this process).
+        num_threads (`int`, *optional*, defaults to 1): Number of writer threads per process (or in
+            this process, if `num_processes=0`).
+
+    Raises:
+        ValueError: If both `num_threads` and `num_processes` are non-positive.
     """
 
     def __init__(self, num_processes: int = 0, num_threads: int = 1):
@@ -230,15 +243,18 @@ class AsyncImageWriter:
     def save_image(
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
     ):
+        """Enqueue `image` to be written to `fpath` asynchronously; returns immediately."""
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
         self.queue.put((image, fpath, compress_level))
 
     def wait_until_done(self):
+        """Block until every enqueued image has been written to disk."""
         self.queue.join()
 
     def stop(self):
+        """Signal all worker threads/processes to exit and wait for them to join. No-op if already stopped."""
         if self._stopped:
             return
 

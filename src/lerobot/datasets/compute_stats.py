@@ -28,13 +28,18 @@ DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
 
 class RunningQuantileStats:
-    """
-    Maintains running statistics for batches of vectors, including mean,
-    standard deviation, min, max, and approximate quantiles.
+    """Maintains running statistics for batches of vectors.
 
-    Statistics are computed per feature dimension and updated incrementally
+    Includes mean, standard deviation, min, max, and approximate quantiles. Statistics are computed per
+    feature dimension and updated incrementally
     as new batches are observed. Quantiles are estimated using histograms,
     which adapt dynamically if the observed data range expands.
+
+    Args:
+        quantile_list (`list[float] | None`, *optional*): Quantiles to track (e.g. `0.01` for the 1st
+            percentile). `None` uses `DEFAULT_QUANTILES` (1st, 10th, 50th, 90th, 99th percentiles).
+        num_quantile_bins (`int`, *optional*, defaults to 5000): Number of histogram bins used to
+            estimate quantiles.
     """
 
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
@@ -204,8 +209,9 @@ def estimate_num_samples(
     dataset_len: int, min_num_samples: int = 100, max_num_samples: int = 10_000, power: float = 0.75
 ) -> int:
     """Heuristic to estimate the number of samples based on dataset size.
-    The power controls the sample growth relative to dataset size.
-    Lower the power for less number of samples.
+
+    The power controls the sample growth relative to dataset size. Lower the power for less number of
+    samples.
 
     For default arguments, we have:
     - from 1 to ~500, num_samples=100
@@ -221,11 +227,24 @@ def estimate_num_samples(
 
 
 def sample_indices(data_len: int) -> list[int]:
+    """Return evenly-spaced indices into a sequence of length `data_len`, sized by `estimate_num_samples`."""
     num_samples = estimate_num_samples(data_len)
     return np.round(np.linspace(0, data_len - 1, num_samples)).astype(int).tolist()
 
 
 def auto_downsample_height_width(img: np.ndarray, target_size: int = 150, max_size_threshold: int = 300):
+    """Downsample a `(C, H, W)` image by integer striding if either dimension exceeds `max_size_threshold`.
+
+    Args:
+        img (`np.ndarray`): Input image in `(C, H, W)` layout to potentially downsample.
+        target_size (`int`, *optional*, defaults to 150): Approximate size, in pixels, that the
+            largest side should be reduced to.
+        max_size_threshold (`int`, *optional*, defaults to 300): Size, in pixels, above which the
+            largest side of `img` triggers downsampling.
+
+    Returns:
+        `img` unchanged, or strided down so its largest side is roughly `target_size`.
+    """
     _, height, width = img.shape
 
     if max(width, height) < max_size_threshold:
@@ -237,6 +256,16 @@ def auto_downsample_height_width(img: np.ndarray, target_size: int = 150, max_si
 
 
 def sample_images(image_paths: list[str]) -> np.ndarray:
+    """Load and downsample a sampled subset of `image_paths` into a single `uint8` array.
+
+    Args:
+        image_paths (`list[str]`): Paths of all images for the episode/feature, from which a
+            subset is sampled (see `sample_indices`).
+
+    Returns:
+        A `(N, C, H, W)` `uint8` array of the sampled, downsampled images (see
+        `auto_downsample_height_width`), where `N` is chosen by `sample_indices`.
+    """
     sampled_indices = sample_indices(len(image_paths))
 
     images = None
@@ -409,6 +438,7 @@ def _compute_basic_stats(
     Args:
         array: Reshaped array ready for statistics computation
         sample_count: Number of samples represented in the data
+        quantile_list: Quantiles to fill with the mean value. Defaults to `DEFAULT_QUANTILES`.
 
     Returns:
         Dictionary with basic statistics and quantiles set to mean values
@@ -447,13 +477,14 @@ def get_feature_stats(
     - Global: axis=None computes statistics over entire array
 
     Args:
-        array: Input data array with shape appropriate for the specified axis
-        axis: Axis or axes along which to compute statistics
-            - (0, 2, 3): For image data (batch, channels, height, width)
-            - 0 or (0,): For vector/tabular data (samples, features)
-            - (1,): For computing across features
-            - None: For global statistics over entire array
-        keepdims: If True, reduced axes are kept as dimensions with size 1
+        array (`np.ndarray`): Input data array with a shape appropriate for the specified `axis`.
+        axis (`int | tuple[int, ...] | None`): Axis or axes along which to compute statistics:
+            `(0, 2, 3)` for image data (batch, channels, height, width), `0` or `(0,)` for
+            vector/tabular data (samples, features), `(1,)` to compute across features, or
+            `None` for global statistics over the entire array.
+        keepdims (`bool`): If `True`, reduced axes are kept as dimensions of size 1.
+        quantile_list (`list[float] | None`, *optional*): Quantiles to compute (e.g. `0.01` for
+            the 1st percentile). Defaults to `DEFAULT_QUANTILES` when not provided.
 
     Returns:
         Dictionary containing:
@@ -496,10 +527,13 @@ def compute_episode_stats(
     - Strings: Skipped (no statistics computed)
 
     Args:
-        episode_data: Dictionary mapping feature names to data
-            - For images/videos: list of file paths
-            - For numerical data: numpy arrays
-        features: Dictionary describing each feature's dtype and shape
+        episode_data (`dict[str, list[str] | np.ndarray]`): Mapping from feature name to its data
+            for the episode: a list of file paths for `image`/`video` features, or a numpy array
+            for numerical features.
+        features (`dict`): Dataset feature metadata, keyed by feature name, describing each
+            feature's `dtype` and shape.
+        quantile_list (`list[float] | None`, *optional*): Quantiles to compute (e.g. `0.01` for
+            the 1st percentile). Defaults to `DEFAULT_QUANTILES` when not provided.
 
     Returns:
         Dictionary mapping feature names to their statistics dictionaries.
@@ -637,7 +671,6 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
     - new_mean = (mean of all data, weighted by counts)
     - new_std = (std of all data)
     """
-
     _assert_type_and_shape(stats_list)
 
     data_keys = {key for stats in stats_list for key in stats}
@@ -697,16 +730,16 @@ def compute_relative_action_stats(
     statistics suitable for normalization.
 
     Args:
-        hf_dataset: The underlying HuggingFace dataset with "action",
-            "observation.state", and "episode_index" columns.
-        features: Dataset feature metadata (must contain "action" with "shape"
-            and optionally "names").
-        chunk_size: Number of consecutive frames per action chunk.
-        exclude_joints: Joint names whose dimensions should remain absolute
-            (not converted to relative actions).
-        num_workers: Number of parallel threads for computation. Values ≤1
-            mean single-threaded. Numpy releases the GIL so threads give
-            real parallelism here.
+        hf_dataset (`datasets.Dataset`): The underlying HuggingFace dataset, must expose
+            `"action"`, `"observation.state"`, and `"episode_index"` columns.
+        features (`dict`): Dataset feature metadata; must contain `"action"` with a `"shape"`
+            entry and optionally `"names"`.
+        chunk_size (`int`): Number of consecutive frames per action chunk.
+        exclude_joints (`list[str] | None`, *optional*): Joint names whose dimensions should
+            remain absolute instead of being converted to relative actions.
+        num_workers (`int`, *optional*, defaults to 0): Number of parallel threads used for
+            computation. Values `<= 1` run single-threaded; NumPy releases the GIL so threads
+            give real parallelism here.
 
     Returns:
         Statistics dict with keys "mean", "std", "min", "max", "q01", …, "q99".

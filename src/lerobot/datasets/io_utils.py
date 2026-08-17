@@ -46,6 +46,7 @@ from .utils import (
 
 
 def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
+    """Return the uncompressed size, in megabytes, of a parquet file's column data (from its metadata)."""
     metadata = pq.read_metadata(parquet_path)
     total_uncompressed_size = 0
     for row_group in range(metadata.num_row_groups):
@@ -57,20 +58,24 @@ def get_parquet_file_size_in_mb(parquet_path: str | Path) -> float:
 
 
 def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
+    """Return the in-memory (Arrow buffer) size of a Hugging Face `Dataset`, in megabytes."""
     return hf_ds.data.nbytes // (1024**2)
 
 
 def load_nested_dataset(
     pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
 ) -> Dataset:
-    """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
-    Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
-    Concatenate all pyarrow references to return HF Dataset format
+    """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet.
+
+    Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage, then
+    concatenate all pyarrow references to return HF Dataset format.
 
     Args:
-        pq_dir: Directory containing parquet files
-        features: Optional features schema to ensure consistent loading of complex types like images
-        episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
+        pq_dir (`Path`): Directory containing parquet files.
+        features (`datasets.features.features.Features | None`, *optional*): Features schema used to ensure
+            consistent loading of complex types like images.
+        episodes (`list[int] | None`, *optional*): List of episode indices to filter. Uses PyArrow
+            predicate pushdown for efficiency.
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
@@ -83,6 +88,7 @@ def load_nested_dataset(
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
+    """Return the number of rows in a parquet file, read from its metadata (no data is loaded)."""
     metadata = pq.read_metadata(parquet_path)
     return metadata.num_rows
 
@@ -118,6 +124,7 @@ def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
 
 
 def write_info(info: DatasetInfo, local_dir: Path) -> None:
+    """Write dataset info metadata to its standard file path (the inverse of `load_info`)."""
     write_json(info.to_dict(), local_dir / INFO_PATH)
 
 
@@ -176,12 +183,14 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]] | None:
 
 
 def write_tasks(tasks: pandas.DataFrame, local_dir: Path) -> None:
+    """Write the task-prompt table to its standard parquet file path (the inverse of `load_tasks`)."""
     path = local_dir / DEFAULT_TASKS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tasks.to_parquet(path)
 
 
 def load_tasks(local_dir: Path) -> pandas.DataFrame:
+    """Load the task-prompt table from its standard file path, indexed by task string."""
     tasks = pd.read_parquet(local_dir / DEFAULT_TASKS_PATH)
     tasks.index.name = "task"
     return tasks
@@ -189,12 +198,13 @@ def load_tasks(local_dir: Path) -> pandas.DataFrame:
 
 def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     """Write episode metadata to a parquet file in the LeRobot v3.0 format.
+
     This function writes episode-level metadata to a single parquet file.
     Used primarily during dataset conversion (v2.1 → v3.0) and in test fixtures.
 
     Args:
-        episodes: HuggingFace Dataset containing episode metadata
-        local_dir: Root directory where the dataset will be stored
+        episodes (`Dataset`): Hugging Face `Dataset` containing the episode metadata.
+        local_dir (`Path`): Root directory where the dataset is stored.
     """
     episode_size_mb = get_hf_dataset_size_in_mb(episodes)
     if episode_size_mb > DEFAULT_DATA_FILE_SIZE_IN_MB:
@@ -210,6 +220,7 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
 
 
 def load_episodes(local_dir: Path) -> datasets.Dataset:
+    """Load episode metadata, excluding per-episode `stats/*` columns (for faster access to the rest)."""
     episodes = load_nested_dataset(local_dir / EPISODES_DIR)
     # Select episode features/columns containing references to episode data and videos
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
@@ -225,9 +236,9 @@ def load_image_as_numpy(
 
     Args:
         fpath (str | Path): Path to the image file.
-        dtype (np.dtype): The desired data type of the output array. If floating,
+        dtype (np.dtype, *optional*, defaults to `float32`): The desired data type of the output array. If floating,
             pixels are scaled to [0, 1]. Only used for RGB images.
-        channel_first (bool): If True, converts the image to (C, H, W) format.
+        channel_first (bool, *optional*, defaults to `True`): If True, converts the image to (C, H, W) format.
             Otherwise, it remains in (H, W, C) format.
 
     Returns:
