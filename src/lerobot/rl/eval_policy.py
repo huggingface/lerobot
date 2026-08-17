@@ -36,6 +36,13 @@ logging.basicConfig(level=logging.INFO)
 
 
 def eval_policy(env, policy, n_episodes):
+    """Roll out `policy` in `env` for `n_episodes` and log the per-episode and average reward.
+
+    Args:
+        env (`gymnasium.Env`): A robot environment, built via `make_robot_env`.
+        policy (`PreTrainedPolicy`): A policy exposing `select_action(obs) -> action`.
+        n_episodes (`int`): Number of episodes to run.
+    """
     sum_reward_episode = []
     for _ in range(n_episodes):
         obs, _ = env.reset()
@@ -54,6 +61,12 @@ def eval_policy(env, policy, n_episodes):
 
 @parser.wrap()
 def main(cfg: TrainRLServerPipelineConfig):
+    """CLI entry point: load a pretrained policy and evaluate it for 10 episodes.
+
+    Args:
+        cfg (`TrainRLServerPipelineConfig`): Parsed from the CLI. `cfg.env.pretrained_policy_name_or_path`
+            selects the checkpoint to load; `cfg.dataset.repo_id` provides normalization stats.
+    """
     env_cfg = cfg.env
     env = make_robot_env(env_cfg)
     dataset_cfg = cfg.dataset

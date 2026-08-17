@@ -45,7 +45,6 @@ class TrainingStats:
 
     def to_log_dict(self) -> dict[str, float]:
         """Flatten all stats into a single dict for logging."""
-
         d: dict[str, float] = {}
         for name, val in self.losses.items():
             d[name] = val
@@ -98,6 +97,35 @@ class RLAlgorithmConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         revision: str | None = None,
         **algo_kwargs: Any,
     ) -> T:
+        """Load an algorithm config from a local directory or the Hugging Face Hub.
+
+        Args:
+            pretrained_name_or_path (`str | Path`):
+                Local directory containing `config.json`, or a Hub repo id.
+            force_download (`bool`, *optional*, defaults to `False`):
+                Whether to force re-download the config even if it's cached.
+            resume_download (`bool | None`, *optional*):
+                Whether to resume an interrupted download.
+            proxies (`dict[Any, Any] | None`, *optional*):
+                Proxies to use for the download request.
+            token (`str | bool | None`, *optional*):
+                Hugging Face Hub authentication token.
+            cache_dir (`str | Path | None`, *optional*):
+                Directory to cache the downloaded config in.
+            local_files_only (`bool`, *optional*, defaults to `False`):
+                Whether to only look for files locally, without querying the Hub.
+            revision (`str | None`, *optional*):
+                Hub revision (branch, tag, or commit hash) to load from.
+            **algo_kwargs: Attribute overrides applied to the loaded config instance.
+
+        Returns:
+            RLAlgorithmConfig: The loaded config, as the concrete registered subclass.
+
+        Raises:
+            FileNotFoundError: If no `config.json` is found locally or on the Hub.
+            TypeError: If loaded via a specific subclass but the config's registered type doesn't
+                match it.
+        """
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

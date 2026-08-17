@@ -23,6 +23,19 @@ from torch.multiprocessing import Queue
 
 
 def get_last_item_from_queue(queue: Queue, block=True, timeout: float = 0.1) -> Any:
+    """Drain `queue` and return only the most recently enqueued item.
+
+    Args:
+        queue (`Queue`): A `torch.multiprocessing.Queue` to drain.
+        block (`bool`, *optional*, defaults to `True`): Whether to block for up to `timeout` seconds
+            waiting for a first item before draining. When `False`, returns `None` if the queue is
+            currently empty.
+        timeout (`float`, *optional*, defaults to 0.1): Seconds to wait for a first item when `block`
+            is `True`.
+
+    Returns:
+        Any: The most recent item, or `None` if the queue was (and stayed) empty.
+    """
     if block:
         try:
             item = queue.get(timeout=timeout)

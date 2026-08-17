@@ -45,7 +45,16 @@ from .configuration_sac import SACAlgorithmConfig
 
 
 class SACAlgorithm(RLAlgorithm):
-    """Soft Actor-Critic. Owns critics, targets, temperature, and loss computation."""
+    """Soft Actor-Critic. Owns critics, targets, temperature, and loss computation.
+
+    Building an instance constructs the critic ensemble, target networks, and temperature from
+    `config`.
+
+    Args:
+        policy (`GaussianActorPolicy`): The actor policy this algorithm trains. Its observation
+            encoder is shared with the critics.
+        config (`SACAlgorithmConfig`): Algorithm configuration.
+    """
 
     config_class = SACAlgorithmConfig
     name = "sac"
@@ -144,17 +153,18 @@ class SACAlgorithm(RLAlgorithm):
         use_target: bool = False,
         observation_features: Tensor | None = None,
     ) -> Tensor:
-        """Forward pass through a critic network ensemble
+        """Forward pass through a critic network ensemble.
 
         Args:
             observations: Dictionary of observations
             actions: Action tensor
             use_target: If True, use target critics, otherwise use ensemble critics
+            observation_features: Optional pre-computed observation features to avoid recomputing
+                encoder output
 
         Returns:
             Tensor of Q-values from all critics
         """
-
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)
         return q_values
@@ -162,7 +172,7 @@ class SACAlgorithm(RLAlgorithm):
     def _discrete_critic_forward(
         self, observations, use_target=False, observation_features=None
     ) -> torch.Tensor:
-        """Forward pass through a discrete critic network
+        """Forward pass through a discrete critic network.
 
         Args:
             observations: Dictionary of observations
@@ -408,7 +418,7 @@ class SACAlgorithm(RLAlgorithm):
         return actor_loss
 
     def _compute_loss_temperature(self, batch: dict[str, Any]) -> Tensor:
-        """Compute the temperature loss"""
+        """Compute the temperature loss."""
         observations = batch["state"]
         observation_features = batch.get("observation_feature")
 
@@ -420,7 +430,7 @@ class SACAlgorithm(RLAlgorithm):
         return temperature_loss
 
     def _update_target_networks(self) -> None:
-        """Update target networks with exponential moving average"""
+        """Update target networks with exponential moving average."""
         for target_p, p in zip(
             self.critic_target.parameters(), self.critic_ensemble.parameters(), strict=True
         ):
@@ -461,8 +471,7 @@ class SACAlgorithm(RLAlgorithm):
         return forward_batch
 
     def make_optimizers_and_scheduler(self) -> dict[str, Optimizer]:
-        """
-        Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
+        """Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
 
         This function sets up Adam optimizers for:
         - The **actor network**, ensuring that only relevant parameters are optimized.
@@ -471,7 +480,7 @@ class SACAlgorithm(RLAlgorithm):
 
         It also initializes a learning rate scheduler, though currently, it is set to `None`.
 
-        NOTE:
+        Note:
         - If the encoder is shared, its parameters are excluded from the actor's optimization process.
         - The policy's log temperature (`log_alpha`) is wrapped in a list to ensure proper optimization as a standalone tensor.
 
@@ -496,6 +505,7 @@ class SACAlgorithm(RLAlgorithm):
         return self.optimizers
 
     def get_optimizers(self) -> dict[str, Optimizer]:
+        """See [`~rl.algorithms.RLAlgorithm.get_optimizers`]."""
         return self.optimizers
 
     def get_weights(self) -> dict[str, Any]:
@@ -560,20 +570,18 @@ class SACAlgorithm(RLAlgorithm):
     def get_observation_features(
         self, observations: Tensor, next_observations: Tensor
     ) -> tuple[Tensor | None, Tensor | None]:
-        """
-        Get observation features from the policy encoder. It act as cache for the observation features.
-        when the encoder is frozen, the observation features are not updated.
-        We can save compute by caching the observation features.
+        """Get observation features from the policy encoder, acting as a cache.
+
+        When the encoder is frozen, the observation features are not updated, so we can save compute
+        by caching them here instead of recomputing on every critic/actor forward pass.
 
         Args:
-            policy: The policy model
             observations: The current observations
             next_observations: The next observations
 
         Returns:
             tuple: observation_features, next_observation_features
         """
-
         if self.policy.config.vision_encoder_name is None or not self.policy.config.freeze_vision_encoder:
             return None, None
 
@@ -595,6 +603,24 @@ def _split_prefix(state: dict[str, torch.Tensor], prefix: str) -> dict[str, torc
 
 
 class CriticHead(nn.Module):
+    """A single Q-value head: an MLP followed by a scalar linear output layer.
+
+    Args:
+        input_dim (`int`): Dimension of the concatenated observation-encoding + action input.
+        hidden_dims (`list[int]`): Hidden layer widths of the MLP trunk.
+        activations (`Callable[[torch.Tensor], torch.Tensor] | str`, *optional*, defaults to `SiLU()`):
+            Activation used between hidden layers.
+        activate_final (`bool`, *optional*, defaults to `False`): Whether to apply `activations`
+            after the last hidden layer.
+        dropout_rate (`float | None`, *optional*): Dropout probability applied between hidden
+            layers. `None` disables dropout.
+        init_final (`float | None`, *optional*): When set, the output layer's weight and bias are
+            initialized uniformly in `[-init_final, init_final]` instead of the default
+            orthogonal initialization.
+        final_activation (`Callable[[torch.Tensor], torch.Tensor] | str | None`, *optional*):
+            Activation applied after the MLP trunk's last hidden layer, before the output layer.
+    """
+
     def __init__(
         self,
         input_dim: int,
@@ -622,19 +648,20 @@ class CriticHead(nn.Module):
             orthogonal_init()(self.output_layer.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute the scalar Q-value for `x` (a concatenated observation-encoding + action tensor)."""
         return self.output_layer(self.net(x))
 
 
 class CriticEnsemble(nn.Module):
-    """
-    CriticEnsemble wraps multiple CriticHead modules into an ensemble.
+    """Wraps multiple `CriticHead` modules into an ensemble.
+
+    `forward` returns a tensor of shape `(num_critics, batch_size)` containing Q-values.
 
     Args:
-        encoder (GaussianActorObservationEncoder): encoder for observations.
-        ensemble (List[CriticHead]): list of critic heads.
-        init_final (float | None): optional initializer scale for final layers.
-
-    Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
+        encoder (`GaussianActorObservationEncoder`): Shared observation encoder for all critics.
+        ensemble (`list[CriticHead]`): The critic heads making up the ensemble.
+        init_final (`float | None`, *optional*): Stored for introspection; each `CriticHead` is
+            already initialized with it before being passed in here.
     """
 
     def __init__(
@@ -654,6 +681,19 @@ class CriticEnsemble(nn.Module):
         actions: torch.Tensor,
         observation_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Encode `observations` and return each ensemble member's Q-value for `actions`.
+
+        Args:
+            observations (`dict[str, torch.Tensor]`): Raw observation tensors, moved to the module's
+                device.
+            actions (`torch.Tensor`): Action tensor to evaluate.
+            observation_features (`torch.Tensor | None`, *optional*): Pre-computed encoder output,
+                e.g. from `SACAlgorithm.get_observation_features`. Bypasses re-encoding when the
+                vision encoder is frozen.
+
+        Returns:
+            torch.Tensor: Q-values of shape `(num_critics, batch_size)`.
+        """
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
         observations = {k: v.to(device) for k, v in observations.items()}
