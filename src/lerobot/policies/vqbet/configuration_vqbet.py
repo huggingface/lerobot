@@ -40,43 +40,108 @@ class VQBeTConfig(PreTrainedConfig):
         - "action" is required as an output key.
 
     Args:
-        n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
-            current step and additional steps going back).
-        n_action_pred_token: Total number of current token and future tokens that VQ-BeT predicts.
-        action_chunk_size: Action chunk size of each action prediction token.
-        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
-            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
-            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
-            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
-        vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        crop_shape: (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
-            within the image size. If None, no cropping is done.
-        crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
-            mode).
-        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
-            `None` means no pretrained weights.
-        use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
-            The group sizes are set to be about 16 (to be precise, feature_dim // 16).
-        spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        n_vqvae_training_steps: Number of optimization steps for training Residual VQ.
-        vqvae_n_embed: Number of embedding vectors in the RVQ dictionary (each layer).
-        vqvae_embedding_dim: Dimension of each embedding vector in the RVQ dictionary.
-        vqvae_enc_hidden_dim: Size of hidden dimensions of Encoder / Decoder part of Residaul VQ-VAE
-        gpt_block_size: Max block size of minGPT (should be larger than the number of input tokens)
-        gpt_input_dim: Size of output input of GPT. This is also used as the dimension of observation features.
-        gpt_output_dim: Size of output dimension of GPT. This is also used as a input dimension of offset / bin prediction headers.
-        gpt_n_layer: Number of layers of GPT
-        gpt_n_head: Number of headers of GPT
-        gpt_hidden_dim: Size of hidden dimensions of GPT
-        dropout: Dropout rate for GPT
-        offset_loss_weight:  A constant that is multiplied to the offset loss
-        primary_code_loss_weight: A constant that is multiplied to the primary code prediction loss
-        secondary_code_loss_weight: A constant that is multiplied to the secondary code prediction loss
-        bet_softmax_temperature: Sampling temperature of code for rollout with VQ-BeT
-        sequentially_select: Whether select code of primary / secondary as sequentially (pick primary code,
-            and then select secodnary code), or at the same time.
+        n_obs_steps (`int`, *optional*, defaults to 5):
+            Number of environment steps of observation to pass to the policy (the current step and
+            additional steps going back).
+        input_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from input feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        output_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from output feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        device (`str | None`, *optional*):
+            Device the policy runs on, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`. Falls back to the
+            best available device if unset or unavailable.
+        use_amp (`bool`, *optional*, defaults to `False`):
+            Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`):
+            Whether this policy is trained with PEFT (parameter-efficient fine-tuning) adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`):
+            Whether to push the trained policy to the Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*):
+            Hugging Face Hub repository id to push the policy to, when `push_to_hub` is enabled.
+        private (`bool | None`, *optional*):
+            Whether to create/push the Hub repository as private.
+        tags (`list[str] | None`, *optional*):
+            Tags to attach to the policy's Hub model card.
+        license (`str | None`, *optional*):
+            License identifier to add to the policy's Hub model card.
+        pretrained_path (`Path | None`, *optional*):
+            Path or Hub repo id of pretrained weights to initialize the policy from. If `None`, the policy
+            is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*):
+            Hub revision (branch, tag, or commit hash) pinning the pretrained model version.
+        n_action_pred_token (`int`, *optional*, defaults to 3):
+            Total number of current token and future tokens that VQ-BeT predicts.
+        action_chunk_size (`int`, *optional*, defaults to 5):
+            Action chunk size of each action prediction token.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps a feature type name (e.g. `"STATE"`, `"VISUAL"`) to the `NormalizationMode` to apply to
+            it. Defaults to identity normalization for visual features and min/max normalization for
+            state and action features.
+        vision_backbone (`str`, *optional*, defaults to `"resnet18"`):
+            Name of the torchvision resnet backbone to use for encoding images.
+        crop_shape (`tuple[int, int] | None`, *optional*, defaults to `(84, 84)`):
+            (H, W) shape to crop images to as a preprocessing step for the vision backbone. Must fit
+            within the image size. `None` means no cropping is done.
+        crop_is_random (`bool`, *optional*, defaults to `True`):
+            Whether the crop should be random at training time (it's always a center crop in eval mode).
+        pretrained_backbone_weights (`str | None`, *optional*, defaults to `"ResNet18_Weights.IMAGENET1K_V1"`):
+            Pretrained weights from torchvision to initialize the backbone. `None` means no pretrained
+            weights.
+        use_group_norm (`bool`, *optional*, defaults to `False`):
+            Whether to replace batch normalization with group normalization in the backbone. The group
+            sizes are set to be about 16 (`feature_dim // 16`).
+        spatial_softmax_num_keypoints (`int`, *optional*, defaults to 32):
+            Number of keypoints for SpatialSoftmax.
+        n_vqvae_training_steps (`int`, *optional*, defaults to 20000):
+            Number of optimization steps for training the Residual VQ.
+        vqvae_n_embed (`int`, *optional*, defaults to 16):
+            Number of embedding vectors in the RVQ dictionary (each layer).
+        vqvae_embedding_dim (`int`, *optional*, defaults to 256):
+            Dimension of each embedding vector in the RVQ dictionary.
+        vqvae_enc_hidden_dim (`int`, *optional*, defaults to 128):
+            Size of hidden dimensions of the encoder/decoder part of the Residual VQ-VAE.
+        gpt_block_size (`int`, *optional*, defaults to 500):
+            Max block size of minGPT (should be larger than the number of input tokens).
+        gpt_input_dim (`int`, *optional*, defaults to 512):
+            Size of input of GPT. This is also used as the dimension of observation features.
+        gpt_output_dim (`int`, *optional*, defaults to 512):
+            Size of output dimension of GPT. This is also used as an input dimension of the offset / bin
+            prediction headers.
+        gpt_n_layer (`int`, *optional*, defaults to 8):
+            Number of layers of GPT.
+        gpt_n_head (`int`, *optional*, defaults to 8):
+            Number of heads of GPT.
+        gpt_hidden_dim (`int`, *optional*, defaults to 512):
+            Size of hidden dimensions of GPT.
+        dropout (`float`, *optional*, defaults to 0.1):
+            Dropout rate for GPT.
+        offset_loss_weight (`float`, *optional*, defaults to 10000.0):
+            A constant that is multiplied to the offset loss.
+        primary_code_loss_weight (`float`, *optional*, defaults to 5.0):
+            A constant that is multiplied to the primary code prediction loss.
+        secondary_code_loss_weight (`float`, *optional*, defaults to 0.5):
+            A constant that is multiplied to the secondary code prediction loss.
+        bet_softmax_temperature (`float`, *optional*, defaults to 0.1):
+            Sampling temperature of code for rollout with VQ-BeT.
+        sequentially_select (`bool`, *optional*, defaults to `False`):
+            Whether to select the primary / secondary code sequentially (pick the primary code, then
+            select the secondary code), or at the same time.
+        optimizer_lr (`float`, *optional*, defaults to 0.0001):
+            Learning rate for the Adam optimizer preset (GPT and other non-VQ-VAE parameters).
+        optimizer_betas (`tuple`, *optional*, defaults to `(0.95, 0.999)`):
+            Adam optimizer's beta coefficients.
+        optimizer_eps (`float`, *optional*, defaults to 1e-08):
+            Adam optimizer's epsilon for numerical stability.
+        optimizer_weight_decay (`float`, *optional*, defaults to 1e-06):
+            Weight decay for the Adam optimizer preset.
+        optimizer_vqvae_lr (`float`, *optional*, defaults to 0.001):
+            Learning rate for the VQ-VAE's own Adam optimizer preset.
+        optimizer_vqvae_weight_decay (`float`, *optional*, defaults to 0.0001):
+            Weight decay for the VQ-VAE's own Adam optimizer preset.
+        scheduler_warmup_steps (`int`, *optional*, defaults to 500):
+            Number of warmup steps for the LR scheduler preset.
     """
 
     # Inputs / output structure.
@@ -129,15 +194,16 @@ class VQBeTConfig(PreTrainedConfig):
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self):
+        """Resolve `device` (see [`~configs.PreTrainedConfig.__post_init__`]), then validate this config. Validates the VQ-VAE and action-chunking configuration."""
         super().__post_init__()
 
-        """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
 
     def get_optimizer_preset(self) -> AdamConfig:
+        """See [`~configs.PreTrainedConfig.get_optimizer_preset`]."""
         return AdamConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -146,12 +212,14 @@ class VQBeTConfig(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> VQBeTSchedulerConfig:
+        """See [`~configs.PreTrainedConfig.get_scheduler_preset`]."""
         return VQBeTSchedulerConfig(
             num_warmup_steps=self.scheduler_warmup_steps,
             num_vqvae_training_steps=self.n_vqvae_training_steps,
         )
 
     def validate_features(self) -> None:
+        """See [`~configs.PreTrainedConfig.validate_features`]."""
         # Note: this check was previously performed inside VQBeTRgbEncoder in the form of
         # assert len(image_keys) == 1
         if not len(self.image_features) == 1:
@@ -176,12 +244,15 @@ class VQBeTConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.observation_delta_indices`]."""
         return list(range(1 - self.n_obs_steps, 1))
 
     @property
     def action_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.action_delta_indices`]."""
         return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
 
     @property
     def reward_delta_indices(self) -> None:
+        """See [`~configs.PreTrainedConfig.reward_delta_indices`]."""
         return None

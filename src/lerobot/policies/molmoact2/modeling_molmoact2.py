@@ -515,12 +515,24 @@ class MolmoAct2Policy(PreTrainedPolicy):
     ``"continuous"`` (flow-matching only), ``"discrete"`` (autoregressive
     token prediction only), or ``"both"`` (joint loss). At inference,
     ``config.inference_action_mode`` selects which head generates actions.
+
+    Args:
+        config (`MolmoAct2Config`): Policy configuration.
+        inputs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+        dataset_stats (`dict[str, dict[str, Tensor]] | None`, *optional*): Unused by this constructor;
+            normalization statistics are instead supplied to the processor factory.
+        dataset_meta (`Any | None`, *optional*): Unused by this constructor.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
     """
 
     config_class = MolmoAct2Config
     name = "molmoact2"
 
     def supports_rtc(self) -> bool:
+        """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`].
+
+        MolmoAct2 implements RTC only for the continuous (flow-matching) action head.
+        """
         return self.config.inference_action_mode == "continuous"
 
     def __init__(
@@ -529,7 +541,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         *inputs,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         dataset_meta: Any | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         super().__init__(config, *inputs, **kwargs)
         _apply_norm_tag_metadata(self.config)
@@ -610,7 +622,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.train(self.training)
 
     def reset(self) -> None:
-        """Clear the action queue and rollout generator between episodes."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`].
+
+        Clears the action queue and the rollout-local action generator.
+        """
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator = None
 
@@ -634,6 +649,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 set_enabled(enabled)
 
     def init_rtc_processor(self) -> None:
+        """(Re)build `self.rtc_processor` from `config.rtc_config`, or clear it when RTC is disabled."""
         self.rtc_processor = None
         if self.config.rtc_config is not None:
             self.rtc_processor = RTCProcessor(self.config.rtc_config)
@@ -683,6 +699,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise RuntimeError("enable_lora_vlm=true, but no action_expert parameters were found.")
 
     def train(self, mode: bool = True):
+        """Set training mode, keeping the backbone frozen in eval mode when `train_action_expert_only`.
+
+        Also toggles the inference CUDA graph managers off while training and on while evaluating.
+
+        Args:
+            mode (bool, *optional*, defaults to `True`): Whether to set training (`True`) or
+                evaluation (`False`) mode.
+
+        Returns:
+            MolmoAct2Policy: `self`.
+        """
         super().train(mode)
         if getattr(self.config, "train_action_expert_only", False) and hasattr(self, "model"):
             self._hf_model().eval()
@@ -719,7 +746,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             param.requires_grad = False
 
     def get_optim_params(self) -> list[dict[str, Any]]:
-        """Return optimizer param groups with per-component learning rates."""
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Splits parameters into per-component groups (vision tower, connector, action expert, and the
+        rest), each with its own learning rate taken from the corresponding `optimizer_*_lr` field.
+        """
         vit_params: list[Tensor] = []
         connector_params: list[Tensor] = []
         action_expert_params: list[Tensor] = []
@@ -1578,7 +1609,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         reduction: str = "mean",
     ) -> tuple[Tensor, dict[str, Any]]:
-        """Compute training loss (flow-matching and/or discrete token loss)."""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Computes the flow-matching loss, the discrete cross-entropy loss, or their sum, depending on
+        `config.action_mode`.
+        """
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         model_inputs = self._model_inputs(batch)
@@ -1638,7 +1673,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Generate an action chunk via continuous flow matching or discrete AR decoding."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Generates the chunk via continuous flow matching or discrete autoregressive decoding,
+        depending on the resolved inference action mode; continuous generation additionally supports
+        RTC when `config.rtc_config` is set.
+        """
         if "action_mode" in kwargs:
             raise TypeError(
                 "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
@@ -1693,7 +1733,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Pop one action step from the queue, regenerating the chunk when empty."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`.
+
+        Raises:
+            AssertionError: If RTC is enabled, since RTC is only supported through
+                `predict_action_chunk`.
+        """
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()

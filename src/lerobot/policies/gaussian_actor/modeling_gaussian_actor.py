@@ -35,6 +35,17 @@ DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
 class GaussianActorPolicy(
     PreTrainedPolicy,
 ):
+    """Tanh-squashed diagonal Gaussian actor policy for SAC and related maximum-entropy continuous-control
+    algorithms.
+
+    This policy only implements the actor (and its observation encoder) plus an optional discrete-action
+    critic head; the Q-critics, temperature, and Bellman-update logic live on the algorithm side (see
+    `lerobot.rl.algorithms.sac`).
+
+    Args:
+        config (`GaussianActorConfig`, *optional*): The policy configuration.
+    """
+
     config_class = GaussianActorConfig
     name = "gaussian_actor"
 
@@ -53,6 +64,12 @@ class GaussianActorPolicy(
         self._init_discrete_critic()
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Returns only the `"actor"` parameter group, excluding the shared encoder's parameters when
+        `shared_encoder` is enabled. The critic, encoder, and temperature parameters are optimized
+        separately by the SAC algorithm.
+        """
         optim_params = {
             "actor": [
                 p
@@ -63,20 +80,30 @@ class GaussianActorPolicy(
         return optim_params
 
     def reset(self):
-        """Reset the policy"""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. This policy holds no episode-scoped state,
+        so this is a no-op.
+        """
         pass
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Not supported: this policy predicts a single action per call rather than a chunk of actions, and
+        calling this always raises `NotImplementedError`.
+        """
         raise NotImplementedError(
             "GaussianActorPolicy does not support action chunking. It returns single actions!"
         )
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select action for inference/evaluation"""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
 
+        Samples one action directly from the actor network, re-using cached image features from the
+        shared encoder when available, and appends an argmax discrete action (e.g. a gripper command)
+        when `num_discrete_actions` is set.
+        """
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
@@ -96,15 +123,19 @@ class GaussianActorPolicy(
         return actions
 
     def forward(self, batch: dict[str, Tensor | dict[str, Tensor]]) -> dict[str, Tensor]:
-        """Actor forward pass: sample actions and return log-probabilities.
+        """Actor forward pass: sample actions and return their log-probabilities.
+
+        Deviates from the base contract: rather than returning a training loss, this returns the actor's
+        sampled actions, log-probabilities, and means directly. Loss computation and the Bellman update
+        live on the algorithm side (see `lerobot.rl.algorithms.sac`).
 
         Args:
-            batch: A flat observation dict, or a training dict containing
-                ``"state"`` (observations) and optionally ``"observation_feature"``
+            batch (dict[str, Tensor | dict[str, Tensor]]): A flat observation dict, or a training dict
+                containing `"state"` (observations) and optionally `"observation_feature"`
                 (pre-computed encoder features).
 
         Returns:
-            Dict with ``"action"``, ``"log_prob"``, and ``"action_mean"`` tensors.
+            dict[str, Tensor]: Dict with `"action"`, `"log_prob"`, and `"action_mean"` tensors.
         """
         observations = batch.get("state", batch)
         observation_features = batch.get("observation_feature") if isinstance(batch, dict) else None
@@ -311,10 +342,10 @@ class MLP(nn.Module):
     Arguments:
         input_dim (int): Size of input feature dimension.
         hidden_dims (list[int]): Sizes for each hidden layer.
-        activations (Callable or str): Activation to apply between layers.
-        activate_final (bool): Whether to apply activation at the final layer.
-        dropout_rate (Optional[float]): Dropout probability applied before normalization and activation.
-        final_activation (Optional[Callable or str]): Activation for the final layer when `activate_final` is True.
+        activations (Callable or str, *optional*, defaults to `SiLU()`): Activation to apply between layers.
+        activate_final (bool, *optional*, defaults to `False`): Whether to apply activation at the final layer.
+        dropout_rate (Optional[float], *optional*): Dropout probability applied before normalization and activation.
+        final_activation (Optional[Callable or str], *optional*): Activation for the final layer when `activate_final` is True.
 
     For each layer, `in_dim` is updated to the previous `out_dim`. All constructed modules are
     stored in `self.net` as an `nn.Sequential` container.
@@ -561,16 +592,16 @@ def orthogonal_init():
 
 
 class SpatialLearnedEmbeddings(nn.Module):
-    def __init__(self, height, width, channel, num_features=8):
-        """
-        PyTorch implementation of learned spatial embeddings
+    """PyTorch implementation of learned spatial embeddings.
 
-        Args:
-            height: Spatial height of input features
-            width: Spatial width of input features
-            channel: Number of input channels
-            num_features: Number of output embedding dimensions
-        """
+    Args:
+        height (`int`): Spatial height of input features.
+        width (`int`): Spatial width of input features.
+        channel (`int`): Number of input channels.
+        num_features (`int`, *optional*, defaults to 8): Number of output embedding dimensions.
+    """
+
+    def __init__(self, height, width, channel, num_features=8):
         super().__init__()
         self.height = height
         self.width = width
@@ -582,8 +613,7 @@ class SpatialLearnedEmbeddings(nn.Module):
         nn.init.kaiming_normal_(self.kernel, mode="fan_in", nonlinearity="linear")
 
     def forward(self, features):
-        """
-        Forward pass for spatial embedding
+        """Forward pass for spatial embedding
 
         Args:
             features: Input tensor of shape [B, C, H, W] where B is batch size,
@@ -591,7 +621,6 @@ class SpatialLearnedEmbeddings(nn.Module):
         Returns:
             Output tensor of shape [B, C*F] where F is the number of features
         """
-
         features_expanded = features.unsqueeze(-1)  # [B, C, H, W, 1]
         kernel_expanded = self.kernel.unsqueeze(0)  # [1, C, H, W, F]
 

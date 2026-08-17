@@ -41,63 +41,135 @@ class DiffusionConfig(PreTrainedConfig):
         - "action" is required as an output key.
 
     Args:
-        n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
-            current step and additional steps going back).
-        horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
-        n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
-            See `DiffusionPolicy.select_action` for more details.
-        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
-            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
-            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
-            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
-        vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        resize_shape: (H, W) shape to resize images to as a preprocessing step for the vision
-            backbone. If None, no resizing is done and the original image resolution is used.
-        crop_ratio: Ratio in (0, 1] used to derive the crop size from resize_shape
-            (crop_h = int(resize_shape[0] * crop_ratio), likewise for width).
-            Set to 1.0 to disable cropping. Only takes effect when resize_shape is not None.
-        crop_shape: (H, W) shape to crop images to. When resize_shape is set and crop_ratio < 1.0,
-            this is computed automatically. Can also be set directly for legacy configs that use
-            crop-only (without resize). If None and no derivation applies, no cropping is done.
-        crop_is_random: Whether the crop should be random at training time (it's always a center
-            crop in eval mode).
-        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
-            `None` means no pretrained weights.
-        use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
-            The group sizes are set to be about 16 (to be precise, feature_dim // 16).
-        spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
-        use_separate_rgb_encoder_per_camera: Whether to use a separate RGB encoder for each camera view.
-        down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
-            You may provide a variable number of dimensions, therefore also controlling the degree of
+        n_obs_steps (`int`, *optional*, defaults to 2):
+            Number of environment steps of observation to pass to the policy (the current step and
+            additional steps going back).
+        input_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from input feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        output_features (`dict[str, PolicyFeature] | None`, *optional*):
+            Mapping from output feature name to its `PolicyFeature` (type and shape). Populated
+            automatically from the dataset when not explicitly provided.
+        device (`str | None`, *optional*):
+            Device the policy runs on, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`. Falls back to the
+            best available device if unset or unavailable.
+        use_amp (`bool`, *optional*, defaults to `False`):
+            Whether to use Automatic Mixed Precision for training and evaluation.
+        use_peft (`bool`, *optional*, defaults to `False`):
+            Whether this policy is trained with PEFT (parameter-efficient fine-tuning) adapters.
+        push_to_hub (`bool`, *optional*, defaults to `True`):
+            Whether to push the trained policy to the Hugging Face Hub after training.
+        repo_id (`str | None`, *optional*):
+            Hugging Face Hub repository id to push the policy to, when `push_to_hub` is enabled.
+        private (`bool | None`, *optional*):
+            Whether to create/push the Hub repository as private.
+        tags (`list[str] | None`, *optional*):
+            Tags to attach to the policy's Hub model card.
+        license (`str | None`, *optional*):
+            License identifier to add to the policy's Hub model card.
+        pretrained_path (`Path | None`, *optional*):
+            Path or Hub repo id of pretrained weights to initialize the policy from. If `None`, the policy
+            is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*):
+            Hub revision (branch, tag, or commit hash) pinning the pretrained model version.
+        horizon (`int`, *optional*, defaults to 64):
+            Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
+        n_action_steps (`int`, *optional*, defaults to 32):
+            The number of action steps to run in the environment for one invocation of the policy. See
+            `DiffusionPolicy.select_action` for more details.
+        normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
+            Maps a feature type name (e.g. `"STATE"`, `"VISUAL"`) to the `NormalizationMode` to apply to
+            it. Defaults to mean/std normalization for visual features and min/max normalization for
+            state and action features.
+        drop_n_last_frames (`int`, *optional*, defaults to 7):
+            Number of frames dropped from the end of each episode when sampling training windows, which
+            avoids excessive padding. Should track `horizon - n_action_steps - n_obs_steps + 1`.
+        vision_backbone (`str`, *optional*, defaults to `"resnet18"`):
+            Name of the torchvision resnet backbone to use for encoding images.
+        resize_shape (`tuple[int, int] | None`, *optional*):
+            (H, W) shape to resize images to as a preprocessing step for the vision backbone. `None`
+            disables resizing, so the original image resolution is used.
+        crop_ratio (`float`, *optional*, defaults to 1.0):
+            Ratio in (0, 1] used to derive the crop size from `resize_shape` (`crop_h =
+            int(resize_shape[0] * crop_ratio)`, likewise for width). Set to 1.0 to disable cropping. Only
+            takes effect when `resize_shape` is not `None`.
+        crop_shape (`tuple[int, int] | None`, *optional*):
+            (H, W) shape to crop images to. Computed automatically when `resize_shape` is set and
+            `crop_ratio` < 1.0. Can also be set directly for legacy configs that use crop-only (without
+            resize). `None`, with no derivation applying, means no cropping.
+        crop_is_random (`bool`, *optional*, defaults to `True`):
+            Whether the crop should be random at training time (it's always a center crop in eval mode).
+        pretrained_backbone_weights (`str | None`, *optional*, defaults to `"ResNet18_Weights.IMAGENET1K_V1"`):
+            Pretrained weights from torchvision to initialize the backbone. `None` means no pretrained
+            weights.
+        use_group_norm (`bool`, *optional*, defaults to `False`):
+            Whether to replace batch normalization with group normalization in the backbone. The group
+            sizes are set to be about 16 (`feature_dim // 16`).
+        spatial_softmax_num_keypoints (`int`, *optional*, defaults to 32):
+            Number of keypoints for SpatialSoftmax.
+        use_separate_rgb_encoder_per_camera (`bool`, *optional*, defaults to `True`):
+            Whether to use a separate RGB encoder for each camera view.
+        down_dims (`tuple[int, ...]`, *optional*, defaults to `(512, 1024, 2048)`):
+            Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet. You
+            may provide a variable number of dimensions, therefore also controlling the degree of
             downsampling.
-        kernel_size: The convolutional kernel size of the diffusion modeling Unet.
-        n_groups: Number of groups used in the group norm of the Unet's convolutional blocks.
-        diffusion_step_embed_dim: The Unet is conditioned on the diffusion timestep via a small non-linear
-            network. This is the output dimension of that network, i.e., the embedding dimension.
-        use_film_scale_modulation: FiLM (https://huggingface.co/papers/1709.07871) is used for the Unet conditioning.
-            Bias modulation is used be default, while this parameter indicates whether to also use scale
+        kernel_size (`int`, *optional*, defaults to 5):
+            The convolutional kernel size of the diffusion modeling Unet.
+        n_groups (`int`, *optional*, defaults to 8):
+            Number of groups used in the group norm of the Unet's convolutional blocks.
+        diffusion_step_embed_dim (`int`, *optional*, defaults to 128):
+            The Unet is conditioned on the diffusion timestep via a small non-linear network. This is the
+            output dimension of that network, i.e. the embedding dimension.
+        use_film_scale_modulation (`bool`, *optional*, defaults to `True`):
+            FiLM (https://huggingface.co/papers/1709.07871) is used for the Unet conditioning. Bias
+            modulation is used by default, while this parameter indicates whether to also use scale
             modulation.
-        gradient_checkpointing: Whether to checkpoint the Unet residual blocks during training. This reduces
-            activation memory at the cost of recomputing those blocks during the backward pass.
-        noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].
-        num_train_timesteps: Number of diffusion steps for the forward diffusion schedule.
-        beta_schedule: Name of the diffusion beta schedule as per DDPMScheduler from Hugging Face diffusers.
-        beta_start: Beta value for the first forward-diffusion step.
-        beta_end: Beta value for the last forward-diffusion step.
-        prediction_type: The type of prediction that the diffusion modeling Unet makes. Choose from "epsilon"
-            or "sample". These have equivalent outcomes from a latent variable modeling perspective, but
-            "epsilon" has been shown to work better in many deep neural network settings.
-        clip_sample: Whether to clip the sample to [-`clip_sample_range`, +`clip_sample_range`] for each
-            denoising step at inference time. WARNING: you will need to make sure your action-space is
-            normalized to fit within this range.
-        clip_sample_range: The magnitude of the clipping range as described above.
-        num_inference_steps: Number of reverse diffusion steps to use at inference time (steps are evenly
-            spaced). If not provided, this defaults to be the same as `num_train_timesteps`.
-        do_mask_loss_for_padding: Whether to mask the loss when there are copy-padded actions. See
-            `LeRobotDataset` and `load_previous_and_future_frames` for more information. Note, this defaults
-            to False as the original Diffusion Policy implementation does the same.
+        gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+            Whether to checkpoint the Unet residual blocks during training. This reduces activation memory
+            at the cost of recomputing those blocks during the backward pass.
+        noise_scheduler_type (`str`, *optional*, defaults to `"DDPM"`):
+            Name of the noise scheduler to use. Supported options: `"DDPM"`, `"DDIM"`.
+        num_train_timesteps (`int`, *optional*, defaults to 100):
+            Number of diffusion steps for the forward diffusion schedule.
+        beta_schedule (`str`, *optional*, defaults to `"squaredcos_cap_v2"`):
+            Name of the diffusion beta schedule as per `DDPMScheduler` from Hugging Face diffusers.
+        beta_start (`float`, *optional*, defaults to 0.0001):
+            Beta value for the first forward-diffusion step.
+        beta_end (`float`, *optional*, defaults to 0.02):
+            Beta value for the last forward-diffusion step.
+        prediction_type (`str`, *optional*, defaults to `"epsilon"`):
+            The type of prediction that the diffusion modeling Unet makes. Choose from `"epsilon"` or
+            `"sample"`. These have equivalent outcomes from a latent variable modeling perspective, but
+            `"epsilon"` has been shown to work better in many deep neural network settings.
+        clip_sample (`bool`, *optional*, defaults to `True`):
+            Whether to clip the sample to `[-clip_sample_range, +clip_sample_range]` for each denoising
+            step at inference time. This requires the action space to be normalized to fit within that
+            range.
+        clip_sample_range (`float`, *optional*, defaults to 1.0):
+            The magnitude of the clipping range described above.
+        num_inference_steps (`int | None`, *optional*):
+            Number of reverse diffusion steps to use at inference time (steps are evenly spaced). If not
+            provided, defaults to the same value as `num_train_timesteps`.
+        compile_model (`bool`, *optional*, defaults to `False`):
+            Whether to compile the Unet with `torch.compile`.
+        compile_mode (`str`, *optional*, defaults to `"reduce-overhead"`):
+            `torch.compile` mode to use when `compile_model` is enabled.
+        do_mask_loss_for_padding (`bool`, *optional*, defaults to `False`):
+            Whether to mask the loss when there are copy-padded actions. See `LeRobotDataset` and
+            `load_previous_and_future_frames` for more information. This defaults to `False` as the
+            original Diffusion Policy implementation does the same.
+        optimizer_lr (`float`, *optional*, defaults to 0.0001):
+            Learning rate for the Adam optimizer preset.
+        optimizer_betas (`tuple`, *optional*, defaults to `(0.95, 0.999)`):
+            Adam optimizer's beta coefficients.
+        optimizer_eps (`float`, *optional*, defaults to 1e-08):
+            Adam optimizer's epsilon for numerical stability.
+        optimizer_weight_decay (`float`, *optional*, defaults to 1e-06):
+            Weight decay for the Adam optimizer preset.
+        scheduler_name (`str`, *optional*, defaults to `"cosine"`):
+            Name of the LR scheduler preset to use.
+        scheduler_warmup_steps (`int`, *optional*, defaults to 500):
+            Number of warmup steps for the LR scheduler preset.
     """
 
     # Inputs / output structure.
@@ -164,9 +236,9 @@ class DiffusionConfig(PreTrainedConfig):
     scheduler_warmup_steps: int = 500
 
     def __post_init__(self):
+        """Resolve `device` (see [`~configs.PreTrainedConfig.__post_init__`]), then validate this config. Validates image/state feature presence and normalization-mode compatibility with the configured vision backbone."""
         super().__post_init__()
 
-        """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
@@ -213,6 +285,7 @@ class DiffusionConfig(PreTrainedConfig):
             )
 
     def get_optimizer_preset(self) -> AdamConfig:
+        """See [`~configs.PreTrainedConfig.get_optimizer_preset`]."""
         return AdamConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -221,12 +294,14 @@ class DiffusionConfig(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self) -> DiffuserSchedulerConfig:
+        """See [`~configs.PreTrainedConfig.get_scheduler_preset`]."""
         return DiffuserSchedulerConfig(
             name=self.scheduler_name,
             num_warmup_steps=self.scheduler_warmup_steps,
         )
 
     def validate_features(self) -> None:
+        """See [`~configs.PreTrainedConfig.validate_features`]."""
         if len(self.image_features) == 0 and self.env_state_feature is None:
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
@@ -249,12 +324,15 @@ class DiffusionConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.observation_delta_indices`]."""
         return list(range(1 - self.n_obs_steps, 1))
 
     @property
     def action_delta_indices(self) -> list:
+        """See [`~configs.PreTrainedConfig.action_delta_indices`]."""
         return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
 
     @property
     def reward_delta_indices(self) -> None:
+        """See [`~configs.PreTrainedConfig.reward_delta_indices`]."""
         return None

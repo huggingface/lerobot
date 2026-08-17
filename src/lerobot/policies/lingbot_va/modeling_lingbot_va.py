@@ -32,6 +32,7 @@ NOTE: The streaming path is written for single-environment eval (``--eval.batch_
 """
 
 from collections import deque
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -60,12 +61,22 @@ from .utils import (
 
 
 class LingBotVAPolicy(PreTrainedPolicy):
-    """LeRobot wrapper for the LingBot-VA autoregressive video-action world model."""
+    """LeRobot wrapper for the LingBot-VA autoregressive video-action world model.
+
+    The VAE, UMT5 text encoder, and tokenizer are frozen and lazily loaded from
+    `config.wan_pretrained_path` on first use; only the transformer is saved in the LeRobot
+    checkpoint.
+
+    Args:
+        config (`LingBotVAConfig`): Policy configuration; also validated/completed via
+            `config.validate_features()`.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+    """
 
     config_class = LingBotVAConfig
     name = "lingbot_va"
 
-    def __init__(self, config: LingBotVAConfig, **kwargs):
+    def __init__(self, config: LingBotVAConfig, **kwargs: Any):
         require_package("diffusers", extra="lingbot_va")
         require_package("transformers", extra="lingbot_va")
         super().__init__(config)
@@ -146,12 +157,18 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     # PreTrainedPolicy API
     def get_optim_params(self) -> dict:
-        # Only the transformer is trainable; the VAE / text encoder stay frozen (kept outside the
-        # nn.Module registry). With PEFT/LoRA this naturally returns just the adapter params.
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Only the transformer is trainable; the VAE and text encoder stay frozen (kept outside the
+        `nn.Module` registry). With PEFT/LoRA this naturally returns just the adapter params.
+        """
         return [p for p in self.transformer.parameters() if p.requires_grad]
 
     def reset(self):
-        """Reset all per-episode streaming state (KV cache, queues, frame counter)."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`].
+
+        Resets all per-episode streaming state (KV cache, queues, frame counter).
+        """
         cfg = self.config
         self._action_queue: deque = deque(maxlen=cfg.n_action_steps)
         self._obs_buffer: list = []  # raw keyframe obs (one per env substep) observed this chunk
@@ -323,11 +340,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return loss, {"latent_loss": latent_loss.item(), "action_loss": action_loss.item()}
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
-        """Training forward: dual-stream flow-matching loss.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
 
         Builds the (video-latent, action, text) training streams from a LeRobot batch
         (VAE-encoding the camera frames and UMT5-encoding the task), then runs the flow-matching
-        dual-stream loss. Requires the policy to be built with ``attn_mode='flex'``.
+        dual-stream loss. Requires the policy to be built with `attn_mode='flex'`.
         """
         self._ensure_frozen_modules()
         latents, actions, actions_mask, text_emb = self._build_training_streams(batch)
@@ -401,12 +418,14 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
 
-        Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
-        the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
-        once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
-        into the KV cache before the next chunk is predicted.
+        Uses an action queue populated by `predict_action_chunk`, refilling it (and feeding back
+        observed keyframes) as needed. Mirrors the upstream LIBERO client loop
+        (`evaluation/libero/client.py`): the first observation is the conditioning frame; every
+        observation produced afterwards is buffered as a keyframe and, once the chunk's actions are
+        exhausted, the buffered frames plus executed actions are fed back into the KV cache before the
+        next chunk is predicted.
         """
         self.eval()
         self._ensure_frozen_modules()
@@ -437,7 +456,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized)."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Runs one autoregressive chunk and returns actions of shape `[B, chunk_size, n_used]`
+        (normalized).
+        """
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)

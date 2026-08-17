@@ -507,8 +507,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         max_decoding_steps=None,
         temperature=0.0,
     ) -> torch.Tensor:
-        """
-        Inefficient but safe autoregressive decoding for FAST tokens.
+        """Inefficient but safe autoregressive decoding for FAST tokens.
         Matches the pattern of _generate_subtask_tokens.
         TODO: jadechoghari, should we move this logic to PI0FastPolicy class?
         """
@@ -602,8 +601,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         max_decoding_steps=None,
         temperature=0.0,
     ) -> torch.Tensor:
-        """
-        Optimized autoregressive decoding for FAST tokens using KV Caching.
+        """Optimized autoregressive decoding for FAST tokens using KV Caching.
 
         Greedy decoding stops once every sequence emits the end-of-action marker. The
         returned tensor keeps its fixed shape, with positions not generated after the
@@ -738,7 +736,12 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
 
 class PI0FastPolicy(PreTrainedPolicy):
-    """PI0Fast Policy for LeRobot."""
+    """PyTorch port of Physical Intelligence's PI0-FAST vision-language-action policy, generating actions
+    autoregressively as discrete FAST tokens.
+
+    Args:
+        config (`PI0FastConfig`): Policy configuration class instance.
+    """
 
     config_class = PI0FastConfig
     name = "pi0_fast"
@@ -748,10 +751,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         config: PI0FastConfig,
         **kwargs,
     ):
-        """
-        Args:
-            config: Policy configuration class instance.
-        """
         require_package("transformers", extra="pi")
         require_package("scipy", extra="pi")
         super().__init__(config)
@@ -806,7 +805,11 @@ class PI0FastPolicy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Override the from_pretrained method to handle key remapping and display important disclaimer."""
+        """See [`~policies.pretrained.PreTrainedPolicy.from_pretrained`].
+
+        Additionally remaps checkpoint state-dict keys from the upstream openpi naming convention before
+        loading them, and defaults `strict` to `True` rather than `False`.
+        """
         print(
             "The PI0Fast model is a direct port of the OpenPI implementation. \n"
             "This implementation follows the original OpenPI structure for compatibility. \n"
@@ -912,7 +915,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         self, state_dict, model_config
     ):  # see openpi `BaseModelConfig, _fix_pytorch_state_dict_keys`
         """Fix state dict keys to match current model architecture."""
-
         fixed_state_dict = {}
 
         for key, value in state_dict.items():
@@ -936,10 +938,13 @@ class PI0FastPolicy(PreTrainedPolicy):
         return fixed_state_dict
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]."""
         return self.parameters()
 
     def reset(self):
-        """Reset internal state - called when environment resets."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the cached action queue used by
+        `select_action`.
+        """
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
@@ -1028,13 +1033,12 @@ class PI0FastPolicy(PreTrainedPolicy):
         return images, img_masks
 
     def prepare_action(self, batch):
-        """Pad action"""
+        """Zero-pad the target action to `config.max_action_dim`."""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     def _paligemma_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
+        """Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
 
         Args:
             tokens: PaliGemma token IDs
@@ -1047,17 +1051,21 @@ class PI0FastPolicy(PreTrainedPolicy):
     def decode_actions_with_fast(
         self, token_ids: list[int], time_horizon: int, action_dim: int, relaxed_decoding: bool = True
     ) -> np.ndarray:
-        """
-        Decodes action token IDs back to continuous action values using the FAST tokenizer.
+        """Decode action token IDs back to continuous action values using the FAST tokenizer.
 
         Args:
-            token_ids: List of token IDs to decode.
-            time_horizon: The number of timesteps for actions.
-            action_dim: The dimensionality of each action.
-            relaxed_decoding: Whether to use relaxed decoding (allows partial sequences).
+            token_ids (`list[int]`):
+                List of token IDs to decode.
+            time_horizon (`int`):
+                The number of timesteps for actions.
+            action_dim (`int`):
+                The dimensionality of each action.
+            relaxed_decoding (`bool`, *optional*, defaults to `True`):
+                Whether to allow decoded DCT coefficient sequences whose length does not exactly match
+                `time_horizon * action_dim`, truncating or zero-padding them to fit.
 
         Returns:
-            A numpy array representing the decoded actions.
+            `np.ndarray`: The decoded actions.
         """
         decoded_actions = []
 
@@ -1101,20 +1109,23 @@ class PI0FastPolicy(PreTrainedPolicy):
         return np.stack(decoded_actions)
 
     def detokenize_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
-        """
-        Detokenizes action tokens back to continuous actions.
+        """Detokenize action tokens back to continuous actions.
 
-        This method converts predicted action tokens from the model back to continuous action values
-        using the FAST tokenizer. It handles the conversion from PaliGemma token space to action token
-        space, then decodes the action tokens to continuous values using DCT decoding.
+        Converts predicted action tokens from the model back to continuous action values using the FAST
+        tokenizer: converts from PaliGemma token space to action token space, then decodes to continuous
+        values using DCT decoding.
 
         Args:
-            tokens: The input tensor of tokenized outputs. Shape: (B, seq_len) or (seq_len,)
-            action_horizon: The number of timesteps for actions.
-            action_dim: The dimensionality of each action.
+            tokens (`torch.Tensor`):
+                The tokenized model output, of shape `(B, seq_len)` or `(seq_len,)`.
+            action_horizon (`int`):
+                The number of timesteps for actions.
+            action_dim (`int`):
+                The dimensionality of each action.
 
         Returns:
-            The continuous action tensor. Shape: (B, action_horizon, action_dim) or (action_horizon, action_dim)
+            `torch.Tensor`: The continuous action tensor, of shape `(B, action_horizon, action_dim)` or
+            `(action_horizon, action_dim)`.
         """
         if self.action_tokenizer is None or self._paligemma_tokenizer is None:
             raise ValueError(
@@ -1190,7 +1201,9 @@ class PI0FastPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Pops one action off an internal
+        queue, refilling the queue by calling `predict_action_chunk` whenever it is empty.
+        """
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
         )
@@ -1207,7 +1220,10 @@ class PI0FastPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`]. Autoregressively decodes
+        discrete FAST action tokens (optionally with a key/value cache, see `config.use_kv_cache`) and
+        detokenizes them into a continuous action chunk.
+        """
         self.eval()
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
@@ -1251,8 +1267,17 @@ class PI0FastPolicy(PreTrainedPolicy):
         return continuous_actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training."""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`]. Computes the cross-entropy loss between
+        the model's predicted and target discrete FAST action tokens.
 
+        Args:
+            batch (`dict[str, Tensor]`):
+                A batch of preprocessed, normalized observation/action tensors, as produced by this
+                policy's preprocessor pipeline. Must contain FAST action tokens and their mask.
+
+        Returns:
+            `tuple[Tensor, dict]`: The loss and a dict of logging-friendly loss statistics.
+        """
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
 

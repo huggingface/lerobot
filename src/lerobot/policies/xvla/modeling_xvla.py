@@ -24,7 +24,7 @@ import os
 import re
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor, nn
@@ -49,9 +49,7 @@ else:
 
 
 class XVLAModel(nn.Module):
-    """
-    XVLA backbone that stitches Florence-2 embeddings with the temporal/action transformer head.
-    """
+    """XVLA backbone that stitches Florence-2 embeddings with the temporal/action transformer head."""
 
     def __init__(
         self,
@@ -119,15 +117,12 @@ class XVLAModel(nn.Module):
         return torch.float32
 
     def _apply_dtype(self) -> None:
-        """
-        Apply dtype casting to model components based on config.
-        """
+        """Apply dtype casting to model components based on config."""
         target_dtype = self._get_target_dtype()
         self.to(dtype=target_dtype)
 
     def _apply_freezing(self) -> None:
-        """
-        Freeze VLM vision and language encoders based on config options.
+        """Freeze VLM vision and language encoders based on config options.
         Keep only policy transformer and soft prompts trainable.
         """
         # Freeze vision encoder
@@ -164,9 +159,7 @@ class XVLAModel(nn.Module):
         pixel_values: torch.FloatTensor,
         image_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        """
-        Encode text and multi-view images via Florence2 encoder.
-        """
+        """Encode text and multi-view images via Florence2 encoder."""
         batch_size, num_views = pixel_values.shape[:2]
         flat_mask = image_mask.view(-1).to(dtype=torch.bool)
         flat_images = pixel_values.flatten(0, 1)
@@ -204,9 +197,7 @@ class XVLAModel(nn.Module):
         proprio: torch.Tensor,
         action: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        """
-        Forward pass for the XVLA model.
-        """
+        """Forward pass for the XVLA model."""
         target_dtype = self._get_target_dtype()
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
@@ -272,12 +263,17 @@ class XVLAModel(nn.Module):
 
 
 class XVLAPolicy(PreTrainedPolicy):
-    """LeRobot-compliant wrapper built around the XVLA model."""
+    """LeRobot-compliant wrapper built around the XVLA model.
+
+    Args:
+        config (`XVLAConfig`): The policy configuration.
+        kwargs: Forwarded to the base class.
+    """
 
     config_class = XVLAConfig
     name = "xvla"
 
-    def __init__(self, config: XVLAConfig, **kwargs):
+    def __init__(self, config: XVLAConfig, **kwargs: Any):
         require_package("transformers", extra="xvla")
         super().__init__(config)
         config.validate_features()
@@ -287,16 +283,19 @@ class XVLAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self) -> None:
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Reinitializes the action queue used by
+        `select_action`.
+        """
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
     def get_optim_params(self) -> dict:
-        """Return trainable named parameters for optimization.
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
 
-        Returns a dict of name -> param for all trainable parameters.
-        This enables the xvla-adamw optimizer to apply differential learning rates
-        based on parameter names (e.g., 1/10 LR for VLM components).
+        Returns a `{name: param}` dict of every parameter with `requires_grad=True`, keyed by its full
+        parameter name so the XVLA AdamW optimizer preset can apply differential learning rates (e.g. a
+        reduced learning rate for VLM parameters) by name pattern.
         """
         return dict(filter(lambda kv: kv[1].requires_grad, self.named_parameters()))
 
@@ -389,6 +388,15 @@ class XVLAPolicy(PreTrainedPolicy):
         }
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation/action tensors.
+
+        Returns:
+            tuple[Tensor, dict]: The total loss, summed over the action space's per-term losses, and a
+                dict of the individual loss terms for logging.
+        """
         inputs = self._build_model_inputs(batch)
         targets = self._prepare_action_targets(batch)
         losses = self.model(action=targets, **inputs)
@@ -405,12 +413,28 @@ class XVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation tensors.
+            noise (Tensor | None, *optional*): Accepted for interface compatibility with
+                `ActionSelectKwargs`; currently unused.
+
+        Returns:
+            Tensor: The predicted action chunk, generated with `config.num_denoising_steps` steps of the
+                flow-matching action head.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         return self._get_action_chunk(batch)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`: the queue is refilled with the first
+        `n_action_steps` predicted actions whenever it runs empty.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
@@ -436,10 +460,11 @@ class XVLAPolicy(PreTrainedPolicy):
         strict: bool = False,
         **kwargs,
     ):
-        """
-        Loads XVLA model weights with:
-        - automatic prefix 'model.' added to all keys
-        - skip list for layers that should remain randomly initialized
+        """See [`~policies.pretrained.PreTrainedPolicy.from_pretrained`].
+
+        Loads `model.safetensors` directly, remapping checkpoints saved with the old vendored
+        Florence-2 module layout to the native `transformers` layout when detected, and restoring
+        whichever alias of the tied encoder/shared token embedding `safetensors` deduplicated on save.
         """
         import safetensors.torch
 
@@ -515,7 +540,8 @@ class XVLAPolicy(PreTrainedPolicy):
 
 def _is_vendored_florence_state_dict(state_dict: dict[str, Tensor], prefix: str = "model.vlm.") -> bool:
     """Detect XVLA checkpoints saved with the old vendored (Microsoft remote-code) Florence-2
-    module layout by their signature keys."""
+    module layout by their signature keys.
+    """
     return f"{prefix}image_projection" in state_dict or any(
         key.startswith(f"{prefix}language_model.model.") for key in state_dict
     )

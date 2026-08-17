@@ -38,8 +38,10 @@ from .vqbet_utils import GPT, ResidualVQ
 
 
 class VQBeTPolicy(PreTrainedPolicy):
-    """
-    VQ-BeT Policy as per "Behavior Generation with Latent Actions"
+    """VQ-BeT Policy as per "Behavior Generation with Latent Actions"
+
+    Args:
+        config (`VQBeTConfig | None`, *optional*): Policy configuration.
     """
 
     config_class = VQBeTConfig
@@ -50,13 +52,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         config: VQBeTConfig | None = None,
         **kwargs,
     ):
-        """
-        Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -66,6 +61,12 @@ class VQBeTPolicy(PreTrainedPolicy):
         self.reset()
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Splits parameters into three groups: the RVQ-VAE parameters (trained at
+        `optimizer_vqvae_lr`/`optimizer_vqvae_weight_decay`), weight-decayed parameters, and
+        non-weight-decayed parameters.
+        """
         vqvae_params = (
             list(self.vqbet.action_head.vqvae_model.encoder.parameters())
             + list(self.vqbet.action_head.vqvae_model.decoder.parameters())
@@ -106,9 +107,9 @@ class VQBeTPolicy(PreTrainedPolicy):
         ]
 
     def reset(self):
-        """
-        Clear observation and action queues. Should be called on `env.reset()`
-        queues are populated during rollout of the policy, they contain the n latest observations and actions
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`].
+
+        Clears the observation and action queues populated during rollout of the policy.
         """
         self._queues = {
             OBS_IMAGES: deque(maxlen=self.config.n_obs_steps),
@@ -118,17 +119,16 @@ class VQBeTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`]."""
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
         return actions
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
 
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        Uses an action queue populated by `predict_action_chunk`, refilling it once it runs dry.
         """
         # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
         if ACTION in batch:
@@ -157,7 +157,11 @@ class VQBeTPolicy(PreTrainedPolicy):
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training or validation."""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Until the Residual VQ-VAE is discretized, this trains the VQ-VAE (returning its reconstruction
+        loss and codebook usage stats); afterwards it trains VQ-BeT's GPT and prediction heads instead.
+        """
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://huggingface.co/papers/2403.03181)
@@ -181,8 +185,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
 
 class SpatialSoftmax(nn.Module):
-    """
-    Spatial Soft Argmax operation described in "Deep Spatial Autoencoders for Visuomotor Learning" by Finn et al.
+    """Spatial Soft Argmax operation described in "Deep Spatial Autoencoders for Visuomotor Learning" by Finn et al.
     (https://huggingface.co/papers/1509.06113). A minimal port of the robomimic implementation.
 
     At a high level, this takes 2D feature maps (from a convnet/ViT) and returns the "center of mass"
@@ -201,14 +204,14 @@ class SpatialSoftmax(nn.Module):
     The example above results in 512 keypoints (corresponding to the 512 input channels). We can optionally
     provide num_kp != None to control the number of keypoints. This is achieved by a first applying a learnable
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
+
+    Args:
+        input_shape (`list`): `(C, H, W)` input feature map shape.
+        num_kp (`int`, *optional*): Number of keypoints in output. If `None`, output will have the same
+            number of channels as input.
     """
 
     def __init__(self, input_shape, num_kp=None):
-        """
-        Args:
-            input_shape (list): (C, H, W) input feature map shape.
-            num_kp (int): number of keypoints in output. If None, output will have the same number of channels as input.
-        """
         super().__init__()
 
         assert len(input_shape) == 3
@@ -230,9 +233,9 @@ class SpatialSoftmax(nn.Module):
         self.register_buffer("pos_grid", torch.cat([pos_x, pos_y], dim=1))
 
     def forward(self, features: Tensor) -> Tensor:
-        """
-        Args:
+        """Args:
             features: (B, C, H, W) input feature maps.
+
         Returns:
             (B, K, 2) image-space coordinates of keypoints.
         """
@@ -405,8 +408,7 @@ class VQBeTModel(nn.Module):
 
 class VQBeTHead(nn.Module):
     def __init__(self, config: VQBeTConfig):
-        """
-        VQBeTHead takes output of GPT layers, and pass the feature through bin prediction head (`self.map_to_cbet_preds_bin`), and offset prediction head (`self.map_to_cbet_preds_offset`)
+        """VQBeTHead takes output of GPT layers, and pass the feature through bin prediction head (`self.map_to_cbet_preds_bin`), and offset prediction head (`self.map_to_cbet_preds_offset`)
 
         self.map_to_cbet_preds_bin: outputs probability of each code (for each layer).
             The input dimension of `self.map_to_cbet_preds_bin` is same with the output of GPT,
@@ -417,7 +419,6 @@ class VQBeTHead(nn.Module):
             The input dimension of ` self.map_to_cbet_preds_offset` is same with the output of GPT,
             and the output dimension of ` self.map_to_cbet_preds_offset` is `self.vqvae_model.vqvae_num_layers (=fixed as 2) * self.config.vqvae_n_embed * config.action_chunk_size * config.action_feature.shape[0]`.
         """
-
         super().__init__()
         self.config = config
         # init vqvae
@@ -573,8 +574,7 @@ class VQBeTHead(nn.Module):
         }
 
     def loss_fn(self, pred, target, **kwargs):
-        """
-        for given ground truth action values (target), and prediction (pred) this function calculates the overall loss.
+        """For given ground truth action values (target), and prediction (pred) this function calculates the overall loss.
 
         predicted_action: predicted action chunk (offset + decoded centroids)
         sampled_centers: sampled centroids (code of RVQ)
@@ -703,9 +703,9 @@ class VQBeTRgbEncoder(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
+        """Args:
             x: (B, C, H, W) image tensor with pixel values in [0, 1].
+
         Returns:
             (B, D) image feature.
         """
@@ -726,11 +726,11 @@ class VQBeTRgbEncoder(nn.Module):
 def _replace_submodules(
     root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
 ) -> nn.Module:
-    """
-    Args:
+    """Args:
         root_module: The module for which the submodules need to be replaced
         predicate: Takes a module as an argument and must return True if the that module is to be replaced.
         func: Takes a module as an argument and returns a new module to replace it with.
+
     Returns:
         The root module with its submodules replaced.
     """
@@ -761,15 +761,13 @@ class VqVae(nn.Module):
         self,
         config: VQBeTConfig,
     ):
-        """
-        VQ-VAE is composed of three parts: encoder, vq_layer, and decoder.
+        """VQ-VAE is composed of three parts: encoder, vq_layer, and decoder.
         Encoder and decoder are MLPs consisting of an input, output layer, and hidden layer, respectively.
         The vq_layer uses residual VQs.
 
         This class contains functions for training the encoder and decoder along with the residual VQ layer (for training phase 1),
         as well as functions to help BeT training part in training phase 2.
         """
-
         super().__init__()
         self.config = config
         # 'discretized' indicates whether the Residual VQ part is trained or not. (After finishing the training, we set discretized=True)
@@ -861,9 +859,7 @@ class VqVae(nn.Module):
 
 
 class FocalLoss(nn.Module):
-    """
-    From https://github.com/notmahi/miniBET/blob/main/behavior_transformer/bet.py
-    """
+    """From https://github.com/notmahi/miniBET/blob/main/behavior_transformer/bet.py"""
 
     def __init__(self, gamma: float = 0, size_average: bool = True):
         super().__init__()

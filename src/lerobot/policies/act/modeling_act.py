@@ -40,9 +40,11 @@ from .configuration_act import ACTConfig
 
 
 class ACTPolicy(PreTrainedPolicy):
-    """
-    Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
+    """Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
+
+    Args:
+        config (`ACTConfig`): Policy configuration.
     """
 
     config_class = ACTConfig
@@ -55,11 +57,6 @@ class ACTPolicy(PreTrainedPolicy):
         config: ACTConfig,
         **kwargs,
     ):
-        """
-        Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                    the configuration class is used.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -72,6 +69,11 @@ class ACTPolicy(PreTrainedPolicy):
         self.reset()
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Splits parameters into two groups: the vision backbone, trained at `optimizer_lr_backbone`, and
+        everything else, trained at the base `optimizer_lr`.
+        """
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
         return [
@@ -93,7 +95,11 @@ class ACTPolicy(PreTrainedPolicy):
         ]
 
     def reset(self):
-        """This should be called whenever the environment is reset."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`].
+
+        Resets the `ACTTemporalEnsembler` when temporal ensembling is enabled, otherwise clears the action
+        queue consumed by `select_action`.
+        """
         if self.config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler.reset()
         else:
@@ -101,11 +107,11 @@ class ACTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
 
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        Returns one action at a time from a queue populated by `predict_action_chunk`, refilling it once
+        it runs dry. When temporal ensembling is enabled, the queue is bypassed and the action is instead
+        produced by combining chunks via `ACTTemporalEnsembler`.
         """
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
@@ -126,7 +132,7 @@ class ACTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`]."""
         self.eval()
 
         if self.config.image_features:
@@ -137,7 +143,11 @@ class ACTPolicy(PreTrainedPolicy):
         return actions
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss for training or validation."""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        The loss is an L1 reconstruction loss between the predicted and target actions, plus (when
+        `use_vae` is enabled) a KL-divergence term weighted by `kl_weight`.
+        """
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
@@ -221,8 +231,7 @@ class ACTTemporalEnsembler:
         self.ensembled_actions_count = None
 
     def update(self, actions: Tensor) -> Tensor:
-        """
-        Takes a (batch, chunk_size, action_dim) sequence of actions, update the temporal ensemble for all
+        """Takes a (batch, chunk_size, action_dim) sequence of actions, update the temporal ensemble for all
         time steps, and pop/return the next batch of actions in the sequence.
         """
         self.ensemble_weights = self.ensemble_weights.to(device=actions.device)
@@ -626,13 +635,13 @@ class ACTDecoderLayer(nn.Module):
         decoder_pos_embed: Tensor | None = None,
         encoder_pos_embed: Tensor | None = None,
     ) -> Tensor:
-        """
-        Args:
+        """Args:
             x: (Decoder Sequence, Batch, Channel) tensor of input tokens.
             encoder_out: (Encoder Sequence, B, C) output features from the last layer of the encoder we are
                 cross-attending with.
             encoder_pos_embed: (ES, 1, C) positional embedding for keys (from the encoder).
             decoder_pos_embed: (DS, 1, C) positional embedding for the queries (from the decoder).
+
         Returns:
             (DS, B, C) tensor of decoder output features.
         """
@@ -671,9 +680,11 @@ def create_sinusoidal_pos_embedding(num_positions: int, dimension: int) -> Tenso
     """1D sinusoidal positional embeddings as in Attention is All You Need.
 
     Args:
-        num_positions: Number of token positions required.
-    Returns: (num_positions, dimension) position embeddings (the first dimension is the batch dimension).
+        num_positions (`int`): Number of positions to embed (the sequence length).
+        dimension (`int`): The embedding dimension.
 
+    Returns:
+        `(num_positions, dimension)` position embeddings (the first dimension is the batch dimension).
     """
 
     def get_position_angle_vec(position):
@@ -690,13 +701,12 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
 
     The variation is that the position indices are normalized in [0, 2π] (not quite: the lower bound is 1/H
     for the vertical direction, and 1/W for the horizontal direction.
+
+    Args:
+        dimension (`int`): The desired dimension of the embeddings.
     """
 
     def __init__(self, dimension: int):
-        """
-        Args:
-            dimension: The desired dimension of the embeddings.
-        """
         super().__init__()
         self.dimension = dimension
         self._two_pi = 2 * math.pi
@@ -705,9 +715,9 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
         self._temperature = 10000
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
+        """Args:
             x: A (B, C, H, W) batch of 2D feature map to generate the embeddings for.
+
         Returns:
             A (1, C, H, W) batch of corresponding sinusoidal positional embeddings.
         """

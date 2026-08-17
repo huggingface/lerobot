@@ -58,6 +58,9 @@ class TDMPCPolicy(PreTrainedPolicy):
           `lerobot/configs/policy/tdmpc_pusht_keypoints.yaml`.
         - Our current xarm datasets were generated using the environment from FOWM. Therefore they do not
           match our xarm environment.
+
+    Args:
+        config (`TDMPCConfig`): Policy configuration.
     """
 
     config_class = TDMPCConfig
@@ -68,11 +71,6 @@ class TDMPCPolicy(PreTrainedPolicy):
         config: TDMPCConfig,
         **kwargs,
     ):
-        """
-        Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                the configuration class is used.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -85,12 +83,14 @@ class TDMPCPolicy(PreTrainedPolicy):
         self.reset()
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]."""
         return self.parameters()
 
     def reset(self):
-        """
-        Clear observation and action queues. Clear previous means for warm starting of MPPI/CEM. Should be
-        called on `env.reset()`
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`].
+
+        Clears the observation and action queues, and the previous CEM mean used to warm-start MPPI/CEM
+        planning in `plan`.
         """
         self._queues = {
             OBS_STATE: deque(maxlen=1),
@@ -106,7 +106,11 @@ class TDMPCPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Encodes the observation and, when `use_mpc` is enabled, plans a trajectory with `plan`; otherwise
+        samples a single action from the policy model (π).
+        """
         batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
 
         # Remove the time dimensions as it is not handled yet.
@@ -135,7 +139,11 @@ class TDMPCPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`, either repeating a single action
+        `n_action_repeats` times or taking `n_action_steps` from the planned trajectory.
+        """
         # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
         if ACTION in batch:
             batch.pop(ACTION)
@@ -165,12 +173,14 @@ class TDMPCPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:
-        """Plan sequence of actions using TD-MPC inference.
+        """Plan a sequence of actions using TD-MPC inference (MPPI/CEM over the learned world model).
 
         Args:
-            z: (batch, latent_dim,) tensor for the initial state.
+            z (`Tensor`):
+                `(batch, latent_dim)` tensor for the initial state.
+
         Returns:
-            (horizon, batch, action_dim,) tensor for the planned trajectory of actions.
+            `Tensor`: `(horizon, batch, action_dim)` tensor for the planned trajectory of actions.
         """
         device = get_device_from_parameters(self)
 
@@ -259,13 +269,16 @@ class TDMPCPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def estimate_value(self, z: Tensor, actions: Tensor):
-        """Estimates the value of a trajectory as per eqn 4 of the FOWM paper.
+        """Estimate the value of a trajectory as per eqn 4 of the FOWM paper.
 
         Args:
-            z: (batch, latent_dim) tensor of initial latent states.
-            actions: (horizon, batch, action_dim) tensor of action trajectories.
+            z (`Tensor`):
+                `(batch, latent_dim)` tensor of initial latent states.
+            actions (`Tensor`):
+                `(horizon, batch, action_dim)` tensor of action trajectories.
+
         Returns:
-            (batch,) tensor of values.
+            `Tensor`: `(batch,)` tensor of values.
         """
         # Initialize return and running discount factor.
         G, running_discount = 0, 1
@@ -308,9 +321,11 @@ class TDMPCPolicy(PreTrainedPolicy):
         return G
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """Run the batch through the model and compute the loss.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
 
-        Returns a dictionary with loss as a tensor, and other information as native floats.
+        The loss combines a latent-consistency loss, a reward regression loss, TD and expectile losses for
+        the Q/V value functions, and an advantage-weighted regression loss for the policy (π), each
+        weighted by its corresponding `*_coeff` config field.
         """
         device = get_device_from_parameters(self)
 
@@ -613,6 +628,7 @@ class TDMPCTOLD(nn.Module):
         Args:
             z: (*, latent_dim) tensor for the current state's latent representation.
             a: (*, action_dim) tensor for the action to be applied.
+
         Returns:
             A tuple containing:
                 - (*, latent_dim) tensor for the next state's latent representation.
@@ -627,6 +643,7 @@ class TDMPCTOLD(nn.Module):
         Args:
             z: (*, latent_dim) tensor for the current state's latent representation.
             a: (*, action_dim) tensor for the action to be applied.
+
         Returns:
             (*, latent_dim) tensor for the next state's latent representation.
         """
@@ -642,6 +659,7 @@ class TDMPCTOLD(nn.Module):
         Args:
             z: (*, latent_dim) tensor for the current state's latent representation.
             std: The standard deviation of the injected noise.
+
         Returns:
             (*, action_dim) tensor for the sampled action.
         """
@@ -656,6 +674,7 @@ class TDMPCTOLD(nn.Module):
 
         Args:
             z: (*, latent_dim) tensor for the current state's latent representation.
+
         Returns:
             (*,) tensor of estimated state values.
         """
@@ -688,8 +707,7 @@ class TDMPCObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
     def __init__(self, config: TDMPCConfig):
-        """
-        Creates encoders for pixel and/or state modalities.
+        """Creates encoders for pixel and/or state modalities.
         TODO(alexander-soare): The original work allows for multiple images by concatenating them along the
             channel dimension. Re-implement this capability.
         """
@@ -816,12 +834,12 @@ def flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tens
     """Helper to temporarily flatten extra dims at the start of the image tensor.
 
     Args:
-        fn: Callable that the image tensor will be passed to. It should accept (B, C, H, W) and return
-            (B, *), where * is any number of dimensions.
-        image_tensor: An image tensor of shape (**, C, H, W), where ** is any number of dimensions, generally
-            different from *.
+        fn (`Callable`): A callable expecting a 4D `(B, C, H, W)` image tensor.
+        image_tensor (`Tensor`): An image tensor with any number of leading batch-like dims, e.g.
+            `(*, C, H, W)`.
+
     Returns:
-        A return value from the callable reshaped to (**, *).
+        A return value from the callable reshaped to `(*, *)`.
     """
     if image_tensor.ndim == 4:
         return fn(image_tensor)

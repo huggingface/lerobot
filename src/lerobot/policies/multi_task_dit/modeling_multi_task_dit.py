@@ -68,6 +68,14 @@ from ..utils import populate_queues
 
 
 class MultiTaskDiTPolicy(PreTrainedPolicy):
+    """Multi-Task Diffusion Transformer policy: a DiT that denoises action chunks conditioned on vision,
+    language, and robot state, trained with either a diffusion or a flow-matching objective.
+
+    Args:
+        config (`MultiTaskDiTConfig`): Policy configuration. `config.objective` selects between a
+            `DiffusionObjective` and a `FlowMatchingObjective`.
+    """
+
     config_class = MultiTaskDiTConfig
     name = "multi_task_dit"
 
@@ -107,7 +115,11 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         self.reset()
 
     def get_optim_params(self) -> list:
-        """Returns parameter groups with different learning rates for vision vs non-vision parameters"""
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Returns two parameter groups: the vision encoder at `optimizer_lr * vision_encoder_lr_multiplier`,
+        and everything else at the base `optimizer_lr`.
+        """
         non_vision_params = []
         vision_encoder_params = []
 
@@ -141,7 +153,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         return actions
 
     def reset(self):
-        """Clear observation and action queues. Should be called on `env.reset()`"""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the observation and action queues used by `select_action`."""
         self._queues = {
             OBS_STATE: deque(maxlen=self.config.n_obs_steps),
             ACTION: deque(maxlen=self.config.n_action_steps),
@@ -152,7 +164,11 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations"""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Samples the chunk via the configured objective's `conditional_sample` (DDPM/DDIM denoising for
+        `objective="diffusion"`, ODE integration for `objective="flow_matching"`).
+        """
         self.eval()
 
         for k in batch:
@@ -172,7 +188,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations"""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Uses an action queue populated by `predict_action_chunk`."""
         if ACTION in batch:
             batch = dict(batch)  # shallow copy to avoid modifying original
             batch.pop(ACTION)
@@ -189,7 +205,10 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
-        """Run the batch through the model and compute the loss for training"""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Computes the diffusion or flow-matching regression loss, depending on `config.objective`.
+        """
         batch = self._prepare_batch(batch)
 
         conditioning_vec = self.observation_encoder.encode(batch)

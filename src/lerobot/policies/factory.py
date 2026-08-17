@@ -77,8 +77,7 @@ def _reconnect_relative_absolute_steps(
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
-    """
-    Retrieves a policy class by its registered name.
+    """Retrieves a policy class by its registered name.
 
     Resolution is convention-based: the draccus-registered config class of ``name`` is
     looked up, its ``configuration_*`` module path is rewritten to ``modeling_*``, and
@@ -88,7 +87,8 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
     ``@PreTrainedConfig.register_subclass``).
 
     Args:
-        name: The registered name of the policy (e.g. "act", "diffusion", "pi0").
+        name (`str`): The registered name of the policy (e.g. "act", "diffusion", "pi0").
+
     Returns:
         The policy class corresponding to the given name.
 
@@ -100,16 +100,15 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
-    """
-    Instantiates a policy configuration object based on the policy type.
+    """Instantiates a policy configuration object based on the policy type.
 
     This factory function simplifies the creation of policy configuration objects by
     mapping a string identifier to the corresponding config class.
 
     Args:
-        policy_type: The registered type of the policy (any name registered via
-                     ``@PreTrainedConfig.register_subclass``, e.g. "act", "diffusion", "pi0").
-        **kwargs: Keyword arguments to be passed to the configuration class constructor.
+        policy_type (`str`): The registered type of the policy (any name registered via
+            `@PreTrainedConfig.register_subclass`, e.g. "act", "diffusion", "pi0").
+        kwargs (`Any`, *optional*): Keyword arguments to be passed to the configuration class constructor.
 
     Returns:
         An instance of a `PreTrainedConfig` subclass.
@@ -125,8 +124,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
-    """
-    A TypedDict defining the keyword arguments for processor configuration.
+    """A TypedDict defining the keyword arguments for processor configuration.
 
     This provides type hints for the optional arguments passed to `make_pre_post_processors`,
     improving code clarity and enabling static analysis.
@@ -160,8 +158,7 @@ def make_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Create or load pre- and post-processor pipelines for a given policy.
+    """Create or load pre- and post-processor pipelines for a given policy.
 
     This function acts as a factory. It can either load existing processor pipelines
     from a pretrained path or create new ones from scratch based on the policy
@@ -172,6 +169,7 @@ def make_pre_post_processors(
         policy_cfg: The configuration of the policy for which to create processors.
         pretrained_path: An optional path to load pretrained processor pipelines from.
             If provided, pipelines are loaded from this path.
+        pretrained_revision: The Hub revision to load `pretrained_path` from, if it's a Hub repo id.
         **kwargs: Keyword arguments for processor configuration, as defined in
             `ProcessorConfigKwargs`.
 
@@ -248,8 +246,7 @@ def make_policy(
     rename_map: dict[str, str] | None = None,
     defer_weight_load: bool = False,
 ) -> PreTrainedPolicy:
-    """
-    Instantiate a policy model.
+    """Instantiate a policy model.
 
     This factory function handles the logic of creating a policy, which requires
     determining the input and output feature shapes. These shapes can be derived
@@ -259,13 +256,13 @@ def make_policy(
     Args:
         cfg (PreTrainedConfig): The configuration for the policy to be created. If
             `cfg.pretrained_path` is set, the policy will be loaded with weights from that path.
-        ds_meta (LeRobotDatasetMetadata | None): Dataset metadata used to infer feature shapes and
+        ds_meta (LeRobotDatasetMetadata | None, *optional*): Dataset metadata used to infer feature shapes and
             types. Also provides statistics for normalization layers.
-        env_cfg (EnvConfig | None): Environment configuration used to infer feature shapes and
+        env_cfg (EnvConfig | None, *optional*): Environment configuration used to infer feature shapes and
             types. One of `ds_meta` or `env_cfg` must be provided.
-        rename_map (dict[str, str] | None): Optional mapping of dataset or environment feature
+        rename_map (dict[str, str] | None, *optional*): Optional mapping of dataset or environment feature
             keys to match expected policy feature names (e.g., `"left"` → `"camera1"`).
-        defer_weight_load (bool): Build the exact policy `from_pretrained` would build — same
+        defer_weight_load (bool, *optional*, defaults to `False`): Build the exact policy `from_pretrained` would build — same
             config resolution, same stats-derived buffers, same device placement and eval mode —
             but skip the safetensors weight load. Used when resuming from a DCP checkpoint, whose
             sharded weights stream in after `accelerator.prepare()` (the distributed checkpoint
@@ -412,6 +409,7 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
 
     Args:
         name: The name of the policy.
+
     Returns:
         The policy class corresponding to the given name.
     """
@@ -467,10 +465,10 @@ def _make_processors_from_policy_config(
         dataset_stats: Dataset statistics for normalization.
         dataset_meta: Dataset metadata, forwarded only to factories that declare a
             ``dataset_meta`` parameter (e.g. groot, molmoact2).
+
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
-
     policy_type = config.type
     function_name = f"make_{policy_type}_pre_post_processors"
     module_path = config.__class__.__module__.replace(

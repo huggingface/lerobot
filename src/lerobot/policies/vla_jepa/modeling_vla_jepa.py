@@ -62,8 +62,7 @@ def _get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16)
 
 
 class VLAJEPAModel(nn.Module):
-    """
-    Native VLA-JEPA model following the original starVLA VLA_JEPA.py.
+    """Native VLA-JEPA model following the original starVLA VLA_JEPA.py.
 
     Components:
       - Qwen3-VL: vision-language backbone for fused embeddings
@@ -330,18 +329,23 @@ class VLAJEPAModel(nn.Module):
 
 
 class VLAJEPAPolicy(PreTrainedPolicy):
-    """
-    LeRobot adapter for VLA-JEPA.
+    """LeRobot adapter for VLA-JEPA.
 
     Converts LeRobot's standard batch format (dict[str, Tensor]) to the batched tensors
     the native model expects (keeping everything on-device), calls the native model, and
     converts outputs back to LeRobot format.
+
+    Args:
+        config (`VLAJEPAConfig`): The policy configuration.
+        kwargs: Forwarded to the base class. If `dataset_meta` is present, it is used to override
+            `config.state_dim`/`config.action_dim` from the actual dataset's feature shapes, in case
+            `validate_features` read stale dimensions from a pretrained config.
     """
 
     config_class = VLAJEPAConfig
     name = "vla_jepa"
 
-    def __init__(self, config: VLAJEPAConfig, **kwargs) -> None:
+    def __init__(self, config: VLAJEPAConfig, **kwargs: Any) -> None:
         super().__init__(config)
         config.validate_features()
         if dataset_meta := kwargs.get("dataset_meta"):
@@ -358,6 +362,9 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self) -> None:
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Reinitializes the action queue used by
+        `select_action`.
+        """
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     # ---- Format Conversion: LeRobot → Native ----
@@ -425,7 +432,18 @@ class VLAJEPAPolicy(PreTrainedPolicy):
     # ---- LeRobot Policy Interface ----
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """LeRobot train forward: convert → native forward → aggregate losses."""
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Converts the batch to the native model's inputs, then runs the flow-matching action loss and,
+        when `enable_world_model` is set, the V-JEPA world-model loss, returning their sum.
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation/action tensors.
+
+        Returns:
+            tuple[Tensor, dict]: The total loss (`action_loss` plus the weighted `wm_loss`) and a dict of
+                the individual loss terms for logging.
+        """
         native_output = self.model.forward(**self._prepare_model_inputs(batch, training=True))
 
         ref = next(iter(native_output.values()))
@@ -436,11 +454,27 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         return total_loss, logs
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Returns all of the model's parameters directly (an iterator), rather than a grouped dict.
+        """
         return self.model.parameters()
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """LeRobot inference: convert → native predict → return as Tensor."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Converts the batch to the native model's inputs and runs the flow-matching action head's
+        `predict_action` to produce the full predicted chunk.
+
+        Args:
+            batch (dict[str, Tensor]): A batch of preprocessed, normalized observation tensors.
+            noise (Tensor | None, *optional*): Accepted for interface compatibility with
+                `ActionSelectKwargs`; currently unused.
+
+        Returns:
+            Tensor: The predicted action chunk.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
@@ -450,7 +484,11 @@ class VLAJEPAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """LeRobot select_action with action queue caching."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`: the queue is refilled with the first
+        `n_action_steps` predicted actions whenever it runs empty.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         if len(self._queues[ACTION]) == 0:
@@ -464,6 +502,7 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         pretrained_name_or_path: str | Path,
         **kwargs,
     ):
+        """See [`~policies.pretrained.PreTrainedPolicy.from_pretrained`]."""
         return super().from_pretrained(pretrained_name_or_path, **kwargs)
 
     @classmethod

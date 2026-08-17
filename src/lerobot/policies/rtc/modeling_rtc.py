@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Real-Time Chunking (RTC) implementation for LeRobot.
+"""Real-Time Chunking (RTC) implementation for LeRobot.
 
 Based on Physical Intelligence's Kinetix implementation:
 https://github.com/Physical-Intelligence/real-time-chunking-kinetix/blob/main/src/model.py#L214
@@ -43,6 +42,7 @@ class RTCProcessor:
     """
 
     def __init__(self, rtc_config: RTCConfig):
+        """Create the processor; starts a debug `Tracker` when `rtc_config.debug` is set."""
         self.rtc_config = rtc_config
 
         self.tracker = None
@@ -158,7 +158,6 @@ class RTCProcessor:
         Reference:
             https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
-
         # In the original implementation, the time goes from 0 to 1 and
         # In our implementation, the time goes from 1 to 0
         # So we need to invert the time
@@ -249,6 +248,16 @@ class RTCProcessor:
         return result
 
     def get_prefix_weights(self, start, end, total):
+        """Build the prefix-attention weight vector, per `rtc_config.prefix_attention_schedule`.
+
+        Args:
+            start: The step at which the weight begins ramping down from 1.0 (`ZEROS`/`LINEAR`/`EXP`).
+            end: The step by which the weight reaches 0.0 (`ONES`/`LINEAR`/`EXP`).
+            total: The length of the returned weight vector.
+
+        Returns:
+            A `(total,)` tensor of weights in `[0, 1]`.
+        """
         start = min(start, end)
 
         if self.rtc_config.prefix_attention_schedule == RTCAttentionSchedule.ZEROS:

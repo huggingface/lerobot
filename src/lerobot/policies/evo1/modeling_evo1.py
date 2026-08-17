@@ -33,16 +33,37 @@ from .evo1_model import Evo1Model
 
 
 class ActionSelectKwargs(TypedDict, total=False):
+    """Extra keyword arguments accepted by EVO1's `select_action`/`predict_action_chunk` for RTC inference.
+
+    **Attributes**:
+        - **inference_delay** (`int | None`) -- Number of environment steps the previous inference call
+          took, used by the RTC processor to blend the new chunk with `prev_chunk_left_over`.
+        - **prev_chunk_left_over** (`Tensor | None`) -- Unconsumed tail of the previously predicted action
+          chunk, blended with the new prediction for a smooth handoff.
+        - **execution_horizon** (`int | None`) -- Number of steps of the new chunk that will actually be
+          executed before the next inference call, used to weight the RTC blend.
+    """
+
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
 
 
 class Evo1Policy(PreTrainedPolicy):
+    """EVO1 vision-language-action policy: an InternVL3 backbone with a flow-matching action head.
+
+    Args:
+        config (`Evo1Config`): Policy configuration.
+        vlm_hub_kwargs (`dict`, *optional*): Hub download options (`token`, `cache_dir`,
+            `local_files_only`, `proxies`) forwarded to the VLM backbone's own `from_pretrained` call, as
+            distinct from the ones used to load this policy's own checkpoint.
+    """
+
     config_class = Evo1Config
     name = "evo1"
 
     def supports_rtc(self) -> bool:
+        """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`]. EVO1 supports Real-Time Chunking."""
         return True
 
     def __init__(self, config: Evo1Config, *, vlm_hub_kwargs: dict | None = None, **kwargs):
@@ -93,6 +114,12 @@ class Evo1Policy(PreTrainedPolicy):
         strict: bool | None = None,
         **kwargs,
     ) -> T:
+        """See [`~policies.pretrained.PreTrainedPolicy.from_pretrained`].
+
+        Defaults `strict` to `True` instead of `False`, and additionally forwards `vlm_hub_kwargs` (or
+        derives them from `token`, `cache_dir`, `local_files_only`, and `proxies`) to the InternVL3
+        backbone's own `from_pretrained` call.
+        """
         if strict is None:
             strict = True
         vlm_hub_kwargs = kwargs.pop("vlm_hub_kwargs", None)
@@ -170,6 +197,11 @@ class Evo1Policy(PreTrainedPolicy):
         return nullcontext()
 
     def get_optim_params(self) -> list[dict]:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Splits parameters into a weight-decayed group and a no-decay group (biases and 1D/normalization
+        parameters).
+        """
         decay, no_decay = [], []
         for name, param in self.named_parameters():
             if not param.requires_grad:
@@ -186,6 +218,7 @@ class Evo1Policy(PreTrainedPolicy):
         ]
 
     def reset(self):
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the action queue used by `select_action`."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def _normalize_task_batch(self, batch: dict[str, Tensor | list[str] | str]) -> list[str]:
@@ -362,6 +395,12 @@ class Evo1Policy(PreTrainedPolicy):
             embedder.eval()
 
     def train(self, mode: bool = True):
+        """Set training mode, keeping the VLM embedder in eval mode when its weights are frozen.
+
+        Args:
+            mode (`bool`, *optional*, defaults to `True`):
+                Whether to set training (`True`) or evaluation (`False`) mode.
+        """
         super().train(mode)
         self._keep_frozen_embedder_eval()
         return self
@@ -452,6 +491,12 @@ class Evo1Policy(PreTrainedPolicy):
         return sq_error.sum() / active.sum()
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Computes the flow-matching velocity-regression loss (squared error between the predicted and
+        target velocity), masked to the active state/action dimensions and averaged per sample. Set
+        `reduction="none"` to get the per-sample loss instead of the batch mean.
+        """
         prompts = self._normalize_task_batch(batch)
         image_batches, image_masks = self._collect_image_batches(batch)
         states, _state_mask = self._prepare_state(batch)
@@ -486,6 +531,12 @@ class Evo1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Accepts `ActionSelectKwargs`'s RTC-specific arguments (`inference_delay`, `prev_chunk_left_over`,
+        `execution_horizon`), which are rejected unless `config.rtc_config` is set and
+        `init_rtc_processor()` has been called.
+        """
         inference_delay = kwargs.get("inference_delay")
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         execution_horizon = kwargs.get("execution_horizon")
@@ -522,6 +573,11 @@ class Evo1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`. Real-Time Chunking is not supported
+        here; use `predict_action_chunk` directly when `config.rtc_config` is enabled.
+        """
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
         )

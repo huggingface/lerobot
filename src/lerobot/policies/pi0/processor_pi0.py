@@ -37,8 +37,7 @@ from .configuration_pi0 import PI0Config
 
 @ProcessorStepRegistry.register(name="pi0_new_line_processor")
 class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
-    """
-    Ensures that the task description string ends with a newline character.
+    """Ensures that the task description string ends with a newline character.
 
     This processing step is required for compatibility with the PaliGemma tokenizer,
     which expects a newline at the end of the text prompt. It handles both single
@@ -46,8 +45,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     """
 
     def complementary_data(self, complementary_data):
-        """
-        Adds a newline to the 'task' field if it doesn't already have one.
+        """Adds a newline to the 'task' field if it doesn't already have one.
 
         Args:
             complementary_data: A dictionary that may contain a 'task' key with a
@@ -80,8 +78,7 @@ class Pi0NewLineProcessor(ComplementaryDataProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        This step does not alter the feature definitions.
+        """This step does not alter the feature definitions.
 
         Args:
             features: The input feature dictionary.
@@ -99,8 +96,7 @@ def make_pi0_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for the PI0 policy.
+    """Constructs pre-processor and post-processor pipelines for the PI0 policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations.
@@ -115,15 +111,12 @@ def make_pi0_pre_post_processors(
     2. Unnormalizing the output features to their original scale.
 
     Args:
-        config: The configuration object for the PI0 policy.
-        dataset_stats: A dictionary of statistics for normalization.
-        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
-        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
+        config (`PI0Config`): The policy's configuration, providing feature shapes/types and normalization settings.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used to initialize normalization layers.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-
     relative_step = RelativeActionsProcessorStep(
         enabled=config.use_relative_actions,
         exclude_joints=getattr(config, "relative_exclude_joints", []),

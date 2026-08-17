@@ -73,14 +73,13 @@ def make_fastwam_pre_post_processors(
     Args:
         config (FastWAMConfig): Policy configuration controlling device and
             normalization feature metadata.
-        dataset_stats (dict[str, dict[str, torch.Tensor]] | None): Optional
+        dataset_stats (dict[str, dict[str, torch.Tensor]] | None, *optional*): Optional
             LeRobot dataset statistics used by normalization processors.
 
     Returns:
         tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]: Input and
         output processor pipelines discoverable by LeRobot.
     """
-
     # NOTE: no visual normalization here. VISUAL is IDENTITY (see configuration_fastwam.normalization_mapping)
     # — images pass through in [0, 1] and the model maps them to the Wan VAE's [-1, 1] at the encode
     # boundary. This is deliberate: `lerobot_train.py` overrides the normalizer stats with

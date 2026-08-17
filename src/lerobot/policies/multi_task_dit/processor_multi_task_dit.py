@@ -36,8 +36,7 @@ def make_multi_task_dit_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for a Multi-Task DiT policy.
+    """Constructs pre-processor and post-processor pipelines for a Multi-Task DiT policy.
 
     The pre-processing pipeline prepares the input data for the model by:
     1. Renaming features.
@@ -51,15 +50,12 @@ def make_multi_task_dit_pre_post_processors(
     2. Moving the data to the CPU.
 
     Args:
-        config: The configuration object for the Multi-Task DiT policy,
-            containing feature definitions, normalization mappings, and device information.
-        dataset_stats: A dictionary of statistics used for normalization.
-            Defaults to None.
+        config (`MultiTaskDiTConfig`): The policy's configuration, providing feature shapes/types and normalization settings.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used to initialize normalization layers.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-
     steps = make_default_policy_processor_steps(config, dataset_stats, normalizer_device=config.device)
 
     input_steps = [

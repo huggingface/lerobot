@@ -38,8 +38,7 @@ def make_wall_x_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Constructs pre-processor and post-processor pipelines for the Wall-X policy.
+    """Constructs pre-processor and post-processor pipelines for the Wall-X policy.
 
     The pre-processing pipeline prepares input data for the model by:
     1. Renaming features to match pretrained configurations
@@ -52,13 +51,12 @@ def make_wall_x_pre_post_processors(
     2. Moving data to the CPU
 
     Args:
-        config: The configuration object for the Wall-X policy
-        dataset_stats: A dictionary of statistics for normalization
+        config (`WallXConfig`): The policy's configuration, providing feature shapes/types and normalization settings.
+        dataset_stats (`dict[str, dict[str, torch.Tensor]] | None`, *optional*): Dataset statistics used to initialize normalization layers.
 
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines
     """
-
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
     input_steps = [
@@ -79,8 +77,7 @@ def make_wall_x_pre_post_processors(
 
 @ProcessorStepRegistry.register(name="wall_x_task_processor")
 class WallXTaskProcessor(ComplementaryDataProcessorStep):
-    """
-    A processor step that ensures the task description is properly formatted for Wall-X.
+    """A processor step that ensures the task description is properly formatted for Wall-X.
 
     This step handles task preprocessing similar to Qwen-VL requirements.
     """

@@ -48,7 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 class EO1Policy(PreTrainedPolicy):
-    """EO1 policy wrapper for LeRobot robot-only training/evaluation."""
+    """EO1 policy wrapper for LeRobot robot-only training/evaluation.
+
+    Args:
+        config (`EO1Config`): Policy configuration. Also drives whether the Qwen backbone is loaded from
+            `config.vlm_base` (fresh initialization) or reconstructed from `config.vlm_backbone_config`
+            (resuming from `config.pretrained_path`).
+    """
 
     config_class = EO1Config
     name = "eo1"
@@ -80,6 +86,7 @@ class EO1Policy(PreTrainedPolicy):
         self.reset()
 
     def reset(self):
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the action queue used by `select_action`."""
         self._action_queue = deque(maxlen=self.config.n_action_steps)
 
     @staticmethod
@@ -87,6 +94,11 @@ class EO1Policy(PreTrainedPolicy):
         return {key: value for key, value in batch.items() if key not in excluded_keys}
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
+
+        Computes the flow-matching loss: the mean squared error between the noise-minus-action target and
+        the velocity predicted by the Qwen backbone plus flow head at a sampled timestep.
+        """
         state = self.prepare_state(batch[OBS_STATE])
         actions = self.prepare_action(batch[ACTION])
         model_inputs = self._get_model_inputs(batch, {OBS_STATE, ACTION})
@@ -97,6 +109,11 @@ class EO1Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Samples the chunk by Euler-integrating the flow-matching head from noise, then slices it back down
+        to the dataset's real action dimensionality (undoing the `max_action_dim` padding).
+        """
         self.eval()
 
         states = self.prepare_state(batch[OBS_STATE])
@@ -107,13 +124,16 @@ class EO1Policy(PreTrainedPolicy):
         return actions[:, :, :original_action_dim]
 
     def prepare_state(self, state: Tensor) -> Tensor:
+        """Zero-pad a state tensor up to `config.max_state_dim` for the flow-matching head."""
         return pad_vector(state, self.config.max_state_dim)
 
     def prepare_action(self, action: Tensor) -> Tensor:
+        """Zero-pad an action tensor up to `config.max_action_dim` for the flow-matching head."""
         return pad_vector(action, self.config.max_action_dim)
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Uses an action queue populated by `predict_action_chunk`."""
         self.eval()
 
         if len(self._action_queue) == 0:
@@ -123,6 +143,7 @@ class EO1Policy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def get_optim_params(self) -> dict:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]. Trains every policy parameter with a single learning rate."""
         return self.parameters()
 
 
@@ -358,7 +379,6 @@ class EO1VisionFlowMatchingModel(nn.Module):
         **kwargs,
     ) -> Tensor:
         """Run the EO1 training forward pass and compute the flow-matching loss."""
-
         # 1. Build the EO1 prefix with state placeholders resolved.
         inputs_embeds = self.embed_prefix(
             input_ids,

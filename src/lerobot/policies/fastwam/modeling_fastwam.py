@@ -47,9 +47,12 @@ class FastWAMPolicy(PreTrainedPolicy):
     PyTorch's own flash/mem-efficient/math kernel internally, unrelated to the ``flash-attn`` package.)
 
     Args:
-        config (FastWAMConfig): FastWAM policy configuration.
-        dataset_stats (dict[str, dict[str, Tensor]] | None): Optional LeRobot
-            dataset statistics passed by the training/evaluation stack.
+        config (`FastWAMConfig`): FastWAM policy configuration.
+        dataset_stats (`dict[str, dict[str, Tensor]]`, *optional*): LeRobot dataset statistics passed by
+            the training/evaluation stack. Accepted for signature compatibility with other policies but
+            not otherwise used here.
+        kwargs: Additional keyword arguments (e.g. `dataset_meta`) forwarded by `make_policy` or
+            `from_pretrained`; accepted and ignored.
     """
 
     config_class = FastWAMConfig
@@ -140,6 +143,12 @@ class FastWAMPolicy(PreTrainedPolicy):
         return model
 
     def get_optim_params(self) -> list[Tensor]:
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`].
+
+        Returns a flat list of trainable tensors (DiT parameters plus the proprio encoder's, when
+        present) rather than a param-group dict, so parameters frozen via `freeze_video_expert` are
+        excluded.
+        """
         # Return the trainable tensors directly (a single param group). The optimizer
         # builder wraps these in a param group; returning a bare {"params": [...]} dict
         # instead would make `list(...)` yield the key string "params".
@@ -152,6 +161,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         return [p for p in params if p.requires_grad]
 
     def reset(self) -> None:
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the action queue used by `select_action`."""
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
 
     def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -187,36 +197,24 @@ class FastWAMPolicy(PreTrainedPolicy):
         return sample
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
-        """Compute FastWAM training loss for a LeRobot batch.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
 
-        Args:
-            batch (dict[str, Tensor]): Batch containing FastWAM-ready keys
-                (`video`, `action`, `context`, `context_mask`) or LeRobot keys
-                that can be adapted (`observation.images.*`, `observation.state`,
-                `action`, `action_is_pad`).
-
-        Returns:
-            tuple[Tensor, dict[str, Any]]: The scalar loss to backprop, and a dict of
-            logging metrics (e.g. `loss_video`, `loss_action`) — the `(loss, output_dict)`
-            contract the LeRobot training loop expects.
+        Accepts either FastWAM-native batch keys (`video`, `action`, `context`, `context_mask`) or
+        standard LeRobot keys (`observation.images.*`, `observation.state`, `action`, `action_is_pad`),
+        which are adapted internally. The metrics dict includes per-term losses such as `loss_video` and
+        `loss_action`.
         """
-
         sample = self._batch_to_training_sample(batch)
         loss, metrics = self.model.training_loss(sample)
         return loss, dict(metrics or {})
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
-        """Predict a chunk of actions from the current FastWAM observation.
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
 
-        Args:
-            batch (dict[str, Tensor]): Inference batch with `input_image` or
-                image observation keys, plus `context/context_mask` or `prompt`.
-
-        Returns:
-            Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
+        Accepts an inference batch with `input_image` or image-observation keys, plus a `context`/
+        `context_mask` pair or a `prompt`. Returns a chunk of shape `[B, action_horizon, action_dim]`.
         """
-
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
@@ -238,6 +236,7 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`]. Uses an action queue populated by `predict_action_chunk`."""
         self.eval()
         if len(self._action_queue) == 0:
             actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]

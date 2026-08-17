@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Wall-X: Cross-embodiment robotic control using Qwen2.5-VL with flow matching.
+"""Wall-X: Cross-embodiment robotic control using Qwen2.5-VL with flow matching.
 
 [Paper](https://github.com/x2-robot/wall-x)
 
@@ -202,8 +201,7 @@ class SinusoidalPosEmb(nn.Module):
 
 
 class ActionHead(nn.Module):
-    """
-    Action prediction head with flow matching.
+    """Action prediction head with flow matching.
 
     Implements Beta-distributed noise scheduling and temporal embeddings
     for action sequence prediction.
@@ -249,8 +247,7 @@ class ActionHead(nn.Module):
         return time
 
     def forward(self, action_chunk, dof_mask=None):
-        """
-        Process action sequences with noise injection for training.
+        """Process action sequences with noise injection for training.
 
         Args:
             action_chunk: Action sequences [batch, seq_len, action_dim]
@@ -352,11 +349,20 @@ _Qwen2_5_VLForAction_Base = Qwen2_5_VLForConditionalGeneration if _wallx_deps_av
 
 
 class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
-    """
-    Qwen2.5 Vision-Language Mixture of Experts model for action processing.
+    """Qwen2.5 Vision-Language Mixture of Experts model for action processing.
 
     This model extends the base Qwen2.5 VL model with action token processing capabilities
     and optional LoRA fine-tuning support.
+
+    Args:
+        config (`Qwen2_5_VLConfig`): Model configuration.
+        use_fast_tokenizer (`bool`, *optional*, defaults to `False`): Whether to use the fast tokenizer.
+        processor (`Any`, *optional*): Text and image processor.
+        action_tokenizer (`Any`, *optional*): Action-specific tokenizer.
+        action_mapper (`Any`, *optional*): Action mapping utility.
+        flow_loss_weight (`float`, *optional*, defaults to 1.0): Weight for flow loss computation.
+        vision_attn_implementation (`str`, *optional*, defaults to `"auto"`): Attention implementation
+            to configure on the vision transformer.
     """
 
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
@@ -384,8 +390,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         strict: bool = False,
         **kwargs: Any,
     ):
-        """
-        Load model from pretrained model path.
+        """Load model from pretrained model path.
 
         Args:
             pretrained_model_path (str): Model directory path containing model.safetensors file
@@ -488,17 +493,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         flow_loss_weight=1.0,
         vision_attn_implementation: str = "auto",
     ):
-        """
-        Initialize the Qwen2.5 VLMoE model for action processing.
-
-        Args:
-            config: Model configuration
-            use_fast_tokenizer (bool): Whether to use fast tokenizer
-            processor: Text and image processor
-            action_tokenizer: Action-specific tokenizer
-            action_mapper: Action mapping utility
-            flow_loss_weight (float): Weight for flow loss computation
-        """
         Qwen2_5_VLMoEModel._require_eager_attention(config._attn_implementation)
         config._attn_implementation = "eager"
         # Text needs eager attention for action-token islands. Vision has no such
@@ -557,8 +551,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
                 param.data = param.data.to(torch.float32)
 
     def define_action_token_id(self):
-        """
-        Define action token IDs based on tokenizer configuration.
+        """Define action token IDs based on tokenizer configuration.
 
         Creates mappings for fast action tokens, proprioception tokens, and general action tokens.
         """
@@ -581,8 +574,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         }
 
     def add_lora(self, r=8, lora_alpha=32, target_modules=None, lora_dropout=0.1):
-        """
-        Add LoRA (Low-Rank Adaptation) adapters to the model.
+        """Add LoRA (Low-Rank Adaptation) adapters to the model.
 
         Args:
             r (int): Rank of adaptation
@@ -638,8 +630,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         second_per_grid_ts: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Calculate 3D RoPE (Rotary Position Embedding) indices for vision and text tokens.
+        """Calculate 3D RoPE (Rotary Position Embedding) indices for vision and text tokens.
 
         This method computes position embeddings that account for the temporal, height, and width
         dimensions of vision tokens (images/videos) while maintaining standard 1D position embeddings
@@ -840,8 +831,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         agent_pos_mask: torch.FloatTensor | None = None,
         **kwargs,
     ) -> tuple | Qwen2_5_VLACausalLMOutputWithPast:
-        """
-        Forward pass for training with multi-modal inputs including vision, text, and action data.
+        """Forward pass for training with multi-modal inputs including vision, text, and action data.
 
         This method handles the complete forward pass during training, processing various input modalities
         including images, videos, text, proprioceptive data, and action sequences. It computes losses
@@ -1086,8 +1076,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         )
 
     def predict_action(self, predict_mode: str, **kwargs):
-        """
-        Predict actions using specified prediction mode.
+        """Predict actions using specified prediction mode.
 
         Args:
             predict_mode (str): Prediction mode, either "fast" or "diffusion"
@@ -1134,8 +1123,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         re_generate: bool = False,
         **kwargs,
     ):
-        """
-        Multi-modal prediction method supporting text generation, fast action prediction, and diffusion-based action prediction.
+        """Multi-modal prediction method supporting text generation, fast action prediction, and diffusion-based action prediction.
 
         This method handles three prediction modes:
         1. "text": Pure text generation using autoregressive decoding
@@ -1423,8 +1411,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
 
             def step(timestep, noisy_action):
-                """
-                Single denoising step for diffusion process.
+                """Single denoising step for diffusion process.
 
                 Args:
                     timestep: Current diffusion timestep
@@ -1494,8 +1481,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         return output
 
     def forward(self, mode: str | None = None, predict_mode: str | None = "text", **kwargs):
-        """
-        Main forward pass dispatcher for different execution modes.
+        """Main forward pass dispatcher for different execution modes.
 
         This method routes execution to appropriate forward functions based on the specified mode:
         - No mode (None): Training step with gradient disabled
@@ -1547,8 +1533,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         agent_pos_mask=None,
         **kwargs,
     ):
-        """
-        Prepare inputs for autoregressive generation with multi-modal support.
+        """Prepare inputs for autoregressive generation with multi-modal support.
 
         This method handles input preparation for generation, including proper slicing of inputs
         based on cache position, MoE token type management, and multi-modal data handling.
@@ -1655,8 +1640,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         self,
         input_ids: torch.LongTensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get the number of images and videos for each sample to calculate tensor separation lengths.
+        """Get the number of images and videos for each sample to calculate tensor separation lengths.
 
         These parameters are computed directly from input_ids rather than being passed through
         the processor to avoid unpredictable impacts from interface modifications.
@@ -1692,8 +1676,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         input_ids: torch.LongTensor | None = None,
         **model_kwargs,
     ) -> tuple[torch.LongTensor, dict[str, Any]]:
-        """
-        Expand inputs for generation with support for multi-modal tensors.
+        """Expand inputs for generation with support for multi-modal tensors.
 
         This is an overridden method that supports expanding tensors without a standard batch
         size dimension, specifically for vision-related tensors:
@@ -1810,17 +1793,21 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
 
 class WallXPolicy(PreTrainedPolicy):
-    """
-    Wall-X policy for cross-embodiment robotic control.
+    """Wall-X policy for cross-embodiment robotic control.
 
     Integrates Qwen2.5-VL vision-language model with action prediction
     using flow matching for continuous action spaces.
+
+    Args:
+        config (`WallXConfig`): Policy configuration; also validated/completed via
+            `config.validate_features()`.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
     """
 
     config_class = WallXConfig
     name = "wall_x"
 
-    def __init__(self, config: WallXConfig, **kwargs):
+    def __init__(self, config: WallXConfig, **kwargs: Any):
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
         require_package("torchdiffeq", extra="wallx")
@@ -1842,13 +1829,13 @@ class WallXPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self):
-        """Reset action queue."""
+        """See [`~policies.pretrained.PreTrainedPolicy.reset`]. Clears the action queue."""
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
     def get_optim_params(self):
-        """Get parameters for optimization."""
+        """See [`~policies.pretrained.PreTrainedPolicy.get_optim_params`]. Returns all model parameters."""
         return self.parameters()
 
     def preprocess_inputs(
@@ -1857,20 +1844,21 @@ class WallXPolicy(PreTrainedPolicy):
         *,
         compute_position_ids: bool = False,
     ) -> BatchFeature:
-        """
-        Convert a batch of LeRobot dataset items to Wall-X model input format.
+        """Convert a batch of LeRobot dataset items to the Wall-X model input format.
 
-        This processes a batched dictionary where tensors have batch dimension first.
+        This processes a batched dictionary where tensors have the batch dimension first.
 
         Args:
-            batch: Dictionary with batched tensors:
-                - "observation.state": (batch_size, state_dim) or (batch_size, n_obs_steps, state_dim)
-                - "action": (batch_size, chunk_size, action_dim)
-                - "observation.images.<key>": (batch_size, C, H, W)
-                - "task": List[str] of length batch_size
+            batch (dict[str, Any]): Dictionary with batched tensors, keyed by e.g.
+                `"observation.state"` (shape `(batch_size, state_dim)` or
+                `(batch_size, n_obs_steps, state_dim)`), `"action"` (shape
+                `(batch_size, chunk_size, action_dim)`), `"observation.images.<key>"` (shape
+                `(batch_size, C, H, W)`), and `"task"` (a list of `batch_size` strings).
+            compute_position_ids (bool, *optional*, defaults to `False`): Whether to also compute and
+                include RoPE position ids in the returned model inputs.
 
         Returns:
-            BatchFeature containing batched model inputs
+            `BatchFeature`: The batched Wall-X model inputs.
         """
         use_fast_tokenizer = self.config.use_fast_tokenizer
 
@@ -2044,17 +2032,11 @@ class WallXPolicy(PreTrainedPolicy):
         return inputs
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """
-        Training forward pass using Qwen2_5_VLMoEForAction.
+        """See [`~policies.pretrained.PreTrainedPolicy.forward`].
 
-        Args:
-            batch: Dictionary containing preprocessed inputs from preprocess_inputs()
-                   Expected keys: input_ids, attention_mask, pixel_values, image_grid_thw,
-                   proprioception, agent_pos_mask, action_chunk, dof_mask, moe_token_types,
-                   etc.
-
-        Returns:
-            tuple: (loss, loss_dict)
+        Runs `preprocess_inputs` on `batch`, then delegates to the underlying
+        `Qwen2_5_VLMoEForAction` model's `forward` in `mode="train"` to compute the flow-matching
+        and/or cross-entropy losses.
         """
         batch = self.preprocess_inputs(batch, compute_position_ids=True)
 
@@ -2082,7 +2064,11 @@ class WallXPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict action chunk for evaluation."""
+        """See [`~policies.pretrained.PreTrainedPolicy.predict_action_chunk`].
+
+        Delegates to the underlying `Qwen2_5_VLMoEForAction` model in `mode="predict"`, using either
+        flow-matching or FAST decoding depending on `config.prediction_mode`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
@@ -2120,7 +2106,10 @@ class WallXPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select single action for environment execution."""
+        """See [`~policies.pretrained.PreTrainedPolicy.select_action`].
+
+        Uses an action queue populated by `predict_action_chunk`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
