@@ -37,22 +37,20 @@ T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
 class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
-    """Base class for reward models."""
+    """Base class for reward models.
+
+    Args:
+        config (`RewardModelConfig`): Reward model configuration. `*inputs`/`**kwargs` are
+            forwarded to `nn.Module.__init__` (unused in practice).
+
+    Raises:
+        ValueError: If `config` is not a `RewardModelConfig` instance.
+    """
 
     config_class: None
     name: None
 
     def __init__(self, config: RewardModelConfig, *inputs, **kwargs):
-        """Store `config` on the instance.
-
-        Args:
-            config (`RewardModelConfig`): Reward model configuration.
-            *inputs: Forwarded to `nn.Module.__init__` (unused in practice).
-            **kwargs: Forwarded to `nn.Module.__init__` (unused in practice).
-
-        Raises:
-            ValueError: If `config` is not a `RewardModelConfig` instance.
-        """
         super().__init__()
         if not isinstance(config, RewardModelConfig):
             raise ValueError(

@@ -115,18 +115,17 @@ def _torch_dtype(name: str) -> torch.dtype:
 
 
 class RobometerPredictionHead(nn.Sequential):
-    """Small MLP head used for Robometer's progress / success / preference outputs."""
+    """Small MLP head used for Robometer's progress / success / preference outputs.
+
+    Args:
+        hidden_dim (`int`): Input dimension, matching the backbone's hidden size.
+        output_size (`int`): Output dimension (1 for scalar heads, `progress_discrete_bins` for
+            the discrete progress head).
+        dropout (`float`): Dropout probability applied before the final linear layer.
+        with_sigmoid (`bool`): Whether to apply a `Sigmoid` after the final linear layer.
+    """
 
     def __init__(self, hidden_dim: int, output_size: int, *, dropout: float, with_sigmoid: bool) -> None:
-        """Build the head's MLP layers.
-
-        Args:
-            hidden_dim (`int`): Input dimension, matching the backbone's hidden size.
-            output_size (`int`): Output dimension (1 for scalar heads, `progress_discrete_bins` for
-                the discrete progress head).
-            dropout (`float`): Dropout probability applied before the final linear layer.
-            with_sigmoid (`bool`): Whether to apply a `Sigmoid` after the final linear layer.
-        """
         layers: list[nn.Module] = [
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.LayerNorm(hidden_dim // 2),
@@ -183,22 +182,20 @@ class RobometerRewardModel(PreTrainedRewardModel):
     inference time only the progress and success heads are queried; the
     preference head is kept on the module so the published ``Robometer-4B``
     safetensors load unchanged.
+
+    Args:
+        config (`RobometerConfig`): Reward model configuration. When `config.pretrained_path`
+            is `None`, the base Qwen weights are downloaded and the embedding table resized;
+            otherwise the empty architecture is rebuilt from `config.vlm_backbone_config` so the
+            subsequent `model.safetensors` load fills it directly.
+        dropout (`float`, *optional*, defaults to 0.1): Dropout probability for the prediction
+            heads.
     """
 
     name = "robometer"
     config_class = RobometerConfig
 
     def __init__(self, config: RobometerConfig, *, dropout: float = 0.1) -> None:
-        """Build the Qwen-VL backbone and Robometer's progress/success/preference heads.
-
-        Args:
-            config (`RobometerConfig`): Reward model configuration. When `config.pretrained_path`
-                is `None`, the base Qwen weights are downloaded and the embedding table resized;
-                otherwise the empty architecture is rebuilt from `config.vlm_backbone_config` so the
-                subsequent `model.safetensors` load fills it directly.
-            dropout (`float`, *optional*, defaults to 0.1): Dropout probability for the prediction
-                heads.
-        """
         require_package("transformers", extra="robometer")
         super().__init__(config)
         self.config = config

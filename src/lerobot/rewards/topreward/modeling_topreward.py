@@ -95,17 +95,16 @@ def _torch_dtype(name: str) -> torch.dtype | str:
 
 
 class TOPRewardModel(PreTrainedRewardModel):
-    """TOPReward zero-shot reward model."""
+    """TOPReward zero-shot reward model.
+
+    Args:
+        config (`TOPRewardConfig`): Reward model configuration.
+    """
 
     name = "topreward"
     config_class = TOPRewardConfig
 
     def __init__(self, config: TOPRewardConfig) -> None:
-        """Load the underlying Qwen3-VL backbone specified by `config.vlm_name`.
-
-        Args:
-            config (`TOPRewardConfig`): Reward model configuration.
-        """
         require_package("transformers", extra="topreward")
         super().__init__(config)
         self.config = config

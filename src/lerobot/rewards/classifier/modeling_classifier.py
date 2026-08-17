@@ -53,17 +53,16 @@ class ClassifierOutput:
 
 
 class SpatialLearnedEmbeddings(nn.Module):
-    """PyTorch implementation of learned spatial embeddings."""
+    """PyTorch implementation of learned spatial embeddings.
+
+    Args:
+        height (`int`): Spatial height of input features
+        width (`int`): Spatial width of input features
+        channel (`int`): Number of input channels
+        num_features (`int`, *optional*, defaults to 8): Number of output embedding dimensions
+    """
 
     def __init__(self, height, width, channel, num_features=8):
-        """Build the learned spatial-embedding kernel.
-
-        Args:
-            height: Spatial height of input features
-            width: Spatial width of input features
-            channel: Number of input channels
-            num_features: Number of output embedding dimensions
-        """
         super().__init__()
         self.height = height
         self.width = width

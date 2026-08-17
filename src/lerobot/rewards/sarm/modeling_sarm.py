@@ -375,20 +375,18 @@ class SARMRewardModel(PreTrainedRewardModel):
     - SubtaskTransformer: Predicts within-stage progress (tau)
 
     Training uses 75%/25% GT/predicted stage conditioning (teacher forcing).
+
+    Args:
+        config (`SARMConfig`): Reward model configuration.
+        dataset_stats (`dict | None`, *optional*): Unused; accepted for interface compatibility.
+        dataset_meta (*optional*): Dataset metadata used to load temporal proportions when
+            `config.annotation_mode` is not `"single_stage"`.
     """
 
     name = "sarm"
     config_class = SARMConfig
 
     def __init__(self, config: SARMConfig, dataset_stats: dict | None = None, dataset_meta=None):
-        """Build the stage and subtask transformers from `config`.
-
-        Args:
-            config (`SARMConfig`): Reward model configuration.
-            dataset_stats (`dict | None`, *optional*): Unused; accepted for interface compatibility.
-            dataset_meta (*optional*): Dataset metadata used to load temporal proportions when
-                `config.annotation_mode` is not `"single_stage"`.
-        """
         super().__init__(config, dataset_stats)
         config.validate_features()
         self.config = config
