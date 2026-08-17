@@ -746,6 +746,9 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 class PI0Policy(PreTrainedPolicy):
     """PyTorch port of Physical Intelligence's PI0 vision-language-action policy, generating action
     chunks via flow matching.
+
+    Args:
+        config (`PI0Config`): Policy configuration class instance.
     """
 
     config_class = PI0Config
@@ -762,11 +765,6 @@ class PI0Policy(PreTrainedPolicy):
         config: PI0Config,
         **kwargs,
     ):
-        """Build the underlying PI0 model from `config`.
-
-        Args:
-            config (`PI0Config`): Policy configuration class instance.
-        """
         require_package("transformers", extra="pi")
         super().__init__(config)
         config.validate_features()

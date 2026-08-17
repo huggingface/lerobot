@@ -41,6 +41,9 @@ class GaussianActorPolicy(
     This policy only implements the actor (and its observation encoder) plus an optional discrete-action
     critic head; the Q-critics, temperature, and Bellman-update logic live on the algorithm side (see
     `lerobot.rl.algorithms.sac`).
+
+    Args:
+        config (`GaussianActorConfig`, *optional*): The policy configuration.
     """
 
     config_class = GaussianActorConfig
@@ -50,11 +53,6 @@ class GaussianActorPolicy(
         self,
         config: GaussianActorConfig | None = None,
     ):
-        """Build the observation encoder(s), the Gaussian actor network, and the optional discrete critic.
-
-        Args:
-            config (GaussianActorConfig): The policy configuration.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -594,15 +592,16 @@ def orthogonal_init():
 
 
 class SpatialLearnedEmbeddings(nn.Module):
-    def __init__(self, height, width, channel, num_features=8):
-        """PyTorch implementation of learned spatial embeddings
+    """PyTorch implementation of learned spatial embeddings.
 
-        Args:
-            height: Spatial height of input features
-            width: Spatial width of input features
-            channel: Number of input channels
-            num_features: Number of output embedding dimensions
-        """
+    Args:
+        height (`int`): Spatial height of input features.
+        width (`int`): Spatial width of input features.
+        channel (`int`): Number of input channels.
+        num_features (`int`, *optional*, defaults to 8): Number of output embedding dimensions.
+    """
+
+    def __init__(self, height, width, channel, num_features=8):
         super().__init__()
         self.height = height
         self.width = width

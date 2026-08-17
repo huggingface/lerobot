@@ -42,6 +42,9 @@ from .configuration_act import ACTConfig
 class ACTPolicy(PreTrainedPolicy):
     """Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
     Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
+
+    Args:
+        config (`ACTConfig`): Policy configuration.
     """
 
     config_class = ACTConfig
@@ -54,12 +57,6 @@ class ACTPolicy(PreTrainedPolicy):
         config: ACTConfig,
         **kwargs,
     ):
-        """Build the ACT model (and, if enabled, the temporal ensembler) from `config`.
-
-        Args:
-            config (`ACTConfig`):
-                Policy configuration.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -704,12 +701,12 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
 
     The variation is that the position indices are normalized in [0, 2π] (not quite: the lower bound is 1/H
     for the vertical direction, and 1/W for the horizontal direction.
+
+    Args:
+        dimension (`int`): The desired dimension of the embeddings.
     """
 
     def __init__(self, dimension: int):
-        """Args:
-        dimension: The desired dimension of the embeddings.
-        """
         super().__init__()
         self.dimension = dimension
         self._two_pi = 2 * math.pi

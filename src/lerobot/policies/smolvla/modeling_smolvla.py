@@ -141,6 +141,9 @@ def aloha_gripper_from_angular_inv(value):
 class SmolVLAPolicy(PreTrainedPolicy):
     """SmolVLA vision-language-action policy: a `VLAFlowMatching` model (SmolVLM2 backbone plus a
     flow-matching action expert) wrapped for training and inference within LeRobot.
+
+    Args:
+        config (`SmolVLAConfig`): Policy configuration class instance.
     """
 
     config_class = SmolVLAConfig
@@ -157,11 +160,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         config: SmolVLAConfig,
         **kwargs,
     ):
-        """Build the underlying `VLAFlowMatching` model from `config`.
-
-        Args:
-            config (`SmolVLAConfig`): Policy configuration class instance.
-        """
         require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()

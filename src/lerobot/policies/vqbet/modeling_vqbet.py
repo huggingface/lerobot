@@ -38,7 +38,11 @@ from .vqbet_utils import GPT, ResidualVQ
 
 
 class VQBeTPolicy(PreTrainedPolicy):
-    """VQ-BeT Policy as per "Behavior Generation with Latent Actions" """
+    """VQ-BeT Policy as per "Behavior Generation with Latent Actions"
+
+    Args:
+        config (`VQBeTConfig | None`, *optional*): Policy configuration.
+    """
 
     config_class = VQBeTConfig
     name = "vqbet"
@@ -48,12 +52,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         config: VQBeTConfig | None = None,
         **kwargs,
     ):
-        """Build the VQ-BeT model from `config`.
-
-        Args:
-            config (`VQBeTConfig | None`):
-                Policy configuration.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -206,13 +204,14 @@ class SpatialSoftmax(nn.Module):
     The example above results in 512 keypoints (corresponding to the 512 input channels). We can optionally
     provide num_kp != None to control the number of keypoints. This is achieved by a first applying a learnable
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
+
+    Args:
+        input_shape (`list`): `(C, H, W)` input feature map shape.
+        num_kp (`int`, *optional*): Number of keypoints in output. If `None`, output will have the same
+            number of channels as input.
     """
 
     def __init__(self, input_shape, num_kp=None):
-        """Args:
-        input_shape (list): (C, H, W) input feature map shape.
-        num_kp (int): number of keypoints in output. If None, output will have the same number of channels as input.
-        """
         super().__init__()
 
         assert len(input_shape) == 3

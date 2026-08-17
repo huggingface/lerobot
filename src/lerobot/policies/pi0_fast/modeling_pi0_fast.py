@@ -738,6 +738,9 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
 class PI0FastPolicy(PreTrainedPolicy):
     """PyTorch port of Physical Intelligence's PI0-FAST vision-language-action policy, generating actions
     autoregressively as discrete FAST tokens.
+
+    Args:
+        config (`PI0FastConfig`): Policy configuration class instance.
     """
 
     config_class = PI0FastConfig
@@ -748,11 +751,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         config: PI0FastConfig,
         **kwargs,
     ):
-        """Build the underlying PI0-FAST model and its tokenizers from `config`.
-
-        Args:
-            config (`PI0FastConfig`): Policy configuration class instance.
-        """
         require_package("transformers", extra="pi")
         require_package("scipy", extra="pi")
         super().__init__(config)

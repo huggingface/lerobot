@@ -70,19 +70,16 @@ from ..utils import populate_queues
 class MultiTaskDiTPolicy(PreTrainedPolicy):
     """Multi-Task Diffusion Transformer policy: a DiT that denoises action chunks conditioned on vision,
     language, and robot state, trained with either a diffusion or a flow-matching objective.
+
+    Args:
+        config (`MultiTaskDiTConfig`): Policy configuration. `config.objective` selects between a
+            `DiffusionObjective` and a `FlowMatchingObjective`.
     """
 
     config_class = MultiTaskDiTConfig
     name = "multi_task_dit"
 
     def __init__(self, config: MultiTaskDiTConfig, **kwargs):
-        """Build the observation encoder, the DiT noise/velocity predictor, and the training objective.
-
-        Args:
-            config (`MultiTaskDiTConfig`):
-                Policy configuration. `config.objective` selects between a `DiffusionObjective` and a
-                `FlowMatchingObjective`.
-        """
         require_package("transformers", extra="multi_task_dit")
         require_package("diffusers", extra="multi_task_dit")
         super().__init__(config)

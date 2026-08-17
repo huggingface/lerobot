@@ -58,6 +58,9 @@ class TDMPCPolicy(PreTrainedPolicy):
           `lerobot/configs/policy/tdmpc_pusht_keypoints.yaml`.
         - Our current xarm datasets were generated using the environment from FOWM. Therefore they do not
           match our xarm environment.
+
+    Args:
+        config (`TDMPCConfig`): Policy configuration.
     """
 
     config_class = TDMPCConfig
@@ -68,12 +71,6 @@ class TDMPCPolicy(PreTrainedPolicy):
         config: TDMPCConfig,
         **kwargs,
     ):
-        """Build the world model (and its EMA target copy) from `config`.
-
-        Args:
-            config (`TDMPCConfig`):
-                Policy configuration.
-        """
         super().__init__(config)
         config.validate_features()
         self.config = config

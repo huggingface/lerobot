@@ -32,6 +32,7 @@ NOTE: The streaming path is written for single-environment eval (``--eval.batch_
 """
 
 from collections import deque
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -60,23 +61,22 @@ from .utils import (
 
 
 class LingBotVAPolicy(PreTrainedPolicy):
-    """LeRobot wrapper for the LingBot-VA autoregressive video-action world model."""
+    """LeRobot wrapper for the LingBot-VA autoregressive video-action world model.
+
+    The VAE, UMT5 text encoder, and tokenizer are frozen and lazily loaded from
+    `config.wan_pretrained_path` on first use; only the transformer is saved in the LeRobot
+    checkpoint.
+
+    Args:
+        config (`LingBotVAConfig`): Policy configuration; also validated/completed via
+            `config.validate_features()`.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+    """
 
     config_class = LingBotVAConfig
     name = "lingbot_va"
 
-    def __init__(self, config: LingBotVAConfig, **kwargs):
-        """Build the trainable Wan dual-stream transformer and reset per-episode streaming state.
-
-        The VAE, UMT5 text encoder, and tokenizer are frozen and lazily loaded from
-        `config.wan_pretrained_path` on first use; only the transformer is saved in the LeRobot
-        checkpoint.
-
-        Args:
-            config (LingBotVAConfig): Policy configuration; also validated/completed via
-                `config.validate_features()`.
-            kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
-        """
+    def __init__(self, config: LingBotVAConfig, **kwargs: Any):
         require_package("diffusers", extra="lingbot_va")
         require_package("transformers", extra="lingbot_va")
         super().__init__(config)

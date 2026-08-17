@@ -45,6 +45,14 @@ class FastWAMPolicy(PreTrainedPolicy):
     arbitrary boolean ``[query, key]`` masks that the FlashAttention varlen API cannot express;
     installing ``flash-attn`` has no effect on the FastWAM path. (SDPA may still dispatch to
     PyTorch's own flash/mem-efficient/math kernel internally, unrelated to the ``flash-attn`` package.)
+
+    Args:
+        config (`FastWAMConfig`): FastWAM policy configuration.
+        dataset_stats (`dict[str, dict[str, Tensor]]`, *optional*): LeRobot dataset statistics passed by
+            the training/evaluation stack. Accepted for signature compatibility with other policies but
+            not otherwise used here.
+        kwargs: Additional keyword arguments (e.g. `dataset_meta`) forwarded by `make_policy` or
+            `from_pretrained`; accepted and ignored.
     """
 
     config_class = FastWAMConfig
@@ -59,17 +67,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         **kwargs: Any,
     ):
-        """Build the FastWAM core model (video expert, action expert, and MoT router).
-
-        Args:
-            config (`FastWAMConfig`):
-                FastWAM policy configuration.
-            dataset_stats (`dict[str, dict[str, Tensor]]`, *optional*):
-                LeRobot dataset statistics passed by the training/evaluation stack. Accepted for
-                signature compatibility with other policies but not otherwise used here.
-            kwargs: Additional keyword arguments (e.g. `dataset_meta`) forwarded by `make_policy` or
-                `from_pretrained`; accepted and ignored.
-        """
         # FastWAM's Wan2.2 backbone needs transformers (UMT5 text encoder/tokenizer) and
         # diffusers (Wan VAE), both behind the `fastwam` extra. Fail fast with an actionable
         # message in base installs rather than deep in Wan component construction.

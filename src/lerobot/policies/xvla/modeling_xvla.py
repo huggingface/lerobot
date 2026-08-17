@@ -24,7 +24,7 @@ import os
 import re
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor, nn
@@ -263,18 +263,17 @@ class XVLAModel(nn.Module):
 
 
 class XVLAPolicy(PreTrainedPolicy):
-    """LeRobot-compliant wrapper built around the XVLA model."""
+    """LeRobot-compliant wrapper built around the XVLA model.
+
+    Args:
+        config (`XVLAConfig`): The policy configuration.
+        kwargs: Forwarded to the base class.
+    """
 
     config_class = XVLAConfig
     name = "xvla"
 
-    def __init__(self, config: XVLAConfig, **kwargs):
-        """Build the Florence-2-backed XVLA model from `config`.
-
-        Args:
-            config (XVLAConfig): The policy configuration.
-            kwargs: Forwarded to the base class.
-        """
+    def __init__(self, config: XVLAConfig, **kwargs: Any):
         require_package("transformers", extra="xvla")
         super().__init__(config)
         config.validate_features()

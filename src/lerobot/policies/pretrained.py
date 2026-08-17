@@ -71,6 +71,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     `select_action`, `get_optim_params`, and `reset`. See `docs/source/writing_docstrings.mdx` for the
     concrete-subclass documentation pattern (config dataclass + this contract's deviations only).
 
+    Args:
+        config (`PreTrainedConfig`): Policy configuration, stored on `self.config`. Subclasses build
+            their model in their own `__init__`.
+
+    Raises:
+        ValueError: If `config` is not a `PreTrainedConfig` instance.
+
     **Attributes**:
         - **config_class** (`type[PreTrainedConfig]`) -- The config class this policy expects.
         - **name** (`str`) -- The registered name of this policy (matches its config's
@@ -97,11 +104,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     _cp_plan: ClassVar[dict[str, Any] | None] = None
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
-        """Store `config` on `self.config`. Subclasses build their model in their own `__init__`.
-
-        Raises:
-            ValueError: If `config` is not a `PreTrainedConfig` instance.
-        """
         super().__init__()
         if not isinstance(config, PreTrainedConfig):
             raise ValueError(

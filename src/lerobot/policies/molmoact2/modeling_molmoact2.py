@@ -515,6 +515,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
     ``"continuous"`` (flow-matching only), ``"discrete"`` (autoregressive
     token prediction only), or ``"both"`` (joint loss). At inference,
     ``config.inference_action_mode`` selects which head generates actions.
+
+    Args:
+        config (`MolmoAct2Config`): Policy configuration.
+        inputs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+        dataset_stats (`dict[str, dict[str, Tensor]] | None`, *optional*): Unused by this constructor;
+            normalization statistics are instead supplied to the processor factory.
+        dataset_meta (`Any | None`, *optional*): Unused by this constructor.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
     """
 
     config_class = MolmoAct2Config
@@ -533,18 +541,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         *inputs,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
         dataset_meta: Any | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
-        """Load the vendored HF MolmoAct2 model from `config.checkpoint_path` and reset the action queue.
-
-        Args:
-            config (MolmoAct2Config): Policy configuration.
-            inputs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
-            dataset_stats (dict[str, dict[str, Tensor]] | None, *optional*): Unused by this
-                constructor; normalization statistics are instead supplied to the processor factory.
-            dataset_meta (Any | None, *optional*): Unused by this constructor.
-            kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
-        """
         super().__init__(config, *inputs, **kwargs)
         _apply_norm_tag_metadata(self.config)
         self.config.validate_features()

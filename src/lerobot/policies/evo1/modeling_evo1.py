@@ -50,7 +50,14 @@ class ActionSelectKwargs(TypedDict, total=False):
 
 
 class Evo1Policy(PreTrainedPolicy):
-    """EVO1 vision-language-action policy: an InternVL3 backbone with a flow-matching action head."""
+    """EVO1 vision-language-action policy: an InternVL3 backbone with a flow-matching action head.
+
+    Args:
+        config (`Evo1Config`): Policy configuration.
+        vlm_hub_kwargs (`dict`, *optional*): Hub download options (`token`, `cache_dir`,
+            `local_files_only`, `proxies`) forwarded to the VLM backbone's own `from_pretrained` call, as
+            distinct from the ones used to load this policy's own checkpoint.
+    """
 
     config_class = Evo1Config
     name = "evo1"
@@ -60,16 +67,6 @@ class Evo1Policy(PreTrainedPolicy):
         return True
 
     def __init__(self, config: Evo1Config, *, vlm_hub_kwargs: dict | None = None, **kwargs):
-        """Build the InternVL3 vision-language embedder and the flow-matching action head.
-
-        Args:
-            config (`Evo1Config`):
-                Policy configuration.
-            vlm_hub_kwargs (`dict`, *optional*):
-                Hub download options (`token`, `cache_dir`, `local_files_only`, `proxies`) forwarded to the
-                VLM backbone's own `from_pretrained` call, as distinct from the ones used to load this
-                policy's own checkpoint.
-        """
         super().__init__(config)
         config.validate_features()
 

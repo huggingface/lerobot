@@ -26,7 +26,7 @@ import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -62,7 +62,13 @@ T = TypeVar("T", bound="GrootPolicy")
 
 
 class GrootPolicy(PreTrainedPolicy):
-    """Wrapper around external Groot model for LeRobot integration."""
+    """Wrapper around external Groot model for LeRobot integration.
+
+    Args:
+        config (`GrootConfig`): Policy configuration; also validated/completed via
+            `config.validate_features()`.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
+    """
 
     name = "groot"
     config_class = GrootConfig
@@ -71,14 +77,7 @@ class GrootPolicy(PreTrainedPolicy):
         """See [`~policies.pretrained.PreTrainedPolicy.supports_rtc`]. GR00T N1.7 implements RTC."""
         return True
 
-    def __init__(self, config: GrootConfig, **kwargs):
-        """Build the underlying GR00T N1.7 model from `config` and reset the action queue.
-
-        Args:
-            config (GrootConfig): Policy configuration; also validated/completed via
-                `config.validate_features()`.
-            kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
-        """
+    def __init__(self, config: GrootConfig, **kwargs: Any):
         require_package("transformers", extra="groot")
         super().__init__(config)
         config.validate_features()

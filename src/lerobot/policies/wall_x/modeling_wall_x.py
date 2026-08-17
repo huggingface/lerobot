@@ -353,6 +353,16 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
     This model extends the base Qwen2.5 VL model with action token processing capabilities
     and optional LoRA fine-tuning support.
+
+    Args:
+        config (`Qwen2_5_VLConfig`): Model configuration.
+        use_fast_tokenizer (`bool`, *optional*, defaults to `False`): Whether to use the fast tokenizer.
+        processor (`Any`, *optional*): Text and image processor.
+        action_tokenizer (`Any`, *optional*): Action-specific tokenizer.
+        action_mapper (`Any`, *optional*): Action mapping utility.
+        flow_loss_weight (`float`, *optional*, defaults to 1.0): Weight for flow loss computation.
+        vision_attn_implementation (`str`, *optional*, defaults to `"auto"`): Attention implementation
+            to configure on the vision transformer.
     """
 
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
@@ -483,16 +493,6 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         flow_loss_weight=1.0,
         vision_attn_implementation: str = "auto",
     ):
-        """Initialize the Qwen2.5 VLMoE model for action processing.
-
-        Args:
-            config: Model configuration
-            use_fast_tokenizer (bool): Whether to use fast tokenizer
-            processor: Text and image processor
-            action_tokenizer: Action-specific tokenizer
-            action_mapper: Action mapping utility
-            flow_loss_weight (float): Weight for flow loss computation
-        """
         Qwen2_5_VLMoEModel._require_eager_attention(config._attn_implementation)
         config._attn_implementation = "eager"
         # Text needs eager attention for action-token islands. Vision has no such
@@ -1797,19 +1797,17 @@ class WallXPolicy(PreTrainedPolicy):
 
     Integrates Qwen2.5-VL vision-language model with action prediction
     using flow matching for continuous action spaces.
+
+    Args:
+        config (`WallXConfig`): Policy configuration; also validated/completed via
+            `config.validate_features()`.
+        kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
     """
 
     config_class = WallXConfig
     name = "wall_x"
 
-    def __init__(self, config: WallXConfig, **kwargs):
-        """Load the pretrained Wall-X (Qwen2.5-VL + flow-matching action head) model and reset the action queue.
-
-        Args:
-            config (WallXConfig): Policy configuration; also validated/completed via
-                `config.validate_features()`.
-            kwargs: Unused; accepted for interface compatibility with `PreTrainedPolicy`.
-        """
+    def __init__(self, config: WallXConfig, **kwargs: Any):
         require_package("transformers", extra="wallx")
         require_package("peft", extra="wallx")
         require_package("torchdiffeq", extra="wallx")

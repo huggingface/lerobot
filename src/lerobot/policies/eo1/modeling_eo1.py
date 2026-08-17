@@ -48,20 +48,18 @@ logger = logging.getLogger(__name__)
 
 
 class EO1Policy(PreTrainedPolicy):
-    """EO1 policy wrapper for LeRobot robot-only training/evaluation."""
+    """EO1 policy wrapper for LeRobot robot-only training/evaluation.
+
+    Args:
+        config (`EO1Config`): Policy configuration. Also drives whether the Qwen backbone is loaded from
+            `config.vlm_base` (fresh initialization) or reconstructed from `config.vlm_backbone_config`
+            (resuming from `config.pretrained_path`).
+    """
 
     config_class = EO1Config
     name = "eo1"
 
     def __init__(self, config: EO1Config, **kwargs):
-        """Build the Qwen2.5-VL backbone and the flow-matching action head.
-
-        Args:
-            config (`EO1Config`):
-                Policy configuration. Also drives whether the Qwen backbone is loaded from
-                `config.vlm_base` (fresh initialization) or reconstructed from `config.vlm_backbone_config`
-                (resuming from `config.pretrained_path`).
-        """
         require_package("transformers", extra="eo1")
         super().__init__(config)
         config.validate_features()

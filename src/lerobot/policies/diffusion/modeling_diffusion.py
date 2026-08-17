@@ -56,6 +56,9 @@ from .configuration_diffusion import DiffusionConfig
 class DiffusionPolicy(PreTrainedPolicy):
     """Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
     (paper: https://huggingface.co/papers/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
+
+    Args:
+        config (`DiffusionConfig`): Policy configuration.
     """
 
     config_class = DiffusionConfig
@@ -66,12 +69,6 @@ class DiffusionPolicy(PreTrainedPolicy):
         config: DiffusionConfig,
         **kwargs,
     ):
-        """Build the diffusion model from `config`.
-
-        Args:
-            config (`DiffusionConfig`):
-                Policy configuration.
-        """
         require_package("diffusers", extra="diffusion")
         super().__init__(config)
         config.validate_features()
@@ -419,13 +416,14 @@ class SpatialSoftmax(nn.Module):
     The example above results in 512 keypoints (corresponding to the 512 input channels). We can optionally
     provide num_kp != None to control the number of keypoints. This is achieved by a first applying a learnable
     linear mapping (in_channels, H, W) -> (num_kp, H, W).
+
+    Args:
+        input_shape (`list`): `(C, H, W)` input feature map shape.
+        num_kp (`int`, *optional*): Number of keypoints in output. If `None`, output will have the same
+            number of channels as input.
     """
 
     def __init__(self, input_shape, num_kp=None):
-        """Args:
-        input_shape (list): (C, H, W) input feature map shape.
-        num_kp (int): number of keypoints in output. If None, output will have the same number of channels as input.
-        """
         super().__init__()
 
         assert len(input_shape) == 3

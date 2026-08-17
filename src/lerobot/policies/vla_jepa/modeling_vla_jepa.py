@@ -334,21 +334,18 @@ class VLAJEPAPolicy(PreTrainedPolicy):
     Converts LeRobot's standard batch format (dict[str, Tensor]) to the batched tensors
     the native model expects (keeping everything on-device), calls the native model, and
     converts outputs back to LeRobot format.
+
+    Args:
+        config (`VLAJEPAConfig`): The policy configuration.
+        kwargs: Forwarded to the base class. If `dataset_meta` is present, it is used to override
+            `config.state_dim`/`config.action_dim` from the actual dataset's feature shapes, in case
+            `validate_features` read stale dimensions from a pretrained config.
     """
 
     config_class = VLAJEPAConfig
     name = "vla_jepa"
 
-    def __init__(self, config: VLAJEPAConfig, **kwargs) -> None:
-        """Build the native VLA-JEPA model: Qwen3-VL backbone, flow-matching action head, and optional
-        V-JEPA world model.
-
-        Args:
-            config (VLAJEPAConfig): The policy configuration.
-            kwargs: Forwarded to the base class. If `dataset_meta` is present, it is used to override
-                `config.state_dim`/`config.action_dim` from the actual dataset's feature shapes, in case
-                `validate_features` read stale dimensions from a pretrained config.
-        """
+    def __init__(self, config: VLAJEPAConfig, **kwargs: Any) -> None:
         super().__init__(config)
         config.validate_features()
         if dataset_meta := kwargs.get("dataset_meta"):
