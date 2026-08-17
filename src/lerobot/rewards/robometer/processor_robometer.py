@@ -139,6 +139,7 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     _processor: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Load the Qwen-VL processor and register Robometer's special tokens on its tokenizer."""
         require_package("transformers", extra="robometer")
         require_package("qwen-vl-utils", extra="robometer", import_name="qwen_vl_utils")
 
@@ -161,6 +162,19 @@ class RobometerEncoderProcessorStep(ProcessorStep):
                 tokenizer.add_special_tokens({"additional_special_tokens": [token]})
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Encode `transition`'s frames and task into Qwen-VL tensors under `ROBOMETER_FEATURE_PREFIX`.
+
+        Args:
+            transition (`EnvTransition`): Must contain an observation dict with `image_key`, and
+                optionally a `task_key` entry in `complementary_data`.
+
+        Returns:
+            EnvTransition: `transition` with the encoded Robometer tensors added to the observation.
+
+        Raises:
+            ValueError: If the observation is not a dict.
+            KeyError: If `image_key` is missing from the observation.
+        """
         observation = transition.get(TransitionKey.OBSERVATION)
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         if not isinstance(observation, dict):
@@ -284,9 +298,11 @@ class RobometerEncoderProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Return `features` unchanged; this step only transforms values, not the feature spec."""
         return features
 
     def get_config(self) -> dict[str, Any]:
+        """Return this step's constructor arguments, for serialization."""
         return {
             "base_model_id": self.base_model_id,
             "image_key": self.image_key,

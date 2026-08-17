@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation.
+"""SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation.
 
 Paper: https://arxiv.org/abs/2509.25358
 
@@ -43,8 +42,7 @@ from .sarm_utils import (
 
 
 class StageTransformer(nn.Module):
-    """
-    Stage classification transformer for SARM.
+    """Stage classification transformer for SARM.
 
     Predicts which stage/subtask the current frame belongs to.
     Supports both sparse (high-level) and dense (fine-grained) annotation schemes.
@@ -66,6 +64,20 @@ class StageTransformer(nn.Module):
         num_classes_sparse: int = 4,
         num_classes_dense: int = 8,
     ):
+        """Build the projection layers, transformer encoder, and sparse/dense classification heads.
+
+        Args:
+            d_model (`int`, *optional*, defaults to 512): Transformer hidden dimension.
+            vis_emb_dim (`int`, *optional*, defaults to 512): Input visual embedding dimension.
+            text_emb_dim (`int`, *optional*, defaults to 512): Input text embedding dimension.
+            state_dim (`int`, *optional*, defaults to 32): Input proprioceptive state dimension.
+            n_layers (`int`, *optional*, defaults to 6): Number of transformer encoder layers.
+            n_heads (`int`, *optional*, defaults to 8): Number of attention heads.
+            dropout (`float`, *optional*, defaults to 0.1): Dropout probability.
+            num_cameras (`int`, *optional*, defaults to 1): Number of camera views fused per frame.
+            num_classes_sparse (`int`, *optional*, defaults to 4): Number of high-level stage classes.
+            num_classes_dense (`int`, *optional*, defaults to 8): Number of fine-grained stage classes.
+        """
         super().__init__()
         self.d_model = d_model
         self.num_cameras = num_cameras
@@ -100,8 +112,7 @@ class StageTransformer(nn.Module):
         )
 
     def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:  # noqa: N803
-        """
-        Prepare language embeddings for fusion.
+        """Prepare language embeddings for fusion.
 
         Accepts lang_emb of shape:
           - (B, text_emb_dim) -> broadcast across time
@@ -125,8 +136,7 @@ class StageTransformer(nn.Module):
         lengths: torch.Tensor,  # (B,) - valid sequence lengths
         scheme: str = "sparse",  # "sparse" or "dense"
     ) -> torch.Tensor:
-        """
-        Forward pass for stage classification.
+        """Forward pass for stage classification.
 
         Args:
             img_seq: Image embeddings (B, N, T, vis_emb_dim) where N=num_cameras
@@ -180,8 +190,7 @@ class StageTransformer(nn.Module):
 
 
 class SubtaskTransformer(nn.Module):
-    """
-    Subtask progress regression transformer for SARM.
+    """Subtask progress regression transformer for SARM.
 
     Predicts within-stage normalized progress (tau) conditioned on stage prior.
     The stage prior is a one-hot encoding passed from StageTransformer predictions.
@@ -201,6 +210,18 @@ class SubtaskTransformer(nn.Module):
         dropout: float = 0.1,
         num_cameras: int = 1,
     ):
+        """Build the projection layers, transformer encoder, and progress-regression head.
+
+        Args:
+            d_model (`int`, *optional*, defaults to 512): Transformer hidden dimension.
+            vis_emb_dim (`int`, *optional*, defaults to 512): Input visual embedding dimension.
+            text_emb_dim (`int`, *optional*, defaults to 512): Input text embedding dimension.
+            state_dim (`int`, *optional*, defaults to 32): Input proprioceptive state dimension.
+            n_layers (`int`, *optional*, defaults to 6): Number of transformer encoder layers.
+            n_heads (`int`, *optional*, defaults to 8): Number of attention heads.
+            dropout (`float`, *optional*, defaults to 0.1): Dropout probability.
+            num_cameras (`int`, *optional*, defaults to 1): Number of camera views fused per frame.
+        """
         super().__init__()
         self.d_model = d_model
         self.num_cameras = num_cameras
@@ -235,9 +256,7 @@ class SubtaskTransformer(nn.Module):
         )
 
     def _prep_lang(self, lang_emb: torch.Tensor, B: int, T: int, D: int) -> torch.Tensor:  # noqa: N803
-        """
-        Prepare language embeddings for fusion.
-        """
+        """Prepare language embeddings for fusion."""
         if lang_emb.dim() == 3:
             # (B, T, E) -> (B, T, D) -> (B, 1, T, D)
             return self.lang_proj(lang_emb).unsqueeze(1)
@@ -246,8 +265,7 @@ class SubtaskTransformer(nn.Module):
             return self.lang_proj(lang_emb).unsqueeze(1).unsqueeze(2).expand(B, 1, T, D)
 
     def _stage_to_dmodel(self, stage_prior: torch.Tensor) -> torch.Tensor:
-        """
-        Deterministic projection of one-hot stage to d_model by pad/truncate.
+        """Deterministic projection of one-hot stage to d_model by pad/truncate.
 
         Args:
             stage_prior: One-hot stage embedding (B, 1, T, C)
@@ -274,8 +292,7 @@ class SubtaskTransformer(nn.Module):
         stage_prior: torch.Tensor,  # (B, 1, T, C) one-hot from gen_stage_emb
         scheme: str = "sparse",  # "sparse" or "dense"
     ) -> torch.Tensor:
-        """
-        Forward pass for subtask progress regression.
+        """Forward pass for subtask progress regression.
 
         Args:
             img_seq: Image embeddings (B, N, T, vis_emb_dim)
@@ -332,12 +349,11 @@ class SubtaskTransformer(nn.Module):
 
 
 def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
-    """
-    Generate one-hot stage embeddings from targets.
+    """Generate one-hot stage embeddings from targets.
 
     Args:
-        num_classes: Number of stage classes
-        targets: Target values (B, T) where integer part is stage index
+        num_classes (`int`): Number of stage classes.
+        targets (`Tensor`): Target values `(B, T)` where the integer part is the stage index.
 
     Returns:
         One-hot stage embedding (B, 1, T, num_classes)
@@ -352,14 +368,19 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
 
 
 class SARMRewardModel(PreTrainedRewardModel):
-    """
-    SARM Reward Model for stage-aware task completion rewards.
+    """SARM Reward Model for stage-aware task completion rewards.
 
     Uses two separate transformer models:
     - StageTransformer: Classifies which stage/subtask
     - SubtaskTransformer: Predicts within-stage progress (tau)
 
     Training uses 75%/25% GT/predicted stage conditioning (teacher forcing).
+
+    Args:
+        config (`SARMConfig`): Reward model configuration.
+        dataset_stats (`dict | None`, *optional*): Unused; accepted for interface compatibility.
+        dataset_meta (*optional*): Dataset metadata used to load temporal proportions when
+            `config.annotation_mode` is not `"single_stage"`.
     """
 
     name = "sarm"
@@ -499,8 +520,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         head_mode: str | None = "sparse",
         frame_index: int | None = None,
     ) -> np.ndarray | tuple:
-        """
-        Calculate rewards for given text, video, and state representations.
+        """Calculate rewards for given text, video, and state representations.
 
         This is the canonical method for SARM reward computation, used for:
         - Inference/visualization
@@ -658,8 +678,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         targets: torch.Tensor,  # (B, T) - format: stage.tau
         scheme: str,
     ) -> dict[str, torch.Tensor]:
-        """
-        Single training step for one annotation scheme.
+        """Single training step for one annotation scheme.
 
         Implements 75%/25% GT/predicted stage conditioning.
 
@@ -709,8 +728,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         }
 
     def forward(self, batch):
-        """
-        Forward pass for SARM reward model training.
+        """Forward pass for SARM reward model training.
 
         Uses stage+tau target format where:
         - Integer part = stage index

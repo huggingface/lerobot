@@ -37,7 +37,15 @@ T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
 class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
-    """Base class for reward models."""
+    """Base class for reward models.
+
+    Args:
+        config (`RewardModelConfig`): Reward model configuration. `*inputs`/`**kwargs` are
+            forwarded to `nn.Module.__init__` (unused in practice).
+
+    Raises:
+        ValueError: If `config` is not a `RewardModelConfig` instance.
+    """
 
     config_class: None
     name: None
@@ -53,6 +61,11 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         self.config = config
 
     def __init_subclass__(cls, **kwargs):
+        """Validate that every concrete subclass defines `config_class` and `name`.
+
+        Raises:
+            TypeError: If `config_class` or `name` is missing on `cls`.
+        """
         super().__init_subclass__(**kwargs)
         if not getattr(cls, "config_class", None):
             raise TypeError(f"Class {cls.__name__} must define 'config_class'")
@@ -96,9 +109,36 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         strict: bool = False,
         **kwargs,
     ) -> T:
-        """
+        """Load a reward model and its weights from a local directory or the Hugging Face Hub.
+
         The reward model is set in evaluation mode by default using `reward.eval()` (dropout modules are
         deactivated). To train it, you should first set it back in training mode with `reward.train()`.
+
+        Args:
+            pretrained_name_or_path (`str | Path`): Local directory containing `config.json` and
+                `model.safetensors`, or a Hub repo id.
+            config (`RewardModelConfig | None`, *optional*): Config to build the instance from.
+                Loaded from `pretrained_name_or_path` when unset.
+            force_download (`bool`, *optional*, defaults to `False`): Whether to force re-download
+                cached files.
+            resume_download (`bool | None`, *optional*): Whether to resume an interrupted download.
+            proxies (`dict | None`, *optional*): Proxies to use for the download request.
+            token (`str | bool | None`, *optional*): Hugging Face Hub authentication token.
+            cache_dir (`str | Path | None`, *optional*): Directory to cache downloaded files in.
+            local_files_only (`bool`, *optional*, defaults to `False`): Whether to only look for files
+                locally, without querying the Hub.
+            revision (`str | None`, *optional*): Hub revision (branch, tag, or commit hash) to load
+                from.
+            strict (`bool`, *optional*, defaults to `False`): Whether to require an exact state-dict
+                key match when loading weights.
+            **kwargs: Forwarded to the config's `from_pretrained` (when `config` is unset) and to the
+                model constructor.
+
+        Returns:
+            PreTrainedRewardModel: The loaded, evaluation-mode reward model.
+
+        Raises:
+            FileNotFoundError: If no `model.safetensors` is found locally or on the Hub.
         """
         if config is None:
             config = RewardModelConfig.from_pretrained(
@@ -153,9 +193,7 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         return model
 
     def get_optim_params(self):
-        """
-        Returns the reward-model-specific parameters dict to be passed on to the optimizer.
-        """
+        """Returns the reward-model-specific parameters dict to be passed on to the optimizer."""
         return self.parameters()
 
     def reset(self) -> None:

@@ -95,7 +95,11 @@ def _torch_dtype(name: str) -> torch.dtype | str:
 
 
 class TOPRewardModel(PreTrainedRewardModel):
-    """TOPReward zero-shot reward model."""
+    """TOPReward zero-shot reward model.
+
+    Args:
+        config (`TOPRewardConfig`): Reward model configuration.
+    """
 
     name = "topreward"
     config_class = TOPRewardConfig

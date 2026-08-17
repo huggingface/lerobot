@@ -32,11 +32,19 @@ class ClassifierOutput:
         probabilities: Tensor | None = None,
         hidden_states: Tensor | None = None,
     ):
+        """Store `logits` and optional `probabilities`/`hidden_states`.
+
+        Args:
+            logits (`Tensor`): Raw classifier logits.
+            probabilities (`Tensor | None`, *optional*): Softmax probabilities, when computed.
+            hidden_states (`Tensor | None`, *optional*): Encoder hidden states, when requested.
+        """
         self.logits = logits
         self.probabilities = probabilities
         self.hidden_states = hidden_states
 
     def __repr__(self):
+        """Return a debug string showing all three fields."""
         return (
             f"ClassifierOutput(logits={self.logits}, "
             f"probabilities={self.probabilities}, "
@@ -45,16 +53,16 @@ class ClassifierOutput:
 
 
 class SpatialLearnedEmbeddings(nn.Module):
-    def __init__(self, height, width, channel, num_features=8):
-        """
-        PyTorch implementation of learned spatial embeddings
+    """PyTorch implementation of learned spatial embeddings.
 
-        Args:
-            height: Spatial height of input features
-            width: Spatial width of input features
-            channel: Number of input channels
-            num_features: Number of output embedding dimensions
-        """
+    Args:
+        height (`int`): Spatial height of input features
+        width (`int`): Spatial width of input features
+        channel (`int`): Number of input channels
+        num_features (`int`, *optional*, defaults to 8): Number of output embedding dimensions
+    """
+
+    def __init__(self, height, width, channel, num_features=8):
         super().__init__()
         self.height = height
         self.width = width
@@ -66,15 +74,13 @@ class SpatialLearnedEmbeddings(nn.Module):
         nn.init.kaiming_normal_(self.kernel, mode="fan_in", nonlinearity="linear")
 
     def forward(self, features):
-        """
-        Forward pass for spatial embedding
+        """Forward pass for spatial embedding.
 
         Args:
             features: Input tensor of shape [B, H, W, C] or [H, W, C] if no batch
         Returns:
             Output tensor of shape [B, C*F] or [C*F] if no batch
         """
-
         features = features.last_hidden_state
 
         original_shape = features.shape
@@ -108,6 +114,12 @@ class Classifier(PreTrainedRewardModel):
         config: RewardClassifierConfig,
         **kwargs,
     ):
+        """Build the frozen vision encoder and per-camera classifier heads from `config`.
+
+        Args:
+            config (`RewardClassifierConfig`): Reward model configuration.
+            **kwargs: Unused; accepted for interface compatibility with `PreTrainedRewardModel`.
+        """
         from transformers import AutoModel
 
         super().__init__(config)
@@ -147,7 +159,7 @@ class Classifier(PreTrainedRewardModel):
         self._build_classifier_head()
 
     def _setup_cnn_backbone(self):
-        """Set up CNN encoder"""
+        """Set up CNN encoder."""
         if hasattr(self.encoder, "fc"):
             self.feature_dim = self.encoder.fc.in_features
             self.encoder = nn.Sequential(*list(self.encoder.children())[:-1])

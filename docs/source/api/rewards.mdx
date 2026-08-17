@@ -1,0 +1,69 @@
+# Reward Models
+
+Every reward model in LeRobot implements [`PreTrainedRewardModel`]: `compute_reward` returns a scalar
+reward signal for a batch of observations. Reward models are used for automated evaluation, RL training
+(see [Reinforcement Learning](./rl)), and RA-BC (Reward-Aligned Behavior Cloning) sample weighting.
+
+Each zero-shot / pretrained reward model has its own guide — [SARM](../sarm), [ROBOMETER](../robometer),
+[TOPReward](../topreward).
+
+## PreTrainedRewardModel
+
+[[autodoc]] lerobot.rewards.pretrained.PreTrainedRewardModel
+
+## make_reward_model
+
+[[autodoc]] lerobot.rewards.factory.make_reward_model
+
+## get_reward_model_class
+
+[[autodoc]] lerobot.rewards.factory.get_reward_model_class
+
+## make_reward_model_config
+
+[[autodoc]] lerobot.rewards.factory.make_reward_model_config
+
+## make_reward_pre_post_processors
+
+[[autodoc]] lerobot.rewards.factory.make_reward_pre_post_processors
+
+## Reward Classifier
+
+Binary success/failure image classifier built on a frozen pretrained vision encoder.
+
+[[autodoc]] lerobot.rewards.classifier.modeling_classifier.Classifier
+    - all
+
+[[autodoc]] lerobot.rewards.classifier.configuration_classifier.RewardClassifierConfig
+
+[[autodoc]] lerobot.rewards.classifier.processor_classifier.make_classifier_processor
+
+## SARM
+
+Stage-Aware Reward Modeling for long-horizon manipulation tasks.
+
+[[autodoc]] lerobot.rewards.sarm.modeling_sarm.SARMRewardModel
+    - all
+
+[[autodoc]] lerobot.rewards.sarm.configuration_sarm.SARMConfig
+
+[[autodoc]] lerobot.rewards.sarm.rabc.RABCWeights
+    - all
+
+## ROBOMETER
+
+Zero-shot, video-language-input reward model built on a Qwen-VL backbone.
+
+[[autodoc]] lerobot.rewards.robometer.modeling_robometer.RobometerRewardModel
+    - all
+
+[[autodoc]] lerobot.rewards.robometer.configuration_robometer.RobometerConfig
+
+## TOPReward
+
+Zero-shot reward model that scores trajectories using a vision-language model's token log-probabilities.
+
+[[autodoc]] lerobot.rewards.topreward.modeling_topreward.TOPRewardModel
+    - all
+
+[[autodoc]] lerobot.rewards.topreward.configuration_topreward.TOPRewardConfig

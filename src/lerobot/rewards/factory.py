@@ -31,15 +31,14 @@ from .topreward.configuration_topreward import TOPRewardConfig
 
 
 def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
-    """
-    Retrieves a reward model class by its registered name.
+    """Retrieves a reward model class by its registered name.
 
     This function uses dynamic imports to avoid loading all reward model classes into
     memory at once, improving startup time and reducing dependencies.
 
     Args:
-        name: The name of the reward model. Supported names are "reward_classifier",
-              "sarm", "robometer", "topreward".
+        name (`str`): The name of the reward model. Supported names are "reward_classifier", "sarm",
+            "robometer", "topreward".
 
     Returns:
         The reward model class corresponding to the given name.
@@ -71,16 +70,16 @@ def get_reward_model_class(name: str) -> type[PreTrainedRewardModel]:
 
 
 def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
-    """
-    Instantiates a reward model configuration object based on the reward type.
+    """Instantiates a reward model configuration object based on the reward type.
 
     This factory function simplifies the creation of reward model configuration objects
     by mapping a string identifier to the corresponding config class.
 
     Args:
-        reward_type: The type of the reward model. Supported types include
-                     "reward_classifier", "sarm", "robometer", "topreward".
-        **kwargs: Keyword arguments to be passed to the configuration class constructor.
+        reward_type (`str`): The type of the reward model. Supported types include
+            "reward_classifier", "sarm", "robometer", "topreward".
+        kwargs (`Any`, *optional*): Keyword arguments to be passed to the configuration class
+            constructor.
 
     Returns:
         An instance of a `RewardModelConfig` subclass.
@@ -105,15 +104,13 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
 
 
 def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel:
-    """
-    Instantiate a reward model from its configuration.
+    """Instantiate a reward model from its configuration.
 
     Args:
-        cfg: The configuration for the reward model to be created. If
-             `cfg.pretrained_path` is set, the model will be loaded with weights
-             from that path.
-        **kwargs: Additional keyword arguments forwarded to the model constructor
-            (e.g., ``dataset_stats``, ``dataset_meta``).
+        cfg (`RewardModelConfig`): The configuration for the reward model to be created. If
+            `cfg.pretrained_path` is set, the model will be loaded with weights from that path.
+        kwargs (`Any`, *optional*): Additional keyword arguments forwarded to the model constructor
+            (e.g., `dataset_stats`, `dataset_meta`).
 
     Returns:
         An instantiated and device-placed reward model.
@@ -142,15 +139,15 @@ def make_reward_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """
-    Create pre- and post-processor pipelines for a given reward model.
+    """Create pre- and post-processor pipelines for a given reward model.
 
     Each reward model type has a dedicated factory function for its processors.
 
     Args:
-        reward_cfg: The configuration of the reward model for which to create processors.
-        **kwargs: Additional keyword arguments passed to the processor factory
-            (e.g., ``dataset_stats``, ``dataset_meta``).
+        reward_cfg (`RewardModelConfig`): The configuration of the reward model for which to create
+            processors.
+        kwargs (`Any`, *optional*): Additional keyword arguments passed to the processor factory
+            (e.g., `dataset_stats`, `dataset_meta`).
 
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.

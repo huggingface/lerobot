@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Compute SARM progress values for RA-BC (Reward-Aware Behavior Cloning) weighting.
+r"""Compute SARM progress values for RA-BC (Reward-Aware Behavior Cloning) weighting.
 
 This script processes all frames in a dataset with SARM to compute progress values [0, 1].
 The results are saved as a parquet file that can be loaded during training for RA-BC weighting.
@@ -82,8 +81,7 @@ def load_sarm_resources(
     reward_model_path: str,
     device: str = "cuda",
 ) -> tuple[LeRobotDataset, SARMRewardModel, any]:
-    """
-    Load SARM model, dataset, and preprocessor.
+    """Load SARM model, dataset, and preprocessor.
 
     Returns:
         Tuple of (dataset, reward_model, preprocessor)
@@ -219,21 +217,23 @@ def visualize_sarm_predictions(
     num_display_frames: int = 5,
     stride: int = 1,
 ):
-    """
-    Visualize SARM predictions for multiple episodes.
+    """Visualize SARM predictions for multiple episodes.
 
     Computes predictions for every frame by default. With stride > 1, computes predictions
     every N frames and interpolates (progress + stage probabilities) for visualization.
 
     Args:
-        dataset: LeRobotDataset with delta_timestamps configured
-        reward_model: Loaded SARM model
-        preprocess: Preprocessor from make_sarm_pre_post_processors
-        episode_indices: List of episode indices to visualize
-        head_mode: "sparse", "dense", or "both"
-        output_dir: Directory to save visualizations
-        num_display_frames: Number of frames to display in thumbnail strip (default: 5)
-        stride: Compute predictions every N frames, interpolate the rest (default: 1)
+        dataset (`LeRobotDataset`): Dataset to visualize episodes from.
+        reward_model (`SARMRewardModel`): Loaded SARM model used to compute predictions.
+        preprocess (`PolicyProcessorPipeline`): Preprocessor pipeline applied to each frame before
+            inference.
+        episode_indices (`list`): Episode indices to visualize.
+        head_mode (`str`): Which SARM head's predictions to visualize ("sparse" or "dense").
+        output_dir (`Path`): Directory to write the visualization images to.
+        num_display_frames (`int`, *optional*, defaults to 5): Number of sample frames shown per
+            visualization.
+        stride (`int`, *optional*, defaults to 1): Compute predictions every `stride` frames and
+            interpolate the rest.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -471,18 +471,23 @@ def compute_sarm_progress(
     output_dir: str = "./sarm_viz",
     stride: int = 1,
 ):
-    """
-    Compute SARM progress predictions for all frames in a dataset.
+    """Compute SARM progress predictions for all frames in a dataset.
 
     Args:
-        dataset_repo_id: HuggingFace dataset repo ID or local path
-        reward_model_path: Path to pretrained SARM model
-        output_path: Path to save results. If None, saves to dataset's cache directory
-        head_mode: SARM head to use ("sparse", "dense", or "both")
-        device: Device to use for inference
-        num_visualizations: Number of episodes to visualize (0 to skip)
-        output_dir: Directory to save visualizations
-        stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
+        dataset_repo_id (`str`): HuggingFace dataset repo id or local path.
+        reward_model_path (`str`): HuggingFace Hub repo id or local path of the pretrained SARM
+            checkpoint.
+        output_path (`str | None`, *optional*): Path to write the output parquet file to. Defaults
+            to the dataset's local cache directory when unset.
+        head_mode (`str`, *optional*, defaults to `"sparse"`): Which SARM head to compute progress
+            for ("sparse" or "dense").
+        device (`str`, *optional*, defaults to `"cuda"`): Torch device to run inference on.
+        num_visualizations (`int`, *optional*, defaults to 5): Number of episodes to render
+            visualizations for.
+        output_dir (`str`, *optional*, defaults to `"./sarm_viz"`): Directory to write visualization
+            images to.
+        stride (`int`, *optional*, defaults to 1): Compute predictions every `stride` frames and
+            interpolate the rest.
     """
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
@@ -707,6 +712,7 @@ def compute_sarm_progress(
 
 
 def main():
+    """CLI entry point: compute SARM progress values for RA-BC weighting, or visualize predictions."""
     parser = argparse.ArgumentParser(
         description="Compute SARM progress values for RA-BC weighting or visualize SARM predictions",
         formatter_class=argparse.RawDescriptionHelpFormatter,

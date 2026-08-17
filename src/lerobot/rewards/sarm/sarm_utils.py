@@ -32,14 +32,18 @@ def find_stage_and_tau(
     """Find stage and within-stage progress (tau) for a frame.
 
     Args:
-        current_frame: Frame index relative to episode start
-        episode_length: Total frames in episode
-        subtask_names: Subtask names for this episode (None for single_stage)
-        subtask_start_frames: Subtask start frames
-        subtask_end_frames: Subtask end frames
-        global_subtask_names: Global list of all subtask names
-        temporal_proportions: Dict of temporal proportions
-        return_combined: If True, return stage+tau as float; else (stage_idx, tau) tuple
+        current_frame (`int`): Frame index within the episode to locate.
+        episode_length (`int`): Total number of frames in the episode.
+        subtask_names (`list | None`): Per-episode subtask names, in order. `None` when unannotated.
+        subtask_start_frames (`list | None`): Start frame of each subtask, aligned with
+            `subtask_names`.
+        subtask_end_frames (`list | None`): End frame of each subtask, aligned with `subtask_names`.
+        global_subtask_names (`list`): The full ordered list of subtask names for this head, used to
+            resolve `stage_idx`.
+        temporal_proportions (`dict`): Unused; accepted for interface symmetry with other SARM
+            helpers.
+        return_combined (`bool`, *optional*, defaults to `False`): If `True`, return `stage_idx + tau`
+            as a single float instead of a tuple.
 
     Returns:
         Float (stage.tau) if return_combined, else (stage_idx, tau) tuple
@@ -100,11 +104,11 @@ def compute_absolute_indices(
     Out-of-bounds frames are clamped (duplicated from boundary).
 
     Args:
-        frame_idx: Target frame index (center frame of sequence)
-        ep_start: Episode start index
-        ep_end: Episode end index (exclusive)
-        n_obs_steps: Number of observation steps (must be even for symmetric sampling)
-        frame_gap: Gap between observation frames
+        frame_idx (`int`): Target frame index the observation window is centered on.
+        ep_start (`int`): First valid frame index of the episode.
+        ep_end (`int`): One past the last valid frame index of the episode.
+        n_obs_steps (`int`): Number of observation history steps; determines the window size.
+        frame_gap (`int`, *optional*, defaults to 30): Frame gap between sampled frames.
 
     Returns:
         Tuple of (indices, out_of_bounds_flags)
@@ -138,21 +142,21 @@ def apply_rewind_augmentation(
     frame_gap: int = 30,
     rewind_step: int | None = None,
 ) -> tuple[int, list[int]]:
-    """
-    Generate rewind frame indices for temporal augmentation.
+    """Generate rewind frame indices for temporal augmentation.
 
     Rewind simulates going backwards through previously seen frames,
     starting from before the earliest observation frame (for bidirectional sampling).
     Appends reversed frames after the observation sequence.
 
     Args:
-        frame_idx: Target frame index (center of bidirectional observation window)
-        ep_start: Episode start index
-        n_obs_steps: Number of observation steps
-        max_rewind_steps: Maximum rewind steps
-        frame_gap: Gap between frames
-        rewind_step: If provided, use this exact rewind step (for deterministic behavior).
-                     If None, sample randomly.
+        frame_idx (`int`): Target frame index the observation window is centered on.
+        ep_start (`int`): First valid frame index of the episode.
+        n_obs_steps (`int`): Number of observation history steps; determines the earliest observed
+            frame.
+        max_rewind_steps (`int`): Maximum number of rewind steps to sample.
+        frame_gap (`int`, *optional*, defaults to 30): Frame gap between sampled frames.
+        rewind_step (`int | None`, *optional*): Fixed number of rewind steps to use. When `None`, a
+            random value in `[1, max_rewind]` is sampled.
 
     Returns:
         Tuple of (rewind_step, rewind_indices)
@@ -246,8 +250,7 @@ def normalize_stage_tau(
     temporal_proportions: dict[str, float] | list[float] | None = None,
     subtask_names: list[str] | None = None,
 ) -> float | torch.Tensor:
-    """
-    Normalize stage+tau reward to [0, 1] with custom breakpoints.
+    """Normalize stage+tau reward to [0, 1] with custom breakpoints.
 
     Maps stage index + within-stage tau to normalized progress [0, 1].
     The breakpoints are designed to give appropriate weight to each stage
@@ -256,11 +259,16 @@ def normalize_stage_tau(
     Priority: breakpoints > temporal_proportions > linear fallback
 
     Args:
-        x: Raw reward value (stage index + tau) where stage ∈ [0, num_stages-1] and tau ∈ [0, 1)
-        num_stages: Number of stages (required if breakpoints/proportions not provided)
-        breakpoints: Optional custom breakpoints list of length num_stages + 1.
-        temporal_proportions: Optional temporal proportions dict/list to compute breakpoints.
-        subtask_names: Optional ordered list of subtask names (for dict proportions)
+        x (`float | torch.Tensor`): Combined stage index + within-stage tau (e.g. `2.5` = stage 2,
+            50% through).
+        num_stages (`int | None`, *optional*): Total number of stages, used for a linear breakpoint
+            fallback when neither `breakpoints` nor `temporal_proportions` is given.
+        breakpoints (`list[float] | None`, *optional*): Cumulative progress values marking each
+            stage's boundary, highest priority when set.
+        temporal_proportions (`dict[str, float] | list[float] | None`, *optional*): Per-stage
+            fraction of the episode, converted to `breakpoints` when `breakpoints` is unset.
+        subtask_names (`list[str] | None`, *optional*): Stage name ordering used to interpret a
+            dict-valued `temporal_proportions`.
 
     Returns:
         Normalized progress value ∈ [0, 1]

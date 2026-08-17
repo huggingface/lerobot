@@ -115,7 +115,15 @@ def _torch_dtype(name: str) -> torch.dtype:
 
 
 class RobometerPredictionHead(nn.Sequential):
-    """Small MLP head used for Robometer's progress / success / preference outputs."""
+    """Small MLP head used for Robometer's progress / success / preference outputs.
+
+    Args:
+        hidden_dim (`int`): Input dimension, matching the backbone's hidden size.
+        output_size (`int`): Output dimension (1 for scalar heads, `progress_discrete_bins` for
+            the discrete progress head).
+        dropout (`float`): Dropout probability applied before the final linear layer.
+        with_sigmoid (`bool`): Whether to apply a `Sigmoid` after the final linear layer.
+    """
 
     def __init__(self, hidden_dim: int, output_size: int, *, dropout: float, with_sigmoid: bool) -> None:
         layers: list[nn.Module] = [
@@ -139,10 +147,10 @@ def decode_progress_outputs(
     """Decode RBM head outputs into per-frame floats.
 
     Args:
-        progress_logits: ``(B, T)`` (continuous) or ``(B, T, num_bins)`` (discrete).
-        success_logits: ``(B, T)`` raw logits, ``sigmoid``-ed to probabilities.
-        is_discrete_mode: if True the progress logits get a softmax over bins
-            and are projected onto bin centers via :func:`convert_bins_to_continuous`.
+        progress_logits (`Tensor | None`): `(B, T)` (continuous) or `(B, T, num_bins)` (discrete).
+        success_logits (`Tensor | None`): `(B, T)` raw logits, sigmoid-ed to probabilities.
+        is_discrete_mode (`bool`): If `True` the progress logits get a softmax over bins and are
+            projected onto bin centers via `convert_bins_to_continuous`.
 
     Returns:
         Dict with ``progress_pred`` and ``success_probs``, each a list of
@@ -174,6 +182,14 @@ class RobometerRewardModel(PreTrainedRewardModel):
     inference time only the progress and success heads are queried; the
     preference head is kept on the module so the published ``Robometer-4B``
     safetensors load unchanged.
+
+    Args:
+        config (`RobometerConfig`): Reward model configuration. When `config.pretrained_path`
+            is `None`, the base Qwen weights are downloaded and the embedding table resized;
+            otherwise the empty architecture is rebuilt from `config.vlm_backbone_config` so the
+            subsequent `model.safetensors` load fills it directly.
+        dropout (`float`, *optional*, defaults to 0.1): Dropout probability for the prediction
+            heads.
     """
 
     name = "robometer"
@@ -247,6 +263,22 @@ class RobometerRewardModel(PreTrainedRewardModel):
         self.frame_pool_attn.to(dtype=model_dtype)
 
     def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+        """See [`~rewards.pretrained.PreTrainedRewardModel.compute_reward`].
+
+        Returns the last frame's progress (clamped to `[0, 1]`) or thresholded success prediction,
+        depending on `config.reward_output`.
+
+        Args:
+            batch (`dict[str, Tensor]`): Batch containing Robometer's pre-encoded Qwen-VL inputs
+                (keys prefixed with `observation.robometer.`), produced by
+                `RobometerEncoderProcessorStep`.
+
+        Returns:
+            Tensor: Shape `(batch_size,)` reward values.
+
+        Raises:
+            KeyError: If the batch is missing the pre-encoded `input_ids`.
+        """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
             for key in ROBOMETER_INPUT_KEYS

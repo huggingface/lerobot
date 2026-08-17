@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-frame TOPReward progress curves for a LeRobot dataset.
+r"""Compute per-frame TOPReward progress curves for a LeRobot dataset.
 
 For each episode, scores trajectory prefixes of increasing length using
 the TOPReward reward model, min-max normalises the raw log-prob rewards per episode,
@@ -260,6 +260,7 @@ def compute_topreward_progress(
 
 
 def main():
+    """CLI entry point: compute per-frame TOPReward progress curves and write a parquet file."""
     parser = argparse.ArgumentParser(
         description="Compute per-frame TOPReward progress curves for RA-BC weighting.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
