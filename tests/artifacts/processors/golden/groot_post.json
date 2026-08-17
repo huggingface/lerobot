@@ -1,0 +1,23 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "clip_normalized_action": true,
+        "env_action_dim": 6,
+        "libero_gripper_action": false,
+        "libero_gripper_binarize": true,
+        "normalize_min_max": true
+      },
+      "registry_name": "groot_action_unpack_unnormalize_v2",
+      "state_file": "policy_postprocessor_step_0_groot_action_unpack_unnormalize_v2.safetensors"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}

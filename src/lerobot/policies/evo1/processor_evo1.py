@@ -23,32 +23,26 @@ import torch
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
-    AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
     PolicyActionProcessorStep,
     PolicyProcessorPipeline,
+    ProcessorBuildContext,
     ProcessorStep,
     ProcessorStepRegistry,
-    RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.processor.converters import (
-    batch_to_transition,
-    create_transition,
-    policy_action_to_transition,
-    transition_to_policy_action,
-)
+from lerobot.processor.converters import batch_to_transition, create_transition
 from lerobot.utils.constants import (
     ACTION,
     DONE,
     INFO,
     OBS_PREFIX,
     OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
     REWARD,
     TRUNCATED,
 )
@@ -302,92 +296,28 @@ def _pad_evo1_stats(
     return padded_stats
 
 
-def _refresh_evo1_normalization_steps(
-    config: Evo1Config,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> None:
-    """Re-pad checkpoint-loaded (un)normalizer stats/features to EVO1's fixed widths.
-
-    Loading a checkpoint injects the raw dataset stats (unpadded to max_state_dim/max_action_dim)
-    into the (un)normalizer via the generic override path in make_pre_post_processors. Those stats
-    and their declared features must be re-padded/reshaped to EVO1's fixed widths, otherwise
-    normalization fails against the padded state/action tensors (e.g. state padded to 24 vs. 8-dim
-    LIBERO stats). Padding is a no-op when stats are already at the target width.
-    """
-    normalization_features = _evo1_normalization_features(config)
-    action_features = _evo1_action_features(config)
-    for step in preprocessor.steps:
-        if isinstance(step, NormalizerProcessorStep):
-            step.features = normalization_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-    for step in postprocessor.steps:
-        if isinstance(step, UnnormalizerProcessorStep):
-            step.features = action_features
-            step.stats = _pad_evo1_stats(config, step.stats)
-            step.to(device=step.device, dtype=step.dtype)
-
-
-def reconcile_evo1_processors(
-    config: Evo1Config,
-    preprocessor: PolicyProcessorPipeline,
-    postprocessor: PolicyProcessorPipeline,
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Reconcile checkpoint-loaded pipelines with the current EVO1 config.
-
-    Three things cannot be restored from a serialized pipeline alone: the EVO1 batch converter
-    (converters are plain functions and are never serialized), eval-time CLI overrides of the
-    action postprocessing flags (`postprocess_action_dim`, `binarize_gripper`, `gripper_*`), and the
-    (un)normalizer stats/features when the generic override path injects raw, unpadded dataset
-    stats. This restores the converter, re-pads the normalization stats to EVO1's fixed widths, and
-    rebuilds the action step from the current config so those overrides take effect.
-    """
-    # Pipelines reloaded from a checkpoint come back with the default batch converter, which drops
-    # non-observation extras (embodiment_id, state_mask, custom task fields) needed by EVO1.
-    preprocessor.to_transition = evo1_batch_to_transition
-
-    _refresh_evo1_normalization_steps(config, preprocessor, postprocessor)
-
-    action_step = Evo1ActionProcessorStep(
-        action_dim=_evo1_action_dim(config),
-        binarize_gripper=config.binarize_gripper,
-        gripper_index=config.gripper_index,
-        gripper_threshold=config.gripper_threshold,
-        gripper_below_threshold_value=config.gripper_below_threshold_value,
-        gripper_above_threshold_value=config.gripper_above_threshold_value,
-    )
-    steps = list(postprocessor.steps)
-    action_step_idx = next(
-        (idx for idx, step in enumerate(steps) if isinstance(step, Evo1ActionProcessorStep)), None
-    )
-    if action_step_idx is None:
-        insert_idx = next(
-            (idx + 1 for idx, step in enumerate(steps) if isinstance(step, UnnormalizerProcessorStep)),
-            0,
-        )
-        steps.insert(insert_idx, action_step)
-    else:
-        steps[action_step_idx] = action_step
-    postprocessor.steps = steps
-
-    return preprocessor, postprocessor
-
-
 def make_evo1_pre_post_processors(
     config: Evo1Config,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    context: ProcessorBuildContext,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
+    """Build EVO1's pipelines.
+
+    EVO1 pads state and action to fixed widths (`max_state_dim`/`max_action_dim`) inside the
+    preprocessor, so its (un)normalizers must carry stats and declared features at those widths, not
+    the dataset's. Owning that here — rather than having dataset-width stats injected afterwards and
+    re-padded — is what makes the padding correct on every build, checkpoint or not (issue #4006).
+    """
+    steps = make_default_policy_processor_steps(config, context.dataset_stats)
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
-    normalization_stats = _pad_evo1_stats(config, dataset_stats)
+    normalization_stats = _pad_evo1_stats(config, context.dataset_stats)
 
     input_steps = [
-        RenameObservationsProcessorStep(rename_map={}),
-        AddBatchDimensionProcessorStep(),
+        steps.rename_observations,
+        steps.add_batch_dim,
         Evo1PadStateProcessorStep(max_state_dim=config.max_state_dim),
         Evo1PadActionProcessorStep(max_action_dim=config.max_action_dim),
         NormalizerProcessorStep(
@@ -415,16 +345,8 @@ def make_evo1_pre_post_processors(
         DeviceProcessorStep(device="cpu", float_dtype="float32"),
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-            to_transition=evo1_batch_to_transition,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
+    return make_policy_processor_pipelines(
+        input_steps=input_steps,
+        output_steps=output_steps,
+        preprocessor_to_transition=evo1_batch_to_transition,
     )

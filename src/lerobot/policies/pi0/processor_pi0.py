@@ -20,13 +20,11 @@ import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
     ComplementaryDataProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RelativeActionsProcessorStep,
     TokenizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -124,15 +122,12 @@ def make_pi0_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
-    relative_step = RelativeActionsProcessorStep(
-        enabled=config.use_relative_actions,
-        exclude_joints=getattr(config, "relative_exclude_joints", []),
-        action_names=getattr(config, "action_feature_names", None),
-    )
-
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
-    # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
+    # OpenPI order: raw → [relative] → normalize → model → unnormalize → [absolute].
+    # The bracketed steps are composed in by `RelativeActionsFeature` when
+    # `config.use_relative_actions` is set; they are anchored around the (un)normalizer, so the
+    # relative conversion sees raw values.
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,  # To mimic the same processor as pretrained one
         steps.add_batch_dim,
@@ -144,13 +139,11 @@ def make_pi0_pre_post_processors(
             padding="max_length",
         ),
         steps.to_device,
-        relative_step,
         steps.normalize,
     ]
 
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         steps.to_cpu,
     ]
 

@@ -1,0 +1,24 @@
+{
+  "covered": [
+    "act",
+    "diffusion",
+    "eo1",
+    "evo1",
+    "fastwam",
+    "gaussian_actor",
+    "groot",
+    "lingbot_va",
+    "molmoact2",
+    "multi_task_dit",
+    "pi0",
+    "pi05",
+    "pi0_fast",
+    "smolvla",
+    "tdmpc",
+    "vla_jepa",
+    "vqbet",
+    "wall_x",
+    "xvla"
+  ],
+  "skipped": {}
+}
