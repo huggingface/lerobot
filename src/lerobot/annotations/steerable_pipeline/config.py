@@ -111,10 +111,11 @@ class PlanConfig:
 
 @dataclass
 class TaskAugAxesConfig:
-    """5-axis t=0 task augmentation (EgoMimic-style): synonym / omit_arm /
-    omit_orientation / omit_grasp_method / combined. Replaces n_task_rephrasings
-    when enabled; each variant becomes a ``task_aug`` row. Axes with nothing to
-    omit emit fewer entries. Defaults (3+3+2+2+2) match EgoMimic."""
+    """5-axis t=0 task augmentation (EgoMimic-style): synonym / omit_arm / omit_orientation / etc.
+
+    Replaces n_task_rephrasings when enabled; each variant becomes a ``task_aug`` row. Axes with
+    nothing to omit emit fewer entries. Defaults (3+3+2+2+2) match EgoMimic.
+    """
 
     enabled: bool = False
 
@@ -249,4 +250,12 @@ class AnnotationPipelineConfig:
     push_commit_message: str | None = None
 
     def resolved_staging_dir(self, root: Path) -> Path:
+        """Return `self.staging_dir`, defaulting to `root / ".annotate_staging"` when unset.
+
+        Args:
+            root (`Path`): Dataset root directory.
+
+        Returns:
+            `Path`: Staging directory to write intermediate annotation outputs to.
+        """
         return self.staging_dir if self.staging_dir is not None else root / ".annotate_staging"

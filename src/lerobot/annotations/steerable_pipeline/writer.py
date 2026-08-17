@@ -78,10 +78,12 @@ from lerobot.datasets.language import DEFAULT_TOOLS, SAY_TOOL_SCHEMA  # noqa: F4
 
 
 def _row_persistent_sort_key(row: dict[str, Any]) -> tuple:
+    """Sort key for persistent rows: `(timestamp, style, role)`."""
     return (float(row["timestamp"]), row.get("style") or "", row.get("role") or "")
 
 
 def _row_event_sort_key(row: dict[str, Any]) -> tuple:
+    """Sort key for event rows within one frame's bucket: `(style, role, camera)`."""
     # events are bucketed per-frame, but within a frame we still want determinism
     return (
         row.get("style") or "",
@@ -143,6 +145,17 @@ def _normalize_event_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_tool_calls(value: Any) -> list[Any] | None:
+    """Coerce a staged row's `tool_calls` field to `list | None`.
+
+    Args:
+        value (`Any`): Raw `tool_calls` value from a staged row.
+
+    Returns:
+        `list[Any] | None`: `None` unchanged, otherwise `value` as a plain `list`.
+
+    Raises:
+        ValueError: If `value` is neither `None` nor a `list`.
+    """
     if value is None:
         return None
     if not isinstance(value, list):
@@ -196,6 +209,16 @@ class LanguageColumnsWriter:
         staging_dir: Path,
         root: Path,
     ) -> list[Path]:
+        """Rewrite every parquet shard touched by `records` with the two language columns.
+
+        Args:
+            records (`Sequence[EpisodeRecord]`): Episodes to write annotations for.
+            staging_dir (`Path`): Directory holding per-episode staged annotation rows.
+            root (`Path`): Dataset root directory.
+
+        Returns:
+            `list[Path]`: Paths of the rewritten parquet shards.
+        """
         episodes_by_path: dict[Path, list[EpisodeRecord]] = defaultdict(list)
         for record in records:
             episodes_by_path[record.data_path].append(record)
@@ -213,6 +236,18 @@ class LanguageColumnsWriter:
         staging_dir: Path,
         root: Path,
     ) -> None:
+        """Rewrite one parquet shard in place with the two language columns.
+
+        Args:
+            path (`Path`): Parquet shard to rewrite.
+            episodes (`Sequence[EpisodeRecord]`): Episodes stored in `path`.
+            staging_dir (`Path`): Directory holding per-episode staged annotation rows.
+            root (`Path`): Dataset root directory. Unused directly; kept for signature symmetry
+                with `write_all`.
+
+        Raises:
+            ValueError: If `path`'s table is missing `episode_index` or `timestamp` columns.
+        """
         table = pq.read_table(path)
         n_rows = table.num_rows
 
@@ -290,6 +325,19 @@ class LanguageColumnsWriter:
         *,
         drop_old: bool,
     ) -> pa.Table:
+        """Rebuild `table` with the two language columns added and legacy columns dropped.
+
+        Args:
+            table (`pa.Table`): Source table to rebuild from.
+            persistent (`list[list[dict[str, Any]]]`): Per-row persistent-column values, one list
+                (broadcast across the episode) per table row.
+            events (`list[list[dict[str, Any]]]`): Per-row event-column values, one list per table
+                row (the rows whose timestamp exactly matches that frame's).
+            drop_old (`bool`): Whether to drop the legacy `subtask_index` column, if present.
+
+        Returns:
+            `pa.Table`: The rebuilt table, with `language_persistent`/`language_events` columns.
+        """
         cols = []
         names = []
         for name in table.column_names:

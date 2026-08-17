@@ -99,9 +99,16 @@ class GeneralVqaModule:
 
     @property
     def enabled(self) -> bool:
+        """Whether `self.config.enabled` is set."""
         return self.config.enabled
 
     def run_episode(self, record: EpisodeRecord, staging: EpisodeStaging) -> None:
+        """Emit grounded VQA `(user, assistant)` pairs for one episode and write them to staging.
+
+        Args:
+            record (`EpisodeRecord`): Episode to annotate.
+            staging (`EpisodeStaging`): Staging area to write the `"vqa"` rows to.
+        """
         if not record.frame_timestamps:
             staging.write("vqa", [])
             return
@@ -212,6 +219,17 @@ class GeneralVqaModule:
         frame_timestamp: float,
         camera_key: str,
     ) -> list[dict[str, Any]]:
+        """Build the VLM chat message asking a `question_type` VQA question about one frame.
+
+        Args:
+            record (`EpisodeRecord`): Episode the frame belongs to.
+            question_type (`str`): Question type to ask (bbox, keypoint, count, attribute, spatial).
+            frame_timestamp (`float`): Episode-relative timestamp of the frame to ground on.
+            camera_key (`str`): Camera to decode the frame from.
+
+        Returns:
+            `list[dict[str, Any]]`: A single-message chat payload for `VlmClient.generate_json`.
+        """
         prompt = load_prompt("vqa").format(
             episode_task=record.episode_task,
             question_type=question_type,
@@ -221,6 +239,15 @@ class GeneralVqaModule:
         return [{"role": "user", "content": content}]
 
     def _postprocess(self, result: Any) -> tuple[str, dict[str, Any]] | None:
+        """Validate and extract `(question, answer)` from one VLM `generate_json` result.
+
+        Args:
+            result (`Any`): Raw parsed JSON result from the VLM.
+
+        Returns:
+            `tuple[str, dict[str, Any]] | None`: The question and answer dict, or `None` if `result`
+                doesn't have the expected shape or its answer doesn't match a known VQA answer type.
+        """
         if not isinstance(result, dict):
             return None
         question = result.get("question")

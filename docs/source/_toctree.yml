@@ -215,4 +215,6 @@
     title: Environments
   - local: api/configs
     title: Configuration
+  - local: api/annotations
+    title: Annotations
   title: "API Reference"

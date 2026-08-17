@@ -63,15 +63,19 @@ class ValidationReport:
 
     @property
     def ok(self) -> bool:
+        """Whether validation found no errors (warnings are non-blocking)."""
         return not self.errors
 
     def add_error(self, message: str) -> None:
+        """Record a blocking validation error."""
         self.errors.append(message)
 
     def add_warning(self, message: str) -> None:
+        """Record a non-blocking validation warning."""
         self.warnings.append(message)
 
     def summary(self) -> str:
+        """Return a one-line `checked=.. errors=.. warnings=..` summary."""
         return f"checked={self.episodes_checked} errors={len(self.errors)} warnings={len(self.warnings)}"
 
 
@@ -111,6 +115,15 @@ class StagingValidator:
         records: Sequence[EpisodeRecord],
         staging_dir: Path,
     ) -> ValidationReport:
+        """Validate every episode's staged output.
+
+        Args:
+            records (`Sequence[EpisodeRecord]`): Episodes to validate.
+            staging_dir (`Path`): Directory holding per-episode staged annotation rows.
+
+        Returns:
+            `ValidationReport`: Aggregated errors/warnings across all episodes.
+        """
         report = ValidationReport()
         for record in records:
             self._validate_episode(record, staging_dir, report)
@@ -123,6 +136,13 @@ class StagingValidator:
         staging_dir: Path,
         report: ValidationReport,
     ) -> None:
+        """Run every check on one episode's staged rows, recording findings on `report`.
+
+        Args:
+            record (`EpisodeRecord`): Episode to validate.
+            staging_dir (`Path`): Directory holding per-episode staged annotation rows.
+            report (`ValidationReport`): Report to append errors/warnings to.
+        """
         staging = EpisodeStaging(staging_dir, record.episode_index)
         staged = staging.read_all()
         all_rows: list[dict[str, Any]] = []
@@ -209,6 +229,13 @@ class StagingValidator:
         report: ValidationReport,
         episode_index: int,
     ) -> None:
+        """Check that `row`'s style routes to the persistent/events column its module owns.
+
+        Args:
+            row (`dict[str, Any]`): Staged row, tagged with `"_module"`.
+            report (`ValidationReport`): Report to append errors to.
+            episode_index (`int`): Episode index, for error messages.
+        """
         style = row.get("style")
         module = row.get("_module")
         try:
@@ -232,6 +259,14 @@ class StagingValidator:
         report: ValidationReport,
         episode_index: int,
     ) -> None:
+        """Check that an event row's timestamp matches (or is within tolerance of) a source frame.
+
+        Args:
+            row (`dict[str, Any]`): Event-column row to check.
+            frame_ts (`set[float]`): Source frame timestamps for the episode.
+            report (`ValidationReport`): Report to append errors to.
+            episode_index (`int`): Episode index, for error messages.
+        """
         ts = row.get("timestamp")
         if ts is None:
             report.add_error(f"ep={episode_index}: event row missing timestamp: {row!r}")
@@ -253,6 +288,13 @@ class StagingValidator:
         report: ValidationReport,
         episode_index: int,
     ) -> None:
+        """Check that every interjection row has a co-timestamped speech atom.
+
+        Args:
+            events (`Iterable[dict[str, Any]]`): Events-column rows for one episode.
+            report (`ValidationReport`): Report to append errors to.
+            episode_index (`int`): Episode index, for error messages.
+        """
         speech_ts: dict[float, int] = {}
         interjection_ts: dict[float, int] = {}
         for row in events:
@@ -276,6 +318,17 @@ class StagingValidator:
         report: ValidationReport,
         episode_index: int,
     ) -> None:
+        """Check plan/memory/subtask/interjection emission consistency.
+
+        Warns if persistent rows exist with no plan, or if memory rows land off a subtask
+        boundary. Errors if an interjection has no co-timestamped plan refresh.
+
+        Args:
+            persistent (`Sequence[dict[str, Any]]`): Persistent-column rows for one episode.
+            events (`Sequence[dict[str, Any]]`): Events-column rows for one episode.
+            report (`ValidationReport`): Report to append errors/warnings to.
+            episode_index (`int`): Episode index, for error messages.
+        """
         plan_ts = sorted({float(r["timestamp"]) for r in persistent if r.get("style") == "plan"})
         memory_ts = sorted({float(r["timestamp"]) for r in persistent if r.get("style") == "memory"})
         subtask_ts = sorted({float(r["timestamp"]) for r in persistent if r.get("style") == "subtask"})
@@ -309,6 +362,13 @@ class StagingValidator:
         report: ValidationReport,
         episode_index: int,
     ) -> None:
+        """Check that every VQA assistant row's content is valid JSON matching a known answer shape.
+
+        Args:
+            events (`Iterable[dict[str, Any]]`): Events-column rows for one episode.
+            report (`ValidationReport`): Report to append errors to.
+            episode_index (`int`): Episode index, for error messages.
+        """
         for row in events:
             if row.get("style") != "vqa" or row.get("role") != "assistant":
                 continue
