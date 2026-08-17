@@ -24,7 +24,6 @@ This script:
 8. Reports compression statistics
 
 Example:
-
 ```shell
 lerobot-train-tokenizer \
     --repo_id=user/dataset_name \
@@ -71,39 +70,54 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenizerTrainingConfig:
-    """Configuration for training FAST tokenizer."""
+    """Configuration for training FAST tokenizer.
 
-    # LeRobot dataset repository ID
+    Args:
+        repo_id (`str`): LeRobot dataset repository ID.
+        root (`str | None`, *optional*): Root directory for the dataset. Defaults to
+            `~/.cache/huggingface/lerobot` when unset.
+        action_horizon (`int`, *optional*, defaults to 10): Number of future actions in each chunk.
+        max_episodes (`int | None`, *optional*): Max episodes to use. `None` uses every episode in
+            the dataset.
+        sample_fraction (`float`, *optional*, defaults to 0.1): Fraction of chunks to sample per
+            episode.
+        encoded_dims (`str`, *optional*, defaults to `"0:6,7:23"`): Comma-separated dimension ranges
+            to encode.
+        relative_dims (`str | None`, *optional*): Comma-separated dimension indices for the relative
+            transform (e.g. `"0,1,2,3,4,5"`).
+        use_relative_transform (`bool`, *optional*, defaults to `False`): Whether to apply the
+            relative transform (relative actions vs absolute actions).
+        state_key (`str`, *optional*, defaults to `"observation.state"`): Dataset key for state
+            observations.
+        normalization_mode (`str`, *optional*, defaults to `"QUANTILES"`): Normalization mode
+            (`MEAN_STD`, `MIN_MAX`, `QUANTILES`, `QUANTILE10`, `IDENTITY`).
+        vocab_size (`int`, *optional*, defaults to 1024): FAST vocabulary size (BPE vocab size).
+        scale (`float`, *optional*, defaults to 10.0): DCT scaling factor.
+        output_dir (`str | None`, *optional*): Directory to save the tokenizer. Defaults to
+            `./fast_tokenizer_{repo_id}` when unset.
+        push_to_hub (`bool`, *optional*, defaults to `False`): Whether to push the tokenizer to the
+            Hugging Face Hub.
+        hub_repo_id (`str | None`, *optional*): Hub repository ID (e.g. `"username/tokenizer-name"`).
+            Uses `output_dir`'s name when unset.
+        hub_private (`bool`, *optional*, defaults to `False`): Whether to create a private
+            repository on the Hub.
+    """
+
     repo_id: str
-    # Root directory for dataset (default: ~/.cache/huggingface/lerobot)
     root: str | None = None
-    # Number of future actions in each chunk
     action_horizon: int = 10
-    # Max episodes to use (None = all episodes in dataset)
     max_episodes: int | None = None
-    # Fraction of chunks to sample per episode
     sample_fraction: float = 0.1
-    # Comma-separated dimension ranges to encode (e.g., "0:6,7:23")
     encoded_dims: str = "0:6,7:23"
-    # Comma-separated dimension indices for relative transform (e.g., "0,1,2,3,4,5")
     relative_dims: str | None = None
-    # Whether to apply relative transform (relative actions vs absolute actions)
     use_relative_transform: bool = False
-    # Dataset key for state observations (default: "observation.state")
     state_key: str = OBS_STATE
-    # Normalization mode (MEAN_STD, MIN_MAX, QUANTILES, QUANTILE10, IDENTITY)
     normalization_mode: str = "QUANTILES"
-    # FAST vocabulary size (BPE vocab size)
     vocab_size: int = 1024
-    # DCT scaling factor (default: 10.0)
     scale: float = 10.0
-    # Directory to save tokenizer (default: ./fast_tokenizer_{repo_id})
     output_dir: str | None = None
-    # Whether to push the tokenizer to Hugging Face Hub
     push_to_hub: bool = False
-    # Hub repository ID (e.g., "username/tokenizer-name"). If None, uses output_dir name
     hub_repo_id: str | None = None
-    # Whether to create a private repository on the Hub
     hub_private: bool = False
 
 
@@ -113,9 +127,10 @@ def apply_relative_transform(
     """Apply relative transform to specified dimensions.
 
     Args:
-        state: Current state [D]
-        actions: Future actions [D]
-        relative_dims: List of dimension indices to apply relative transform to
+        state (`ndarray`): Current state `[D]`, used as the reference for relative dimensions.
+        actions (`ndarray`): Absolute action `[D]` to transform.
+        relative_dims (`list[int] | None`): Action dimensions to convert to `action - state`. A no-op
+            when `None` or empty.
 
     Returns:
         Transformed actions [D]
@@ -139,10 +154,11 @@ def apply_normalization(
     """Apply normalization to data based on the specified mode.
 
     Args:
-        data: Data to normalize [N, H, D] or [D]
-        stats: Dictionary of statistics (mean, std, min, max, q01, q99, q10, q90)
-        mode: Normalization mode to apply
-        eps: Small epsilon for numerical stability
+        data (`ndarray`): Data to normalize.
+        stats (`dict`): Per-feature statistics. Required keys depend on `mode`: `mean`/`std` for
+            `MEAN_STD`, `min`/`max` for `MIN_MAX`, `q01`/`q99` for `QUANTILES`.
+        mode (`NormalizationMode`): Normalization mode to apply.
+        eps (`float`, *optional*, defaults to 1e-08): Minimum denominator, to avoid division by zero.
 
     Returns:
         Normalized data with the same shape as input
@@ -288,15 +304,15 @@ def train_fast_tokenizer(
     vocab_size: int = 1024,
     scale: float = 10.0,
 ) -> AutoProcessor:
-    """
-    Train FAST tokenizer (BPE on DCT coefficients) on action chunks.
+    """Train FAST tokenizer (BPE on DCT coefficients) on action chunks.
 
     Uses the .fit() method to train a new tokenizer on the provided data.
 
     Args:
-        action_chunks: Array of action chunks [N, H, D] where N=num_chunks, H=horizon, D=action_dim
-        vocab_size: BPE vocabulary size
-        scale: DCT scaling factor for quantization
+        action_chunks (`ndarray`): Array of action chunks `[N, H, D]` where `N` is the number of
+            chunks, `H` the horizon, and `D` the action dimension.
+        vocab_size (`int`, *optional*, defaults to 1024): BPE vocabulary size.
+        scale (`float`, *optional*, defaults to 10.0): DCT scaling factor for quantization.
 
     Returns:
         Trained FAST tokenizer
@@ -379,11 +395,10 @@ def compute_compression_stats(tokenizer, action_chunks: np.ndarray):
 
 @parser.wrap()
 def train_tokenizer(cfg: TokenizerTrainingConfig):
-    """
-    Train FAST tokenizer for action encoding.
+    """Train FAST tokenizer for action encoding.
 
     Args:
-        cfg: TokenizerTrainingConfig dataclass with all configuration parameters
+        cfg (`TokenizerTrainingConfig`): Configuration with all training parameters.
     """
     # load dataset
     logger.info(f"Loading dataset: {cfg.repo_id}")

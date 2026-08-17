@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Helper to set motor ids and baudrate.
+"""Helper to set motor ids and baudrate.
 
 Example:
-
 ```shell
 lerobot-setup-motors \
     --teleop.type=so100_leader \
@@ -56,10 +54,24 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 @dataclass
 class SetupConfig:
+    """Configuration for the `lerobot-setup-motors` CLI.
+
+    Args:
+        teleop (`TeleoperatorConfig | None`, *optional*): Teleoperator whose motors to set up. Exactly
+            one of `teleop`/`robot` must be set.
+        robot (`RobotConfig | None`, *optional*): Robot whose motors to set up. Exactly one of
+            `teleop`/`robot` must be set.
+    """
+
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
     def __post_init__(self):
+        """Resolve `device` from whichever of `teleop`/`robot` is set.
+
+        Raises:
+            ValueError: If both or neither of `teleop`/`robot` are set.
+        """
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
 
@@ -68,6 +80,14 @@ class SetupConfig:
 
 @draccus.wrap()
 def setup_motors(cfg: SetupConfig):
+    """Connect to `cfg.device` (robot or teleoperator) and run its motor setup routine.
+
+    Args:
+        cfg (`SetupConfig`): Parsed from the CLI.
+
+    Raises:
+        NotImplementedError: If `cfg.device`'s type doesn't support motor setup.
+    """
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
     else:
@@ -80,6 +100,7 @@ def setup_motors(cfg: SetupConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-setup-motors`."""
     register_third_party_plugins()
     setup_motors()
 

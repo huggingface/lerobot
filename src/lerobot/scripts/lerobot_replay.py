@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Replays the actions of an episode from a dataset on a robot.
+"""Replays the actions of an episode from a dataset on a robot.
 
 Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
 
 Examples:
-
 ```shell
 lerobot-replay \
     --robot.type=so100_follower \
@@ -81,26 +79,46 @@ from lerobot.utils.utils import (
 
 @dataclass
 class DatasetReplayConfig:
-    # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
+    """Configuration for the dataset an episode is replayed from.
+
+    Args:
+        repo_id (`str`): Dataset identifier. By convention it should match
+            `'{hf_username}/{dataset_name}'` (e.g. `lerobot/test`).
+        episode (`int`): Episode to replay.
+        root (`str | Path | None`, *optional*): Root directory where the dataset is stored (e.g.
+            `'dataset/path'`). Defaults to `$HF_LEROBOT_HOME/repo_id` when unset.
+        fps (`int`, *optional*, defaults to 30): Frames-per-second cap for the replay loop.
+    """
+
     repo_id: str
-    # Episode to replay.
     episode: int
-    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
-    # Limit the frames per second. By default, uses the policy fps.
     fps: int = 30
 
 
 @dataclass
 class ReplayConfig:
+    """Configuration for the `lerobot-replay` CLI.
+
+    Args:
+        robot (`RobotConfig`): Robot to replay the episode on.
+        dataset (`DatasetReplayConfig`): Dataset and episode to replay.
+        play_sounds (`bool`, *optional*, defaults to `True`): Whether to use vocal synthesis to read
+            events aloud.
+    """
+
     robot: RobotConfig
     dataset: DatasetReplayConfig
-    # Use vocal synthesis to read events.
     play_sounds: bool = True
 
 
 @parser.wrap()
 def replay(cfg: ReplayConfig):
+    """Connect to `cfg.robot` and send it the recorded actions of `cfg.dataset.episode`.
+
+    Args:
+        cfg (`ReplayConfig`): Parsed from the CLI.
+    """
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
@@ -136,6 +154,7 @@ def replay(cfg: ReplayConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-replay`."""
     register_third_party_plugins()
     replay()
 

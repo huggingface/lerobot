@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
+"""Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
 
 Requires: pip install 'lerobot[dataset_viz]'  (includes dataset + viz extras)
 
@@ -28,7 +28,6 @@ lossy compression artifacts since these images have been decoded from compressed
 save disk space. The compression factor applied has been tuned to not affect success rate.
 
 Examples:
-
 - Visualize data stored on a local machine:
 ```
 local$ lerobot-dataset-viz \
@@ -111,9 +110,7 @@ def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
 
 
 def check_chw_float32(frame: torch.Tensor) -> None:
-    """
-    Check if a frame is a channel-first, float32 tensor.
-    """
+    """Check if a frame is a channel-first, float32 tensor."""
     assert frame.dtype == torch.float32
     assert frame.ndim == 3
     c, h, w = frame.shape
@@ -121,12 +118,14 @@ def check_chw_float32(frame: torch.Tensor) -> None:
 
 
 def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
+    """Convert a channel-first float32 `[0, 1]` image tensor to a channel-last uint8 numpy array."""
     check_chw_float32(chw_float32_torch)
     hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
     return hwc_uint8_numpy
 
 
 def to_hwc_float32_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
+    """Convert a channel-first float32 image tensor to a channel-last float32 numpy array."""
     check_chw_float32(chw_float32_torch)
     hwc_float32_numpy = chw_float32_torch.permute(1, 2, 0).numpy()
     return hwc_float32_numpy
@@ -173,6 +172,36 @@ def visualize_dataset(
     autoplay: bool = True,
     **kwargs,
 ) -> Path | None:
+    """Stream (or save) an episode's camera images and time series for visualization.
+
+    Args:
+        dataset (`LeRobotDataset`): Dataset to visualize an episode from.
+        episode_index (`int`): Episode index to visualize.
+        batch_size (`int`, *optional*, defaults to 32): Dataloader batch size.
+        num_workers (`int`, *optional*, defaults to 0): Number of dataloader worker processes.
+        mode (`str`, *optional*, defaults to `"local"`): Rerun spawn mode: `"local"` (native
+            viewer) or `"distant"` (serve over gRPC/web, when `display_mode="rerun"`).
+        web_port (`int | None`, *optional*): Port for Rerun's web viewer, or the Foxglove server
+            when `display_mode="foxglove"`. Defaults to `DEFAULT_FOXGLOVE_PORT` for Foxglove.
+        grpc_port (`int`, *optional*, defaults to 9876): Port for Rerun's gRPC server, in
+            `"distant"` mode.
+        save (`bool`, *optional*, defaults to `False`): Whether to save the recording as a `.rrd`
+            file to `output_dir` instead of (or in addition to) streaming it live.
+        output_dir (`Path | None`, *optional*): Directory to write the `.rrd` file to. Required
+            when `save=True`.
+        display_compressed_images (`bool`, *optional*, defaults to `False`): Whether to display
+            compressed (JPEG) images instead of raw frames.
+        display_mode (`str`, *optional*, defaults to `"rerun"`): Visualization backend: `"rerun"`
+            or `"foxglove"`.
+        host (`str`, *optional*, defaults to `"127.0.0.1"`): Interface to bind the Foxglove server
+            to, when `display_mode="foxglove"`.
+        autoplay (`bool`, *optional*, defaults to `True`): Whether the Foxglove player starts
+            playing automatically.
+        kwargs (`Any`, *optional*): Unused; absorbs stray CLI keys not otherwise consumed.
+
+    Returns:
+        Path | None: The `.rrd` file path when `save=True`, otherwise `None`.
+    """
     if display_mode == "foxglove":
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
@@ -305,6 +334,7 @@ def visualize_dataset(
 
 
 def main():
+    """CLI entry point for `lerobot-dataset-viz`."""
     parser = argparse.ArgumentParser()
 
     parser.add_argument(

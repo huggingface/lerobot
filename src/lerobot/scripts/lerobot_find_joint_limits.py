@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Script to find joint limits and end-effector bounds via teleoperation.
+"""Script to find joint limits and end-effector bounds via teleoperation.
 
 Example:
-
 ```shell
 lerobot-find-joint-limits \
   --robot.type=so100_follower \
@@ -74,25 +72,41 @@ from lerobot.utils.robot_utils import precise_sleep
 
 @dataclass
 class FindJointLimitsConfig:
+    """Configuration for the `lerobot-find-joint-limits` CLI.
+
+    Args:
+        teleop (`TeleoperatorConfig`): Teleoperator used to drive the robot through its range of motion.
+        robot (`RobotConfig`): Robot whose joint limits and end-effector bounds are being measured.
+        urdf_path (`str`): Path to the robot's URDF file for kinematics. It is highly recommended to use
+            the URDF from the [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf).
+        target_frame_name (`str`, *optional*, defaults to `"gripper"`): URDF frame whose end-effector
+            position/bounds are tracked.
+        teleop_time_s (`float`, *optional*, defaults to 30): Duration, in seconds, of the recording
+            phase.
+        warmup_time_s (`float`, *optional*, defaults to 5): Duration, in seconds, of the warmup phase
+            before recording starts.
+        control_loop_fps (`int`, *optional*, defaults to 30): Control loop frequency, in Hz.
+    """
+
     teleop: TeleoperatorConfig
     robot: RobotConfig
-
-    # Path to URDF file for kinematics
-    # NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
-    # https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
     urdf_path: str
     target_frame_name: str = "gripper"
-
-    # Duration of the recording phase in seconds
     teleop_time_s: float = 30
-    # Duration of the warmup phase in seconds
     warmup_time_s: float = 5
-    # Control loop frequency
     control_loop_fps: int = 30
 
 
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
+    """Teleoperate `cfg.robot` and print the observed joint-position and end-effector bounds.
+
+    After `cfg.warmup_time_s` of unrecorded warmup, tracks the min/max joint positions and forward-
+    kinematics end-effector position for `cfg.teleop_time_s`, then prints the results (or on Ctrl+C).
+
+    Args:
+        cfg (`FindJointLimitsConfig`): Parsed from the CLI.
+    """
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
 
@@ -220,6 +234,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-find-joint-limits`."""
     find_joint_and_ee_bounds()
 
 

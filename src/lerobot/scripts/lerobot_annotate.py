@@ -13,24 +13,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""``lerobot-annotate`` — populate ``language_persistent`` and
-``language_events`` columns on a LeRobot dataset.
+r"""``lerobot-annotate`` — populate ``language_persistent`` and ``language_events`` columns on a dataset.
 
 Annotations live directly in ``data/chunk-*/file-*.parquet``.
 
 Example:
-
-  uv run lerobot-annotate \\
-      --root=/path/to/dataset \\
+  uv run lerobot-annotate \
+      --root=/path/to/dataset \
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 
 Pass ``--job.target=<flavor>`` to run the same command on a Hugging Face
 Jobs GPU instead of this machine (see ``lerobot.jobs.annotate``):
 
-  uv run lerobot-annotate \\
-      --repo_id=user/dataset \\
-      --new_repo_id=user/dataset_annotated \\
-      --push_to_hub=true \\
+  uv run lerobot-annotate \
+      --repo_id=user/dataset \
+      --new_repo_id=user/dataset_annotated \
+      --push_to_hub=true \
       --job.target=h200
 """
 
@@ -65,6 +63,17 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
+    """Return `cfg.root`, or download `cfg.repo_id`'s snapshot and return its local path.
+
+    Args:
+        cfg (`AnnotationPipelineConfig`): Must set `root` or `repo_id`.
+
+    Returns:
+        `Path`: Local directory of the dataset to annotate.
+
+    Raises:
+        ValueError: If neither `root` nor `repo_id` is set.
+    """
     if cfg.root is not None:
         return Path(cfg.root)
     if cfg.repo_id is not None:
@@ -211,6 +220,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
 
 
 def main() -> None:
+    """CLI entry point for `lerobot-annotate`."""
     annotate()
 
 

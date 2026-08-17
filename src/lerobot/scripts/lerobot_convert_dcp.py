@@ -43,14 +43,21 @@ from lerobot.utils.utils import init_logging
 
 @dataclass
 class ConvertDcpConfig:
-    """CLI config for the offline DCP-to-safetensors checkpoint conversion."""
+    """CLI config for the offline DCP-to-safetensors checkpoint conversion.
 
-    # A checkpoint step directory (containing pretrained_model/) or a pretrained_model
-    # directory itself.
+    Args:
+        checkpoint_dir (`Path`): A checkpoint step directory (containing `pretrained_model/`) or a
+            `pretrained_model` directory itself.
+        delete_dcp (`bool`, *optional*, defaults to `False`): Whether to remove the DCP shard
+            directory after a successful conversion.
+        push_to_hub (`str | None`, *optional*): Publish the converted directory to this Hub repo id
+            (e.g. `"user/my-policy"`).
+        private (`bool | None`, *optional*): Repo visibility passed to `create_repo`. `None` keeps
+            the Hub's (or an existing repo's) default.
+    """
+
     checkpoint_dir: Path
-    # Remove the DCP shard directory after a successful conversion.
     delete_dcp: bool = False
-    # Publish the converted directory to this Hub repo id (e.g. "user/my-policy").
     push_to_hub: str | None = None
     private: bool | None = None
 
@@ -79,9 +86,9 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
     excluded from the upload.
 
     Args:
-        pretrained_dir (Path): The converted `pretrained_model/` directory to upload.
-        repo_id (str): Target Hub model repo id (e.g. "user/my-policy"); created if missing.
-        private (bool | None): Repo visibility passed to `create_repo`; None keeps the Hub (or
+        pretrained_dir (`Path`): The converted `pretrained_model/` directory to upload.
+        repo_id (`str`): Target Hub model repo id (e.g. `"user/my-policy"`); created if missing.
+        private (`bool | None`): Repo visibility passed to `create_repo`; `None` keeps the Hub (or
             existing repo's) default.
     """
     from lerobot.common.train_utils import generate_model_card

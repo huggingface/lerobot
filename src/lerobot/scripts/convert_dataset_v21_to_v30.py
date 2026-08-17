@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.1 to
-3.0. It will:
+"""Convert any LeRobot dataset already pushed to the hub from codebase version 2.1 to 3.0.
+
+It will:
 
 - Generate per-episodes stats and writes them in `episodes_stats.jsonl`
 - Check consistency between these new stats and the old ones.
@@ -144,16 +144,19 @@ meta/info.json
 
 
 def load_jsonlines(fpath: Path) -> list[Any]:
+    """Read a `.jsonl` file into a list of parsed JSON objects."""
     with jsonlines.open(fpath, "r") as reader:
         return list(reader)
 
 
 def legacy_load_episodes(local_dir: Path) -> dict:
+    """Load v2.1's `episodes.jsonl`, keyed and sorted by `episode_index`."""
     episodes = load_jsonlines(local_dir / LEGACY_EPISODES_PATH)
     return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
 
 
 def legacy_load_episodes_stats(local_dir: Path) -> dict:
+    """Load v2.1's `episodes_stats.jsonl`, keyed by `episode_index` with stats cast to numpy."""
     episodes_stats = load_jsonlines(local_dir / LEGACY_EPISODES_STATS_PATH)
     return {
         item["episode_index"]: cast_stats_to_numpy(item["stats"])
@@ -162,6 +165,12 @@ def legacy_load_episodes_stats(local_dir: Path) -> dict:
 
 
 def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
+    """Load v2.1's `tasks.jsonl`.
+
+    Returns:
+        tuple[dict, dict]: `(tasks, task_to_task_index)`, mapping task index to task string and
+        vice versa.
+    """
     tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
     tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
     task_to_task_index = {task: task_index for task_index, task in tasks.items()}
@@ -180,6 +189,12 @@ def validate_local_dataset_version(local_path: Path) -> None:
 
 
 def convert_tasks(root, new_root):
+    """Convert v2.1's `tasks.jsonl` into v3.0's `meta/tasks.parquet`.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read `tasks.jsonl` from.
+        new_root (`Path`): v3.0 dataset directory to write `meta/tasks.parquet` to.
+    """
     logging.info(f"Converting tasks from {root} to {new_root}")
     tasks, _ = legacy_load_tasks(root)
     task_indices = tasks.keys()
@@ -189,6 +204,16 @@ def convert_tasks(root, new_root):
 
 
 def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
+    """Concatenate per-episode v2.1 parquet files into a single v3.0 data file.
+
+    Args:
+        paths_to_cat (`list[Path]`): Per-episode v2.1 parquet file paths to concatenate, in order.
+        new_root (`Path`): v3.0 dataset directory to write the concatenated data file to.
+        chunk_idx (`int`): Chunk index for the output file's path.
+        file_idx (`int`): File index within `chunk_idx` for the output file's path.
+        image_keys (`list[str]`): Feature keys whose dtype is `"image"`, re-tagged as `Image()` in the
+            output parquet schema.
+    """
     # TODO(rcadene): to save RAM use Dataset.from_parquet(file) and concatenate_datasets
     dataframes = [pd.read_parquet(file) for file in paths_to_cat]
     # Concatenate all DataFrames along rows
@@ -210,6 +235,17 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
 
 
 def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
+    """Concatenate v2.1's per-episode data parquet files into v3.0's size-bounded data files.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read per-episode data parquet files from.
+        new_root (`Path`): v3.0 dataset directory to write concatenated data files to.
+        data_file_size_in_mb (`int`): Target maximum size, in MB, per output data file.
+
+    Returns:
+        list[dict]: Per-episode metadata (`episode_index`, `data/chunk_index`, `data/file_index`,
+        `dataset_from_index`, `dataset_to_index`), in episode order.
+    """
     data_dir = root / "data"
     ep_paths = sorted(data_dir.glob("*/*.parquet"))
 
@@ -261,6 +297,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
 
 def get_video_keys(root):
+    """Return the feature keys whose dtype is `"video"`, per the dataset's `meta/info.json`."""
     info = load_info(root)
     features = info.features
     video_keys = [key for key, ft in features.items() if ft["dtype"] == "video"]
@@ -268,6 +305,7 @@ def get_video_keys(root):
 
 
 def get_image_keys(root):
+    """Return the feature keys whose dtype is `"image"`, per the dataset's `meta/info.json`."""
     info = load_info(root)
     features = info.features
     image_keys = [key for key, ft in features.items() if ft["dtype"] == "image"]
@@ -275,6 +313,21 @@ def get_image_keys(root):
 
 
 def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
+    """Convert every camera's per-episode v2.1 video files into v3.0's size-bounded video files.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read per-episode video files from.
+        new_root (`Path`): v3.0 dataset directory to write concatenated video files to.
+        video_file_size_in_mb (`int`): Target maximum size, in MB, per output video file.
+
+    Returns:
+        list[dict] | None: Per-episode metadata merged across all cameras, or `None` if the
+        dataset has no video features.
+
+    Raises:
+        ValueError: If cameras disagree on the number of episodes, or episode indices don't align
+            across cameras.
+    """
     logging.info(f"Converting videos from {root} to {new_root}")
 
     video_keys = get_video_keys(root)
@@ -311,6 +364,18 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
 
 
 def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int):
+    """Concatenate one camera's per-episode v2.1 video files into v3.0's size-bounded video files.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read `video_key`'s per-episode video files from.
+        new_root (`Path`): v3.0 dataset directory to write concatenated video files to.
+        video_key (`str`): Camera feature key whose video files are being converted.
+        video_file_size_in_mb (`int`): Target maximum size, in MB, per output video file.
+
+    Returns:
+        list[dict]: Per-episode metadata (`episode_index`, chunk/file indices, from/to timestamps)
+        for this camera, in episode order.
+    """
     # Access old paths to mp4
     videos_dir = root / "videos"
     ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
@@ -384,6 +449,24 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
 def generate_episode_metadata_dict(
     episodes_legacy_metadata, episodes_metadata, episodes_stats, episodes_videos=None
 ):
+    """Yield one merged per-episode metadata dict for each episode, in order.
+
+    Args:
+        episodes_legacy_metadata (`dict`): v2.1 per-episode metadata, keyed by `episode_index`, as
+            returned by `legacy_load_episodes`.
+        episodes_metadata (`list[dict]`): Per-episode data metadata, as returned by `convert_data`.
+        episodes_stats (`dict`): v2.1 per-episode stats, keyed by `episode_index`, as returned by
+            `legacy_load_episodes_stats`.
+        episodes_videos (`list[dict] | None`, *optional*): Per-episode video metadata, as returned by
+            `convert_videos`. Omitted when the dataset has no video features.
+
+    Yields:
+        dict: One merged metadata dict per episode.
+
+    Raises:
+        ValueError: If the episode indices don't align across the legacy metadata, data metadata,
+            stats, and (when provided) video metadata.
+    """
     num_episodes = len(episodes_metadata)
     episodes_legacy_metadata_vals = list(episodes_legacy_metadata.values())
     episodes_stats_vals = list(episodes_stats.values())
@@ -416,6 +499,19 @@ def generate_episode_metadata_dict(
 
 
 def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata=None):
+    """Write v3.0's `meta/episodes/*.parquet` and re-aggregated dataset-level `meta/stats.json`.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read legacy episode metadata/stats from.
+        new_root (`Path`): v3.0 dataset directory to write episode metadata and stats to.
+        episodes_metadata (`list[dict]`): Per-episode data metadata, as returned by `convert_data`.
+        episodes_video_metadata (`list[dict] | None`, *optional*): Per-episode video metadata, as
+            returned by `convert_videos`. Omitted when the dataset has no video features.
+
+    Raises:
+        ValueError: If the number of episodes disagrees across legacy metadata, `episodes_metadata`,
+            and (when provided) `episodes_video_metadata`.
+    """
     logging.info(f"Converting episodes metadata from {root} to {new_root}")
 
     episodes_legacy_metadata = legacy_load_episodes(root)
@@ -440,6 +536,14 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
 
 
 def convert_info(root, new_root, data_file_size_in_mb, video_file_size_in_mb):
+    """Convert v2.1's `meta/info.json` into v3.0's schema and write it to `new_root`.
+
+    Args:
+        root (`Path`): v2.1 dataset directory to read `meta/info.json` from.
+        new_root (`Path`): v3.0 dataset directory to write the converted `meta/info.json` to.
+        data_file_size_in_mb (`int`): Target maximum size, in MB, per output data file.
+        video_file_size_in_mb (`int`): Target maximum size, in MB, per output video file.
+    """
     # Load as raw dict to remove legacy v2.1 fields before constructing DatasetInfo.
     info = load_json(root / INFO_PATH)
     info["codebase_version"] = V30
@@ -470,6 +574,25 @@ def convert_dataset(
     push_to_hub: bool = True,
     force_conversion: bool = False,
 ):
+    """Convert a v2.1 LeRobot dataset (local or on the Hub) to v3.0, in place.
+
+    Skips the conversion (downloading the v3.0 snapshot instead) if a v3.0 revision already exists
+    on the Hub, unless `root` or `force_conversion` is set.
+
+    Args:
+        repo_id (`str`): Hugging Face Hub dataset repo id.
+        branch (`str | None`, *optional*): Hub branch/revision to push the converted dataset to.
+        data_file_size_in_mb (`int | None`, *optional*): Target maximum size, in MB, per output
+            data file. Defaults to `DEFAULT_DATA_FILE_SIZE_IN_MB` when unset.
+        video_file_size_in_mb (`int | None`, *optional*): Target maximum size, in MB, per output
+            video file. Defaults to `DEFAULT_VIDEO_FILE_SIZE_IN_MB` when unset.
+        root (`str | Path | None`, *optional*): Local dataset directory to convert in place. When
+            unset, the v2.1 snapshot is downloaded from the Hub first.
+        push_to_hub (`bool`, *optional*, defaults to `True`): Whether to push the converted dataset
+            back to the Hub and re-tag it with `CODEBASE_VERSION`.
+        force_conversion (`bool`, *optional*, defaults to `False`): Whether to convert even if a
+            v3.0 revision already exists on the Hub.
+    """
     if data_file_size_in_mb is None:
         data_file_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_file_size_in_mb is None:

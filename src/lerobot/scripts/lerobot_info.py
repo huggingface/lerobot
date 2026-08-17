@@ -14,12 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Use this script to get a quick summary of your system config.
+"""Use this script to get a quick summary of your system config.
+
 It should be able to run without any of LeRobot's dependencies or LeRobot itself installed.
 
 Example:
-
 ```shell
 lerobot-info
 ```
@@ -117,9 +116,7 @@ def format_dict_for_markdown(d: dict[str, str]) -> str:
 
 
 def main():
-    """
-    Main function to print system info in markdown format.
-    """
+    """CLI entry point for `lerobot-info`: print system info in markdown format."""
     system_info = get_sys_info()
     print(format_dict_for_markdown(system_info))
 

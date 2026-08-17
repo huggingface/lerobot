@@ -1,0 +1,118 @@
+# Scripts
+
+`src/lerobot/scripts/` holds the CLI entry points mapped in `pyproject.toml`'s `[project.scripts]`
+(`lerobot-train`, `lerobot-record`, `lerobot-eval`, ...). This page documents each command's configuration
+— every field below is settable as a `--flag` on the command line. For setup, recording, and training
+walkthroughs, start with [`AGENT_GUIDE.md`](https://github.com/huggingface/lerobot/blob/main/AGENT_GUIDE.md).
+
+## lerobot-train
+
+[[autodoc]] lerobot.configs.train.TrainPipelineConfig
+
+## lerobot-eval
+
+[[autodoc]] lerobot.configs.eval.EvalPipelineConfig
+
+## lerobot-record
+
+[[autodoc]] lerobot.scripts.lerobot_record.RecordConfig
+
+## lerobot-replay
+
+[[autodoc]] lerobot.scripts.lerobot_replay.ReplayConfig
+
+[[autodoc]] lerobot.scripts.lerobot_replay.DatasetReplayConfig
+
+## lerobot-teleoperate
+
+[[autodoc]] lerobot.scripts.lerobot_teleoperate.TeleoperateConfig
+
+## lerobot-calibrate
+
+[[autodoc]] lerobot.scripts.lerobot_calibrate.CalibrateConfig
+
+## lerobot-rollout
+
+Policy deployment on real robots, with pluggable rollout strategies (`base`, `sentry`, `highlight`,
+`dagger`, `episodic`) and inference backends (`sync`, `rtc`).
+
+[[autodoc]] lerobot.rollout.configs.RolloutConfig
+
+## lerobot-edit-dataset
+
+Non-destructive and in-place dataset edits, selected via `--operation.type=<name>`.
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.EditDatasetConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.OperationConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.DeleteEpisodesConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.SplitConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.MergeConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.RemoveFeatureConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.ModifyTasksConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.ConvertImageToVideoConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.RecomputeStatsConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.ReencodeVideosConfig
+
+[[autodoc]] lerobot.scripts.lerobot_edit_dataset.InfoConfig
+
+## lerobot-annotate
+
+Populates `language_persistent` and `language_events` columns on a dataset via a steerable VLM pipeline.
+Pass `--job.target=<flavor>` to run on a Hugging Face Jobs GPU instead of locally.
+
+[[autodoc]] lerobot.annotations.steerable_pipeline.config.AnnotationPipelineConfig
+
+## lerobot-train-tokenizer
+
+[[autodoc]] lerobot.scripts.lerobot_train_tokenizer.TokenizerTrainingConfig
+
+## lerobot-convert-dcp
+
+Offline, single-process conversion of a DCP-format checkpoint into a distributable safetensors model.
+
+[[autodoc]] lerobot.scripts.lerobot_convert_dcp.ConvertDcpConfig
+
+## lerobot-find-joint-limits
+
+[[autodoc]] lerobot.scripts.lerobot_find_joint_limits.FindJointLimitsConfig
+
+## lerobot-setup-motors
+
+[[autodoc]] lerobot.scripts.lerobot_setup_motors.SetupConfig
+
+## lerobot-setup-can
+
+Configures and debugs CAN interfaces for Damiao motors (e.g. OpenArms).
+
+[[autodoc]] lerobot.scripts.lerobot_setup_can.CANSetupConfig
+
+## lerobot-dataset-viz
+
+Streams (or saves) an episode's camera images and time series for visualization in Rerun or Foxglove.
+
+[[autodoc]] lerobot.scripts.lerobot_dataset_viz.visualize_dataset
+
+## lerobot-imgtransform-viz
+
+Renders example outputs of a dataset's configured image transforms, individually and combined.
+
+[[autodoc]] lerobot.scripts.lerobot_imgtransform_viz.visualize_image_transforms
+
+## lerobot-find-cameras
+
+[[autodoc]] lerobot.scripts.lerobot_find_cameras.find_and_print_cameras
+
+[[autodoc]] lerobot.scripts.lerobot_find_cameras.save_images_from_all_cameras
+
+## lerobot-find-port
+
+[[autodoc]] lerobot.scripts.lerobot_find_port.find_port

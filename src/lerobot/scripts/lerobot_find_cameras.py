@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Helper to find the camera devices available in your system.
+"""Helper to find the camera devices available in your system.
 
 Example:
-
 ```shell
 lerobot-find-cameras
 ```
@@ -45,8 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def find_all_opencv_cameras() -> list[dict[str, Any]]:
-    """
-    Finds all available OpenCV cameras plugged into the system.
+    """Finds all available OpenCV cameras plugged into the system.
 
     Returns:
         A list of all available OpenCV cameras with their metadata.
@@ -65,8 +62,7 @@ def find_all_opencv_cameras() -> list[dict[str, Any]]:
 
 
 def find_all_realsense_cameras() -> list[dict[str, Any]]:
-    """
-    Finds all available RealSense cameras plugged into the system.
+    """Finds all available RealSense cameras plugged into the system.
 
     Returns:
         A list of all available RealSense cameras with their metadata.
@@ -87,12 +83,11 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
 
 
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
-    """
-    Finds available cameras based on an optional filter and prints their information.
+    """Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
-                            If None, lists all cameras.
+        camera_type_filter (`str | None`, *optional*): String to filter cameras (`"realsense"` or
+            `"opencv"`). If `None`, lists all cameras.
 
     Returns:
         A list of all available cameras matching the filter, with their metadata.
@@ -133,9 +128,7 @@ def save_image(
     images_dir: Path,
     camera_type: str,
 ) -> None:
-    """
-    Saves a single image to disk using Pillow. Handles color conversion if necessary.
-    """
+    """Saves a single image to disk using Pillow. Handles color conversion if necessary."""
     try:
         img = Image.fromarray(img_array, mode="RGB")
 
@@ -230,16 +223,17 @@ def save_images_from_all_cameras(
     camera_type: str | None = None,
     warmup_s: int = 1,
 ):
-    """
-    Connects to detected cameras (optionally filtered by type) and saves images from each.
+    """Connects to detected cameras (optionally filtered by type) and saves images from each.
+
     Uses default stream profiles for width, height, and FPS.
 
     Args:
-        output_dir: Directory to save images.
-        record_time_s: Duration in seconds to record images.
-        camera_type: Optional string to filter cameras ("realsense" or "opencv").
-                            If None, uses all detected cameras.
-        warmup_s: Duration in seconds to warmup camera before recording images.
+        output_dir (`Path`): Directory to save images.
+        record_time_s (`float`, *optional*, defaults to 2.0): Duration in seconds to record images.
+        camera_type (`str | None`, *optional*): String to filter cameras (`"realsense"` or `"opencv"`).
+            If `None`, uses all detected cameras.
+        warmup_s (`int`, *optional*, defaults to 1): Duration in seconds to warmup camera before
+            recording images.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Saving images to {output_dir}")
@@ -270,6 +264,7 @@ def save_images_from_all_cameras(
 
 
 def main():
+    """CLI entry point for `lerobot-find-cameras`."""
     init_logging()
 
     parser = argparse.ArgumentParser(

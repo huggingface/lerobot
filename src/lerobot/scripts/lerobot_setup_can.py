@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Setup and debug CAN interfaces for Damiao motors (e.g., OpenArms).
+"""Setup and debug CAN interfaces for Damiao motors (e.g., OpenArms).
 
 Examples:
-
 Setup CAN interfaces with CAN FD:
 ```shell
 lerobot-setup-can --mode=setup --interfaces=can0,can1,can2,can3
@@ -61,8 +59,26 @@ MOTOR_NAMES = {
 
 @dataclass
 class CANSetupConfig:
+    """Configuration for the `lerobot-setup-can` CLI.
+
+    Args:
+        mode (`str`, *optional*, defaults to `"test"`): Operation to run: `"setup"` configures the
+            interfaces, `"test"` probes motors on them, `"speed"` measures round-trip latency.
+        interfaces (`str`, *optional*, defaults to `"can0"`): Comma-separated CAN interface names, e.g.
+            `"can0,can1,can2,can3"`.
+        bitrate (`int`, *optional*, defaults to 1000000): Arbitration bitrate, in bit/s.
+        data_bitrate (`int`, *optional*, defaults to 5000000): CAN FD data-phase bitrate, in bit/s.
+            Only used when `use_fd` is `True`.
+        use_fd (`bool`, *optional*, defaults to `True`): Whether to configure/use CAN FD.
+        motor_ids (`list[int]`, *optional*): Motor arbitration IDs to probe. Defaults to `0x01`-`0x08`.
+        timeout (`float`, *optional*, defaults to 1.0): Seconds to wait for a motor response in `"test"`
+            mode.
+        speed_iterations (`int`, *optional*, defaults to 100): Number of round-trips to measure in
+            `"speed"` mode.
+    """
+
     mode: str = "test"
-    interfaces: str = "can0"  # Comma-separated, e.g. "can0,can1,can2,can3"
+    interfaces: str = "can0"
     bitrate: int = 1000000
     data_bitrate: int = 5000000
     use_fd: bool = True
@@ -71,6 +87,7 @@ class CANSetupConfig:
     speed_iterations: int = 100
 
     def get_interfaces(self) -> list[str]:
+        """Parse `interfaces` into a list of interface names."""
         return [i.strip() for i in self.interfaces.split(",") if i.strip()]
 
 
@@ -337,6 +354,11 @@ def run_speed(cfg: CANSetupConfig):
 
 @draccus.wrap()
 def setup_can(cfg: CANSetupConfig):
+    """Dispatch `cfg` to the handler for its `cfg.mode` (`"setup"`, `"test"`, or `"speed"`).
+
+    Args:
+        cfg (`CANSetupConfig`): Parsed from the CLI.
+    """
     if not _can_available:
         print("Error: python-can not installed. Install with: pip install python-can")
         sys.exit(1)
@@ -354,6 +376,7 @@ def setup_can(cfg: CANSetupConfig):
 
 
 def main():
+    """CLI entry point for `lerobot-setup-can`."""
     setup_can()
 
 

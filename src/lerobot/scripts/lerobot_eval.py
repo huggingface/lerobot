@@ -200,17 +200,35 @@ def rollout(
             extraneous elements from the sequences above.
 
     Args:
-        env: The batch of environments.
-        policy: The policy. Must be a PyTorch nn module.
-        seeds: The environments are seeded once at the start of the rollout. If provided, this argument
-            specifies the seeds for each of the environments.
-        return_observations: Whether to include all observations in the returned rollout data. Observations
-            are returned optionally because they typically take more memory to cache. Defaults to False.
-        render_callback: Optional rendering callback to be used after the environments are reset, and after
+        env (`VectorEnv`): The batch of environments.
+        policy (`PreTrainedPolicy`): The policy. Must be a PyTorch nn module.
+        env_preprocessor (`DataProcessorPipeline`): Pipeline applied to the raw environment observation
+            before it reaches the policy.
+        env_postprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's action before
+            it's sent to the environment.
+        preprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's observation input
+            (device placement, normalization).
+        postprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's raw action output
+            (denormalization).
+        seeds (`list[int] | None`, *optional*): The environments are seeded once at the start of the
+            rollout. If provided, this argument specifies the seeds for each of the environments.
+        return_observations (`bool`, *optional*, defaults to `False`): Whether to include all
+            observations in the returned rollout data. Observations are returned optionally because
+            they typically take more memory to cache.
+        render_callback (`collections.abc.Callable[[gymnasium.vector.vector_env.VectorEnv], None] | None`, *optional*): Optional rendering callback to be used after the environments are reset, and after
             every step.
-        predicted_latents_callback: Optional callback invoked after every ``select_action`` with the policy
+        recording_dir (`pathlib.Path | None`, *optional*): Optional directory to write recorded
+            episodes to as a `LeRobotDataset`, in addition to returning rollout data.
+        env_features (`dict | None`, *optional*): Feature schema used to build dataset frames when
+            `recording_dir` is set.
+        recording_repo_id (`str | None`, *optional*): Repo id used for the dataset written to
+            `recording_dir`.
+        recording_private (`bool`, *optional*, defaults to `False`): Whether the pushed recording
+            dataset (if any) should be private.
+        predicted_latents_callback (`collections.abc.Callable[[lerobot.policies.pretrained.PreTrainedPolicy], None] | None`, *optional*): Optional callback invoked after every ``select_action`` with the policy
             itself. World-model policies (e.g. LingBot-VA) stash predicted video latents on
             ``policy.last_predicted_latents``; this lets the caller concatenate chunks and decode once.
+
     Returns:
         The dictionary described above.
     """
@@ -429,17 +447,40 @@ def eval_policy(
     recording_private: bool = False,
     save_predicted_video: bool = False,
 ) -> dict:
-    """
+    """Evaluate a policy on a batch of environments for `n_episodes`, aggregating rollout metrics.
+
     Args:
-        env: The batch of environments.
-        policy: The policy.
-        n_episodes: The number of episodes to evaluate.
-        max_episodes_rendered: Maximum number of episodes to render into videos.
-        videos_dir: Where to save rendered videos.
-        return_episode_data: Whether to return episode data for online training. Incorporates the data into
-            the "episodes" key of the returned dictionary.
-        start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
-            seed is incremented by 1. If not provided, the environments are not manually seeded.
+        env (`VectorEnv`): The batch of environments.
+        policy (`PreTrainedPolicy`): The policy.
+        env_preprocessor (`DataProcessorPipeline`): Pipeline applied to the raw environment observation
+            before it reaches the policy.
+        env_postprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's action before
+            it's sent to the environment.
+        preprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's observation input
+            (device placement, normalization).
+        postprocessor (`DataProcessorPipeline`): Pipeline applied to the policy's raw action output
+            (denormalization).
+        n_episodes (`int`): The number of episodes to evaluate.
+        max_episodes_rendered (`int`, *optional*, defaults to 0): Maximum number of episodes to render
+            into videos.
+        videos_dir (`pathlib.Path | None`, *optional*): Where to save rendered videos.
+        return_episode_data (`bool`, *optional*, defaults to `False`): Whether to return episode data
+            for online training. Incorporates the data into the "episodes" key of the returned dict.
+        start_seed (`int | None`, *optional*): The first seed to use for the first individual rollout.
+            For all subsequent rollouts the seed is incremented by 1. If not provided, the
+            environments are not manually seeded.
+        recording_dir (`pathlib.Path | None`, *optional*): Optional directory to write recorded
+            episodes to as a `LeRobotDataset`, in addition to returning rollout data.
+        env_features (`dict | None`, *optional*): Feature schema used to build dataset frames when
+            `recording_dir` is set.
+        recording_repo_id (`str | None`, *optional*): Repo id used for the dataset written to
+            `recording_dir`.
+        recording_private (`bool`, *optional*, defaults to `False`): Whether the pushed recording
+            dataset (if any) should be private.
+        save_predicted_video (`bool`, *optional*, defaults to `False`): Whether to collect and decode a
+            world-model policy's predicted-video latents. Also enabled automatically when
+            `policy.config.save_predicted_video` is set.
+
     Returns:
         Dictionary with metrics and data regarding the rollouts.
     """
@@ -481,6 +522,7 @@ def eval_policy(
 
     # Callback for visualization.
     def render_frame(env: gym.vector.VectorEnv):
+        """Render up to the remaining quota of episode frames into `ep_frames`."""
         # noqa: B023
         if n_episodes_rendered >= max_episodes_rendered:
             return
@@ -504,6 +546,7 @@ def eval_policy(
     # Collect predicted-video latents across a rollout (world-model policies only). The latents are
     # concatenated and decoded once after the rollout, matching upstream LingBot-VA's visualization path.
     def collect_predicted_latents(policy: PreTrainedPolicy):
+        """Drain `policy.last_predicted_latents` (if set) into `pred_latents`."""
         latents = getattr(policy, "last_predicted_latents", None)
         if latents is not None:
             pred_latents.append(
@@ -694,7 +737,7 @@ def eval_policy(
 def _compile_episode_data(
     rollout_data: dict, done_indices: Tensor, start_episode_index: int, start_data_index: int, fps: float
 ) -> dict:
-    """Convenience function for `eval_policy(return_episode_data=True)`
+    """Convenience function for `eval_policy(return_episode_data=True)`.
 
     Compiles all the rollout data into a Hugging Face dataset.
 
@@ -738,6 +781,11 @@ def _compile_episode_data(
 
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig):
+    """Build the env/policy from `cfg`, run evaluation, and write `eval_info.json` to `cfg.output_dir`.
+
+    Args:
+        cfg (`EvalPipelineConfig`): Parsed from the CLI.
+    """
     logging.info(pformat(asdict(cfg)))
 
     # Check device is available
@@ -824,6 +872,16 @@ def eval_main(cfg: EvalPipelineConfig):
 
 # ---- typed payload returned by one task eval ----
 class TaskMetrics(TypedDict):
+    """Per-task metrics and artifact paths returned by [`eval_one`].
+
+    Args:
+        sum_rewards (`list[float]`): Summed reward per episode.
+        max_rewards (`list[float]`): Maximum reward per episode.
+        successes (`list[bool]`): Whether each episode succeeded.
+        video_paths (`list[str]`): Paths to rendered rollout videos.
+        predicted_video_paths (`list[str]`): Paths to decoded predicted-latent videos.
+    """
+
     sum_rewards: list[float]
     max_rewards: list[float]
     successes: list[bool]
@@ -853,7 +911,6 @@ def eval_one(
     recording_private: bool = False,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
-
     task_videos_dir = videos_dir
 
     task_result = eval_policy(
@@ -904,10 +961,10 @@ def run_one(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
 ):
-    """
-    Run eval_one for a single (task_group, task_id, env).
-    Returns (task_group, task_id, task_metrics_dict).
-    This function is intentionally module-level to make it easy to test.
+    """Run eval_one for a single (task_group, task_id, env).
+
+    Returns (task_group, task_id, task_metrics_dict). This function is intentionally module-level to
+    make it easy to test.
     """
     task_videos_dir = None
     if videos_dir is not None:
@@ -964,8 +1021,8 @@ def eval_policy_all(
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
 ) -> dict:
-    """
-    Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
+    """Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
+
     This implementation flattens tasks, runs them sequentially or via ThreadPoolExecutor,
     accumulates per-group and overall statistics, and returns the same aggregate metrics
     schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
@@ -983,10 +1040,13 @@ def eval_policy_all(
 
     # small inline helper to accumulate one task's metrics into accumulators
     def _accumulate_to(group: str, metrics: dict):
+        """Merge one task's `metrics` into both `group_acc[group]` and `overall`."""
+
         # metrics expected to contain 'sum_rewards', 'max_rewards', 'successes', optionally 'video_paths'
         # but eval_one may store per-episode lists; we assume metrics uses scalars averaged per task as before.
         # To be robust, accept scalars or lists.
         def _append(key, value):
+            """Append `value` (scalar or list) to `group_acc[group][key]` and `overall[key]`."""
             if value is None:
                 return
             if isinstance(value, list):
@@ -1069,6 +1129,7 @@ def eval_policy_all(
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
+        """Return the NaN-aware mean of `xs`, or `nan` if `xs` is empty."""
         if not xs:
             return float("nan")
         arr = np.array(xs, dtype=float)
@@ -1106,6 +1167,7 @@ def eval_policy_all(
 
 
 def main():
+    """CLI entry point for `lerobot-eval`."""
     init_logging()
     register_third_party_plugins()
     eval_main()

@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Records a dataset via teleoperation.  This is a pure data-collection
-tool — no policy inference.  For deploying trained policies, use
+r"""Records a dataset via teleoperation.
+
+This is a pure data-collection tool — no policy inference. For deploying trained policies, use
 ``lerobot-rollout`` instead.
 
 Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
 
 Example:
-
 ```shell
 lerobot-record \\
     --robot.type=so100_follower \\
@@ -169,27 +168,46 @@ from lerobot.utils.visualization_utils import (
 
 @dataclass
 class RecordConfig:
+    """Configuration for the `lerobot-record` CLI.
+
+    Args:
+        robot (`RobotConfig`): Robot to record from.
+        dataset (`DatasetRecordConfig`): Where and how to save the recorded episodes.
+        teleop (`TeleoperatorConfig | None`, *optional*): Teleoperator to control the robot. Required —
+            for policy-based deployment, use `lerobot-rollout` instead.
+        display_data (`bool`, *optional*, defaults to `False`): Whether to display all cameras on screen.
+        display_mode (`str`, *optional*, defaults to `"rerun"`): Visualization backend used when
+            `display_data` is `True`: `"rerun"` or `"foxglove"`.
+        display_ip (`str | None`, *optional*): For `"rerun"`, the IP of a remote server to send to.
+            For `"foxglove"`, the interface to bind the WebSocket server to (`127.0.0.1` for local
+            only, `0.0.0.0` for all interfaces).
+        display_port (`int | None`, *optional*): For `"rerun"`, the port of the remote server. For
+            `"foxglove"`, the port to bind the WebSocket server to.
+        display_compressed_images (`bool`, *optional*, defaults to `False`): Whether to display
+            compressed (JPEG) images instead of raw frames.
+        play_sounds (`bool`, *optional*, defaults to `True`): Whether to use vocal synthesis to read
+            events aloud.
+        resume (`bool`, *optional*, defaults to `False`): Whether to resume recording onto an existing
+            dataset.
+    """
+
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Teleoperator to control the robot (required)
     teleop: TeleoperatorConfig | None = None
-    # Display all cameras on screen
     display_data: bool = False
-    # Visualization backend used when display_data is True: "rerun" or "foxglove".
     display_mode: str = "rerun"
-    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
-    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
-    # Use vocal synthesis to read events.
     play_sounds: bool = True
-    # Resume recording on an existing dataset.
     resume: bool = False
 
     def __post_init__(self):
+        """Validate that a teleoperator was supplied.
+
+        Raises:
+            ValueError: If `teleop` is unset.
+        """
         if self.teleop is None:
             raise ValueError(
                 "A teleoperator is required for recording. "
@@ -246,6 +264,40 @@ def record_loop(
     display_mode: str = "rerun",
     display_compressed_images: bool = False,
 ):
+    """Run one teleoperated control loop of `robot`, saving frames to `dataset` for `control_time_s`.
+
+    On each step: reads a robot observation, runs it through `robot_observation_processor`, gets an
+    action from `teleop` (or the two-teleop keyboard+arm combo used by LeKiwi), routes it through
+    `teleop_action_processor` then `robot_action_processor`, sends it to `robot`, and appends the
+    resulting frame to `dataset` (when provided). Exits early if `events["exit_early"]` is set.
+
+    Args:
+        robot (`Robot`): Robot being controlled.
+        events (`dict`): Shared event flags (e.g. `"exit_early"`) toggled by the keyboard listener.
+        fps (`int`): Target control loop frequency, in Hz. Must match `dataset.fps` when `dataset` is set.
+        teleop_action_processor (`RobotProcessorPipeline`): Pipeline run on the teleop action after
+            `teleop.get_action()`.
+        robot_action_processor (`RobotProcessorPipeline`): Pipeline run on the processed teleop action
+            before sending it to `robot`.
+        robot_observation_processor (`RobotProcessorPipeline`): Pipeline run on the raw robot
+            observation after `robot.get_observation()`.
+        dataset (`LeRobotDataset | None`, *optional*): Dataset to append recorded frames to.
+        teleop (`Teleoperator | list[Teleoperator] | None`, *optional*): Teleoperator(s) to source
+            actions from. A list is only supported for the LeKiwi robot, and must contain exactly one
+            `KeyboardTeleop` and one arm teleoperator.
+        control_time_s (`int | None`, *optional*): Duration, in seconds, to run the loop for.
+        single_task (`str | None`, *optional*): Task description saved alongside each recorded frame.
+        display_data (`bool`, *optional*, defaults to `False`): Whether to stream observation/action
+            data to the visualization backend.
+        display_mode (`str`, *optional*, defaults to `"rerun"`): Visualization backend: `"rerun"` or
+            `"foxglove"`.
+        display_compressed_images (`bool`, *optional*, defaults to `False`): Whether to compress
+            images (JPEG) before displaying them.
+
+    Raises:
+        ValueError: If `dataset` is set and `dataset.fps != fps`, or `teleop` is a list that doesn't
+            match the LeKiwi keyboard+arm pattern.
+    """
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -365,6 +417,20 @@ def record(
     robot_action_processor: RobotProcessorPipeline | None = None,
     robot_observation_processor: RobotProcessorPipeline | None = None,
 ) -> LeRobotDataset:
+    """Connect `cfg.robot`/`cfg.teleop`, then record episodes into `cfg.dataset`.
+
+    Args:
+        cfg (`RecordConfig`): Parsed from the CLI.
+        teleop_action_processor (`RobotProcessorPipeline | None`, *optional*): Pipeline applied to
+            teleop actions. Defaults to an identity pipeline when unset.
+        robot_action_processor (`RobotProcessorPipeline | None`, *optional*): Pipeline applied to
+            actions before sending them to the robot. Defaults to an identity pipeline when unset.
+        robot_observation_processor (`RobotProcessorPipeline | None`, *optional*): Pipeline applied to
+            robot observations. Defaults to an identity pipeline when unset.
+
+    Returns:
+        `LeRobotDataset`: The recorded dataset.
+    """
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -544,6 +610,7 @@ def record(
 
 
 def main():
+    """CLI entry point for `lerobot-record`."""
     register_third_party_plugins()
     record()
 
