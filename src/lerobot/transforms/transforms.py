@@ -42,6 +42,10 @@ class RandomSubsetApply(Transform):
             them.
         random_order (`bool`, *optional*, defaults to `False`):
             Whether to apply the sampled transformations in a random order.
+
+    Raises:
+        TypeError: If `transforms` is not a sequence, or `n_subset` is not an int or `None`.
+        ValueError: If `p`'s length doesn't match `transforms`, or `n_subset` is out of range.
     """
 
     def __init__(
@@ -51,12 +55,6 @@ class RandomSubsetApply(Transform):
         n_subset: int | None = None,
         random_order: bool = False,
     ) -> None:
-        """Validate and store the transform pool, sampling weights, and subset size.
-
-        Raises:
-            TypeError: If `transforms` is not a sequence, or `n_subset` is not an int or `None`.
-            ValueError: If `p`'s length doesn't match `transforms`, or `n_subset` is out of range.
-        """
         super().__init__()
         if not isinstance(transforms, Sequence):
             raise TypeError("Argument transforms should be a sequence of callables")
@@ -130,7 +128,6 @@ class SharpnessJitter(Transform):
     """
 
     def __init__(self, sharpness: float | Sequence[float]) -> None:
-        """Normalize `sharpness` into a `(min, max)` range to sample from on each call."""
         super().__init__()
         self.sharpness = self._check_input(sharpness)
 
@@ -170,15 +167,13 @@ class GaussianNoise(Transform):
     Args:
         std (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(5.0, 25.0)`):
             Range `(min, max)` for the noise standard deviation, in pixel-value scale (0-255).
+
+    Raises:
+        TypeError: If `std` is not a number or a length-2 sequence.
+        ValueError: If the resulting range does not satisfy `0 <= min <= max`.
     """
 
     def __init__(self, std: float | Sequence[float] = (5.0, 25.0)) -> None:
-        """Normalize `std` into a `(min, max)` range to sample from on each call.
-
-        Raises:
-            TypeError: If `std` is not a number or a length-2 sequence.
-            ValueError: If the resulting range does not satisfy `0 <= min <= max`.
-        """
         super().__init__()
         if isinstance(std, (int, float)):
             self.std = (0.0, float(std))
@@ -213,15 +208,13 @@ class MotionBlur(Transform):
     Args:
         kernel_size (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(3, 11)`):
             An odd kernel size, or a `(min, max)` range containing at least one odd kernel size.
+
+    Raises:
+        TypeError: If `kernel_size` is not an int or a length-2 sequence.
+        ValueError: If the resulting range does not satisfy `1 <= min <= max`, or contains no odd value.
     """
 
     def __init__(self, kernel_size: int | Sequence[int] = (3, 11)) -> None:
-        """Normalize `kernel_size` into a `(min, max)` range containing at least one odd value.
-
-        Raises:
-            TypeError: If `kernel_size` is not an int or a length-2 sequence.
-            ValueError: If the resulting range does not satisfy `1 <= min <= max`, or contains no odd value.
-        """
         super().__init__()
         if isinstance(kernel_size, int):
             self.kernel_size = (kernel_size, kernel_size)
@@ -280,15 +273,13 @@ class JPEGCompression(Transform):
     Args:
         quality (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(15, 75)`):
             Range `(min, max)` for the JPEG quality factor. Lower values produce more artifacts.
+
+    Raises:
+        TypeError: If `quality` is not an int or a length-2 sequence.
+        ValueError: If the resulting range does not satisfy `1 <= min <= max <= 100`.
     """
 
     def __init__(self, quality: int | Sequence[int] = (15, 75)) -> None:
-        """Normalize `quality` into a `(min, max)` range to sample from on each call.
-
-        Raises:
-            TypeError: If `quality` is not an int or a length-2 sequence.
-            ValueError: If the resulting range does not satisfy `1 <= min <= max <= 100`.
-        """
         super().__init__()
         if isinstance(quality, int):
             self.quality = (quality, quality)
@@ -341,6 +332,10 @@ class GaussianPatchBrightness(Transform):
             Range `(min, max)` for each patch's Gaussian sigma, as a fraction of image size.
         factor_range (`Sequence`, *optional*, defaults to `(0.4, 1.6)`):
             Range `(min, max)` for the brightness factor; below 1 darkens, above 1 brightens.
+
+    Raises:
+        TypeError: If any range argument is not the expected type or length.
+        ValueError: If any range does not satisfy `min <= max` within its valid bounds.
     """
 
     def __init__(
@@ -349,12 +344,6 @@ class GaussianPatchBrightness(Transform):
         sigma_range: Sequence[float] = (0.05, 0.25),
         factor_range: Sequence[float] = (0.4, 1.6),
     ) -> None:
-        """Validate and store the patch count, size, and brightness ranges.
-
-        Raises:
-            TypeError: If any range argument is not the expected type or length.
-            ValueError: If any range does not satisfy `min <= max` within its valid bounds.
-        """
         super().__init__()
         if isinstance(num_patches, int):
             self.num_patches = (num_patches, num_patches)
@@ -411,15 +400,13 @@ class RandomShadow(Transform):
     Args:
         opacity (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(0.3, 0.6)`):
             Range `(min, max)` for the shadow/highlight opacity.
+
+    Raises:
+        TypeError: If `opacity` is not a number or a length-2 sequence.
+        ValueError: If the resulting range does not satisfy `0 <= min <= max <= 1`.
     """
 
     def __init__(self, opacity: float | Sequence[float] = (0.3, 0.6)) -> None:
-        """Normalize `opacity` into a `(min, max)` range to sample from on each call.
-
-        Raises:
-            TypeError: If `opacity` is not a number or a length-2 sequence.
-            ValueError: If the resulting range does not satisfy `0 <= min <= max <= 1`.
-        """
         super().__init__()
         if isinstance(opacity, (int, float)):
             self.opacity = (float(opacity), float(opacity))
@@ -484,6 +471,10 @@ class CoarseDropout(Transform):
             Maximum patch width, as a fraction of image width.
         fill_value (`float`, *optional*, defaults to 0.0):
             Value to fill dropped regions with.
+
+    Raises:
+        TypeError: If `max_holes` is not an int.
+        ValueError: If any argument is out of its valid range.
     """
 
     def __init__(
@@ -493,12 +484,6 @@ class CoarseDropout(Transform):
         max_width_frac: float = 0.07,
         fill_value: float = 0.0,
     ) -> None:
-        """Validate and store the dropout patch count, size limits, and fill value.
-
-        Raises:
-            TypeError: If `max_holes` is not an int.
-            ValueError: If any argument is out of its valid range.
-        """
         super().__init__()
         if not isinstance(max_holes, int):
             raise TypeError("max_holes must be an int.")
@@ -557,16 +542,14 @@ class GammaCorrection(Transform):
     Args:
         gamma (`float | collections.abc.Sequence[float]`, *optional*, defaults to `(0.5, 2.0)`):
             Range `(min, max)` for the gamma value. Values below 1 brighten, above 1 darken.
+
+    Raises:
+        TypeError: If `gamma` is not a number or a length-2 sequence.
+        ValueError: If a single `gamma` is not positive, or the resulting range does not satisfy
+            `0 < min <= max`.
     """
 
     def __init__(self, gamma: float | Sequence[float] = (0.5, 2.0)) -> None:
-        """Normalize `gamma` into a log-symmetric `(min, max)` range to sample from on each call.
-
-        Raises:
-            TypeError: If `gamma` is not a number or a length-2 sequence.
-            ValueError: If a single `gamma` is not positive, or the resulting range does not satisfy
-                `0 < min <= max`.
-        """
         super().__init__()
         if isinstance(gamma, (int, float)):
             gamma = float(gamma)
@@ -641,15 +624,13 @@ class PlanckianJitter(Transform):
         temperature (`int | collections.abc.Sequence[int]`, *optional*, defaults to `(3000, 15000)`):
             A fixed color temperature, or a `(min, max)` range, in Kelvin. Supported values are between
             3000 K and 15000 K.
+
+    Raises:
+        TypeError: If `temperature` is not an int or a length-2 sequence.
+        ValueError: If the resulting range falls outside `[3000, 15000]` Kelvin.
     """
 
     def __init__(self, temperature: int | Sequence[int] = (3_000, 15_000)) -> None:
-        """Normalize `temperature` into a `(min, max)` range to sample from on each call.
-
-        Raises:
-            TypeError: If `temperature` is not an int or a length-2 sequence.
-            ValueError: If the resulting range falls outside `[3000, 15000]` Kelvin.
-        """
         super().__init__()
         if isinstance(temperature, int):
             self.temperature = (temperature, temperature)
@@ -843,15 +824,13 @@ class ImageTransforms(Transform):
     Builds each enabled transform (weight > 0) named in `cfg.tfs`, then wraps them in a
     [`~transforms.RandomSubsetApply`] so a random subset is applied on each call. If `cfg.enable` is
     `False` or no transforms are enabled, this is equivalent to the identity transform.
+
+    Args:
+        cfg (`ImageTransformsConfig`):
+            Configuration listing the available transforms and how many to sample per call.
     """
 
     def __init__(self, cfg: ImageTransformsConfig) -> None:
-        """Build the enabled transforms from `cfg` and wrap them in a random-subset sampler.
-
-        Args:
-            cfg (`ImageTransformsConfig`):
-                Configuration listing the available transforms and how many to sample per call.
-        """
         super().__init__()
         self._cfg = cfg
 
