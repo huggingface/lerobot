@@ -99,6 +99,45 @@ def _wrap_predict_action_chunk_with_torch_compile(
     return True
 
 
+def _validate_trained_rtc_rollout_config(policy_config, inference_config: RTCInferenceConfig) -> None:
+    """Fail fast when rollout cannot retain every trained RTC prefix."""
+    rtc = inference_config.rtc
+    if not rtc.enabled or rtc.mode != "trained":
+        return
+    if policy_config.type != "pi05":
+        raise ValueError(
+            "--inference.rtc.mode=trained currently requires a PI05 checkpoint; "
+            f"got policy type {policy_config.type!r}."
+        )
+
+    training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
+    if training_max_delay <= 0:
+        raise ValueError(
+            "--inference.rtc.mode=trained requires a checkpoint trained with "
+            "--policy.rtc_training_max_delay > 0."
+        )
+    if rtc.execution_horizon < training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_config.queue_threshold < training_max_delay:
+        raise ValueError(
+            f"--inference.queue_threshold ({inference_config.queue_threshold}) must be at least the "
+            f"checkpoint's rtc_training_max_delay ({training_max_delay})."
+        )
+
+    # RTC requires d <= s <= H - d (arXiv 2506.07339): an execution horizon past H - d would
+    # commit actions the next chunk can no longer re-plan, so the overlap never closes.
+    chunk_size = int(getattr(policy_config, "chunk_size", 0))
+    if chunk_size and rtc.execution_horizon > chunk_size - training_max_delay:
+        raise ValueError(
+            f"--inference.rtc.execution_horizon ({rtc.execution_horizon}) must be at most "
+            f"chunk_size - rtc_training_max_delay ({chunk_size} - {training_max_delay} = "
+            f"{chunk_size - training_max_delay})."
+        )
+
+
 def _resolve_action_key_order(
     policy_action_names: list[str] | None, dataset_action_names: list[str]
 ) -> list[str]:
@@ -313,6 +352,9 @@ def build_rollout_context(
     # --- 1. Policy (heavy I/O, but no hardware yet) -------------------
     logger.info("Loading policy from '%s'...", cfg.policy.pretrained_path)
     policy_config = cfg.policy
+
+    if is_rtc:
+        _validate_trained_rtc_rollout_config(policy_config, cfg.inference)
 
     if hasattr(policy_config, "compile_model"):
         policy_config.compile_model = cfg.use_torch_compile
