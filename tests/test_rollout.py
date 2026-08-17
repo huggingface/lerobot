@@ -485,6 +485,87 @@ def test_create_inference_engine_sync():
     assert isinstance(engine, SyncInferenceEngine)
 
 
+def test_third_party_inference_engine_builder_dispatches_without_factory_patch():
+    from lerobot.rollout import (
+        InferenceEngineConfig,
+        create_inference_engine,
+        register_inference_engine,
+    )
+
+    @InferenceEngineConfig.register_subclass("test_extension")
+    @dataclasses.dataclass
+    class TestExtensionConfig(InferenceEngineConfig):
+        marker: str = "plugin"
+
+    sentinel = object()
+
+    @register_inference_engine(TestExtensionConfig)
+    def build_test_extension(config, **kwargs):
+        assert config.marker == "plugin"
+        assert kwargs["task"] == "test"
+        return sentinel
+
+    engine = create_inference_engine(
+        TestExtensionConfig(),
+        policy=MagicMock(),
+        preprocessor=MagicMock(),
+        postprocessor=MagicMock(),
+        robot_wrapper=MagicMock(robot_type="mock"),
+        hw_features={},
+        dataset_features={},
+        ordered_action_keys=["k"],
+        task="test",
+        fps=30.0,
+        device="cpu",
+    )
+
+    assert engine is sentinel
+
+
+def test_inference_engine_builder_rejects_duplicate_registration():
+    from lerobot.rollout import InferenceEngineConfig, register_inference_engine
+
+    @InferenceEngineConfig.register_subclass("test_duplicate")
+    @dataclasses.dataclass
+    class TestDuplicateConfig(InferenceEngineConfig):
+        pass
+
+    register_inference_engine(TestDuplicateConfig)(lambda **_kwargs: object())
+    with pytest.raises(ValueError, match="already registered"):
+        register_inference_engine(TestDuplicateConfig)(lambda **_kwargs: object())
+
+
+def test_inference_engine_builder_rejects_invalid_config_type():
+    from lerobot.rollout import register_inference_engine
+
+    with pytest.raises(TypeError, match="must inherit InferenceEngineConfig"):
+        register_inference_engine(object)  # type: ignore[arg-type]
+
+
+def test_create_inference_engine_reports_unregistered_config():
+    from lerobot.rollout import InferenceEngineConfig, create_inference_engine
+
+    @InferenceEngineConfig.register_subclass("test_unregistered")
+    @dataclasses.dataclass
+    class TestUnregisteredConfig(InferenceEngineConfig):
+        pass
+
+    with pytest.raises(ValueError, match="No inference engine registered"):
+        create_inference_engine(
+            TestUnregisteredConfig(),
+            policy=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            robot_wrapper=MagicMock(robot_type="mock"),
+            hw_features={},
+            dataset_features={},
+            ordered_action_keys=["k"],
+            task="test",
+            fps=30.0,
+            device="cpu",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
