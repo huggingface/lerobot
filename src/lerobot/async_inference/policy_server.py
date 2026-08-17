@@ -40,7 +40,7 @@ import torch
 
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import get_policy_class, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, ProcessorBuildContext
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -152,16 +152,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
 
-        # Load preprocessor and postprocessor, overriding device to match requested device
-        device_override = {"device": self.device}
+        # The pipelines are rebuilt from this config, so pointing it at the requested device is
+        # enough. Note that the device is deliberately *not* forced onto the postprocessor: its only
+        # device step exists to bring actions back to CPU for the wire, and overriding that step (as
+        # this call used to) left actions on the GPU.
+        self.policy.config.device = str(self.device)
+        self.policy.config.rename_map = dict(policy_specs.rename_map or {})
         self.preprocessor, self.postprocessor = make_pre_post_processors(
             self.policy.config,
             pretrained_path=policy_specs.pretrained_name_or_path,
-            preprocessor_overrides={
-                "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-            },
-            postprocessor_overrides={"device_processor": device_override},
+            context=ProcessorBuildContext(),
         )
 
         end = time.perf_counter()
