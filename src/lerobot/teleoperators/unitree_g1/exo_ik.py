@@ -23,6 +23,7 @@ after calibration.
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -71,15 +72,13 @@ class ArmCfg:
 
 
 class Markers:
-    """Creates meshcat visualization primitives, showing end-effector frames of exoskeleton and G1."""
+    """Creates meshcat visualization primitives, showing end-effector frames of exoskeleton and G1.
 
-    def __init__(self, viewer):
-        """Store the meshcat viewer (or scene-tree node) markers will be attached under.
+    Args:
+        viewer (`Any`): The meshcat viewer (or scene-tree node) markers will be attached under.
+    """
 
-        Args:
-            viewer:
-                The meshcat viewer markers are added to.
-        """
+    def __init__(self, viewer: Any):
         self.v = viewer
 
     def sphere(self, path: str, r: float, rgba: tuple[float, float, float, float]):
@@ -149,18 +148,19 @@ class ExoskeletonIKHelper:
     G1 model to find joint angles reproducing those poses. Also provides an optional meshcat
     visualization showing both robots alongside their IK targets.
 
+    Initializing an instance loads the G1 and exoskeleton Pinocchio models and precomputes frozen-joint
+    indices.
+
     Args:
         frozen_joints (`list[str] | None`, *optional*):
             G1 joint names to exclude from IK; these are held at their current pose instead of being
             solved for.
+
+    Raises:
+        ImportError: If `pinocchio` is not installed.
     """
 
     def __init__(self, frozen_joints: list[str] | None = None):
-        """Load the G1 and exoskeleton Pinocchio models and precompute frozen-joint indices.
-
-        Raises:
-            ImportError: If `pinocchio` is not installed.
-        """
         try:
             import pinocchio as pin
         except ImportError as e:

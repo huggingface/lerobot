@@ -59,18 +59,15 @@ class GamepadTeleop(Teleoperator):
     right stick's vertical axis as `delta_z`, plus an optional gripper command. See `gamepad_utils.py`'s
     `GamepadController` (`pygame`) and `GamepadControllerHID` (`hidapi`) for the exact axis/button
     mapping.
+
+    Args:
+        config (`GamepadTeleopConfig`): Configuration for this gamepad teleoperator.
     """
 
     config_class = GamepadTeleopConfig
     name = "gamepad"
 
     def __init__(self, config: GamepadTeleopConfig):
-        """Instantiate the teleoperator.
-
-        Args:
-            config (`GamepadTeleopConfig`):
-                Configuration for this gamepad teleoperator.
-        """
         super().__init__(config)
         self.config = config
         self.robot_type = config.type

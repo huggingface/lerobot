@@ -43,18 +43,16 @@ class RebotArm102Leader(Teleoperator):
     A 7-joint (incl. gripper) leader built on FashionStar UART smart servos. Servo
     communication is handled by the ``motorbridge-smart-servo`` package; this class
     only reads joint angles, so it produces actions but accepts no feedback.
+
+    Args:
+        config (`RebotArm102LeaderTeleopConfig`): The teleoperator's configuration. Its `port`
+            determines what is connected.
     """
 
     config_class = RebotArm102LeaderTeleopConfig
     name = "rebot_102_leader"
 
     def __init__(self, config: RebotArm102LeaderTeleopConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`RebotArm102LeaderTeleopConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected.
-        """
         require_package("motorbridge-smart-servo", extra="rebot", import_name="motorbridge_smart_servo")
         super().__init__(config)
         self.config = config

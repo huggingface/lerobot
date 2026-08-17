@@ -31,21 +31,18 @@ logger = logging.getLogger(__name__)
 class BiRebot102Leader(BimanualMixin, Teleoperator):
     """Bimanual Seeed Studio StarArm102 / reBot Arm 102 leader.
 
-    Composes two single-arm :class:`RebotArm102Leader` instances. Action keys of
-    each arm are namespaced with a ``left_`` / ``right_`` prefix, so a bimanual
-    leader can teleoperate a bimanual reBot B601 follower.
+    Composes two single-arm [`~teleoperators.rebot_102_leader.RebotArm102Leader`] instances. Action
+    keys of each arm are namespaced with a `left_` / `right_` prefix, so a bimanual leader can
+    teleoperate a bimanual reBot B601 follower.
+
+    Args:
+        config (`BiRebot102LeaderConfig`): The teleoperator's configuration.
     """
 
     config_class = BiRebot102LeaderConfig
     name = "bi_rebot_102_leader"
 
     def __init__(self, config: BiRebot102LeaderConfig):
-        """Build the two underlying [`~teleoperators.rebot_102_leader.RebotArm102Leader`] arms.
-
-        Args:
-            config (`BiRebot102LeaderConfig`):
-                The teleoperator's configuration.
-        """
         super().__init__(config)
         self.config = config
 

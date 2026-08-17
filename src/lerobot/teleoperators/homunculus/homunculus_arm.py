@@ -44,18 +44,18 @@ class HomunculusArm(Teleoperator):
     produces actions and accepts no feedback.
 
     See [`~teleoperators.Teleoperator`] for the contract every method here implements.
+
+    Initializing an instance opens the serial connection and starts the background reader thread.
+
+    Args:
+        config (`HomunculusArmConfig`): The teleoperator's configuration. Its `port` determines what
+            is connected.
     """
 
     config_class = HomunculusArmConfig
     name = "homunculus_arm"
 
     def __init__(self, config: HomunculusArmConfig):
-        """Open the serial connection and set up the background reader thread.
-
-        Args:
-            config (`HomunculusArmConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected.
-        """
         require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config

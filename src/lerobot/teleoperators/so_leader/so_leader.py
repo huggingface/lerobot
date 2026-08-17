@@ -40,6 +40,10 @@ class SOLeader(Teleoperator):
     Actions are keyed `"<motor>.pos"`. See [`~teleoperators.Teleoperator`] for the contract every method
     here implements.
 
+    Args:
+        config (`SOLeaderTeleopConfig`): The teleoperator's configuration. Its `port` determines what
+            is connected.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
@@ -53,12 +57,6 @@ class SOLeader(Teleoperator):
     name = "so_leader"
 
     def __init__(self, config: SOLeaderTeleopConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`SOLeaderTeleopConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected.
-        """
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100

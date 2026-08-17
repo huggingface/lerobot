@@ -31,23 +31,20 @@ logger = logging.getLogger(__name__)
 class BiOpenArmMini(BimanualMixin, Teleoperator):
     """Bimanual OpenArm Mini teleoperator.
 
-    Composes two single-arm :class:`OpenArmMini` instances. Action and feedback
-    keys of each arm are namespaced with a ``left_`` / ``right_`` prefix, so a
-    bimanual leader can teleoperate a bimanual OpenArm follower.
+    Composes two single-arm [`OpenArmMini`] instances. Action and feedback keys of each arm are
+    namespaced with a `left_` / `right_` prefix, so a bimanual leader can teleoperate a bimanual
+    OpenArm follower.
+
+    Args:
+        config (`BiOpenArmMiniConfig`): The teleoperator's configuration. Its `left_arm_config` and
+            `right_arm_config` determine what is connected on each side; each arm's `side` is forced
+            to `"left"`/`"right"` regardless of what was set on the per-arm config.
     """
 
     config_class = BiOpenArmMiniConfig
     name = "bi_openarm_mini"
 
     def __init__(self, config: BiOpenArmMiniConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`BiOpenArmMiniConfig`):
-                The teleoperator's configuration. Its `left_arm_config` and `right_arm_config` determine
-                what is connected on each side; each arm's `side` is forced to `"left"`/`"right"`
-                regardless of what was set on the per-arm config.
-        """
         super().__init__(config)
         self.config = config
 

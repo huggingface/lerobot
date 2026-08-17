@@ -50,21 +50,18 @@ class KeyboardTeleop(Teleoperator):
     Windows desktop, or macOS with Accessibility / Input Monitoring permission granted. On Wayland or a
     headless machine, [`~teleoperators.Teleoperator.connect`] logs a warning and the teleoperator produces
     no actions.
+
+    Args:
+        config (`KeyboardTeleopConfig`): Configuration for this keyboard teleoperator.
+
+    Raises:
+        ImportError: If `pynput` is not installed.
     """
 
     config_class = KeyboardTeleopConfig
     name = "keyboard"
 
     def __init__(self, config: KeyboardTeleopConfig):
-        """Instantiate the teleoperator.
-
-        Args:
-            config (`KeyboardTeleopConfig`):
-                Configuration for this keyboard teleoperator.
-
-        Raises:
-            ImportError: If `pynput` is not installed.
-        """
         require_package("pynput", extra="pynput-dep")
         super().__init__(config)
         self.config = config
@@ -191,18 +188,16 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     Arrow keys and shift map to `delta_x`/`delta_y`/`delta_z`; `ctrl_l`/`ctrl_r` map to the gripper.
     Designed for use with the `So100FollowerEndEffector` robot.
+
+    Args:
+        config (`KeyboardEndEffectorTeleopConfig`): Configuration for this keyboard end-effector
+            teleoperator.
     """
 
     config_class = KeyboardEndEffectorTeleopConfig
     name = "keyboard_ee"
 
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
-        """Instantiate the teleoperator.
-
-        Args:
-            config (`KeyboardEndEffectorTeleopConfig`):
-                Configuration for this keyboard end-effector teleoperator.
-        """
         super().__init__(config)
         self.config = config
         self.misc_keys_queue = Queue()
@@ -351,6 +346,9 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     motion assist), `q`/`e` rotate in place, `x` is an emergency stop, and `+`/`-` adjust speed. `ESC`
     disconnects the teleoperator.
 
+    Args:
+        config (`KeyboardRoverTeleopConfig`): Configuration for this keyboard rover teleoperator.
+
     **Attributes**:
         - **current_linear_speed** (`float`) -- Current linear velocity magnitude, adjustable at runtime
           with `+`/`-`.
@@ -370,12 +368,6 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     name = "keyboard_rover"
 
     def __init__(self, config: KeyboardRoverTeleopConfig):
-        """Instantiate the teleoperator.
-
-        Args:
-            config (`KeyboardRoverTeleopConfig`):
-                Configuration for this keyboard rover teleoperator.
-        """
         super().__init__(config)
         # Add rover-specific speed settings
         self.current_linear_speed = config.linear_speed

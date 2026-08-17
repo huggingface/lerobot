@@ -36,6 +36,10 @@ class OpenArmLeader(Teleoperator):
     moved (torque disabled). For the bimanual setup, see [`~teleoperators.bi_openarm_leader.BiOpenArmLeader`], which composes
     two of these.
 
+    Args:
+        config (`OpenArmLeaderConfig`): The teleoperator's configuration. Its `port` and `motor_config`
+            determine what is connected and how the CAN bus is laid out.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.openarm_leader import OpenArmLeader, OpenArmLeaderConfig
@@ -50,13 +54,6 @@ class OpenArmLeader(Teleoperator):
     name = "openarm_leader"
 
     def __init__(self, config: OpenArmLeaderConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`OpenArmLeaderConfig`):
-                The teleoperator's configuration. Its `port` and `motor_config` determine what is
-                connected and how the CAN bus is laid out.
-        """
         super().__init__(config)
         self.config = config
 

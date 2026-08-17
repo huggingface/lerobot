@@ -48,6 +48,13 @@ class OpenArmMini(Teleoperator):
 
     For the bimanual setup, see [`~teleoperators.bi_openarm_mini.BiOpenArmMini`], which composes two of these.
 
+    Args:
+        config (`OpenArmMiniConfig`): The teleoperator's configuration. Its `port` and `side` determine
+            what is connected and which per-joint direction flips are applied.
+
+    Raises:
+        ValueError: If `config.side` is not `"left"`, `"right"`, or `None`.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.openarm_mini import OpenArmMini, OpenArmMiniConfig
@@ -62,16 +69,6 @@ class OpenArmMini(Teleoperator):
     name = "openarm_mini"
 
     def __init__(self, config: OpenArmMiniConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`OpenArmMiniConfig`):
-                The teleoperator's configuration. Its `port` and `side` determine what is connected and
-                which per-joint direction flips are applied.
-
-        Raises:
-            ValueError: If `config.side` is not `"left"`, `"right"`, or `None`.
-        """
         super().__init__(config)
         self.config = config
 

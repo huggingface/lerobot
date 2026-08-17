@@ -76,19 +76,17 @@ REACHY2_VEL = {
 
 
 class Reachy2Teleoperator(Teleoperator):
-    """[Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics."""
+    """[Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
+
+    Args:
+        config (`Reachy2TeleoperatorConfig`): The teleoperator's configuration. Its `ip_address` and
+            `with_*` flags determine what is read.
+    """
 
     config_class = Reachy2TeleoperatorConfig
     name = "reachy2_specific"
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`Reachy2TeleoperatorConfig`):
-                The teleoperator's configuration. Its `ip_address` and `with_*` flags determine what is
-                read.
-        """
         require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 

@@ -32,14 +32,12 @@ else:
 
         Raises `ImportError` on instantiation instead of on import, so the module can still be imported
         (and its non-hardware members inspected) without the SDK present.
+
+        Raises:
+            ImportError: Always.
         """
 
         def __init__(self):
-            """Raise `ImportError` because `unitree_sdk2py` is required and not installed.
-
-            Raises:
-                ImportError: Always.
-            """
             raise ImportError(
                 "unitree_sdk2py is required for RemoteController. Install with: pip install unitree_sdk2py"
             )
@@ -202,6 +200,14 @@ class UnitreeG1Teleoperator(Teleoperator):
     locomotion. If neither exoskeleton arm has a configured serial port, the teleoperator falls back to
     remote-controller-only mode and reports no arm joint actions.
 
+    Args:
+        config (`UnitreeG1TeleoperatorConfig`): The teleoperator's configuration. Exoskeleton arm
+            control is enabled only if both `left_arm_config.port` and `right_arm_config.port` are
+            set; leaving both empty runs in remote-controller-only mode.
+
+    Raises:
+        ValueError: If exactly one of the two arm ports is configured.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.unitree_g1 import UnitreeG1Teleoperator, UnitreeG1TeleoperatorConfig
@@ -215,17 +221,6 @@ class UnitreeG1Teleoperator(Teleoperator):
     name = "unitree_g1"
 
     def __init__(self, config: UnitreeG1TeleoperatorConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`UnitreeG1TeleoperatorConfig`):
-                The teleoperator's configuration. Exoskeleton arm control is enabled only if both
-                `left_arm_config.port` and `right_arm_config.port` are set; leaving both empty runs in
-                remote-controller-only mode.
-
-        Raises:
-            ValueError: If exactly one of the two arm ports is configured.
-        """
         super().__init__(config)
         self.config = config
         left_exo_enabled = bool(config.left_arm_config.port.strip())

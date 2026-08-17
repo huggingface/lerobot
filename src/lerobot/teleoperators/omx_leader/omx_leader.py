@@ -40,6 +40,10 @@ class OmxLeader(Teleoperator):
     Actions are keyed `"<motor>.pos"`. See [`~teleoperators.Teleoperator`] for the contract every method
     here implements.
 
+    Args:
+        config (`OmxLeaderConfig`): The teleoperator's configuration. Its `port` determines what is
+            connected.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.omx_leader import OmxLeader, OmxLeaderConfig
@@ -53,12 +57,6 @@ class OmxLeader(Teleoperator):
     name = "omx_leader"
 
     def __init__(self, config: OmxLeaderConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`OmxLeaderConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected.
-        """
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(

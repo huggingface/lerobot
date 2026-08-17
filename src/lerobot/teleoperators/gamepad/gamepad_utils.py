@@ -38,19 +38,14 @@ class InputController:
 
     Subclasses override `start`, `stop`, `update`, and `get_deltas` to read an actual device; this base
     class returns inert defaults.
+
+    Args:
+        x_step_size (`float`, *optional*, defaults to 1.0): Movement step size along X, in meters.
+        y_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Y, in meters.
+        z_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Z, in meters.
     """
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
-        """Instantiate the controller's step sizes and reset its state.
-
-        Args:
-            x_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along X, in meters.
-            y_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Y, in meters.
-            z_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Z, in meters.
-        """
         self.x_step_size = x_step_size
         self.y_step_size = y_step_size
         self.z_step_size = z_step_size
@@ -255,24 +250,19 @@ class GamepadController(InputController):
     Left stick drives X/Y, the right stick's vertical axis drives Z. Y/Triangle, A/Cross, and X/Square
     end the episode with success, failure, or rerecord respectively; RB/LT open and close the gripper;
     holding RB also sets the intervention flag.
+
+    Args:
+        x_step_size (`float`, *optional*, defaults to 1.0): Movement step size along X, in meters.
+        y_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Y, in meters.
+        z_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Z, in meters.
+        deadzone (`float`, *optional*, defaults to 0.1): Minimum absolute stick reading before it is
+            treated as input, to filter out drift.
+
+    Raises:
+        ImportError: If `pygame` is not installed.
     """
 
     def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
-        """Instantiate the controller.
-
-        Args:
-            x_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along X, in meters.
-            y_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Y, in meters.
-            z_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Z, in meters.
-            deadzone (`float`, *optional*, defaults to 0.1):
-                Minimum absolute stick reading before it is treated as input, to filter out drift.
-
-        Raises:
-            ImportError: If `pygame` is not installed.
-        """
         require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
@@ -386,6 +376,16 @@ class GamepadControllerHID(InputController):
     An alternative to `GamepadController` for controllers `pygame` does not reliably detect (notably on
     macOS). Byte offsets in `update` are tuned for the Logitech RumblePad 2 and may need adjusting for
     other controllers.
+
+    Args:
+        x_step_size (`float`, *optional*, defaults to 1.0): Movement step size along X, in meters.
+        y_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Y, in meters.
+        z_step_size (`float`, *optional*, defaults to 1.0): Movement step size along Z, in meters.
+        deadzone (`float`, *optional*, defaults to 0.1): Minimum absolute stick reading before it is
+            treated as input, to filter out drift.
+
+    Raises:
+        ImportError: If `hidapi` is not installed.
     """
 
     def __init__(
@@ -395,21 +395,6 @@ class GamepadControllerHID(InputController):
         z_step_size=1.0,
         deadzone=0.1,
     ):
-        """Instantiate the controller.
-
-        Args:
-            x_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along X, in meters.
-            y_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Y, in meters.
-            z_step_size (`float`, *optional*, defaults to 1.0):
-                Movement step size along Z, in meters.
-            deadzone (`float`, *optional*, defaults to 0.1):
-                Minimum absolute stick reading before it is treated as input, to filter out drift.
-
-        Raises:
-            ImportError: If `hidapi` is not installed.
-        """
         require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone

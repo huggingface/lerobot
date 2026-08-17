@@ -130,20 +130,19 @@ class IOSPhone(BasePhone, Teleoperator):
     SDK, along with the app's 8 analog (`a1`-`a8`) and 8 digital (`b1`-`b8`) inputs. `Phone` instantiates
     this internally when `PhoneConfig.phone_os` is `PhoneOS.IOS`; use `Phone` directly rather than this
     class.
+
+    Initializing an instance checks for the optional dependencies this backend needs.
+
+    Args:
+        config (`PhoneConfig`): Configuration shared with the parent `Phone` teleoperator.
+
+    Raises:
+        ImportError: If the `hebi-py` or `teleop` packages are not installed.
     """
 
     name = "ios_phone"
 
     def __init__(self, config: PhoneConfig):
-        """Check for the optional dependencies this backend needs and store the configuration.
-
-        Args:
-            config (`PhoneConfig`):
-                Configuration shared with the parent `Phone` teleoperator.
-
-        Raises:
-            ImportError: If the `hebi-py` or `teleop` packages are not installed.
-        """
         require_package("hebi-py", extra="phone", import_name="hebi")
         require_package("teleop", extra="phone")
         super().__init__(config)
@@ -333,20 +332,19 @@ class AndroidPhone(BasePhone, Teleoperator):
     Runs the `teleop` package's local WebXR server on a background thread and reads the pose and touch
     events posted by the phone's browser session. `Phone` instantiates this internally when
     `PhoneConfig.phone_os` is `PhoneOS.ANDROID`; use `Phone` directly rather than this class.
+
+    Initializing an instance checks for the optional dependencies this backend needs.
+
+    Args:
+        config (`PhoneConfig`): Configuration shared with the parent `Phone` teleoperator.
+
+    Raises:
+        ImportError: If the `hebi-py` or `teleop` packages are not installed.
     """
 
     name = "android_phone"
 
     def __init__(self, config: PhoneConfig):
-        """Check for the optional dependencies this backend needs and store the configuration.
-
-        Args:
-            config (`PhoneConfig`):
-                Configuration shared with the parent `Phone` teleoperator.
-
-        Raises:
-            ImportError: If the `hebi-py` or `teleop` packages are not installed.
-        """
         require_package("hebi-py", extra="phone", import_name="hebi")
         require_package("teleop", extra="phone")
         super().__init__(config)
@@ -544,6 +542,16 @@ class Phone(Teleoperator):
     the reference position to wherever the phone currently is, so motion is always relative to where
     teleoperation was last resumed.
 
+    Initializing an instance picks and constructs the backend matching `config.phone_os`.
+
+    Args:
+        config (`PhoneConfig`): Configuration selecting the phone platform (`config.phone_os`) and
+            forwarded to the chosen backend.
+
+    Raises:
+        ValueError: If `config.phone_os` is not a valid `PhoneOS` member.
+        ImportError: If the `hebi-py` or `teleop` packages are not installed.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.phone import Phone, PhoneConfig
@@ -557,17 +565,6 @@ class Phone(Teleoperator):
     name = "phone"
 
     def __init__(self, config: PhoneConfig):
-        """Pick and construct the backend matching `config.phone_os`.
-
-        Args:
-            config (`PhoneConfig`):
-                Configuration selecting the phone platform (`config.phone_os`) and forwarded to the
-                chosen backend.
-
-        Raises:
-            ValueError: If `config.phone_os` is not a valid `PhoneOS` member.
-            ImportError: If the `hebi-py` or `teleop` packages are not installed.
-        """
         super().__init__(config)
         self.config = config
 

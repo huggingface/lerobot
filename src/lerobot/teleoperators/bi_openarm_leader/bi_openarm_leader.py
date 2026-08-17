@@ -29,19 +29,17 @@ logger = logging.getLogger(__name__)
 
 
 class BiOpenArmLeader(BimanualMixin, Teleoperator):
-    """A bimanual pair of [`~teleoperators.openarm_leader.OpenArmLeader`] arms."""
+    """A bimanual pair of [`~teleoperators.openarm_leader.OpenArmLeader`] arms.
+
+    Args:
+        config (`BiOpenArmLeaderConfig`): The teleoperator's configuration. Its `left_arm_config` and
+            `right_arm_config` determine what is connected on each side.
+    """
 
     config_class = BiOpenArmLeaderConfig
     name = "bi_openarm_leader"
 
     def __init__(self, config: BiOpenArmLeaderConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`BiOpenArmLeaderConfig`):
-                The teleoperator's configuration. Its `left_arm_config` and `right_arm_config` determine
-                what is connected on each side.
-        """
         super().__init__(config)
         self.config = config
 

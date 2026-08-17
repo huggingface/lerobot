@@ -29,19 +29,17 @@ logger = logging.getLogger(__name__)
 
 
 class BiSOLeader(BimanualMixin, Teleoperator):
-    """A bimanual pair of [SO leader arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio."""
+    """A bimanual pair of [SO leader arms](https://github.com/TheRobotStudio/SO-ARM100) by TheRobotStudio.
+
+    Args:
+        config (`BiSOLeaderConfig`): The teleoperator's configuration. Its `left_arm_config` and
+            `right_arm_config` determine what is connected.
+    """
 
     config_class = BiSOLeaderConfig
     name = "bi_so_leader"
 
     def __init__(self, config: BiSOLeaderConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`BiSOLeaderConfig`):
-                The teleoperator's configuration. Its `left_arm_config` and `right_arm_config` determine
-                what is connected.
-        """
         super().__init__(config)
         self.config = config
 

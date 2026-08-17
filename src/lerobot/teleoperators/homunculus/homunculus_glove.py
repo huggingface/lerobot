@@ -71,19 +71,18 @@ class HomunculusGlove(Teleoperator):
     only produces actions and accepts no feedback.
 
     See [`~teleoperators.Teleoperator`] for the contract every method here implements.
+
+    Initializing an instance opens the serial connection and starts the background reader thread.
+
+    Args:
+        config (`HomunculusGloveConfig`): The teleoperator's configuration. Its `port` determines what
+            is connected and `side` selects which joints are inverted for the left vs. right hand.
     """
 
     config_class = HomunculusGloveConfig
     name = "homunculus_glove"
 
     def __init__(self, config: HomunculusGloveConfig):
-        """Open the serial connection and set up the background reader thread.
-
-        Args:
-            config (`HomunculusGloveConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected and `side`
-                selects which joints are inverted for the left vs. right hand.
-        """
         require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config

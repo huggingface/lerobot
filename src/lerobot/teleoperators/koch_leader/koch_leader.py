@@ -41,6 +41,10 @@ class KochLeader(Teleoperator):
     Actions are keyed `"<motor>.pos"`. See [`~teleoperators.Teleoperator`] for the contract every method
     here implements.
 
+    Args:
+        config (`KochLeaderConfig`): The teleoperator's configuration. Its `port` determines what is
+            connected.
+
     Example:
         ```python
         >>> from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
@@ -54,12 +58,6 @@ class KochLeader(Teleoperator):
     name = "koch_leader"
 
     def __init__(self, config: KochLeaderConfig):
-        """Build the teleoperator from its configuration.
-
-        Args:
-            config (`KochLeaderConfig`):
-                The teleoperator's configuration. Its `port` determines what is connected.
-        """
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(
