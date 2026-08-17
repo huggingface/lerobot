@@ -248,16 +248,15 @@ class ProcessorKwargs(TypedDict, total=False):
 
 
 class ProcessorMigrationError(Exception):
-    """Raised when a model needs migration to the processor format."""
+    """Raised when a model needs migration to the processor format.
+
+    Args:
+        model_path (`str | Path`): Path or Hub repo ID of the model that needs migration.
+        migration_command (`str`): Shell command the user should run to migrate it.
+        original_error (`str`): The underlying error that triggered this migration check.
+    """
 
     def __init__(self, model_path: str | Path, migration_command: str, original_error: str):
-        """Build the error message pointing the user at the migration command to run.
-
-        Args:
-            model_path: Path or Hub repo ID of the model that needs migration.
-            migration_command: Shell command the user should run to migrate it.
-            original_error: The underlying error that triggered this migration check.
-        """
         self.model_path = model_path
         self.migration_command = migration_command
         self.original_error = original_error
