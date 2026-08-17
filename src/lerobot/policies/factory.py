@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 import torch
@@ -29,15 +30,9 @@ if TYPE_CHECKING:
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.lerobot_types import PolicyAction
-from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
-    PolicyProcessorPipeline,
-    RelativeActionsProcessorStep,
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
-)
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor.context import ProcessorBuildContext, apply_checkpoint_rename_map
+from lerobot.processor.features import apply_policy_features
 from lerobot.utils.constants import (
     ACTION,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
@@ -46,8 +41,6 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
-from .evo1.configuration_evo1 import Evo1Config
-from .groot.configuration_groot import GrootConfig
 from .pretrained import PreTrainedPolicy
 from .utils import validate_visual_features_consistency
 
@@ -56,24 +49,6 @@ if TYPE_CHECKING or _peft_available:
 else:
     PeftConfig = None
     PeftModel = None
-
-
-def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
-) -> None:
-    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
-
-    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
-    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
-    the RelativeActionsProcessorStep so it can read the cached state at inference time.
-    That reference is not serializable, so we re-establish it here after loading.
-    """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def get_policy_class(name: str) -> type[PreTrainedPolicy]:
@@ -132,13 +107,18 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     improving code clarity and enabling static analysis.
 
     Attributes:
+        context: The preferred way to pass per-run build inputs. Supersedes `dataset_stats`,
+            `dataset_meta` and the two override dicts.
         preprocessor_config_filename: The filename for the preprocessor configuration.
         postprocessor_config_filename: The filename for the postprocessor configuration.
-        preprocessor_overrides: A dictionary of overrides for the preprocessor configuration.
-        postprocessor_overrides: A dictionary of overrides for the postprocessor configuration.
-        dataset_stats: Dataset statistics for normalization.
+        preprocessor_overrides: Deprecated. Step-level overrides; values the policy config now owns
+            (`device`, `rename_map`) are applied to it, the rest are ignored with a warning.
+        postprocessor_overrides: Deprecated. See `preprocessor_overrides`.
+        dataset_stats: Dataset statistics for normalization. Prefer `context.dataset_stats`.
+        dataset_meta: Dataset metadata. Prefer `context.dataset_meta`.
     """
 
+    context: ProcessorBuildContext | None
     preprocessor_config_filename: str | None
     postprocessor_config_filename: str | None
     preprocessor_overrides: dict[str, Any] | None
@@ -157,84 +137,132 @@ def make_pre_post_processors(
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """
-    Create or load pre- and post-processor pipelines for a given policy.
+    Create pre- and post-processor pipelines for a given policy.
 
-    This function acts as a factory. It can either load existing processor pipelines
-    from a pretrained path or create new ones from scratch based on the policy
-    configuration. Each policy type has a dedicated factory function for its
-    processors (e.g., `make_tdmpc_pre_post_processors`).
+    There is one construction path: the policy's own factory
+    (e.g. `make_tdmpc_pre_post_processors`, resolved by naming convention) builds the pipelines from
+    `policy_cfg`. When `pretrained_path` is given, the checkpoint contributes only its *tensor state*
+    — normalization statistics and the like — which is loaded into those freshly built steps.
+
+    That split is the authority rule for the whole processor system:
+
+    - **Structure and shape belong to the code.** A `--policy.*` flag reconfigures a step even when
+      the checkpoint predates it, and a policy whose pipeline reshapes tensors internally (EVO1
+      padding state to `max_state_dim`) keeps its own shape instead of having dataset-derived widths
+      forced onto it. Deserializing structure is what previously required per-policy reconciliation
+      after loading.
+    - **Statistics belong to whoever supplied them.** Passing `context.dataset_stats` makes the
+      dataset authoritative (the finetune case); omitting it keeps the checkpoint's saved stats (eval
+      and resume). `NormalizerProcessorStep` already implements exactly this precedence via
+      `_stats_explicitly_provided`.
+
+    To deserialize a saved pipeline wholesale instead — structure included — use
+    `PolicyProcessorPipeline.from_pretrained` directly.
 
     Args:
         policy_cfg: The configuration of the policy for which to create processors.
-        pretrained_path: An optional path to load pretrained processor pipelines from.
-            If provided, pipelines are loaded from this path.
+        pretrained_path: Optional checkpoint whose step state should be loaded into the pipelines.
+        pretrained_revision: Optional Hub revision for `pretrained_path`.
         **kwargs: Keyword arguments for processor configuration, as defined in
-            `ProcessorConfigKwargs`.
+            `ProcessorConfigKwargs`. Prefer passing `context=ProcessorBuildContext(...)`; the
+            `preprocessor_overrides`/`postprocessor_overrides` dicts are deprecated.
 
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
 
     Raises:
-        ValueError: If no processor factory exists for the given policy configuration type.
+        ValueError: If no processor factory exists for the given policy configuration type, or if the
+            checkpoint carries state for a step the policy config does not build.
     """
-    if pretrained_path:
-        if isinstance(policy_cfg, GrootConfig):
-            from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
-
-            return make_groot_pre_post_processors_from_pretrained(
-                config=policy_cfg,
-                pretrained_path=pretrained_path,
-                revision=pretrained_revision,
-                dataset_stats=kwargs.get("dataset_stats"),
-                dataset_meta=kwargs.get("dataset_meta"),
-                preprocessor_overrides=kwargs.get("preprocessor_overrides"),
-                postprocessor_overrides=kwargs.get("postprocessor_overrides"),
-                preprocessor_config_filename=kwargs.get(
-                    "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-                ),
-                postprocessor_config_filename=kwargs.get(
-                    "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-                ),
-            )
-
-        preprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "preprocessor_config_filename", f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("preprocessor_overrides", {}),
-            to_transition=batch_to_transition,
-            to_output=transition_to_batch,
-            revision=pretrained_revision,
-        )
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=pretrained_path,
-            config_filename=kwargs.get(
-                "postprocessor_config_filename", f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
-            ),
-            overrides=kwargs.get("postprocessor_overrides", {}),
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-            revision=pretrained_revision,
-        )
-        _reconnect_relative_absolute_steps(preprocessor, postprocessor)
-        if isinstance(policy_cfg, Evo1Config):
-            from .evo1.processor_evo1 import reconcile_evo1_processors
-
-            preprocessor, postprocessor = reconcile_evo1_processors(
-                policy_cfg,
-                preprocessor,
-                postprocessor,
-            )
-        return preprocessor, postprocessor
-
-    # Create new processors from the policy config, resolving the per-policy factory
-    # function by naming convention (lazy import keeps optional dependencies optional).
-    return _make_processors_from_policy_config(
-        config=policy_cfg,
-        dataset_stats=kwargs.get("dataset_stats"),
-        dataset_meta=kwargs.get("dataset_meta"),
+    context = kwargs.get("context")
+    if context is None:
+        context = ProcessorBuildContext.from_legacy_kwargs(dict(kwargs), policy_cfg)
+    pre_filename = kwargs.get("preprocessor_config_filename") or f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    post_filename = kwargs.get("postprocessor_config_filename") or f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+    context = replace(
+        context,
+        pretrained_path=str(pretrained_path) if pretrained_path else None,
+        pretrained_revision=pretrained_revision,
     )
+
+    if pretrained_path and _uses_legacy_pretrained_loader(policy_cfg):
+        # GR00T has not been migrated to the rule above and still deserializes its saved pipelines,
+        # then repairs them. See `_uses_legacy_pretrained_loader`.
+        from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
+
+        return make_groot_pre_post_processors_from_pretrained(
+            config=policy_cfg,
+            pretrained_path=pretrained_path,
+            revision=pretrained_revision,
+            dataset_stats=context.dataset_stats,
+            dataset_meta=context.dataset_meta,
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
+            preprocessor_config_filename=pre_filename,
+            postprocessor_config_filename=post_filename,
+        )
+
+    if pretrained_path:
+        # Read the saved preprocessor before building, only to recover a rename map the caller did
+        # not supply. Everything else about the pipeline comes from the config.
+        apply_checkpoint_rename_map(
+            policy_cfg, _peek_pipeline_config(pretrained_path, pre_filename, pretrained_revision)
+        )
+
+    preprocessor, postprocessor = _make_processors_from_policy_config(
+        config=policy_cfg,
+        context=context,
+    )
+
+    if pretrained_path:
+        # Structure and shape came from the config above; only tensors come from the checkpoint.
+        preprocessor.load_pretrained_state(pretrained_path, pre_filename, revision=pretrained_revision)
+        postprocessor.load_pretrained_state(pretrained_path, post_filename, revision=pretrained_revision)
+
+    return preprocessor, postprocessor
+
+
+def _uses_legacy_pretrained_loader(policy_cfg: PreTrainedConfig) -> bool:
+    """Whether this policy still deserializes its saved pipelines instead of rebuilding them.
+
+    Only GR00T does. Rebuilding its pipelines from the config is not yet possible: two of its steps
+    are stateful, and for checkpoints converted from a raw N1.7 release the values those steps need
+    (``raw_stats``, ``modality_config``, ``video_modality_keys``) exist *only* inside the serialized
+    pipeline JSON — there is no sidecar and no config field to rebuild them from. Migrating GR00T
+    therefore means teaching its config to carry those values plus a reader for checkpoints that
+    predate them, and that cannot be validated without the gated backbone its tests download.
+
+    Resolved by attribute rather than by importing `GrootConfig`, so the check stays lazy and this
+    module keeps its no-eager-policy-imports property.
+    """
+    return policy_cfg.type == "groot"
+
+
+def _peek_pipeline_config(
+    pretrained_path: str, config_filename: str, revision: str | None
+) -> dict[str, Any] | None:
+    """Load a checkpoint's serialized pipeline config, or None if it cannot be read.
+
+    Best-effort by design: this only feeds the rename-map carry-over, and a checkpoint without a
+    readable processor config is handled with a proper error by `load_pretrained_state` later.
+    """
+    try:
+        loaded_config, _ = PolicyProcessorPipeline._load_config(
+            str(pretrained_path),
+            config_filename,
+            {
+                "force_download": False,
+                "resume_download": None,
+                "proxies": None,
+                "token": None,
+                "cache_dir": None,
+                "local_files_only": False,
+                "revision": revision,
+            },
+        )
+        return loaded_config
+    except Exception:  # noqa: BLE001 - advisory read; the authoritative error comes from loading state
+        return None
 
 
 def make_policy(
@@ -309,13 +337,16 @@ def make_policy(
 
     if rename_map:
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
+        # Record it on the config so a processor pipeline built from this config later renames the
+        # same keys, without the caller having to pass the map a second time.
+        cfg.rename_map = dict(rename_map)
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     if not cfg.input_features:
         cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
     # Store action feature names for relative_exclude_joints support
-    if ds_meta is not None and hasattr(cfg, "action_feature_names"):
+    if ds_meta is not None:
         raw_action_feature = next(
             (
                 feature
@@ -461,19 +492,25 @@ def _get_policy_cls_from_policy_name(name: str) -> type[PreTrainedPolicy]:
 
 def _make_processors_from_policy_config(
     config: PreTrainedConfig,
-    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
-    dataset_meta: Any | None = None,
+    context: ProcessorBuildContext,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
     Resolves ``make_{type}_pre_post_processors`` from the policy's ``processor_*`` module
     by naming convention. Works for built-in policies and 3rd party lerobot plugins.
 
+    Two factory signatures are supported, distinguished by parameter name:
+
+    - ``(config, context)`` — the current contract.
+    - ``(config, dataset_stats=None[, dataset_meta=None])`` — the older one, still used by most
+      policies. Those values are unpacked from the context, so such factories need no edit. Anything
+      else a context carries (``training``, ``pretrained_path``) is unavailable to them, which is
+      fine: nothing that ignores it needs it.
+
     Args:
         config: The policy configuration object.
-        dataset_stats: Dataset statistics for normalization.
-        dataset_meta: Dataset metadata, forwarded only to factories that declare a
-            ``dataset_meta`` parameter (e.g. groot, molmoact2).
+        context: Per-run build inputs.
+
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -498,7 +535,14 @@ def _make_processors_from_policy_config(
     function = getattr(module, function_name, None)
     if function is None:
         raise ValueError(f"Processor for policy type '{policy_type}' is not implemented.")
-    call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
-    if "dataset_meta" in inspect.signature(function).parameters:
-        call_kwargs["dataset_meta"] = dataset_meta
-    return function(config, **call_kwargs)
+    parameters = inspect.signature(function).parameters
+    if "context" in parameters:
+        preprocessor, postprocessor = function(config, context=context)
+    else:
+        call_kwargs: dict[str, Any] = {"dataset_stats": context.dataset_stats}
+        if "dataset_meta" in parameters:
+            call_kwargs["dataset_meta"] = context.dataset_meta
+        preprocessor, postprocessor = function(config, **call_kwargs)
+
+    apply_policy_features(config, context, preprocessor, postprocessor)
+    return preprocessor, postprocessor

@@ -14,13 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
+from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .batch_processor import AddBatchDimensionProcessorStep
@@ -106,14 +107,14 @@ def make_default_policy_processor_steps(
     """Construct the canonical policy processor steps from a policy config.
 
     Args:
-        config: A `PreTrainedConfig` providing `device`, `input_features`,
+        config: A `PreTrainedConfig` providing `device`, `rename_map`, `input_features`,
             `output_features` and `normalization_mapping`.
         dataset_stats: Dataset statistics used for (un)normalization.
         normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
             their normalization stats to the policy device; most leave it unset).
     """
     return DefaultPolicyProcessorSteps(
-        rename_observations=RenameObservationsProcessorStep(rename_map={}),
+        rename_observations=RenameObservationsProcessorStep(rename_map=dict(config.rename_map)),
         add_batch_dim=AddBatchDimensionProcessorStep(),
         to_device=DeviceProcessorStep(device=config.device),
         normalize=NormalizerProcessorStep(
@@ -132,6 +133,8 @@ def make_default_policy_processor_steps(
 def make_policy_processor_pipelines(
     input_steps: list[ProcessorStep],
     output_steps: list[ProcessorStep],
+    *,
+    preprocessor_to_transition: Callable[[dict[str, Any]], EnvTransition] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -140,11 +143,24 @@ def make_policy_processor_pipelines(
 
     Uses the standard pipeline names (which determine the serialized JSON filenames on
     the Hub) and the standard policy-action converters on the postprocessor.
+
+    Args:
+        input_steps: The preprocessor's steps, in order.
+        output_steps: The postprocessor's steps, in order.
+        preprocessor_to_transition: Converter from a batch to an `EnvTransition`, for policies whose
+            batches carry keys the default converter drops (EVO1's `embodiment_id`/`state_mask`).
+            Converters are plain functions and are never serialized, so a policy that needs a custom
+            one must set it here on every build rather than expecting a checkpoint to restore it.
     """
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+            **(
+                {"to_transition": preprocessor_to_transition}
+                if preprocessor_to_transition is not None
+                else {}
+            ),
         ),
         PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,
