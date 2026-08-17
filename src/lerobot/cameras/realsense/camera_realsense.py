@@ -104,6 +104,9 @@ class RealSenseCamera(Camera):
         name_camera = RealSenseCamera(name_config)
         # ... connect, read, disconnect ...
         ```
+
+    Args:
+        config (`RealSenseCameraConfig`): The configuration settings for the camera.
     """
 
     # Maximum number of warmup attempts made by connect(). A failed attempt is first
@@ -112,11 +115,6 @@ class RealSenseCamera(Camera):
     _MAX_CONNECT_ATTEMPTS = 3
 
     def __init__(self, config: RealSenseCameraConfig):
-        """Initializes the RealSenseCamera instance.
-
-        Args:
-            config: The configuration settings for the camera.
-        """
         require_package(pkg_name, extra="intelrealsense", import_name="pyrealsense2")
         super().__init__(config)
 

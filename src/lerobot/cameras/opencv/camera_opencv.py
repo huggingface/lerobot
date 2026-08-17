@@ -87,14 +87,12 @@ class OpenCVCamera(Camera):
         # When done, properly disconnect the camera using
         camera.disconnect()
         ```
+
+    Args:
+        config (`OpenCVCameraConfig`): The configuration settings for the camera.
     """
 
     def __init__(self, config: OpenCVCameraConfig):
-        """Initializes the OpenCVCamera instance.
-
-        Args:
-            config: The configuration settings for the camera.
-        """
         super().__init__(config)
 
         self.config = config

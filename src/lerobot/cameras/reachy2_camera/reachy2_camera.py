@@ -66,14 +66,12 @@ class Reachy2Camera(Camera):
 
     The camera's default settings (FPS, resolution, color mode) are used unless
     overridden in the configuration.
+
+    Args:
+        config (`Reachy2CameraConfig`): The configuration settings for the camera.
     """
 
     def __init__(self, config: Reachy2CameraConfig):
-        """Initializes the Reachy2Camera instance.
-
-        Args:
-            config: The configuration settings for the camera.
-        """
         require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 

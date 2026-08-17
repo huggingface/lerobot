@@ -37,14 +37,12 @@ class Camera(abc.ABC):
         - **fps** (`int | None`) -- Configured frames per second.
         - **width** (`int | None`) -- Frame width in pixels.
         - **height** (`int | None`) -- Frame height in pixels.
+
+    Args:
+        config (`CameraConfig`): Camera configuration containing FPS and resolution.
     """
 
     def __init__(self, config: CameraConfig):
-        """Initialize the camera with the given configuration.
-
-        Args:
-            config: Camera configuration containing FPS and resolution.
-        """
         self.fps: int | None = config.fps
         self.width: int | None = config.width
         self.height: int | None = config.height

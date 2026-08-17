@@ -77,14 +77,12 @@ class ZMQCamera(Camera):
 
         camera.disconnect()
         ```
+
+    Args:
+        config (`ZMQCameraConfig`): Camera configuration, including the image server's address and port.
     """
 
     def __init__(self, config: ZMQCameraConfig):
-        """Initialize the camera with the given configuration.
-
-        Args:
-            config: Camera configuration, including the image server's address and port.
-        """
         require_package("pyzmq", extra="pyzmq-dep", import_name="zmq")
         super().__init__(config)
 

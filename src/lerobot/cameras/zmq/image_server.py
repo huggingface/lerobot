@@ -44,15 +44,14 @@ def encode_image(image: np.ndarray, quality: int = 80) -> str:
 
 
 class CameraCaptureThread:
-    """Background thread that continuously captures and encodes frames from a camera."""
+    """Background thread that continuously captures and encodes frames from a camera.
+
+    Args:
+        camera (`OpenCVCamera`): The already-connected camera to read frames from.
+        name (`str`): Name used to identify this camera in log messages.
+    """
 
     def __init__(self, camera: OpenCVCamera, name: str):
-        """Initialize the capture thread for one camera.
-
-        Args:
-            camera: The already-connected camera to read frames from.
-            name: Name used to identify this camera in log messages.
-        """
         self.camera = camera
         self.name = name
         self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
@@ -99,17 +98,18 @@ class ImageServer:
 
     Runs on the machine physically connected to the cameras (e.g. a Raspberry Pi on a robot); pair with
     [`~cameras.zmq.ZMQCamera`] on the machine that consumes the stream.
+
+    Connecting every camera listed in `config` and opening the publishing socket happens as a side
+    effect of construction.
+
+    Args:
+        config (`dict`): A mapping with an optional `"fps"` (the publish loop rate, not the camera
+            capture rate) and a `"cameras"` mapping of camera name to a dict with `"device_id"`,
+            `"shape"` (`[height, width]`), and `"fourcc"` keys.
+        port (`int`, *optional*, defaults to 5555): TCP port to publish on.
     """
 
     def __init__(self, config: dict, port: int = 5555):
-        """Connect every camera listed in `config` and open the publishing socket.
-
-        Args:
-            config: A mapping with an optional `"fps"` (the publish loop rate, not the camera capture
-                rate) and a `"cameras"` mapping of camera name to a dict with `"device_id"`, `"shape"`
-                (`[height, width]`), and `"fourcc"` keys.
-            port: TCP port to publish on.
-        """
         # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
         self.fps = config.get("fps", 30)
         self.cameras: dict[str, OpenCVCamera] = {}
