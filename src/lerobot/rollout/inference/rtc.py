@@ -447,7 +447,8 @@ class RTCInferenceEngine(InferenceEngine):
                         prev_actions = queue.get_left_over()
                         has_previous_actions = prev_actions is not None and prev_actions.numel() > 0
 
-                        training_max_delay = int(getattr(self._policy.config, "rtc_training_max_delay", 0))
+                        policy_config = getattr(self._policy, "config", None)
+                        training_max_delay = int(getattr(policy_config, "rtc_training_max_delay", 0))
                         latency = latency_tracker.max()
                         delay = _estimate_rtc_delay(
                             latency=latency,
