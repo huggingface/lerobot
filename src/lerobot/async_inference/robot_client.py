@@ -50,12 +50,16 @@ import torch
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.zmq.configuration_zmq import ZMQCameraConfig  # noqa: F401
 
-# pyrealsense2 isn't importable on every platform (e.g. Jetson with an older glibc). Register
-# the realsense camera type when it's available, but don't hard-crash the client when it isn't.
+# `lerobot.cameras.realsense` imports pyrealsense2 eagerly whenever the package is merely
+# installed, and on some platforms it is installed but not loadable (e.g. a Jetson wheel built
+# against a newer glibc). Probe the dependency itself rather than the camera module, so a missing
+# realsense only costs us that camera type, while any other import error still surfaces.
 try:
+    import pyrealsense2  # noqa: F401
+except ImportError as e:
+    logging.warning("realsense camera type unavailable: pyrealsense2 failed to import (%s)", e)
+else:
     from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
-except ImportError:
-    RealSenseCameraConfig = None
 
 from lerobot.robots import (  # noqa: F401
     Robot,
