@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol in the
-following format:
+"""Captures frames from remote cameras via ZeroMQ.
+
+Uses a JSON protocol of the following form:
     {
         "timestamps": {"camera_name": float},
         "images": {"camera_name": "<base64-jpeg>"}
@@ -52,8 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 class ZMQCamera(Camera):
-    """
-    Manages camera interactions via ZeroMQ for receiving frames from a remote server.
+    """Manages camera interactions via ZeroMQ for receiving frames from a remote server.
 
     This class connects to a ZMQ Publisher, subscribes to frame topics, and decodes
     incoming JSON messages containing Base64 encoded images. It supports both
@@ -78,6 +77,9 @@ class ZMQCamera(Camera):
 
         camera.disconnect()
         ```
+
+    Args:
+        config (`ZMQCameraConfig`): Camera configuration, including the image server's address and port.
     """
 
     def __init__(self, config: ZMQCameraConfig):
@@ -105,6 +107,7 @@ class ZMQCamera(Camera):
         self.new_frame_event: Event = Event()
 
     def __str__(self) -> str:
+        """Return a short representation naming the camera and its server address."""
         return f"ZMQCamera({self.camera_name}@{self.server_address}:{self.port})"
 
     @property
@@ -120,7 +123,6 @@ class ZMQCamera(Camera):
             warmup (bool): If True, waits for the camera to provide at least one
                            valid frame before returning. Defaults to True.
         """
-
         logger.info(f"Connecting to {self}...")
 
         try:
@@ -171,15 +173,11 @@ class ZMQCamera(Camera):
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
-        """
-        Detection not implemented for ZMQ cameras. These cameras require manual configuration (server address/port).
-        """
+        """Detection not implemented for ZMQ cameras; they require manual server address/port configuration."""
         raise NotImplementedError("Camera detection is not implemented for ZMQ cameras.")
 
     def _read_from_hardware(self) -> NDArray[Any]:
-        """
-        Reads a single frame directly from the ZMQ socket.
-        """
+        """Reads a single frame directly from the ZMQ socket."""
         if not self.is_connected or self.socket is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -215,8 +213,7 @@ class ZMQCamera(Camera):
 
     @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
-        """
-        Reads a single frame synchronously from the camera.
+        """Reads a single frame synchronously from the camera.
 
         This is a blocking call. It waits for the next available frame from the
         camera background thread.
@@ -243,9 +240,7 @@ class ZMQCamera(Camera):
         return frame
 
     def _read_loop(self) -> None:
-        """
-        Internal loop run by the background thread for asynchronous reading.
-        """
+        """Internal loop run by the background thread for asynchronous reading."""
         stop_event = self.stop_event
         if stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized.")
@@ -306,8 +301,7 @@ class ZMQCamera(Camera):
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """
-        Reads the latest available frame asynchronously.
+        """Reads the latest available frame asynchronously.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
@@ -321,7 +315,6 @@ class ZMQCamera(Camera):
             TimeoutError: If no frame data becomes available within the specified timeout.
             RuntimeError: If the background thread is not running.
         """
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 
@@ -353,7 +346,6 @@ class ZMQCamera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-
         if self.thread is None or not self.thread.is_alive():
             raise RuntimeError(f"{self} read thread is not running.")
 

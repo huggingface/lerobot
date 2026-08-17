@@ -37,36 +37,34 @@ class Camera(abc.ABC):
         - **fps** (`int | None`) -- Configured frames per second.
         - **width** (`int | None`) -- Frame width in pixels.
         - **height** (`int | None`) -- Frame height in pixels.
+
+    Args:
+        config (`CameraConfig`): Camera configuration containing FPS and resolution.
     """
 
     def __init__(self, config: CameraConfig):
-        """Initialize the camera with the given configuration.
-
-        Args:
-            config: Camera configuration containing FPS and resolution.
-        """
         self.fps: int | None = config.fps
         self.width: int | None = config.width
         self.height: int | None = config.height
 
     def __enter__(self):
-        """
-        Context manager entry.
+        """Context manager entry.
+
         Automatically connects to the camera.
         """
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        """
-        Context manager exit.
+        """Context manager exit.
+
         Automatically disconnects, ensuring resources are released even on error.
         """
         self.disconnect()
 
     def __del__(self) -> None:
-        """
-        Destructor safety net.
+        """Destructor safety net.
+
         Attempts to disconnect if the object is garbage collected without cleanup.
         """
         try:
@@ -90,6 +88,7 @@ class Camera(abc.ABC):
     @abc.abstractmethod
     def find_cameras() -> list[dict[str, Any]]:
         """Detects available cameras connected to the system.
+
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains information about a detected camera.

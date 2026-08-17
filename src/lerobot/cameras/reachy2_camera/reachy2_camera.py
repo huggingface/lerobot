@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Provides the Reachy2Camera class for capturing frames from Reachy 2 cameras using Reachy 2's CameraManager.
-"""
+"""Provides the Reachy2Camera class for capturing frames from Reachy 2 cameras using Reachy 2's CameraManager."""
 
 from __future__ import annotations
 
@@ -42,6 +40,8 @@ else:
     CameraManager = None
 
     class CameraView:
+        """Fallback stand-in for `reachy2_sdk`'s `CameraView` when the SDK is not installed."""
+
         LEFT = 0
         RIGHT = 1
 
@@ -55,8 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 class Reachy2Camera(Camera):
-    """
-    Manages Reachy 2 camera using Reachy 2 CameraManager.
+    """Manages Reachy 2 camera using Reachy 2 CameraManager.
 
     This class provides a high-level interface to connect to, configure, and read
     frames from Reachy 2 cameras. It supports both synchronous and asynchronous
@@ -67,15 +66,12 @@ class Reachy2Camera(Camera):
 
     The camera's default settings (FPS, resolution, color mode) are used unless
     overridden in the configuration.
+
+    Args:
+        config (`Reachy2CameraConfig`): The configuration settings for the camera.
     """
 
     def __init__(self, config: Reachy2CameraConfig):
-        """
-        Initializes the Reachy2Camera instance.
-
-        Args:
-            config: The configuration settings for the camera.
-        """
         require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 
@@ -88,6 +84,7 @@ class Reachy2Camera(Camera):
         self.cam_manager: CameraManager | None = None
 
     def __str__(self) -> str:
+        """Return a short representation naming the class, camera name, and image type."""
         return f"{self.__class__.__name__}({self.config.name}, {self.config.image_type})"
 
     @property
@@ -105,8 +102,7 @@ class Reachy2Camera(Camera):
             raise ValueError(f"Invalid camera name '{self.config.name}'. Expected 'teleop' or 'depth'.")
 
     def connect(self, warmup: bool = True) -> None:
-        """
-        Connects to the Reachy2 CameraManager as specified in the configuration.
+        """Connects to the Reachy2 CameraManager as specified in the configuration.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -120,15 +116,12 @@ class Reachy2Camera(Camera):
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
-        """
-        Detection not implemented for Reachy2 cameras.
-        """
+        """Detection not implemented for Reachy2 cameras."""
         raise NotImplementedError("Camera detection is not implemented for Reachy2 cameras.")
 
     @check_if_not_connected
     def read(self, color_mode: ColorMode | None = None) -> NDArray[Any]:
-        """
-        Reads a single frame synchronously from the camera.
+        """Reads a single frame synchronously from the camera.
 
         This method retrieves the most recent frame available in Reachy 2's low-level software.
 
@@ -187,8 +180,7 @@ class Reachy2Camera(Camera):
 
     @check_if_not_connected
     def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
-        """
-        Same as read()
+        """Same as [`~cameras.reachy2_camera.Reachy2Camera.read`]; Reachy 2 has no separate async path.
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -199,7 +191,6 @@ class Reachy2Camera(Camera):
             TimeoutError: If no frame becomes available within the specified timeout.
             RuntimeError: If an unexpected error occurs.
         """
-
         return self.read()
 
     @check_if_not_connected
@@ -220,7 +211,6 @@ class Reachy2Camera(Camera):
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If the camera is connected but has not captured any frames yet.
         """
-
         if self.latest_frame is None or self.latest_timestamp is None:
             raise RuntimeError(f"{self} has not captured any frames yet.")
 
@@ -234,13 +224,11 @@ class Reachy2Camera(Camera):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        """
-        Stops the background read thread (if running).
+        """Stops the background read thread (if running).
 
         Raises:
             DeviceNotConnectedError: If the camera is already disconnected.
         """
-
         if self.cam_manager is not None:
             self.cam_manager.disconnect()
 
