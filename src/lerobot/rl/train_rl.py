@@ -96,6 +96,8 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
             FSDP/DDP tuning knobs, compile & activation-checkpointing.
         eval (`EvalConfig`, *optional*):
             Simulation-environment evaluation configuration (number of episodes, batch size).
+        ema (`EMAConfig`, *optional*):
+            Configuration for maintaining an EMA shadow of the policy weights during training.
         wandb (`WandBConfig`, *optional*):
             Weights & Biases logging configuration.
         peft (`lerobot.configs.default.PeftConfig | None`, *optional*):

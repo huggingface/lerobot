@@ -608,7 +608,7 @@ class CriticHead(nn.Module):
     Args:
         input_dim (`int`): Dimension of the concatenated observation-encoding + action input.
         hidden_dims (`list[int]`): Hidden layer widths of the MLP trunk.
-        activations (`Callable[[torch.Tensor], torch.Tensor] | str`, *optional*, defaults to `nn.SiLU()`):
+        activations (`Callable[[torch.Tensor], torch.Tensor] | str`, *optional*, defaults to `SiLU()`):
             Activation used between hidden layers.
         activate_final (`bool`, *optional*, defaults to `False`): Whether to apply `activations`
             after the last hidden layer.

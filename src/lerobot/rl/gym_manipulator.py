@@ -124,7 +124,7 @@ class RobotEnv(gym.Env):
     """Gym environment for robotic control with human intervention support.
 
     Args:
-        robot: Robot interface for hardware communication.
+        robot (`Robot`): Robot interface for hardware communication.
         use_gripper (`bool`, *optional*, defaults to `False`): Whether to include gripper in action
             space.
         display_cameras (`bool`, *optional*, defaults to `False`): Whether to show camera feeds during
@@ -135,7 +135,7 @@ class RobotEnv(gym.Env):
 
     def __init__(
         self,
-        robot,
+        robot: Robot,
         use_gripper: bool = False,
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
