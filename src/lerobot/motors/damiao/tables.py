@@ -19,6 +19,8 @@ from enum import IntEnum
 
 # Motor type definitions
 class MotorType(IntEnum):
+    """The Damiao motor model, selecting its limit and gearing parameters."""
+
     DM3507 = 0
     DM4310 = 1
     DM4310_48V = 2
@@ -36,6 +38,16 @@ class MotorType(IntEnum):
 
 # Control modes
 class ControlMode(IntEnum):
+    """The Damiao motor's active control mode.
+
+    **Attributes**:
+        - **MIT** -- Combined position/velocity/torque control over CAN, following the MIT Cheetah
+          protocol.
+        - **POS_VEL** -- Position and velocity control.
+        - **VEL** -- Velocity-only control.
+        - **TORQUE_POS** -- Torque and position control.
+    """
+
     MIT = 1
     POS_VEL = 2
     VEL = 3
@@ -44,6 +56,12 @@ class ControlMode(IntEnum):
 
 # Motor variable IDs (RID)
 class MotorVariable(IntEnum):
+    """Register IDs (RID) for a Damiao motor's internal parameter table.
+
+    Used with the motor's read/write-parameter CAN commands to get or set a single tunable, e.g. current
+    limits, PID gains, or CAN bitrate. See Damiao's motor manual for the meaning of each register.
+    """
+
     UV_VALUE = 0
     KT_VALUE = 1
     OT_VALUE = 2
