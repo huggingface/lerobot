@@ -257,7 +257,19 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
 
 
 class VideoAnnotator:
-    """Annotates robot manipulation videos using local Qwen3-VL model on GPU."""
+    """Annotates robot manipulation videos using local Qwen3-VL model on GPU.
+
+    Args:
+        subtask_list (`list[str]`): List of allowed subtask names, for consistency.
+        model_name (`str`, *optional*, defaults to `"Qwen/Qwen3-VL-30B-A3B-Instruct"`): Hugging Face
+            model name.
+        device (`str`, *optional*, defaults to `"cuda"`): Device to use (`"cuda"`, `"cpu"`).
+        torch_dtype (`torch.dtype`, *optional*, defaults to `torch.bfloat16`): Data type for the model.
+        model (`Qwen3VLMoeForConditionalGeneration | None`, *optional*): Pre-loaded model instance,
+            to share between annotators.
+        processor (`AutoProcessor | None`, *optional*): Pre-loaded processor instance, to share
+            between annotators.
+    """
 
     def __init__(
         self,
@@ -268,16 +280,6 @@ class VideoAnnotator:
         model: Qwen3VLMoeForConditionalGeneration | None = None,  # noqa: F821
         processor: AutoProcessor | None = None,  # noqa: F821
     ):
-        """Initialize the video annotator with local model.
-
-        Args:
-            subtask_list: List of allowed subtask names (for consistency)
-            model_name: Hugging Face model name (default: Qwen/Qwen3-VL-30B-A3B-Instruct)
-            device: Device to use (cuda, cpu)
-            torch_dtype: Data type for model (bfloat16, float16, float32)
-            model: Pre-loaded model instance (optional, to share between annotators)
-            processor: Pre-loaded processor instance (optional, to share between annotators)
-        """
         self.subtask_list = subtask_list
         self.prompt = create_sarm_prompt(subtask_list)
         self.device = device
