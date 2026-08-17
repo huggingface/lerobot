@@ -66,20 +66,20 @@ class RangeValues:
 
 
 class RangeSlider:
-    """A draggable min/current/max slider row for one motor in the range-finder GUI."""
+    """A draggable min/current/max slider row for one motor in the range-finder GUI.
+
+    Args:
+        motor (`str`): Motor name this row controls.
+        idx (`int`): Row index, used to compute its vertical position.
+        res (`int`): Motor resolution (number of steps), used to convert steps to pixels.
+        calibration (`MotorCalibration`): The motor's current calibration, for the initial min/max
+            handles.
+        present (`int`): The motor's current position, in raw steps.
+        label_pad (`int`): Pixel width reserved for the widest motor name label.
+        base_y (`int`): Vertical pixel offset of the first row.
+    """
 
     def __init__(self, motor, idx, res, calibration, present, label_pad, base_y):
-        """Lay out one slider row from the motor's current calibration and position.
-
-        Args:
-            motor: Motor name this row controls.
-            idx: Row index, used to compute its vertical position.
-            res: Motor resolution (number of steps), used to convert steps to pixels.
-            calibration: The motor's current `MotorCalibration`, for the initial min/max handles.
-            present: The motor's current position, in raw steps.
-            label_pad: Pixel width reserved for the widest motor name label.
-            base_y: Vertical pixel offset of the first row.
-        """
         import pygame
 
         self.motor = motor
@@ -247,16 +247,17 @@ class RangeFinderGUI:
 
     Drag a motor's handles to set its min/max range, or the triangle to move it to a position. Motors can
     be split into named groups (shown in a dropdown) when there are too many to fit one screen.
+
+    Connecting to the bus (if needed), reading its current calibration, and laying out one slider per
+    motor all happen at construction time.
+
+    Args:
+        bus (`MotorsBus`): The connected (or connectable) bus whose motors to calibrate.
+        groups (`dict[str, list[str]] | None`, *optional*): Named subsets of `bus.motors` to show one at
+            a time via a dropdown. `None` puts every motor in a single `"all"` group.
     """
 
     def __init__(self, bus: MotorsBus, groups: dict[str, list[str]] | None = None):
-        """Connect to the bus if needed, read its current calibration, and lay out one slider per motor.
-
-        Args:
-            bus: The connected (or connectable) `MotorsBus` whose motors to calibrate.
-            groups: Named subsets of `bus.motors` to show one at a time via a dropdown. `None` puts every
-                motor in a single `"all"` group.
-        """
         import pygame
 
         self.bus = bus

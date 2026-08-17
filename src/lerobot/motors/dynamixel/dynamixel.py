@@ -127,6 +127,17 @@ class DynamixelMotorsBus(SerialMotorsBus):
 
     Relies on the [Dynamixel SDK](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20)
     to talk to the motors over a serial port. Protocol 2.0 only.
+
+    Sets up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
+
+    Args:
+        port (`str`):
+            Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
+        motors (`dict[str, Motor]`):
+            Motors on this bus, keyed by name, e.g. `{"shoulder_pan": Motor(id=1, model="xl430-w250")}`.
+        calibration (`dict[str, MotorCalibration]`, *optional*):
+            Cached calibration to use instead of reading it from the motors on connect. `None` reads
+            it from the motors instead.
     """
 
     apply_drive_mode = False
@@ -146,17 +157,6 @@ class DynamixelMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
-        """Set up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
-
-        Args:
-            port (`str`):
-                Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
-            motors (`dict[str, Motor]`):
-                Motors on this bus, keyed by name, e.g. `{"shoulder_pan": Motor(id=1, model="xl430-w250")}`.
-            calibration (`dict[str, MotorCalibration]`, *optional*):
-                Cached calibration to use instead of reading it from the motors on connect. `None` reads
-                it from the motors instead.
-        """
         require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
         super().__init__(port, motors, calibration)
         self.port_handler = dxl.PortHandler(self.port)

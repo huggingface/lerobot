@@ -92,6 +92,17 @@ class DamiaoMotorsBus(MotorsBusBase):
     - python-can documentation: https://python-can.readthedocs.io/en/stable/
     - Seedstudio documentation: https://wiki.seeedstudio.com/damiao_series/
     - DM_Control_Python repo: https://github.com/cmjang/DM_Control_Python
+
+    Args:
+        port (`str`): CAN interface name (e.g. `"can0"` for Linux, `"/dev/cu.usbmodem*"` for macOS).
+        motors (`dict[str, Motor]`): Motors on this bus, keyed by name.
+        calibration (`dict[str, MotorCalibration] | None`, *optional*): Cached calibration data.
+        can_interface (`str`, *optional*, defaults to `"auto"`): CAN interface type: `"auto"`,
+            `"socketcan"` (Linux), or `"slcan"` (macOS/serial).
+        use_can_fd (`bool`, *optional*, defaults to `True`): Whether to use CAN FD mode.
+        bitrate (`int`, *optional*, defaults to 1000000): Nominal bitrate in bps.
+        data_bitrate (`int | None`, *optional*, defaults to 5000000): Data bitrate for CAN FD in bps,
+            ignored if `use_can_fd` is `False`.
     """
 
     # CAN-specific settings
@@ -109,17 +120,6 @@ class DamiaoMotorsBus(MotorsBusBase):
         bitrate: int = 1000000,
         data_bitrate: int | None = 5000000,
     ):
-        """Initialize the Damiao motors bus.
-
-        Args:
-            port: CAN interface name (e.g., "can0" for Linux, "/dev/cu.usbmodem*" for macOS)
-            motors: Dictionary mapping motor names to Motor objects
-            calibration: Optional calibration data
-            can_interface: CAN interface type - "auto" (default), "socketcan" (Linux), or "slcan" (macOS/serial)
-            use_can_fd: Whether to use CAN FD mode (default: True for OpenArms)
-            bitrate: Nominal bitrate in bps (default: 1000000 = 1 Mbps)
-            data_bitrate: Data bitrate for CAN FD in bps (default: 5000000 = 5 Mbps), ignored if use_can_fd is False
-        """
         require_package("python-can", extra="damiao", import_name="can")
         super().__init__(port, motors, calibration)
         self.port = port

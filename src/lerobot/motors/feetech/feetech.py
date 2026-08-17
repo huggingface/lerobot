@@ -114,6 +114,22 @@ class FeetechMotorsBus(SerialMotorsBus):
 
     Relies on the Feetech servo SDK (itself based on the Dynamixel SDK) to talk to the motors over a
     serial port. Supports both Feetech protocol 0 and 1, selected via `protocol_version`.
+
+    Sets up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
+
+    Args:
+        port (`str`):
+            Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
+        motors (`dict[str, Motor]`):
+            Motors on this bus, keyed by name, e.g. `{"gripper": Motor(id=1, model="sts3215")}`.
+        calibration (`dict[str, MotorCalibration]`, *optional*):
+            Cached calibration to use instead of reading it from the motors on connect. `None` reads
+            it from the motors instead.
+        protocol_version (`int`, *optional*, defaults to 0):
+            Feetech protocol version. All configured motors must use the same one.
+
+    Raises:
+        ValueError: If a motor's model is incompatible with `protocol_version`.
     """
 
     apply_drive_mode = True
@@ -134,22 +150,6 @@ class FeetechMotorsBus(SerialMotorsBus):
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
-        """Set up the bus without opening the port; call [`~motors.motors_bus.MotorsBus.connect`] to talk to it.
-
-        Args:
-            port (`str`):
-                Serial port the motors are connected to, e.g. `/dev/ttyACM0`.
-            motors (`dict[str, Motor]`):
-                Motors on this bus, keyed by name, e.g. `{"gripper": Motor(id=1, model="sts3215")}`.
-            calibration (`dict[str, MotorCalibration]`, *optional*):
-                Cached calibration to use instead of reading it from the motors on connect. `None` reads
-                it from the motors instead.
-            protocol_version (`int`, *optional*, defaults to 0):
-                Feetech protocol version. All configured motors must use the same one.
-
-        Raises:
-            ValueError: If a motor's model is incompatible with `protocol_version`.
-        """
         require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
