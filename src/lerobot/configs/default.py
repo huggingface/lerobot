@@ -228,6 +228,12 @@ class EMAConfig:
     use_for_eval: bool = True
 
     def __post_init__(self) -> None:
+        """Validate the decay/warmup/eval-mode fields against each other.
+
+        Raises:
+            ValueError: If any field is out of range, or if `decay` (constant decay) and
+                `min_decay`/`max_decay` (schedule clamp) are both set to non-default values.
+        """
         if not (0.0 <= self.min_decay <= self.max_decay <= 1.0):
             raise ValueError(
                 "Expected 0 <= ema.min_decay <= ema.max_decay <= 1, got "

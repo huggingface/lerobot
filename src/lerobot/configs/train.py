@@ -171,6 +171,7 @@ class TrainPipelineConfig(HubMixin):
             precision, gradient accumulation, FSDP/DDP tuning knobs, compile & activation-checkpointing
             placeholders.
         eval (`EvalConfig`, *optional*): Settings for the periodic simulation-environment evaluation.
+        ema (`EMAConfig`, *optional*): Exponential moving average of the policy weights. Off by default.
         wandb (`WandBConfig`, *optional*): Weights & Biases logging settings.
         peft (`PeftConfig | None`, *optional*): PEFT (e.g. LoRA) settings, when fine-tuning with adapters
             instead of full-parameter training.
