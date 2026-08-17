@@ -87,15 +87,17 @@ def get_safe_wandb_artifact_name(name: str):
 
 
 class WandBLogger:
-    """A helper class to log object using wandb."""
+    """A helper class to log object using wandb.
+
+    Initializing an instance starts a WandB run for `cfg`, resuming a previous run when
+    `cfg.resume` is set.
+
+    Args:
+        cfg (`TrainPipelineConfig`): Training configuration. `cfg.wandb.run_id` is set to the
+            created (or resumed) run's id as a side effect.
+    """
 
     def __init__(self, cfg: TrainPipelineConfig):
-        """Initialize a WandB run for `cfg`, resuming a previous run when `cfg.resume` is set.
-
-        Args:
-            cfg (`TrainPipelineConfig`): Training configuration. `cfg.wandb.run_id` is set to the
-                created (or resumed) run's id as a side effect.
-        """
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
