@@ -108,59 +108,110 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
+    """The top-level configuration for `lerobot-train`, parsed by draccus from CLI flags and/or a YAML file.
+
+    Args:
+        dataset (`DatasetConfig`): The dataset(s) to train on.
+        env (`envs.EnvConfig | None`, *optional*): The simulation environment to periodically evaluate the
+            policy in (see `env_eval_freq`). Required when `env_eval_freq > 0`.
+        policy (`PreTrainedConfig | None`, *optional*): The policy to train. Mutually exclusive with
+            `reward_model`.
+        reward_model (`RewardModelConfig | None`, *optional*): The reward model to train instead of a
+            policy. Mutually exclusive with `policy`.
+        output_dir (`Path | None`, *optional*): Where to save all of the run outputs. If you run another
+            training session with the same value its contents will be overwritten unless `resume` is set.
+        job_name (`str | None`, *optional*): A name for the run.
+        resume (`bool`, *optional*, defaults to `False`): Resume a previous run. Pass `--config_path`
+            pointing at either a local checkpoint's `train_config.json` or a Hub repo id holding
+            `checkpoints/<step>/` subtrees (the latest checkpoint is downloaded and resumed from). When
+            resuming, the default behavior is to use the configuration from the checkpoint, regardless of
+            what's provided with the training command at the time of resumption (CLI `--*` flags still
+            override).
+        seed (`int | None`, *optional*, defaults to 1000): Seed used for training (e.g. model
+            initialization, dataset shuffling) and for the evaluation environments.
+        cudnn_deterministic (`bool`, *optional*, defaults to `False`): Use deterministic cuDNN algorithms
+            for reproducibility. Disables `cudnn.benchmark` and may reduce training speed by ~10-20 percent.
+        num_workers (`int`, *optional*, defaults to 4): Number of workers for the dataloader.
+        batch_size (`int`, *optional*, defaults to 8): The training batch size.
+        prefetch_factor (`int`, *optional*, defaults to 4): Number of batches loaded in advance by each
+            dataloader worker.
+        persistent_workers (`bool`, *optional*, defaults to `True`): Keep dataloader worker processes alive
+            between epochs.
+        dataloader_multiprocessing_context (`str | None`, *optional*, defaults to `"spawn"`): DataLoader
+            worker start method. `"spawn"` is safer than `"fork"` with non-fork-safe libs (PyAV /
+            torchcodec / ffmpeg), but adds some worker-startup time per run since workers re-import modules
+            instead of inheriting parent state. Override with `--dataloader_multiprocessing_context=fork`
+            when appropriate, or set it to `None` to use Python's platform default.
+        steps (`int`, *optional*, defaults to 100000): Total number of training steps.
+        env_eval_freq (`int`, *optional*, defaults to 20000): Run the policy in the simulation environment
+            every N steps to measure reward/success (0 = disabled).
+        log_freq (`int`, *optional*, defaults to 200): Logging frequency, in steps.
+        eval_steps (`int`, *optional*, defaults to 0): Compute eval loss on held-out episodes every N steps
+            (0 = disabled). Requires `eval_split > 0`.
+        max_eval_samples (`int`, *optional*, defaults to 0): Cap on total eval samples, split uniformly
+            across tasks (0 = use all held-out data).
+        tolerance_s (`float`, *optional*, defaults to 0.0001): Maximum timestamp difference tolerated when
+            loading dataset frames, in seconds.
+        save_checkpoint (`bool`, *optional*, defaults to `True`): Whether to save checkpoints during
+            training.
+        save_freq (`int`, *optional*, defaults to 20000): Save a checkpoint every `save_freq` training
+            iterations and after the last training step. A non-positive value disables periodic saving,
+            keeping only the final checkpoint.
+        checkpoint_format (`CheckpointFormat`, *optional*, defaults to `CheckpointFormat.SAFETENSORS`):
+            Model-artifact format inside checkpoints; non-default values require a sharded run.
+        use_policy_training_preset (`bool`, *optional*, defaults to `True`): Use the policy's own
+            optimizer/scheduler presets when `optimizer`/`scheduler` aren't explicitly set.
+        optimizer (`OptimizerConfig | None`, *optional*): The optimizer to use. Falls back to the policy's
+            preset when `use_policy_training_preset` is `True`.
+        scheduler (`LRSchedulerConfig | None`, *optional*): The learning-rate scheduler to use. Falls back
+            to the policy's preset when `use_policy_training_preset` is `True`.
+        parallelism (`ParallelismConfig`, *optional*): Process topology: `dp_replicate` / `dp_shard` for HSDP
+            and context-parallel degree placeholders.
+        accelerator (`AcceleratorConfig`, *optional*): Execution runtime handed to the Accelerator: mixed
+            precision, gradient accumulation, FSDP/DDP tuning knobs, compile & activation-checkpointing
+            placeholders.
+        eval (`EvalConfig`, *optional*): Settings for the periodic simulation-environment evaluation.
+        ema (`EMAConfig`, *optional*): Exponential moving average of the policy weights. Off by default.
+        wandb (`WandBConfig`, *optional*): Weights & Biases logging settings.
+        peft (`PeftConfig | None`, *optional*): PEFT (e.g. LoRA) settings, when fine-tuning with adapters
+            instead of full-parameter training.
+        job (`JobConfig`, *optional*): Where to run training: locally (default), or an HF Jobs flavor.
+        save_checkpoint_to_hub (`bool`, *optional*, defaults to `False`): Push each saved checkpoint to the
+            Hub (`policy.repo_id`) as it is written, not just the final model (useful to monitor progress
+            mid-run). The final model is pushed regardless. Works the same locally and remotely.
+        sample_weighting (`SampleWeightingConfig | None`, *optional*): Sample weighting configuration (e.g.
+            for RA-BC training).
+        rename_map (`dict[str, str]`, *optional*): Rename map for the observation, to override the image
+            and state keys.
+    """
+
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     reward_model: RewardModelConfig | None = None
-    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
-    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
     job_name: str | None = None
-    # Set `resume` to true to resume a previous run. Pass `--config_path` pointing at either a local
-    # checkpoint's train_config.json or a Hub repo id holding `checkpoints/<step>/` subtrees (the
-    # latest checkpoint is downloaded and resumed from). Note that when resuming, the default behavior
-    # is to use the configuration from the checkpoint, regardless of what's provided with the training
-    # command at the time of resumption (CLI `--*` flags still override).
     resume: bool = False
-    # `seed` is used for training (eg: model initialization, dataset shuffling)
-    # AND for the evaluation environments.
     seed: int | None = 1000
-    # Set to True to use deterministic cuDNN algorithms for reproducibility.
-    # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
     cudnn_deterministic: bool = False
-    # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # DataLoader worker start method. "spawn" is safer than "fork" with
-    # non-fork-safe libs (PyAV / torchcodec / ffmpeg), but adds some
-    # worker-startup time per run since workers re-import modules instead
-    # of inheriting parent state. Override with `--dataloader_multiprocessing_context=fork`
-    # when appropriate, or set it to `null` to use Python's platform default.
     dataloader_multiprocessing_context: str | None = "spawn"
     steps: int = 100_000
-    # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
     log_freq: int = 200
-    # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
-    # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
     max_eval_samples: int = 0
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
-    # Checkpoint is saved every `save_freq` training iterations and after the last training step.
-    # A non-positive value disables periodic saving, keeping only the final checkpoint.
     save_freq: int = 20_000
-    # Model-artifact format inside checkpoints; non-default values require a sharded run.
     checkpoint_format: CheckpointFormat = CheckpointFormat.SAFETENSORS
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
-    # Process topology: dp_replicate / dp_shard (HSDP) and context-parallel degree placeholders.
     parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
-    # Execution runtime handed to the Accelerator: mixed precision, gradient accumulation,
-    # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
     accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
@@ -168,17 +219,11 @@ class TrainPipelineConfig(HubMixin):
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
 
-    # Where to run training (local default, or an HF Jobs flavor). See JobConfig.
     job: JobConfig = field(default_factory=JobConfig)
-    # Push each saved checkpoint to the Hub (policy.repo_id) as it is written, not
-    # just the final model (useful to monitor progress mid-run). Optional; the
-    # final model is pushed regardless. Works the same locally and remotely.
     save_checkpoint_to_hub: bool = False
 
-    # Sample weighting configuration (e.g., for RA-BC training)
     sample_weighting: SampleWeightingConfig | None = None
 
-    # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)
 
@@ -264,6 +309,21 @@ class TrainPipelineConfig(HubMixin):
             self.reward_model.pretrained_path = str(policy_dir)
 
     def validate(self) -> None:
+        """Resolve pretrained sources and cross-field defaults, and fail fast on invalid combinations.
+
+        Called by draccus after parsing. Resolves `--policy.path`/`--reward_model.path`/`resume` into a
+        loaded config, derives `job_name` and `output_dir` when unset, and applies the policy's
+        optimizer/scheduler presets when `use_policy_training_preset` is `True`.
+
+        Raises:
+            ValueError: On an unsupported `dataloader_multiprocessing_context`, neither `policy` nor
+                `reward_model` configured, a `rename_map` without a pretrained checkpoint, an unsplit
+                dataset with `eval_steps > 0`, a missing `repo_id` when pushing to the Hub, or
+                `save_checkpoint_to_hub` without `policy.repo_id` — or (see `_validate_distributed`) an
+                unsupported distributed-training combination.
+            FileExistsError: If `output_dir` already exists and `resume` is `False`.
+            NotImplementedError: If `dataset.repo_id` is a list (multi-dataset training).
+        """
         available_contexts = multiprocessing.get_all_start_methods()
         if (
             self.dataloader_multiprocessing_context is not None
@@ -391,6 +451,7 @@ class TrainPipelineConfig(HubMixin):
         return ["policy", "reward_model"]
 
     def to_dict(self) -> dict[str, Any]:
+        """Encode the config to a plain, JSON-serializable dictionary (via `draccus.encode`)."""
         return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -411,6 +472,35 @@ class TrainPipelineConfig(HubMixin):
         revision: str | None = None,
         **kwargs: Any,
     ) -> "TrainPipelineConfig":
+        """Download a run's `train_config.json` from the Hub (or read it locally) and parse it.
+
+        Falls back to the latest checkpoint's config when the repo has no root `train_config.json` (a repo
+        of periodic checkpoints from an interrupted run), so a resume can start straight from
+        `--config_path=<repo>`. Legacy RA-BC fields in a JSON config are migrated to the current
+        `sample_weighting` schema.
+
+        Args:
+            pretrained_name_or_path (`str | Path`): Either the `repo_id` of the run hosted on the Hub, or
+                a path to a directory containing a `train_config.json` saved via `.save_pretrained`.
+            force_download (`bool`, *optional*, defaults to `False`): Whether to force (re-)downloading
+                the files from the Hub, overriding the existing cache.
+            resume_download (`bool | None`, *optional*): Deprecated; ignored by the underlying Hub client.
+            proxies (`dict[Any, Any] | None`, *optional*): A dictionary of proxy servers to use by protocol
+                or endpoint.
+            token (`str | bool | None`, *optional*): The token to use as HTTP bearer authorization for
+                remote files. By default, uses the token cached by `huggingface-cli login`.
+            cache_dir (`str | Path | None`, *optional*): Path to the folder where cached files are stored.
+            local_files_only (`bool`, *optional*, defaults to `False`): If `True`, avoid downloading the
+                file and return the path to the local cached file if it exists.
+            revision (`str | None`, *optional*): Revision on the Hub: a branch name, git tag, or commit id.
+                Defaults to the latest commit on `main`.
+            kwargs: Forwarded as CLI-style overrides via `kwargs["cli_args"]` (a list of `--key=value`
+                strings applied on top of the loaded config); any other keys are ignored.
+
+        Raises:
+            FileNotFoundError: If `train_config.json` isn't found locally, on the Hub, or on any checkpoint
+                within the Hub repo.
+        """
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

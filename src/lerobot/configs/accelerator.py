@@ -171,6 +171,13 @@ class CompileConfig:
 
 
 class ActivationCheckpointingMode(str, Enum):
+    """The activation-checkpointing strategy applied to FSDP wrap units.
+
+    **Attributes**:
+        - **NONE** -- No activation checkpointing.
+        - **FULL** -- Checkpoint every wrap unit.
+    """
+
     NONE = "none"
     FULL = "full"
 

@@ -39,50 +39,64 @@ logger = getLogger(__name__)
 
 @dataclass
 class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
-    """
-    Base configuration class for policy models.
+    """Base configuration class for policy models.
+
+    Every concrete policy config also declares a `normalization_mapping: dict[str, NormalizationMode]`
+    field (mapping a `FeatureType` name, e.g. `"STATE"`/`"VISUAL"`, to the `NormalizationMode` to apply),
+    with a policy-specific default — not declared here since it has no sensible shared default.
 
     Args:
-        n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
-            current step and additional steps going back).
-        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
-            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
-            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
-            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
+        n_obs_steps (`int`, *optional*, defaults to 1): Number of environment steps worth of observations
+            to pass to the policy (takes the current step and additional steps going back).
+        input_features (`dict[str, PolicyFeature] | None`, *optional*): A dictionary defining the
+            `PolicyFeature` of the input data for the policy. The key represents the input data name, and
+            the value is a `PolicyFeature`, which consists of `type` and `shape` attributes. Can be set to
+            `None`/`null` in order to infer those values from the dataset.
+        output_features (`dict[str, PolicyFeature] | None`, *optional*): A dictionary defining the
+            `PolicyFeature` of the output data for the policy, with the same key/value semantics as
+            `input_features`.
+        device (`str | None`, *optional*): The torch device, e.g. `"cuda"`, `"cuda:0"`, `"cpu"`, or `"mps"`.
+            If unset or unavailable, `__post_init__` auto-selects one.
+        use_amp (`bool`, *optional*, defaults to `False`): Whether to use Automatic Mixed Precision for
+            training and evaluation, with automatic gradient scaling. Auto-disabled by `__post_init__`
+            when AMP isn't available on `device`.
+        use_peft (`bool`, *optional*, defaults to `False`): Whether the policy employed PEFT for training.
+        push_to_hub (`bool`, *optional*, defaults to `True`): Whether to push the policy to the Hugging Face
+            Hub after training.
+        repo_id (`str | None`, *optional*): The Hub repo ID to push to. Required when `push_to_hub` is
+            `True`.
+        private (`bool | None`, *optional*): Whether to upload to a private repository on the Hugging Face
+            Hub.
+        tags (`list[str] | None`, *optional*): Tags to add to the policy on the Hub.
+        license (`str | None`, *optional*): The license to add to the policy on the Hub.
+        pretrained_path (`Path | None`, *optional*): Either the repo ID of a model hosted on the Hub or a
+            path to a directory containing weights saved using `PreTrainedPolicy.save_pretrained`. If not
+            provided, the policy is initialized from scratch.
+        pretrained_revision (`str | None`, *optional*): Hub revision (commit hash, branch, or tag) to pin
+            the pretrained model version.
     """
 
     n_obs_steps: int = 1
 
-    # `input_features` can be set to None/null in order to infer those values from the dataset.
     input_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
-    device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
-    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
-    # automatic gradient scaling is used.
+    device: str | None = None
     use_amp: bool = False
 
-    # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
     push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
     repo_id: str | None = None
 
-    # Upload on private repository on the Hugging Face hub.
     private: bool | None = None
-    # Add tags to your policy on the hub.
     tags: list[str] | None = None
-    # Add tags to your policy on the hub.
     license: str | None = None
-    # Either the repo ID of a model hosted on the Hub or a path to a directory containing weights
-    # saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch.
     pretrained_path: Path | None = None
-    # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
 
     def __post_init__(self) -> None:
+        """Auto-select `device` when unset/unavailable, and disable `use_amp` when AMP isn't available on it."""
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -97,6 +111,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def type(self) -> str:
+        """The policy's registered `draccus.ChoiceRegistry` name (e.g. `"act"`, `"diffusion"`)."""
         choice_name = self.get_choice_name(self.__class__)
         if not isinstance(choice_name, str):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
@@ -105,32 +120,52 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     @property
     @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
+        """Offsets, relative to the current step, of the observation timesteps the policy consumes.
+
+        `None` means only the current step is used.
+        """
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
     def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+        """Offsets, relative to the current step, of the action timesteps the policy predicts/consumes.
+
+        `None` means only the current step is used.
+        """
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
     def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+        """Offsets, relative to the current step, of the reward timesteps the policy consumes.
+
+        `None` means only the current step is used.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def get_optimizer_preset(self) -> OptimizerConfig:
+        """Return this policy's default `OptimizerConfig`, used when `use_policy_training_preset` is set."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
+        """Return this policy's default `LRSchedulerConfig`, or `None` if it uses no scheduler."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def validate_features(self) -> None:
+        """Check that `input_features`/`output_features` contain what this policy requires.
+
+        Raises:
+            ValueError: If a required feature is missing or has an unexpected shape/type.
+        """
         raise NotImplementedError
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
+        """The input `PolicyFeature` for the robot's proprioceptive state (`observation.state`), if any."""
         if not self.input_features:
             return None
         for ft_name, ft in self.input_features.items():
@@ -140,6 +175,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def env_state_feature(self) -> PolicyFeature | None:
+        """The input `PolicyFeature` of type `FeatureType.ENV` (environment state), if any."""
         if not self.input_features:
             return None
         for _, ft in self.input_features.items():
@@ -149,12 +185,14 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     def image_features(self) -> dict[str, PolicyFeature]:
+        """All input features of type `FeatureType.VISUAL`, keyed by feature name."""
         if not self.input_features:
             return {}
         return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.VISUAL}
 
     @property
     def action_feature(self) -> PolicyFeature | None:
+        """The output `PolicyFeature` for the action (`action`), if any."""
         if not self.output_features:
             return None
         for ft_name, ft in self.output_features.items():
@@ -182,6 +220,35 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
         revision: str | None = None,
         **policy_kwargs: Any,
     ) -> T:
+        """Download a policy's `config.json` from the Hub (or read it locally) and parse it.
+
+        The concrete policy config subclass is resolved from the serialized `"type"` tag (e.g. `"act"`,
+        `"diffusion"`) rather than being fixed by `cls`, so calling this on the `PreTrainedConfig` base
+        class works for any registered policy type.
+
+        Args:
+            pretrained_name_or_path (`str | Path`): Either the `repo_id` of the config hosted on the Hub,
+                or a path to a directory containing a `config.json` saved via `.save_pretrained`.
+            force_download (`bool`, *optional*, defaults to `False`): Whether to force (re-)downloading
+                the files from the Hub, overriding the existing cache.
+            resume_download (`bool | None`, *optional*): Deprecated; ignored by the underlying Hub client.
+            proxies (`dict[Any, Any] | None`, *optional*): A dictionary of proxy servers to use by protocol
+                or endpoint.
+            token (`str | bool | None`, *optional*): The token to use as HTTP bearer authorization for
+                remote files. By default, uses the token cached by `huggingface-cli login`.
+            cache_dir (`str | Path | None`, *optional*): Path to the folder where cached files are stored.
+            local_files_only (`bool`, *optional*, defaults to `False`): If `True`, avoid downloading the
+                file and return the path to the local cached file if it exists.
+            revision (`str | None`, *optional*): Revision on the Hub: a branch name, git tag, or commit id.
+                Defaults to the latest commit on `main`.
+            policy_kwargs: Forwarded as CLI-style overrides via `policy_kwargs["cli_overrides"]`
+                (a list of `--key=value` strings applied on top of the loaded config); any other keys are
+                ignored.
+
+        Raises:
+            FileNotFoundError: If `config.json` isn't found locally or on the Hub.
+            ValueError: If `config.json` has no `"type"` field, or its value isn't a registered policy type.
+        """
         model_id = str(pretrained_name_or_path)
         config_file: str | None = None
         if Path(model_id).is_dir():

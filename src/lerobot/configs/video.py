@@ -84,18 +84,33 @@ DEPTH_ENCODER_INFO_FIELD_NAMES: frozenset[str] = frozenset({"depth_min", "depth_
 
 @dataclass
 class VideoEncoderConfig:
-    """Video encoder configuration."""
+    """Video encoder configuration.
 
-    vcodec: str = "libsvtav1"  # Video codec name. "auto" picks a hardware codec if available, else libsvtav1.
-    pix_fmt: str = "yuv420p"  # Pixel format (e.g. yuv420p).
-    g: int | None = 2  # GOP size (keyframe interval).
-    crf: int | float | None = 30  # Quality level. Lower means better quality and larger files.
-    preset: int | str | None = None  # Speed/quality preset. Accepted values are codec-specific.
-    fast_decode: int = 0  # Fast-decode tuning. Accepted values are codec-specific, 0 disables it.
+    Args:
+        vcodec (`str`, *optional*, defaults to `"libsvtav1"`): Video codec name. `"auto"` picks a hardware
+            codec if available, else `libsvtav1`.
+        pix_fmt (`str`, *optional*, defaults to `"yuv420p"`): Pixel format (e.g. `yuv420p`).
+        g (`int | None`, *optional*, defaults to 2): GOP size (keyframe interval).
+        crf (`int | float | None`, *optional*, defaults to 30): Quality level. Lower means better quality
+            and larger files.
+        preset (`int | str | None`, *optional*): Speed/quality preset. Accepted values are codec-specific.
+        fast_decode (`int`, *optional*, defaults to 0): Fast-decode tuning. Accepted values are
+            codec-specific; 0 disables it.
+        video_backend (`str`, *optional*, defaults to `"pyav"`): Encoding backend. Only `"pyav"` is
+            currently supported.
+        extra_options (`dict[str, Any]`, *optional*): Extra codec options merged last, e.g. `{"tune":
+            "film"}`.
+    """
+
+    vcodec: str = "libsvtav1"
+    pix_fmt: str = "yuv420p"
+    g: int | None = 2
+    crf: int | float | None = 30
+    preset: int | str | None = None
+    fast_decode: int = 0
     # TODO(CarolinePascal): add torchcodec support + find a way to unify the
     # two backends (encoding and decoding).
-    video_backend: str = "pyav"  # Encoding backend. Only "pyav" is currently supported.
-    # Extra codec options merged last, e.g. {"tune": "film"}.
+    video_backend: str = "pyav"
     extra_options: dict[str, Any] = field(default_factory=dict)
 
     # Source-data channel count this encoder is expected to handle. ``None``
@@ -104,6 +119,7 @@ class VideoEncoderConfig:
     _DEFAULT_CHANNELS: ClassVar[int | None] = None
 
     def __post_init__(self) -> None:
+        """Resolve `vcodec` (e.g. `"auto"`), apply the libsvtav1 default preset, and validate the config."""
         self.resolve_vcodec()
         # Empty-constructor ergonomics: ``VideoEncoderConfig()`` must "just work".
         if self.preset is None and self.vcodec == "libsvtav1":
@@ -112,9 +128,7 @@ class VideoEncoderConfig:
 
     @classmethod
     def _kwargs_from_video_info(cls, video_info: dict | None) -> dict[str, Any]:
-        """Parse the ``video.*`` keys of a feature ``info`` block into
-        constructor kwargs.
-        """
+        """Parse the ``video.*`` keys of a feature ``info`` block into constructor kwargs."""
         video_info = video_info or {}
         kwargs: dict[str, Any] = {}
 
@@ -147,6 +161,7 @@ class VideoEncoderConfig:
 
         Args:
             encoders: List of encoder names to detect. If a string, it is converted to a list.
+
         Returns:
             List of available encoder names. If the video backend is not "pyav", returns an empty list.
         """
@@ -211,6 +226,7 @@ class VideoEncoderConfig:
         opts: dict[str, Any] = {}
 
         def set_if(key: str, value: Any) -> None:
+            """Set `opts[key]` to `value` (stringified if `as_strings`), unless `value` is `None`."""
             if value is not None:
                 opts[key] = value if not as_strings else str(value)
 
@@ -302,9 +318,10 @@ class DepthEncoderConfig(VideoEncoderConfig):
 
     @classmethod
     def _kwargs_from_video_info(cls, video_info: dict | None) -> dict[str, Any]:
-        """Layer the depth-specific tuning (``depth_min`` / ``depth_max`` /
-        ``shift`` / ``use_log``) on top of the base parser. Missing keys
-        fall back to the class defaults.
+        """Layer the depth-specific tuning on top of the base parser.
+
+        Adds ``depth_min`` / ``depth_max`` / ``shift`` / ``use_log``. Missing keys fall back to the
+        class defaults.
         """
         kwargs = super()._kwargs_from_video_info(video_info)
         video_info = video_info or {}
@@ -328,8 +345,8 @@ def encoder_config_from_video_info(video_info: dict | None) -> VideoEncoderConfi
     otherwise.
 
     Args:
-        video_info: A feature's ``info`` dict as persisted in ``info.json``,
-            or ``None`` (treated as an empty dict).
+        video_info (`dict | None`): A feature's ``info`` dict as persisted in ``info.json``, or ``None``
+            (treated as an empty dict).
 
     Returns:
         A :class:`DepthEncoderConfig` for depth features, otherwise a
