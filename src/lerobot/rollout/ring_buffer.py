@@ -29,22 +29,20 @@ class RolloutRingBuffer:
     time (``max_frames``) and memory (``max_memory_bytes``).  When either
     limit is reached the oldest frames are evicted.
 
+    Args:
+        max_seconds (`float`, *optional*, defaults to 30.0):
+            Maximum duration of buffered telemetry.
+        max_memory_mb (`int`, *optional*, defaults to 2048):
+            Hard memory cap in MiB. Frames are evicted when the estimated total size exceeds
+            this.
+        fps (`float`, *optional*, defaults to 30.0):
+            Frames per second, used to convert `max_seconds` to a frame count.
+
     .. note::
        This class is **single-threaded**.  ``append``/``drain``/``clear``
        must all be called from the same thread (the rollout main loop).
        Concurrent access from a background thread will corrupt
        ``_current_bytes`` accounting.
-
-    Parameters
-    ----------
-    max_seconds:
-        Maximum duration of buffered telemetry.
-    max_memory_mb:
-        Hard memory cap in MiB.  Frames are evicted when the estimated
-        total size exceeds this.
-    fps:
-        Frames per second — used to convert ``max_seconds`` to a frame
-        count.
     """
 
     def __init__(self, max_seconds: float = 30.0, max_memory_mb: int = 2048, fps: float = 30.0) -> None:
@@ -82,6 +80,7 @@ class RolloutRingBuffer:
         self._current_bytes = 0
 
     def __len__(self) -> int:
+        """Number of frames currently buffered."""
         return len(self._buffer)
 
     @property

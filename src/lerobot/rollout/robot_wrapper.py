@@ -31,6 +31,9 @@ class ThreadSafeRobot:
 
     Read-only properties are proxied without the lock since they don't
     mutate hardware state.
+
+    Args:
+        robot (`Robot`): The connected robot instance to protect.
     """
 
     def __init__(self, robot: Robot) -> None:
@@ -40,10 +43,12 @@ class ThreadSafeRobot:
     # -- Lock-protected I/O --------------------------------------------------
 
     def get_observation(self) -> dict[str, Any]:
+        """See [`~robots.Robot.get_observation`]."""
         with self._lock:
             return self._robot.get_observation()
 
     def send_action(self, action: dict[str, Any] | Any) -> Any:
+        """See [`~robots.Robot.send_action`]."""
         with self._lock:
             return self._robot.send_action(action)
 
@@ -51,26 +56,32 @@ class ThreadSafeRobot:
 
     @property
     def observation_features(self) -> dict:
+        """See [`~robots.Robot.observation_features`]."""
         return self._robot.observation_features
 
     @property
     def action_features(self) -> dict:
+        """See [`~robots.Robot.action_features`]."""
         return self._robot.action_features
 
     @property
     def name(self) -> str:
+        """See [`~robots.Robot.name`]."""
         return self._robot.name
 
     @property
     def robot_type(self) -> str:
+        """See [`~robots.Robot.robot_type`]."""
         return self._robot.robot_type
 
     @property
     def cameras(self):
+        """The wrapped robot's cameras, or `{}` if it has none."""
         return getattr(self._robot, "cameras", {})
 
     @property
     def is_connected(self) -> bool:
+        """See [`~robots.Robot.is_connected`]."""
         return self._robot.is_connected
 
     @property

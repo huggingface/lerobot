@@ -52,6 +52,24 @@ class SyncInferenceEngine(InferenceEngine):
     ``get_action`` runs the full policy pipeline (pre/post-processor +
     ``select_action``) on the given observation frame and returns a
     CPU action tensor reordered to match the dataset action keys.
+
+    Args:
+        policy (`PreTrainedPolicy`):
+            The policy to run inference with.
+        preprocessor (`PolicyProcessorPipeline`):
+            Observation pre-processor pipeline.
+        postprocessor (`PolicyProcessorPipeline`):
+            Action post-processor pipeline.
+        dataset_features (`dict`):
+            Dataset feature spec, used to reorder the policy's action output.
+        ordered_action_keys (`list[str]`):
+            Action key ordering the returned tensor is mapped to.
+        task (`str`):
+            Task string passed through to the policy.
+        device (`str | None`):
+            Torch device to run inference on. Defaults to `"cpu"` when `None`.
+        robot_type (`str`):
+            Robot type string, used for `prepare_observation_for_inference`'s per-robot handling.
     """
 
     def __init__(

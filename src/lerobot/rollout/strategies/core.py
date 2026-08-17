@@ -43,6 +43,12 @@ class RolloutStrategy(abc.ABC):
     Each concrete strategy implements a self-contained control loop with
     its own recording/interaction semantics.  Strategies are mutually
     exclusive — only one runs per session.
+
+    Building an instance stores `config`; the inference engine is attached later via
+    `_init_engine`.
+
+    Args:
+        config (`RolloutStrategyConfig`): This strategy's configuration.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:

@@ -74,6 +74,7 @@ class EpisodicStrategy(RolloutStrategy):
     config: EpisodicStrategyConfig
 
     def __init__(self, config: EpisodicStrategyConfig) -> None:
+        """See [`~rollout.RolloutStrategy.__init__`]."""
         super().__init__(config)
         self._listener = None
         self._events: dict | None = None

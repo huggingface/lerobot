@@ -55,6 +55,7 @@ class HighlightStrategy(RolloutStrategy):
     config: HighlightStrategyConfig
 
     def __init__(self, config: HighlightStrategyConfig):
+        """See [`~rollout.RolloutStrategy.__init__`]."""
         super().__init__(config)
         self._ring: RolloutRingBuffer | None = None
         self._listener = None

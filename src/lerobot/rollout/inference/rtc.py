@@ -106,6 +106,38 @@ class RTCInferenceEngine(InferenceEngine):
     returns ``None`` if the queue is empty).  The main loop should call
     ``notify_observation`` every tick and ``pause``/``resume`` around
     human-intervention phases.
+
+    Building an instance starts nothing by itself — the background thread is started separately
+    via `start`.
+
+    Args:
+        policy (`PreTrainedPolicy`):
+            The RTC-capable policy to run inference with.
+        preprocessor (`PolicyProcessorPipeline`):
+            Observation pre-processor pipeline.
+        postprocessor (`PolicyProcessorPipeline`):
+            Action post-processor pipeline.
+        robot_wrapper (`ThreadSafeRobot`):
+            Thread-safe robot handle used to resolve `action_features` for relative-action
+            re-anchoring.
+        rtc_config (`RTCConfig`):
+            RTC configuration (execution horizon, prefix-attention schedule, etc.).
+        hw_features (`dict`):
+            Raw hardware observation feature spec used to rebuild dataset frames each tick.
+        task (`str`):
+            Task string passed through to the policy.
+        fps (`float`):
+            Control loop frequency, used to size the time-per-chunk estimate.
+        device (`str | None`):
+            Torch device to run inference on. Defaults to `"cpu"` when `None`.
+        use_torch_compile (`bool`, *optional*, defaults to `False`):
+            Whether to `torch.compile` the policy's action-prediction call.
+        compile_warmup_inferences (`int`, *optional*, defaults to 2):
+            Number of warmup inferences before `ready` reports `True`.
+        rtc_queue_threshold (`int`, *optional*, defaults to 30):
+            Action-queue size below which the background thread produces a new chunk.
+        shutdown_event (`Event | None`, *optional*):
+            Global shutdown event this engine sets on an unrecoverable background-thread error.
     """
 
     def __init__(
