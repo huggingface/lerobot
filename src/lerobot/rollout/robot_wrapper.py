@@ -31,14 +31,12 @@ class ThreadSafeRobot:
 
     Read-only properties are proxied without the lock since they don't
     mutate hardware state.
+
+    Args:
+        robot (`Robot`): The connected robot instance to protect.
     """
 
     def __init__(self, robot: Robot) -> None:
-        """Wrap `robot` behind a lock.
-
-        Args:
-            robot (`Robot`): The connected robot instance to protect.
-        """
         self._robot = robot
         self._lock = Lock()
 
