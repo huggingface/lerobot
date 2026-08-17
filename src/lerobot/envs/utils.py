@@ -68,8 +68,10 @@ def _convert_nested_dict(d):
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
+
     Args:
-        observation: Dictionary of observation batches from a Gym vector environment.
+        observations (`dict`): Dictionary of observation batches from a Gym vector environment.
+
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
@@ -150,6 +152,18 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
+    """Convert an `EnvConfig`'s `features` into channel-first policy-facing `PolicyFeature`s.
+
+    Args:
+        env_cfg (`EnvConfig`): Environment configuration providing `features` and `features_map`.
+
+    Returns:
+        dict[str, PolicyFeature]: Features keyed by their policy-facing name (via `features_map`),
+        with visual features converted to channel-first shape.
+
+    Raises:
+        ValueError: If a visual feature's shape does not have exactly 3 dimensions.
+    """
     # TODO(jadechoghari, imstevenpmwork): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
     policy_features = {}
@@ -208,6 +222,9 @@ class FreezeAfterEpisodeEnd(gym.Wrapper):
 
     `AutoresetMode.DISABLED` is not an alternative here — Gymnasium asserts that no
     terminated env is ever stepped in that mode, so the wrapper is never reached.
+
+    Args:
+        env (`gym.Env`): The environment to wrap.
     """
 
     def __init__(self, env: gym.Env):
@@ -215,6 +232,16 @@ class FreezeAfterEpisodeEnd(gym.Wrapper):
         self._frozen: tuple | None = None
 
     def reset(self, *, seed=None, options=None):
+        """Reset `env`, or replay the cached terminal transition if frozen and not starting a new rollout.
+
+        Args:
+            seed (`int | None`, *optional*): Random seed forwarded to the wrapped env.
+            options (`dict | None`, *optional*): Reset options. Must include `NEW_ROLLOUT_OPTION` to
+                thaw a frozen env.
+
+        Returns:
+            tuple: `(observation, info)`, matching the Gymnasium `reset` contract.
+        """
         if self._frozen is not None and not (options or {}).get(NEW_ROLLOUT_OPTION):
             # Gymnasium's autoreset for a sub-env the rollout has already finished with.
             # Replay the terminal observation instead of rebuilding the simulation.
@@ -224,6 +251,15 @@ class FreezeAfterEpisodeEnd(gym.Wrapper):
         return self.env.reset(seed=seed, options=options)
 
     def step(self, action):
+        """Step `env`, or replay the cached terminal transition (with reward zeroed) if frozen.
+
+        Args:
+            action (`Any`): Action forwarded to the wrapped env, when not frozen.
+
+        Returns:
+            tuple: `(observation, reward, terminated, truncated, info)`, matching the Gymnasium
+            `step` contract.
+        """
         if self._frozen is not None:
             return self._frozen
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -235,6 +271,7 @@ class FreezeAfterEpisodeEnd(gym.Wrapper):
 
     @property
     def is_frozen(self) -> bool:
+        """Whether this sub-env has cached a terminal transition and is replaying it."""
         return self._frozen is not None
 
 
@@ -255,6 +292,14 @@ class _LazyAsyncVectorEnv:
     are evaluated sequentially, only one task's workers need to be alive at a
     time. This wrapper stores the factory functions and creates the real
     AsyncVectorEnv on first reset()/step()/call(), keeping peak process count = n_envs.
+
+    Args:
+        env_fns (`list[Callable]`): Factory functions, one per sub-env.
+        observation_space (*optional*): Observation space. When any of `observation_space`,
+            `action_space`, or `metadata` is `None`, all three are inferred by building and
+            immediately closing one sub-env via `env_fns[0]`.
+        action_space (*optional*): Action space. See `observation_space`.
+        metadata (*optional*): Gym metadata dict. See `observation_space`.
     """
 
     def __init__(
@@ -291,31 +336,42 @@ class _LazyAsyncVectorEnv:
 
     @property
     def unwrapped(self):
+        """Return `self` (this wrapper has no further unwrapping)."""
         return self
 
     def reset(self, **kwargs):
+        """Create the underlying `AsyncVectorEnv` on first call, then reset it."""
         self._ensure()
         return self._env.reset(**kwargs)
 
     def step(self, actions):
+        """Create the underlying `AsyncVectorEnv` on first call, then step it."""
         self._ensure()
         return self._env.step(actions)
 
     def call(self, name, *args, **kwargs):
+        """Create the underlying `AsyncVectorEnv` on first call, then forward `call(name, ...)`."""
         self._ensure()
         return self._env.call(name, *args, **kwargs)
 
     def get_attr(self, name):
+        """Create the underlying `AsyncVectorEnv` on first call, then forward `get_attr(name)`."""
         self._ensure()
         return self._env.get_attr(name)
 
     def close(self) -> None:
+        """Close the underlying `AsyncVectorEnv`, if one was created."""
         if self._env is not None:
             self._env.close()
             self._env = None
 
 
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
+    """Warn once if `env`'s sub-envs are missing the `task`/`task_description` attributes.
+
+    Args:
+        env (`gym.vector.VectorEnv`): The vectorized environment to check.
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)
 
@@ -403,9 +459,9 @@ def _download_hub_file(
     trust_remote_code: bool,
     hub_cache_dir: str | None,
 ) -> tuple[str, str, str, str]:
-    """
-    Parse `cfg_str` (hub URL), enforce `trust_remote_code`, and return
-    (repo_id, file_path, local_file, revision).
+    """Parse `cfg_str` (hub URL) and enforce `trust_remote_code`.
+
+    Returns `(repo_id, file_path, local_file, revision)`.
     """
     if not trust_remote_code:
         raise RuntimeError(
@@ -434,9 +490,7 @@ def _download_hub_file(
 
 
 def _import_hub_module(local_file: str, repo_id: str) -> Any:
-    """
-    Import the downloaded file as a module and surface helpful import error messages.
-    """
+    """Import the downloaded file as a module and surface helpful import error messages."""
     module_name = f"hub_env_{repo_id.replace('/', '_')}"
     try:
         module = _load_module_from_path(local_file, module_name=module_name)
@@ -454,9 +508,7 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
 
 
 def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
-    """
-    Ensure module exposes make_env and call it.
-    """
+    """Ensure module exposes make_env and call it."""
     if not hasattr(module, "make_env"):
         raise AttributeError(
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
@@ -470,9 +522,8 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfi
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """
-    Normalize possible return types from hub `make_env` into the mapping:
-      { suite_name: { task_id: vector_env } }
+    """Normalize possible return types from hub `make_env` into a `{suite: {task_id: vec_env}}` mapping.
+
     Accepts:
       - dict (assumed already correct)
       - gym.vector.VectorEnv

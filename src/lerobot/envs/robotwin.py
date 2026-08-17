@@ -343,6 +343,27 @@ class RoboTwinEnv(gym.Env):
     ``setup_demo`` and ``take_action`` drive CuRobo's Newton trajectory
     optimizer, which calls ``cost.backward()`` internally. lerobot_eval wraps
     the rollout in ``torch.no_grad()``, so both call sites re-enable grad.
+
+    Args:
+        task_name (`str`): RoboTwin task name.
+        episode_index (`int`, *optional*, defaults to 0): Index tying this sub-env to a fixed
+            initial state (offset by `n_envs` on each reset).
+        n_envs (`int`, *optional*, defaults to 1): Number of parallel sub-envs; used to stride
+            `episode_index` between resets.
+        camera_names (`Sequence[str]`, *optional*, defaults to `('head_camera', 'left_camera', 'right_camera')`): RoboTwin
+            camera names to render.
+        observation_height (`int | None`, *optional*): Height of rendered camera observations.
+            `None` uses the D435 default.
+        observation_width (`int | None`, *optional*): Width of rendered camera observations.
+            `None` uses the D435 default.
+        episode_length (`int`, *optional*, defaults to 1200): Maximum steps per episode.
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+        action_mode (`str`, *optional*, defaults to `"joint"`): `"joint"` for 14-d joint-space
+            actions via `take_action`, or `"ee"` for 16-d end-effector-pose deltas (added onto
+            the episode's initial eef pose) executed via `take_action(.., "ee")` + IK.
+
+    Raises:
+        ValueError: If `action_mode` is not `"joint"` or `"ee"`.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 25}
@@ -463,6 +484,16 @@ class RoboTwinEnv(gym.Env):
         return np.asarray(pose, dtype=np.float64)
 
     def reset(self, seed: int | None = None, **kwargs) -> tuple[RobotObservation, dict]:
+        """Reset the episode, setting up a new SAPIEN demo scene.
+
+        Args:
+            seed (`int | None`, *optional*): Random seed for the episode. `None` uses
+                `episode_index`.
+            **kwargs: Unused; accepted for Gymnasium interface compatibility.
+
+        Returns:
+            tuple: `(observation, info)`, matching the Gymnasium `reset` contract.
+        """
         self._ensure_env()
         super().reset(seed=seed)
         assert self._env is not None  # set by _ensure_env() above
@@ -492,6 +523,18 @@ class RoboTwinEnv(gym.Env):
         return obs, {"is_success": False, "task": self.task_name}
 
     def step(self, action: np.ndarray) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
+        """Apply `action` and advance the simulation by one step.
+
+        Args:
+            action (`np.ndarray`): 1-D action array of shape `(action_dim,)`.
+
+        Returns:
+            tuple: `(observation, reward, terminated, truncated, info)`, matching the Gymnasium
+            `step` contract. Auto-resets on termination or truncation.
+
+        Raises:
+            ValueError: If `action` is not 1-D or has the wrong dimension.
+        """
         assert self._env is not None, "step() called before reset()"
         if action.ndim != 1 or action.shape[0] != self._action_dim:
             raise ValueError(f"Expected 1-D action of shape ({self._action_dim},), got {action.shape}")
@@ -531,6 +574,7 @@ class RoboTwinEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def render(self) -> np.ndarray:
+        """Return the head camera's frame (or the first available camera) from the current observation."""
         self._ensure_env()
         obs = self._get_obs()
         # Prefer head camera for rendering; fall back to first available.
@@ -539,6 +583,7 @@ class RoboTwinEnv(gym.Env):
         return next(iter(obs["pixels"].values()))
 
     def close(self) -> None:
+        """Close the underlying SAPIEN environment, if one was created."""
         if self._env is not None:
             if hasattr(self._env, "close_env"):
                 import contextlib
@@ -595,14 +640,18 @@ def create_robotwin_envs(
         ``n_envs`` parallel rollouts.
 
     Args:
-        task: Comma-separated list of task names (e.g. ``"beat_block_hammer"``
-            or ``"beat_block_hammer,click_bell"``).
-        n_envs: Number of parallel rollouts per task.
-        env_cls: Vector env constructor (e.g. ``gym.vector.AsyncVectorEnv``).
-        camera_names: Cameras to include in observations.
-        observation_height: Pixel height for all cameras.
-        observation_width: Pixel width for all cameras.
-        episode_length: Max steps before truncation.
+        task (`str`): Comma-separated list of task names (e.g. `"beat_block_hammer"` or
+            `"beat_block_hammer,click_bell"`).
+        n_envs (`int`): Number of parallel rollouts per task.
+        env_cls (`Callable[[Sequence[Callable[[], Any]]], Any] | None`, *optional*): Vector env
+            constructor (e.g. `gym.vector.AsyncVectorEnv`).
+        camera_names (`Sequence[str]`, *optional*, defaults to `('head_camera', 'left_camera', 'right_camera')`):
+            Cameras to include in observations.
+        observation_height (`int`, *optional*, defaults to 240): Pixel height for all cameras.
+        observation_width (`int`, *optional*, defaults to 320): Pixel width for all cameras.
+        episode_length (`int`, *optional*, defaults to 1200): Max steps before truncation.
+        action_mode (`str`, *optional*, defaults to `"joint"`): `"joint"` for 14-d joint-space
+            actions, or `"ee"` for 16-d end-effector-pose deltas.
     """
     if env_cls is None or not callable(env_cls):
         raise ValueError("env_cls must be callable (e.g. gym.vector.AsyncVectorEnv).")
