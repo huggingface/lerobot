@@ -85,18 +85,17 @@ class RobotClient:
     """Connects a robot to a remote `PolicyServer`: streams observations, receives action chunks.
 
     Runs two threads: one that sends observations and receives predicted action chunks, and one
-    that runs the robot control loop, consuming actions from the local queue.
+    that runs the robot control loop, consuming actions from the local queue. Initializing an
+    instance connects to `config.robot`.
+
+    Args:
+        config (`RobotClientConfig`): Client configuration (robot, policy, server address, fps).
     """
 
     prefix = "robot_client"
     logger = get_logger(prefix)
 
     def __init__(self, config: RobotClientConfig):
-        """Initialize the client and connect to `config.robot`.
-
-        Args:
-            config (`RobotClientConfig`): Client configuration (robot, policy, server address, fps).
-        """
         # Store configuration
         self.config = config
         self.robot = make_robot_from_config(config.robot)

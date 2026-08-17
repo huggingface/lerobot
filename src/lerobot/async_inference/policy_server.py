@@ -66,17 +66,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     """gRPC servicer that runs policy inference on behalf of a remote `RobotClient`.
 
     Receives observations, runs the configured policy, and streams back predicted action chunks.
+    Initializing an instance starts the server with no policy loaded; a client selects one via
+    `SendPolicyInstructions`.
+
+    Args:
+        config (`PolicyServerConfig`): Server configuration (host, port, fps, timeouts).
     """
 
     prefix = "policy_server"
     logger = get_logger(prefix)
 
     def __init__(self, config: PolicyServerConfig):
-        """Initialize the server with no policy loaded; a client selects one via `SendPolicyInstructions`.
-
-        Args:
-            config (`PolicyServerConfig`): Server configuration (host, port, fps, timeouts).
-        """
         self.config = config
         self.shutdown_event = threading.Event()
 
