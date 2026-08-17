@@ -34,16 +34,15 @@ class RunningQuantileStats:
     feature dimension and updated incrementally
     as new batches are observed. Quantiles are estimated using histograms,
     which adapt dynamically if the observed data range expands.
+
+    Args:
+        quantile_list (`list[float] | None`, *optional*): Quantiles to track (e.g. `0.01` for the 1st
+            percentile). `None` uses `DEFAULT_QUANTILES` (1st, 10th, 50th, 90th, 99th percentiles).
+        num_quantile_bins (`int`, *optional*, defaults to 5000): Number of histogram bins used to
+            estimate quantiles.
     """
 
     def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
-        """Initialize empty running statistics.
-
-        Args:
-            quantile_list: Quantiles to track (e.g. `0.01` for the 1st percentile). Defaults to
-                `DEFAULT_QUANTILES` (1st, 10th, 50th, 90th, 99th percentiles).
-            num_quantile_bins: Number of histogram bins used to estimate quantiles.
-        """
         self._count = 0
         self._mean = None
         self._mean_of_squares = None

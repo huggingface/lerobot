@@ -48,8 +48,155 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     Backed by parquet files (`data/`) for tabular observation/action/reward data, optional video files
     (`videos/`) for image observations, and a `meta/` directory holding `info.json` (shapes, keys, fps),
-    `stats.json` (normalization statistics), and per-episode metadata. See `__init__`'s docstring for the
-    on-disk layout, and `create()` for building a new (empty) dataset from scratch.
+    `stats.json` (normalization statistics), and per-episode metadata. See `create()` for building a new
+    (empty) dataset from scratch.
+
+    2 modes are available for instantiating this class, depending on 2 different use cases.
+
+    1. Your dataset already exists:
+        - On your local disk in the 'root' folder. This is typically the case when you recorded your
+          dataset locally and you may or may not have pushed it to the hub yet. Instantiating this class
+          with 'root' will load your dataset directly from disk. This can happen while you're offline (no
+          internet connection).
+
+        - On the Hugging Face Hub at the address https://huggingface.co/datasets/{repo_id} and not on
+          your local disk in the 'root' folder. Instantiating this class with this 'repo_id' will download
+          the dataset from that address and load it, pending your dataset is compliant with
+          codebase_version v3.0. If your dataset has been created before this new format, you will be
+          prompted to convert it using our conversion script from v2.1 to v3.0, which you can find at
+          lerobot/scripts/convert_dataset_v21_to_v30.py.
+
+
+    2. Your dataset doesn't already exists (either on local disk or on the Hub): you can create an empty
+       LeRobotDataset with the 'create' classmethod. This can be used for recording a dataset or port an
+       existing dataset to the LeRobotDataset format.
+
+
+    In terms of files, LeRobotDataset encapsulates 3 main things:
+        - metadata:
+            - info contains various information about the dataset like shapes, keys, fps etc.
+            - stats stores the dataset statistics of the different modalities for normalization
+            - tasks contains the prompts for each task of the dataset, which can be used for
+              task-conditioned training.
+        - data (backed by datasets.Dataset), which reads values from parquet files.
+        - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
+
+    A typical LeRobotDataset looks like this from its root path:
+    .
+    ├── data
+    │   ├── chunk-000
+    │   │   ├── file-000.parquet
+    │   │   ├── file-001.parquet
+    │   │   └── ...
+    │   ├── chunk-001
+    │   │   ├── file-000.parquet
+    │   │   ├── file-001.parquet
+    │   │   └── ...
+    │   └── ...
+    ├── meta
+    │   ├── episodes
+    │   │   ├── chunk-000
+    │   │   │   ├── file-000.parquet
+    │   │   │   ├── file-001.parquet
+    │   │   │   └── ...
+    │   │   ├── chunk-001
+    │   │   │   └── ...
+    │   │   └── ...
+    │   ├── info.json
+    │   ├── stats.json
+    │   └── tasks.parquet
+    └── videos
+        ├── observation.images.laptop
+        │   ├── chunk-000
+        │   │   ├── file-000.mp4
+        │   │   ├── file-001.mp4
+        │   │   └── ...
+        │   ├── chunk-001
+        │   │   └── ...
+        │   └── ...
+        ├── observation.images.phone
+        │   ├── chunk-000
+        │   │   ├── file-000.mp4
+        │   │   ├── file-001.mp4
+        │   │   └── ...
+        │   ├── chunk-001
+        │   │   └── ...
+        │   └── ...
+        └── ...
+
+    Note that this file-based structure is designed to be as versatile as possible. Multiple episodes are
+    consolidated into chunked files which improves storage efficiency and loading performance. The
+    structure of the dataset is entirely described in the info.json file, which can be easily downloaded
+    or viewed directly on the hub before downloading any actual data. The type of files used are very
+    simple and do not need complex tools to be read, it only uses .parquet, .json and .mp4 files (and .md
+    for the README).
+
+    Args:
+        repo_id (`str`): This is the repo id that will be used to fetch the dataset.
+        root (`Path | None`, *optional*): Local directory where the dataset will be read from or
+            downloaded into. If set, all dataset files are materialized directly under this path. If not
+            set, existing local datasets are still looked up under `$HF_LEROBOT_HOME/{repo_id}`, but Hub
+            downloads use a revision-safe snapshot cache under `$HF_LEROBOT_HOME/hub`.
+        episodes (`list[int] | None`, *optional*): If specified, this will only load episodes specified
+            by their episode_index in this list.
+        episode_filter (`Callable[[dict], bool] | None`, *optional*): Predicate over per-episode
+            metadata rows used to select episodes. Evaluated against `meta/` without `stats` keys (e.g.
+            `task_index`, `episode_index`, `length`, `from_timestamp`, `to_timestamp`). Intersected with
+            `episodes` when both are set. Example: `lambda ep: ep["length"] >= 100`.
+        image_transforms (`Callable | None`, *optional*): Transform applied to visual modalities inside
+            `__getitem__` after image decoding / tensor conversion. This works for both image-backed and
+            video-backed observations and can later be updated with `set_image_transforms()` or cleared
+            with `clear_image_transforms()`.
+        delta_timestamps (`dict[str, list[float]] | None`, *optional*): Per-feature timestamp offsets
+            (in seconds, relative to a frame's own timestamp) of additional frames to return alongside
+            it.
+        tolerance_s (`float`, *optional*, defaults to 0.0001): Tolerance in seconds used to ensure data
+            timestamps are actually in sync with the fps value. It is used at the init of the dataset to
+            make sure that each timestamps is separated to the next by 1/fps +/- tolerance_s. This also
+            applies to frames decoded from video files. It is also used to check that `delta_timestamps`
+            (when provided) are multiples of 1/fps.
+        revision (`str | None`, *optional*): An optional Git revision id which can be a branch name, a
+            tag, or a commit hash. `None` uses the current codebase version tag.
+        force_cache_sync (`bool`, *optional*, defaults to `False`): Flag to sync and refresh local files
+            first. If `True` and files are already present in the local cache, this will be faster.
+            However, files loaded might not be in sync with the version on the hub, especially if you
+            specified 'revision'.
+        download_videos (`bool`, *optional*, defaults to `True`): Flag to download the videos. Note that
+            when set to `True` but the video files are already present on local disk, they won't be
+            downloaded again.
+        video_backend (`str | None`, *optional*): Video backend to use for decoding videos. `None`
+            defaults to torchcodec when available on the platform; otherwise, defaults to 'pyav'. You
+            can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or
+            'video_reader' which is another decoder of Torchvision.
+        return_uint8 (`bool`, *optional*, defaults to `False`): For RGB videos, whether to return raw
+            uint8 frames instead of the default float32 frames normalized to [0, 1].
+        depth_output_unit (`str`, *optional*, defaults to `"mm"`): Physical unit depth maps are
+            dequantized to at load time: "mm" (millimeters) or "m" (metres). Has no effect on datasets
+            without depth cameras.
+        batch_encoding_size (`int`, *optional*, defaults to 1): Number of episodes to accumulate before
+            batch encoding videos. Set to 1 for immediate encoding (default), or higher for batched
+            encoding.
+        rgb_encoder (`RGBEncoderConfig | None`, *optional*): Video encoder settings for cameras (codec,
+            quality, etc.). `None` uses [`~configs.video.rgb_encoder_defaults`] by the writer.
+        depth_encoder (`DepthEncoderConfig | None`, *optional*): Video encoder settings for depth
+            cameras (codec, quality, etc.). `None` uses [`~configs.video.depth_encoder_defaults`] by the
+            writer.
+        encoder_threads (`int | None`, *optional*): Number of encoder threads (global). `None` lets the
+            codec decide.
+        streaming_encoding (`bool`, *optional*, defaults to `False`): If `True`, encode video frames in
+            real-time during capture instead of writing PNG images first. This makes save_episode()
+            near-instant.
+        encoder_queue_maxsize (`int`, *optional*, defaults to 30): Maximum number of frames to buffer
+            per camera when using streaming encoding (~1s at 30fps).
+        token (`str | bool | None`, *optional*): Authentication token used while downloading this
+            dataset from the Hub. Pass a string token, `True` to require the locally stored token,
+            `False` to disable authentication, or `None` to use the Hugging Face Hub default. The token
+            is not retained on the dataset instance after initialization.
+
+    Note:
+        Write-mode parameters (`streaming_encoding`, `batch_encoding_size`) passed to `__init__` are
+        deprecated. Use [`~datasets.LeRobotDataset.create`] for new datasets or
+        [`~datasets.LeRobotDataset.resume`] to append to existing ones.
     """
 
     def __init__(
@@ -76,154 +223,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         *,
         token: str | bool | None = None,
     ):
-        """2 modes are available for instantiating this class, depending on 2 different use cases.
-
-        1. Your dataset already exists:
-            - On your local disk in the 'root' folder. This is typically the case when you recorded your
-              dataset locally and you may or may not have pushed it to the hub yet. Instantiating this class
-              with 'root' will load your dataset directly from disk. This can happen while you're offline (no
-              internet connection).
-
-            - On the Hugging Face Hub at the address https://huggingface.co/datasets/{repo_id} and not on
-              your local disk in the 'root' folder. Instantiating this class with this 'repo_id' will download
-              the dataset from that address and load it, pending your dataset is compliant with
-              codebase_version v3.0. If your dataset has been created before this new format, you will be
-              prompted to convert it using our conversion script from v2.1 to v3.0, which you can find at
-              lerobot/scripts/convert_dataset_v21_to_v30.py.
-
-
-        2. Your dataset doesn't already exists (either on local disk or on the Hub): you can create an empty
-           LeRobotDataset with the 'create' classmethod. This can be used for recording a dataset or port an
-           existing dataset to the LeRobotDataset format.
-
-
-        In terms of files, LeRobotDataset encapsulates 3 main things:
-            - metadata:
-                - info contains various information about the dataset like shapes, keys, fps etc.
-                - stats stores the dataset statistics of the different modalities for normalization
-                - tasks contains the prompts for each task of the dataset, which can be used for
-                  task-conditioned training.
-            - data (backed by datasets.Dataset), which reads values from parquet files.
-            - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
-
-        A typical LeRobotDataset looks like this from its root path:
-        .
-        ├── data
-        │   ├── chunk-000
-        │   │   ├── file-000.parquet
-        │   │   ├── file-001.parquet
-        │   │   └── ...
-        │   ├── chunk-001
-        │   │   ├── file-000.parquet
-        │   │   ├── file-001.parquet
-        │   │   └── ...
-        │   └── ...
-        ├── meta
-        │   ├── episodes
-        │   │   ├── chunk-000
-        │   │   │   ├── file-000.parquet
-        │   │   │   ├── file-001.parquet
-        │   │   │   └── ...
-        │   │   ├── chunk-001
-        │   │   │   └── ...
-        │   │   └── ...
-        │   ├── info.json
-        │   ├── stats.json
-        │   └── tasks.parquet
-        └── videos
-            ├── observation.images.laptop
-            │   ├── chunk-000
-            │   │   ├── file-000.mp4
-            │   │   ├── file-001.mp4
-            │   │   └── ...
-            │   ├── chunk-001
-            │   │   └── ...
-            │   └── ...
-            ├── observation.images.phone
-            │   ├── chunk-000
-            │   │   ├── file-000.mp4
-            │   │   ├── file-001.mp4
-            │   │   └── ...
-            │   ├── chunk-001
-            │   │   └── ...
-            │   └── ...
-            └── ...
-
-        Note that this file-based structure is designed to be as versatile as possible. Multiple episodes are
-        consolidated into chunked files which improves storage efficiency and loading performance. The
-        structure of the dataset is entirely described in the info.json file, which can be easily downloaded
-        or viewed directly on the hub before downloading any actual data. The type of files used are very
-        simple and do not need complex tools to be read, it only uses .parquet, .json and .mp4 files (and .md
-        for the README).
-
-        Args:
-            repo_id (str): This is the repo id that will be used to fetch the dataset.
-            root (Path | None, optional): Local directory where the dataset will be read from or downloaded
-                into. If set, all dataset files are materialized directly under this path. If not set,
-                existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
-                downloads use a revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
-            episodes (list[int] | None, optional): If specified, this will only load episodes specified by
-                their episode_index in this list. Defaults to None.
-            episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
-                metadata rows used to select episodes. Evaluated against ``meta/`` without ``stats`` keys
-                (e.g.``task_index``, ``episode_index``, ``length``, ``from_timestamp``, ``to_timestamp``).
-                Intersected with ``episodes`` when both are set. Example: ``lambda ep: ep["length"] >= 100``.
-                Defaults to None.
-            image_transforms (Callable | None, optional):
-                Transform applied to visual modalities inside `__getitem__` after image decoding / tensor
-                conversion. This works for both image-backed and video-backed observations and can later be
-                updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
-                Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): Per-feature timestamp offsets (in
-                seconds, relative to a frame's own timestamp) of additional frames to return alongside it.
-                Defaults to None.
-            tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
-                sync with the fps value. It is used at the init of the dataset to make sure that each
-                timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
-                decoded from video files. It is also used to check that `delta_timestamps` (when provided) are
-                multiples of 1/fps. Defaults to 1e-4.
-            revision (str, optional): An optional Git revision id which can be a branch name, a tag, or a
-                commit hash. Defaults to current codebase version tag.
-            force_cache_sync (bool, optional): Flag to sync and refresh local files first. If True and files
-                are already present in the local cache, this will be faster. However, files loaded might not
-                be in sync with the version on the hub, especially if you specified 'revision'. Defaults to
-                False.
-            download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
-                video files are already present on local disk, they won't be downloaded again. Defaults to
-                True.
-            video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
-                You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            return_uint8 (bool, optional): For RGB videos, whether to return raw uint8 frames instead of
-                the default float32 frames normalized to [0, 1]. Defaults to False.
-            depth_output_unit (str, optional): Physical unit depth maps are dequantized to at load time:
-                "mm" (millimeters) or "m" (metres). Has no effect on datasets without depth cameras.
-                Defaults to "mm".
-            batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
-                Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            rgb_encoder (RGBEncoderConfig | None, optional): Video encoder settings for cameras
-                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults`
-                is used by the writer.
-            depth_encoder (DepthEncoderConfig | None, optional): Video encoder settings for depth cameras
-                (codec, quality, etc.). When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults`
-                is used by the writer.
-            encoder_threads (int | None, optional): Number of encoder threads (global). ``None`` lets the
-                codec decide.
-            streaming_encoding (bool, optional): If True, encode video frames in real-time during capture
-                instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
-            encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
-                streaming encoding. Defaults to 30 (~1s at 30fps).
-            token: Authentication token used while downloading this dataset
-                from the Hub. Pass a string token, ``True`` to require the
-                locally stored token, ``False`` to disable authentication, or
-                ``None`` to use the Hugging Face Hub default. The token is not
-                retained on the dataset instance after initialization.
-
-        Note:
-            Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
-            ``__init__`` are deprecated. Use :meth:`create` for new datasets or :meth:`resume`
-            to append to existing ones.
-        """
         super().__init__()
         self.repo_id = repo_id
         self._requested_root = Path(root) if root else None

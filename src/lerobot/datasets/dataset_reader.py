@@ -47,6 +47,26 @@ class DatasetReader:
     """Encapsulates read-side state and methods for LeRobotDataset.
 
     Owns: hf_dataset, _absolute_to_relative_idx, delta_indices.
+
+    The HF dataset is not loaded by the constructor — call [`~datasets.DatasetReader.try_load`] or
+    [`~datasets.DatasetReader.load_and_activate`] afterward.
+
+    Args:
+        meta (`LeRobotDatasetMetadata`): Dataset metadata instance.
+        root (`Path`): Local dataset root directory.
+        episodes (`list[int] | None`): List of episode indices to select. `None` means all episodes.
+        tolerance_s (`float`): Timestamp synchronization tolerance in seconds.
+        video_backend (`str`): Video decoding backend identifier.
+        delta_timestamps (`dict[str, list[float]] | None`): Dict mapping feature keys to lists of
+            relative timestamp offsets for temporal context windows.
+        image_transforms (`Callable | None`): torchvision v2 transform applied to visual features.
+        return_uint8 (`bool`, *optional*, defaults to `False`): If `True`, return RGB video frames as
+            raw uint8 tensors instead of normalized float32.
+        depth_output_unit (`str`, *optional*, defaults to `"mm"`): Physical unit depth maps are
+            dequantized to (`"m"` or `"mm"`).
+
+    Raises:
+        TypeError: If `image_transforms` isn't callable or `None`.
     """
 
     def __init__(
@@ -61,27 +81,6 @@ class DatasetReader:
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
     ):
-        """Initialize the reader with metadata, filtering, and transform config.
-
-        The HF dataset is not loaded here — call :meth:`try_load` or
-        :meth:`load_and_activate` afterward.
-
-        Args:
-            meta: Dataset metadata instance.
-            root: Local dataset root directory.
-            episodes: Optional list of episode indices to select. ``None``
-                means all episodes.
-            tolerance_s: Timestamp synchronization tolerance in seconds.
-            video_backend: Video decoding backend identifier.
-            delta_timestamps: Optional dict mapping feature keys to lists of
-                relative timestamp offsets for temporal context windows.
-            image_transforms: Optional torchvision v2 transform applied to
-                visual features.
-            return_uint8: If True, return RGB video frames as raw uint8 tensors
-                instead of normalized float32.
-            depth_output_unit: Physical unit depth maps are dequantized to
-                (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
-        """
         self._meta = meta
         self.root = root
         self.episodes = resolve_episode_indices(episodes, meta.total_episodes)

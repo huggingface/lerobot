@@ -201,18 +201,18 @@ class AsyncImageWriter:
     The optimal number of processes and threads depends on your computer capabilities.
     We advise to use 4 threads per camera with 0 processes. If the fps is not stable, try to increase or lower
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
+
+    Args:
+        num_processes (`int`, *optional*, defaults to 0): Number of worker subprocesses. `0` uses
+            threads only (in this process).
+        num_threads (`int`, *optional*, defaults to 1): Number of writer threads per process (or in
+            this process, if `num_processes=0`).
+
+    Raises:
+        ValueError: If both `num_threads` and `num_processes` are non-positive.
     """
 
     def __init__(self, num_processes: int = 0, num_threads: int = 1):
-        """Start the thread or process pool.
-
-        Args:
-            num_processes: Number of worker subprocesses. `0` uses threads only (in this process).
-            num_threads: Number of writer threads per process (or in this process, if `num_processes=0`).
-
-        Raises:
-            ValueError: If both `num_threads` and `num_processes` are non-positive.
-        """
         self.num_processes = num_processes
         self.num_threads = num_threads
         self.queue = None

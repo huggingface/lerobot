@@ -63,9 +63,34 @@ CODEBASE_VERSION = "v3.0"
 class LeRobotDatasetMetadata:
     """Metadata container for a LeRobot dataset.
 
-    Manages the ``info.json``, ``stats.json``, ``tasks.parquet``, and
-    ``episodes/`` parquet files that describe a dataset's structure, content,
+    Manages the `info.json`, `stats.json`, `tasks.parquet`, and
+    `episodes/` parquet files that describe a dataset's structure, content,
     and statistics.
+
+    Loading attempts to read metadata from local disk. If files are missing or `force_cache_sync` is
+    `True`, downloads the `meta/` directory from the Hub.
+
+    Args:
+        repo_id (`str`): Repository identifier (e.g. `"lerobot/aloha_sim"`).
+        root (`str | Path | None`, *optional*): Local directory for the dataset. When provided, Hub
+            downloads are materialized directly into this directory. When omitted, existing local
+            datasets are still looked up under `$HF_LEROBOT_HOME/{repo_id}`, but Hub downloads use a
+            revision-safe snapshot cache under `$HF_LEROBOT_HOME/hub`.
+        revision (`str | None`, *optional*): Git revision (branch, tag, or commit hash). `None` uses
+            the current codebase version.
+        force_cache_sync (`bool`, *optional*, defaults to `False`): If `True`, re-download metadata
+            from the Hub even when local files exist.
+        metadata_buffer_size (`int`, *optional*, defaults to 10): Number of episode metadata records
+            to buffer in memory before flushing to parquet.
+        repo_type (`Literal["dataset", "bucket"]`, *optional*, defaults to `"dataset"`): Repository
+            type: `"dataset"` (default) or `"bucket"` for an HF Storage Bucket streamed over
+            `hf://buckets/`.
+        token (`str | bool | None`, *optional*): Authentication token used for Hub requests. Pass a
+            string token, `True` to require the locally stored token, `False` to disable
+            authentication, or `None` to use the Hugging Face Hub default.
+
+    Raises:
+        ValueError: If `repo_type` isn't `"dataset"` or `"bucket"`.
     """
 
     def __init__(
@@ -79,33 +104,6 @@ class LeRobotDatasetMetadata:
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
     ):
-        """Load or download metadata for an existing LeRobot dataset.
-
-        Attempts to load metadata from local disk. If files are missing or
-        ``force_cache_sync`` is ``True``, downloads the ``meta/`` directory from
-        the Hub.
-
-        Args:
-            repo_id: Repository identifier (e.g. ``'lerobot/aloha_sim'``).
-            root: Local directory for the dataset. When provided, Hub downloads
-                are materialized directly into this directory. When omitted,
-                existing local datasets are still looked up under
-                ``$HF_LEROBOT_HOME/{repo_id}``, but Hub downloads use a
-                revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
-            revision: Git revision (branch, tag, or commit hash). Defaults to
-                the current codebase version.
-            force_cache_sync: If ``True``, re-download metadata from the Hub
-                even when local files exist.
-            metadata_buffer_size: Number of episode metadata records to buffer
-                in memory before flushing to parquet.
-            repo_type: Repository type: "dataset" (default) or "bucket" for an
-                HF Storage Bucket streamed over hf://buckets/.
-            token: Authentication token used for Hub requests. Pass a string
-                token, ``True`` to require the locally stored token, ``False``
-                to disable authentication, or ``None`` to use the Hugging Face
-                Hub default.
-        """
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
 

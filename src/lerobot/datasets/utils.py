@@ -70,14 +70,15 @@ class CompatibilityError(Exception):
 
 
 class BackwardCompatibilityError(CompatibilityError):
-    """Raised when a dataset was saved with an older, unsupported `codebase_version`."""
+    """Raised when a dataset was saved with an older, unsupported `codebase_version`.
+
+    Building the message points the user at the v2.1-to-v3.0 conversion script.
+
+    Raises:
+        NotImplementedError: If `version` isn't the one supported legacy version (2.1).
+    """
 
     def __init__(self, repo_id: str, version: packaging.version.Version):
-        """Build the error message pointing the user at the v2.1-to-v3.0 conversion script.
-
-        Raises:
-            NotImplementedError: If `version` isn't the one supported legacy version (2.1).
-        """
         if version.major == 2 and version.minor == 1:
             message = V30_MESSAGE.format(repo_id=repo_id, version=version)
         else:
@@ -91,7 +92,6 @@ class ForwardCompatibilityError(CompatibilityError):
     """Raised when a dataset was saved with a newer `codebase_version` than this install supports."""
 
     def __init__(self, repo_id: str, version: packaging.version.Version):
-        """Build the error message pointing the user at upgrading their `lerobot` install."""
         message = FUTURE_MESSAGE.format(repo_id=repo_id, version=version)
         super().__init__(message)
 

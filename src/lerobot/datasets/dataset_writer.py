@@ -103,6 +103,23 @@ class DatasetWriter:
 
     Owns: episode_buffer, image_writer, _pq_writer (ParquetWriter), _latest_episode,
     _current_file_start_frame, _streaming_encoder, _episodes_since_last_encoding, _recorded_frames.
+
+    Args:
+        meta (`LeRobotDatasetMetadata`): Dataset metadata instance (used for feature schema, chunk
+            settings, and episode persistence).
+        root (`Path`): Local dataset root directory.
+        rgb_encoder (`RGBEncoderConfig | None`): Video encoder settings applied to RGB cameras. `None`
+            uses [`~configs.video.rgb_encoder_defaults`].
+        depth_encoder (`DepthEncoderConfig | None`): Video encoder settings applied to depth cameras,
+            including the quantization parameters. `None` uses
+            [`~configs.video.depth_encoder_defaults`].
+        encoder_threads (`int | None`): Number of encoder threads (global). `None` lets the codec
+            decide.
+        batch_encoding_size (`int`): Number of episodes to accumulate before batch-encoding videos.
+        streaming_encoder (`StreamingVideoEncoder | None`, *optional*): Pre-built streaming encoder
+            for real-time encoding. `None` disables streaming mode.
+        initial_frames (`int`, *optional*, defaults to 0): Starting frame count (non-zero when
+            resuming).
     """
 
     def __init__(
@@ -116,25 +133,6 @@ class DatasetWriter:
         streaming_encoder: StreamingVideoEncoder | None = None,
         initial_frames: int = 0,
     ):
-        """Initialize the writer with metadata, codec, and encoder config.
-
-        Args:
-            meta: Dataset metadata instance (used for feature schema, chunk
-                settings, and episode persistence).
-            root: Local dataset root directory.
-            rgb_encoder: Video encoder settings applied to RGB cameras. When
-                ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
-            depth_encoder: Video encoder settings applied to depth cameras, including
-                the quantization parameters. When ``None``,
-                :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
-            encoder_threads: Number of encoder threads (global). ``None``
-                lets the codec decide.
-            batch_encoding_size: Number of episodes to accumulate before
-                batch-encoding videos.
-            streaming_encoder: Optional pre-built :class:`StreamingVideoEncoder`
-                for real-time encoding. ``None`` disables streaming mode.
-            initial_frames: Starting frame count (non-zero when resuming).
-        """
         self._meta = meta
         self._root = root
         self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()

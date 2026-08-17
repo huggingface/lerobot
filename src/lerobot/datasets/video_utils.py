@@ -270,6 +270,9 @@ class VideoDecoderCache:
             number of decoders to retain. `None` disables eviction and restores legacy unbounded
             behaviour. The sentinel default defers to the value of `LEROBOT_VIDEO_DECODER_CACHE_SIZE`
             if set, otherwise `DEFAULT_DECODER_CACHE_SIZE`.
+
+    Raises:
+        ValueError: If `max_size` is neither `None` nor a positive integer.
     """
 
     class _UnsetSentinel:
@@ -286,11 +289,6 @@ class VideoDecoderCache:
     _SENTINEL: ClassVar[object] = _UnsetSentinel()
 
     def __init__(self, max_size: int | None | object = _SENTINEL):
-        """Create the cache. See the class docstring for `max_size`.
-
-        Raises:
-            ValueError: If `max_size` is neither `None` nor a positive integer.
-        """
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:

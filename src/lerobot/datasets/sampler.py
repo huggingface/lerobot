@@ -42,6 +42,28 @@ class EpisodeAwareSampler:
     iterations would skip or repeat epochs. The training loop drives it purely through `__iter__`
     (via `cycle`); `set_epoch` / `load_state_dict` are used only to (re)position before iteration
     starts (e.g. on resume or in tests).
+
+    Constructing an instance builds the sampler from per-episode `[from, to)` frame-index boundaries.
+
+    Args:
+        dataset_from_indices (`list[int]`): Start index of each episode in the dataset.
+        dataset_to_indices (`list[int]`): End index of each episode in the dataset.
+        episode_indices_to_use (`list | None`, *optional*): Episode indices to use; `None` means all.
+        drop_n_first_frames (`int`, *optional*, defaults to 0): Frames to drop from the start of each
+            episode.
+        drop_n_last_frames (`int`, *optional*, defaults to 0): Frames to drop from the end of each
+            episode.
+        shuffle (`bool`, *optional*, defaults to `False`): Whether to shuffle the indices.
+        seed (`int`, *optional*, defaults to 0): Seed the permutation is derived from (together with
+            the epoch).
+        absolute_to_relative_idx (`dict[int, int] | None`, *optional*): Mapping from absolute dataset
+            frame index to the relative index actually yielded (e.g. when the sampler is used over a
+            filtered subset).
+
+    Raises:
+        ValueError: If `drop_n_first_frames`/`drop_n_last_frames` is negative, if
+            `dataset_from_indices`/`dataset_to_indices` have different lengths, or if no episode has
+            any frames remaining after dropping.
     """
 
     def __init__(
@@ -55,24 +77,6 @@ class EpisodeAwareSampler:
         seed: int = 0,
         absolute_to_relative_idx: dict[int, int] | None = None,
     ):
-        """Build the sampler from per-episode `[from, to)` frame-index boundaries.
-
-        Args:
-            dataset_from_indices: Start index of each episode in the dataset.
-            dataset_to_indices: End index of each episode in the dataset.
-            episode_indices_to_use: Episode indices to use; None means all.
-            drop_n_first_frames: Frames to drop from the start of each episode.
-            drop_n_last_frames: Frames to drop from the end of each episode.
-            shuffle: Whether to shuffle the indices.
-            seed: Seed the permutation is derived from (together with the epoch).
-            absolute_to_relative_idx: Optional mapping from absolute dataset frame index to the relative
-                index actually yielded (e.g. when the sampler is used over a filtered subset).
-
-        Raises:
-            ValueError: If `drop_n_first_frames`/`drop_n_last_frames` is negative, if
-                `dataset_from_indices`/`dataset_to_indices` have different lengths, or if no episode has
-                any frames remaining after dropping.
-        """
         if drop_n_first_frames < 0:
             raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
         if drop_n_last_frames < 0:

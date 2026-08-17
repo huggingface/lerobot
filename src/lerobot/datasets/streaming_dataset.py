@@ -66,6 +66,16 @@ class Backtrackable[T]:
     to access previous and future items
     but can't load the entire dataset into memory.
 
+    Args:
+        iterable (`Iterable[T]`): The iterable to wrap.
+        history (`int`, *optional*, defaults to 1): How many past items `prev()`/`peek_back()` can
+            reach. Must be `>= 1`.
+        lookahead (`int`, *optional*, defaults to 0): How many future items `peek_ahead()` can reach.
+            Must be `> 0`.
+
+    Raises:
+        ValueError: If `history < 1` or `lookahead <= 0`.
+
     Example:
     -------
     ```python
@@ -93,16 +103,6 @@ class Backtrackable[T]:
     __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
 
     def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
-        """Wrap `iterable`, buffering up to `history` past items and `lookahead` future items.
-
-        Args:
-            iterable: The iterable to wrap.
-            history: How many past items `prev()`/`peek_back()` can reach. Must be `>= 1`.
-            lookahead: How many future items `peek_ahead()` can reach. Must be `> 0`.
-
-        Raises:
-            ValueError: If `history < 1` or `lookahead <= 0`.
-        """
         if history < 1:
             raise ValueError("history must be >= 1")
         if lookahead <= 0:

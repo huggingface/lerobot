@@ -36,6 +36,25 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
     The underlying `LeRobotDataset`s are effectively concatenated, and this class adopts much of the API
     structure of `LeRobotDataset`.
+
+    Constructing an instance builds a `LeRobotDataset` for each `repo_id` and concatenates them.
+
+    Args:
+        repo_ids (`list[str]`): The Hub repo IDs (or local dataset names, if `root` is set) to load.
+        root (`str | Path | None`, *optional*): Root directory containing the underlying datasets.
+            `None` uses `$HF_LEROBOT_HOME`.
+        episodes (`dict | None`, *optional*): Mapping from `repo_id` to the episode indices to load
+            from it.
+        image_transforms (`Callable | None`, *optional*): Transform applied to visual observations in
+            each underlying dataset.
+        delta_timestamps (`dict[str, list[float]] | None`, *optional*): Passed through to each
+            underlying `LeRobotDataset`.
+        tolerances_s (`dict | None`, *optional*): Mapping from `repo_id` to its timestamp tolerance, in
+            seconds. `None` uses `1e-4` for every dataset.
+        download_videos (`bool`, *optional*, defaults to `True`): Whether to download video files for
+            each underlying dataset.
+        video_backend (`str | None`, *optional*): The video decoding backend to use.
+        token (`str | bool | None`, *optional*): Hugging Face Hub authentication token.
     """
 
     def __init__(
@@ -51,20 +70,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         *,
         token: str | bool | None = None,
     ):
-        """Construct a `LeRobotDataset` for each `repo_id` and concatenate them.
-
-        Args:
-            repo_ids: The Hub repo IDs (or local dataset names, if `root` is set) to load.
-            root: Root directory containing the underlying datasets. Defaults to `$HF_LEROBOT_HOME`.
-            episodes: Optional mapping from `repo_id` to the episode indices to load from it.
-            image_transforms: Transform applied to visual observations in each underlying dataset.
-            delta_timestamps: Passed through to each underlying `LeRobotDataset`.
-            tolerances_s: Optional mapping from `repo_id` to its timestamp tolerance, in seconds. Defaults
-                to `1e-4` for every dataset.
-            download_videos: Whether to download video files for each underlying dataset.
-            video_backend: The video decoding backend to use.
-            token: Hugging Face Hub authentication token.
-        """
         super().__init__()
         self.repo_ids = repo_ids
         self.root = Path(root) if root else HF_LEROBOT_HOME
