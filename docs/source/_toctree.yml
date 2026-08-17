@@ -215,4 +215,6 @@
     title: Environments
   - local: api/configs
     title: Configuration
+  - local: api/data_processing
+    title: Data Processing
   title: "API Reference"

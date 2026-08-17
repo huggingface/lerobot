@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-SARM Subtask Annotation using local GPU (Qwen3-VL).
+"""SARM Subtask Annotation using local GPU (Qwen3-VL).
 
 This script implements the annotation approach from the SARM paper using local GPU inference:
 "SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation"
@@ -81,21 +80,21 @@ from lerobot.datasets import LeRobotDataset, resolve_episode_indices
 
 # Pydantic Models for SARM Subtask Annotation
 class Timestamp(BaseModel):
-    """Timestamp in MM:SS or SS format"""
+    """Timestamp in MM:SS or SS format."""
 
     start: str = Field(description="Start timestamp (MM:SS or just seconds)")
     end: str = Field(description="End timestamp (MM:SS or just seconds)")
 
 
 class Subtask(BaseModel):
-    """Individual subtask/stage - must use EXACT names from provided list"""
+    """Individual subtask/stage - must use EXACT names from provided list."""
 
     name: str = Field(description="Subtask name - MUST match one from the predefined list exactly")
     timestamps: Timestamp
 
 
 class SubtaskAnnotation(BaseModel):
-    """Complete annotation for a robot manipulation episode"""
+    """Complete annotation for a robot manipulation episode."""
 
     subtasks: list[Subtask] = Field(description="List of all subtasks in temporal order")
 
@@ -103,18 +102,18 @@ class SubtaskAnnotation(BaseModel):
 def compute_temporal_proportions(
     annotations: dict[int, Any], fps: int = 30, subtask_order: list[str] | None = None
 ) -> dict[str, float]:
-    """
-    Compute dataset-level temporal proportions (priors) for each subtask.
+    """Compute dataset-level temporal proportions (priors) for each subtask.
 
     Implements SARM Paper Formula (1): ᾱ_k = (1/M) × Σ_i (L_{i,k} / T_i)
 
     Args:
-        annotations: Dict mapping episode index to SubtaskAnnotation object.
-        fps: Frames per second (unused, kept for API compatibility)
-        subtask_order: Optional list defining the output order of subtasks.
+        annotations (`dict[int, Any]`): Dict mapping episode index to SubtaskAnnotation object.
+        fps (`int`, *optional*, defaults to 30): Frames per second (unused, kept for API compatibility).
+        subtask_order (`list[str] | None`, *optional*): List defining the output order of subtasks.
 
     Returns:
-        Dict mapping subtask name to its temporal proportion (ᾱ_k), ordered by subtask_order if provided.
+        `dict[str, float]`: Subtask name mapped to its temporal proportion (ᾱ_k), ordered by
+        `subtask_order` if provided.
     """
     subtask_proportions: dict[str, list[float]] = {}
 
@@ -164,6 +163,15 @@ def compute_temporal_proportions(
 
 
 def create_sarm_prompt(subtask_list: list[str]) -> str:
+    """Build the VLM prompt for temporal subtask segmentation over a fixed vocabulary.
+
+    Args:
+        subtask_list (`list[str]`): Closed vocabulary of subtask labels the VLM must segment the
+            demonstration video into.
+
+    Returns:
+        `str`: The full prompt text.
+    """
     subtask_str = "\n".join([f"  - {name}" for name in subtask_list])
 
     return textwrap.dedent(f"""\
@@ -249,7 +257,19 @@ def create_sarm_prompt(subtask_list: list[str]) -> str:
 
 
 class VideoAnnotator:
-    """Annotates robot manipulation videos using local Qwen3-VL model on GPU"""
+    """Annotates robot manipulation videos using local Qwen3-VL model on GPU.
+
+    Args:
+        subtask_list (`list[str]`): List of allowed subtask names, for consistency.
+        model_name (`str`, *optional*, defaults to `"Qwen/Qwen3-VL-30B-A3B-Instruct"`): Hugging Face
+            model name.
+        device (`str`, *optional*, defaults to `"cuda"`): Device to use (`"cuda"`, `"cpu"`).
+        torch_dtype (`torch.dtype`, *optional*, defaults to `torch.bfloat16`): Data type for the model.
+        model (`Qwen3VLMoeForConditionalGeneration | None`, *optional*): Pre-loaded model instance,
+            to share between annotators.
+        processor (`AutoProcessor | None`, *optional*): Pre-loaded processor instance, to share
+            between annotators.
+    """
 
     def __init__(
         self,
@@ -260,17 +280,6 @@ class VideoAnnotator:
         model: Qwen3VLMoeForConditionalGeneration | None = None,  # noqa: F821
         processor: AutoProcessor | None = None,  # noqa: F821
     ):
-        """
-        Initialize the video annotator with local model.
-
-        Args:
-            subtask_list: List of allowed subtask names (for consistency)
-            model_name: Hugging Face model name (default: Qwen/Qwen3-VL-30B-A3B-Instruct)
-            device: Device to use (cuda, cpu)
-            torch_dtype: Data type for model (bfloat16, float16, float32)
-            model: Pre-loaded model instance (optional, to share between annotators)
-            processor: Pre-loaded processor instance (optional, to share between annotators)
-        """
         self.subtask_list = subtask_list
         self.prompt = create_sarm_prompt(subtask_list)
         self.device = device
@@ -296,18 +305,18 @@ class VideoAnnotator:
     def extract_episode_segment(
         self, file_path: Path, start_timestamp: float, end_timestamp: float, target_fps: int = 1
     ) -> Path:
-        """
-        Extract a specific episode segment from concatenated video.
+        """Extract a specific episode segment from concatenated video.
+
         Uses minimal compression to preserve quality for local inference.
 
         Args:
-            file_path: Path to the concatenated video file
-            start_timestamp: Starting timestamp in seconds (within this video file)
-            end_timestamp: Ending timestamp in seconds (within this video file)
-            target_fps: Target FPS (default: 1 for faster processing)
+            file_path (`Path`): Path to the concatenated video file.
+            start_timestamp (`float`): Starting timestamp in seconds (within this video file).
+            end_timestamp (`float`): Ending timestamp in seconds (within this video file).
+            target_fps (`int`, *optional*, defaults to 1): Target FPS, for faster processing.
 
         Returns:
-            Path to extracted video file
+            `Path`: Path to the extracted video file.
         """
         # Create temporary file for extracted video
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:
@@ -468,7 +477,7 @@ def display_annotation(annotation: SubtaskAnnotation, episode_idx: int, fps: int
 
 
 def timestamp_to_seconds(timestamp: str) -> float:
-    """Convert MM:SS or SS timestamp to seconds"""
+    """Convert MM:SS or SS timestamp to seconds."""
     parts = timestamp.split(":")
     if len(parts) == 2:
         return int(parts[0]) * 60 + int(parts[1])
@@ -660,18 +669,19 @@ def visualize_annotations(
     annotation_type: str = "sparse",
     episode_indices: list[int] | None = None,
 ):
-    """
-    Visualize subtask annotations for a set of episodes.
+    """Visualize subtask annotations for a set of episodes.
 
     Args:
-        dataset: LeRobotDataset instance
-        sparse_annotations: Dict mapping episode index to sparse annotations
-        dense_annotations: Dict mapping episode index to dense annotations (or None)
-        video_key: Camera/video key to use
-        output_dir: Directory to save visualization images
-        num_episodes: Number of episodes to visualize (ignored if episode_indices provided)
-        annotation_type: "sparse", "dense", or "both"
-        episode_indices: Specific episode indices to visualize (optional)
+        dataset (`LeRobotDataset`): Dataset the annotated episodes belong to.
+        sparse_annotations (`dict`): Sparse annotations, keyed by episode index.
+        dense_annotations (`dict[int, lerobot.data_processing.sarm_annotations.subtask_annotation.SubtaskAnnotation] | None`): Dense annotations, keyed by episode index. May be `None` when `annotation_type="sparse"`.
+        video_key (`str`): Camera feature key to render frames from.
+        output_dir (`Path`): Directory to save visualization outputs to.
+        num_episodes (`int`, *optional*, defaults to 5): Maximum number of episodes to visualize.
+        annotation_type (`str`, *optional*, defaults to `"sparse"`): Which annotations to visualize:
+            `"sparse"`, `"dense"`, or `"both"`.
+        episode_indices (`list[int] | None`, *optional*): Specific episode indices to visualize.
+            Defaults to the first `num_episodes` available episodes when unset.
     """
     # Determine available episodes based on annotation type
     if annotation_type == "sparse":
@@ -949,6 +959,7 @@ def worker_process_episodes(
 
 
 def main():
+    """CLI entry point for SARM-style subtask annotation using a local GPU (Qwen3-VL)."""
     parser = argparse.ArgumentParser(description="SARM-style subtask annotation using local GPU (Qwen3-VL)")
     parser.add_argument("--repo-id", type=str, required=True, help="HuggingFace dataset repository ID")
     parser.add_argument(
@@ -1164,6 +1175,15 @@ def main():
 
     # Save temporal proportions
     def save_proportions(annotations, prefix, subtask_list=None, is_auto=False):
+        """Compute and write `annotations`' per-subtask temporal proportions to `meta/`.
+
+        Args:
+            annotations (`dict`): Per-episode subtask annotations.
+            prefix (`str`): Annotation kind (`"sparse"` or `"dense"`), used in the output filename.
+            subtask_list (`list[str] | None`, *optional*): Subtask vocabulary. Unused when `is_auto`.
+            is_auto (`bool`, *optional*, defaults to `False`): Whether this is the auto-generated
+                sparse `"task"` stage, which skips proportion computation (always `{"task": 1.0}`).
+        """
         props: dict[str, float] = (
             {"task": 1.0} if is_auto else compute_temporal_proportions(annotations, fps, subtask_list)
         )

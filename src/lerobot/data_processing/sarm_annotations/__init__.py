@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-SARM subtask annotation tools.
+"""SARM subtask annotation tools.
 
 Available modules (import directly)::
 

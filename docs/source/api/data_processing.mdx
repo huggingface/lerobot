@@ -1,0 +1,29 @@
+# Data Processing
+
+`src/lerobot/data_processing/` holds standalone dataset-processing scripts that don't ship as
+`lerobot-*` CLI commands — run them directly, e.g. `python
+src/lerobot/data_processing/sarm_annotations/subtask_annotation.py --repo-id ...`.
+
+## SARM subtask annotation
+
+Implements the annotation approach from ["SARM: Stage-Aware Reward Modeling for Long Horizon Robot
+Manipulation"](https://arxiv.org/pdf/2509.25358): a local Qwen3-VL model segments each episode's video
+into subtasks, and the resulting timestamps (and per-subtask temporal proportions) are saved to the
+dataset's metadata.
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.Timestamp
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.Subtask
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.SubtaskAnnotation
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.VideoAnnotator
+    - all
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.compute_temporal_proportions
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.create_sarm_prompt
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.save_annotations_to_dataset
+
+[[autodoc]] lerobot.data_processing.sarm_annotations.subtask_annotation.load_annotations_from_dataset
