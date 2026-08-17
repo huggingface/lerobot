@@ -897,6 +897,7 @@ class StreamingVideoEncoder:
         depth_encoder: DepthEncoderConfig | None = None,
         queue_maxsize: int = 30,
         encoder_threads: int | None = None,
+        drop_on_full: bool = True,
     ):
         """
         Args:
@@ -906,16 +907,23 @@ class StreamingVideoEncoder:
             depth_encoder: Video encoder settings applied to all depth cameras,
                 including the depth quantization parameters. When ``None``,
                 :func:`depth_encoder_defaults` is used.
-            queue_maxsize: Max frames to buffer per camera before
-                back-pressure drops frames.
+            queue_maxsize: Max frames to buffer per camera.
             encoder_threads: Number of encoder threads (global setting).
                 ``None`` lets the codec decide.
+            drop_on_full: What to do when a camera's queue is full. ``True``
+                (default) drops the frame, keeping :meth:`feed_frame`
+                non-blocking for live capture, where stalling the control loop
+                is worse than losing a frame. ``False`` waits for a free slot
+                instead, which offline conversion needs: it has no real-time
+                deadline, and a dropped frame there leaves the video shorter
+                than the recorded data.
         """
         self.fps = fps
         self._rgb_encoder = rgb_encoder or rgb_encoder_defaults()
         self._depth_encoder = depth_encoder or depth_encoder_defaults()
         self._encoder_threads = encoder_threads
         self.queue_maxsize = queue_maxsize
+        self.drop_on_full = drop_on_full
 
         self._frame_queues: dict[str, queue.Queue] = {}
         self._result_queues: dict[str, queue.Queue] = {}
@@ -979,7 +987,8 @@ class StreamingVideoEncoder:
         A copy of the image is made before enqueueing to prevent race conditions
         with camera drivers that may reuse buffers. If the encoder queue is full
         (encoder can't keep up), the frame is dropped with a warning instead of
-        crashing the recording session.
+        crashing the recording session, unless ``drop_on_full=False`` was passed
+        to the constructor, in which case this blocks until a slot frees up.
 
         Args:
             video_key: The video feature key
@@ -1002,8 +1011,23 @@ class StreamingVideoEncoder:
                 pass
             raise RuntimeError(f"Encoder thread for {video_key} is not alive")
 
+        frame = image.copy()
+
+        if not self.drop_on_full:
+            # Poll rather than block indefinitely: an encoder thread that dies while the
+            # queue is full would otherwise never drain it, hanging the caller forever.
+            while True:
+                try:
+                    self._frame_queues[video_key].put(frame, timeout=1.0)
+                    return
+                except queue.Full:
+                    if not thread.is_alive():
+                        raise RuntimeError(
+                            f"Encoder thread for {video_key} died while waiting to enqueue a frame"
+                        ) from None
+
         try:
-            self._frame_queues[video_key].put(image.copy(), timeout=0.1)
+            self._frame_queues[video_key].put(frame, timeout=0.1)
         except queue.Full:
             self._dropped_frames[video_key] = self._dropped_frames.get(video_key, 0) + 1
             count = self._dropped_frames[video_key]
@@ -1011,7 +1035,8 @@ class StreamingVideoEncoder:
             if count == 1 or count % 10 == 0:
                 logger.warning(
                     f"Encoder queue full for {video_key}, dropped {count} frame(s). "
-                    f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
+                    f"Consider using vcodec='auto' for hardware encoding, increasing "
+                    f"encoder_queue_maxsize, or drop_on_full=False when not capturing live."
                 )
 
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
