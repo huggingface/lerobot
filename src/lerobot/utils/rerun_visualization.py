@@ -32,6 +32,7 @@ from .import_utils import require_package
 
 
 def _is_scalar(x):
+    """Whether `x` is a Python/NumPy scalar number, or a zero-dimensional NumPy array."""
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0
     )
@@ -40,15 +41,14 @@ def _is_scalar(x):
 def init_rerun(
     session_name: str = "lerobot_control_loop", ip: str | None = None, port: int | None = None
 ) -> None:
-    """
-    Initializes the Rerun SDK for visualizing the control loop.
+    """Initializes the Rerun SDK for visualizing the control loop.
 
     Args:
-        session_name: Name of the Rerun session.
-        ip: Optional IP for connecting to a Rerun server.
-        port: Optional port for connecting to a Rerun server.
+        session_name (`str`, *optional*, defaults to `"lerobot_control_loop"`): Name of the Rerun
+            session.
+        ip (`str | None`, *optional*): IP for connecting to a Rerun server.
+        port (`int | None`, *optional*): Port for connecting to a Rerun server.
     """
-
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
@@ -66,7 +66,6 @@ def init_rerun(
 
 def shutdown_rerun() -> None:
     """Shuts down the Rerun SDK gracefully."""
-
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
@@ -78,7 +77,6 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
 
     Camera images, observation and action scalars are arranged in a grid.
     """
-
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun.blueprint as rrb
 
@@ -113,8 +111,7 @@ def log_rerun_data(
     action: RobotAction | None = None,
     compress_images: bool = False,
 ) -> None:
-    """
-    Logs observation and action data to Rerun for real-time visualization.
+    """Logs observation and action data to Rerun for real-time visualization.
 
     This function iterates through the provided observation and action dictionaries and sends their contents
     to the Rerun viewer. It handles different data types appropriately:
@@ -131,11 +128,11 @@ def log_rerun_data(
     time-series views and each image gets its own spatial view.
 
     Args:
-        observation: An optional dictionary containing observation data to log.
-        action: An optional dictionary containing action data to log.
-        compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
+        observation (`dict[str, typing.Any] | None`, *optional*): Observation dict to log.
+        action (`dict[str, typing.Any] | None`, *optional*): Action dict to log.
+        compress_images (`bool`, *optional*, defaults to `False`): Whether to log images as
+            compressed JPEG instead of raw.
     """
-
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 

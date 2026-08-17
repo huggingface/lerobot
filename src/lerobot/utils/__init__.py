@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Public API for lightweight, base-dependency-only utilities.
+"""Public API for lightweight, base-dependency-only utilities.
 
 Heavy cross-cutting modules (train_utils, control_utils) have been moved
 to ``lerobot.common``. ``visualization_utils`` remains here but is

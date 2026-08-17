@@ -462,7 +462,6 @@ ignore = [
 "src/lerobot/teleoperators/**" = ["D"]
 "src/lerobot/transforms/**" = ["D"]
 "src/lerobot/transport/**" = ["D"]
-"src/lerobot/utils/**" = ["D"]
 "src/lerobot/lerobot_types.py" = ["D"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -520,7 +519,7 @@ ignore-private = false
 ignore-property-decorators = false
 ignore-module = false
 ignore-setters = false
-fail-under = 55
+fail-under = 56.2
 output-format = "term-missing"
 color = true
 paths = ["src/lerobot"]

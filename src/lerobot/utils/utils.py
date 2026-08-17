@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 def inside_slurm():
-    """Check whether the python process was launched through slurm"""
+    """Check whether the python process was launched through slurm."""
     # TODO(rcadene): return False for interactive mode `--pty bash`
     return "SLURM_JOB_ID" in os.environ
 
@@ -53,15 +53,20 @@ def init_logging(
     Non-main processes have console logging suppressed but can still log to file.
 
     Args:
-        log_file: Optional file path to write logs to
-        display_pid: Include process ID in log messages (useful for debugging multi-process)
-        console_level: Logging level for console output
-        file_level: Logging level for file output
-        accelerator: Optional Accelerator instance (for multi-GPU detection)
+        log_file (`Path | None`, *optional*): File path to write logs to.
+        display_pid (`bool`, *optional*, defaults to `False`): Include process ID in log messages
+            (useful for debugging multi-process).
+        console_level (`str`, *optional*, defaults to `"INFO"`): Logging level for console output.
+        file_level (`str`, *optional*, defaults to `"DEBUG"`): Logging level for file output.
+        accelerator (`Accelerator | None`, *optional*): Accelerator instance, for multi-GPU
+            detection.
     """
 
     class LeRobotFormatter(logging.Formatter):
+        """A `logging.Formatter` that adds `lerobot_location` and `lerobot_pid` record fields."""
+
         def format(self, record: logging.LogRecord) -> str:
+            """Populate `record.lerobot_location`/`lerobot_pid` before formatting."""
             record.lerobot_location = f"{record.pathname}:{record.lineno}"[-15:]
             record.lerobot_pid = f"[PID: {os.getpid()}] " if display_pid else ""
             return super().format(record)
@@ -101,6 +106,15 @@ def init_logging(
 
 
 def format_big_number(num, precision=0):
+    """Format a large number with a metric suffix (K/M/B/T/Q).
+
+    Args:
+        num (`float`): Number to format.
+        precision (`int`, *optional*, defaults to 0): Decimal places to keep.
+
+    Returns:
+        `str | float`: The formatted string, or `num` unchanged if it exceeds every suffix's range.
+    """
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
 
@@ -113,6 +127,15 @@ def format_big_number(num, precision=0):
 
 
 def say(text: str, blocking: bool = False):
+    """Speak `text` aloud using the OS's text-to-speech command.
+
+    Args:
+        text (`str`): Text to speak.
+        blocking (`bool`, *optional*, defaults to `False`): Whether to wait for speech to finish.
+
+    Raises:
+        RuntimeError: If the OS isn't macOS, Linux, or Windows.
+    """
     system = platform.system()
 
     if system == "Darwin":
@@ -144,6 +167,13 @@ def say(text: str, blocking: bool = False):
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
+    """Log `text` at INFO level and, optionally, speak it aloud.
+
+    Args:
+        text (`str`): Text to log (and optionally speak).
+        play_sounds (`bool`, *optional*, defaults to `True`): Whether to also speak `text` via `say`.
+        blocking (`bool`, *optional*, defaults to `False`): Whether to wait for speech to finish.
+    """
     logging.info(text)
 
     if play_sounds:
@@ -151,6 +181,17 @@ def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
 
 
 def get_channel_first_image_shape(image_shape: tuple) -> tuple:
+    """Reorder an image shape to channel-first (`C, H, W`), if it isn't already.
+
+    Args:
+        image_shape (`tuple`): Image shape, either `(H, W, C)` or `(C, H, W)`.
+
+    Returns:
+        `tuple`: The shape in `(C, H, W)` order.
+
+    Raises:
+        ValueError: If `image_shape` isn't recognizable as either layout.
+    """
     shape = copy(image_shape)
     if shape[2] < shape[0] and shape[2] < shape[1]:  # (h, w, c) -> (c, h, w)
         shape = (shape[2], shape[0], shape[1])
@@ -161,6 +202,7 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
 
 
 def has_method(cls: object, method_name: str) -> bool:
+    """Whether `cls` has a callable attribute named `method_name`."""
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
 
 
@@ -184,9 +226,7 @@ def unwrap_scalar(value: Any) -> Any:
 
 
 def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
-    """
-    Return True if a given string can be converted to a numpy dtype.
-    """
+    """Return True if a given string can be converted to a numpy dtype."""
     try:
         # Attempt to convert the string to a numpy dtype
         np.dtype(dtype_str)
@@ -197,6 +237,11 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 
 def enter_pressed() -> bool:
+    """Whether the Enter key was pressed on stdin, without blocking.
+
+    Returns:
+        `bool`: `True` if a bare Enter keypress is available to read.
+    """
     if platform.system() == "Windows":
         import msvcrt
 
@@ -214,6 +259,14 @@ def move_cursor_up(lines):
 
 
 def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    """Break a duration in seconds into `(days, hours, minutes, seconds)`.
+
+    Args:
+        elapsed_time_s (`float`): Duration, in seconds.
+
+    Returns:
+        `tuple[int, int, int, float]`: `(days, hours, minutes, seconds)`.
+    """
     days = int(elapsed_time_s // (24 * 3600))
     elapsed_time_s %= 24 * 3600
     hours = int(elapsed_time_s // 3600)
@@ -232,12 +285,13 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
         {'a/b': 1, 'a/c/d': 2, 'e': 3}
 
     Args:
-        d (dict): The dictionary to flatten.
-        parent_key (str): The base key to prepend to the keys in this level.
-        sep (str): The separator to use between keys.
+        d (`dict`): The dictionary to flatten.
+        parent_key (`str`, *optional*, defaults to `""`): The base key to prepend to the keys in
+            this level.
+        sep (`str`, *optional*, defaults to `"/"`): The separator to use between keys.
 
     Returns:
-        dict: A flattened dictionary.
+        `dict`: A flattened dictionary.
     """
     items = []
     for k, v in d.items():
@@ -258,11 +312,11 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
         {'a': {'b': 1, 'c': {'d': 2}}, 'e': 3}
 
     Args:
-        d (dict): A dictionary with flattened keys.
-        sep (str): The separator used in the keys.
+        d (`dict`): A dictionary with flattened keys.
+        sep (`str`, *optional*, defaults to `"/"`): The separator used in the keys.
 
     Returns:
-        dict: A nested dictionary.
+        `dict`: A nested dictionary.
     """
     outdict = {}
     for key, value in d.items():
@@ -284,7 +338,7 @@ def cycle(iterable: Any) -> Iterator[Any]:
     See https://github.com/pytorch/pytorch/issues/23900 for details.
 
     Args:
-        iterable: The iterable to cycle over.
+        iterable (`Any`): The iterable to cycle over.
 
     Yields:
         Items from the iterable, restarting from the beginning when exhausted.
@@ -298,10 +352,9 @@ def cycle(iterable: Any) -> Iterator[Any]:
 
 
 class SuppressProgressBars:
-    """
-    Context manager to suppress progress bars.
+    """Context manager to suppress progress bars.
 
-    Example
+    Example:
     --------
     ```python
     with SuppressProgressBars():
@@ -310,6 +363,7 @@ class SuppressProgressBars:
     """
 
     def __enter__(self):
+        """Disable `datasets`' progress bars, if `datasets` is installed."""
         try:
             from datasets.utils.logging import disable_progress_bar
 
@@ -320,6 +374,7 @@ class SuppressProgressBars:
             )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Re-enable `datasets`' progress bars, if `datasets` is installed."""
         try:
             from datasets.utils.logging import enable_progress_bar
 
@@ -329,10 +384,15 @@ class SuppressProgressBars:
 
 
 class TimerManager:
-    """
-    Lightweight utility to measure elapsed time.
+    """Lightweight utility to measure elapsed time.
 
-    Examples
+    Args:
+        label (`str`, *optional*, defaults to `"Elapsed-time"`): Label prepended to log lines.
+        log (`bool`, *optional*, defaults to `True`): Whether to log each measured duration.
+        logger (`logging.Logger | None`, *optional*): Logger to use. Defaults to the root
+            logger when unset.
+
+    Examples:
     --------
     ```python
     # Example 1: Using context manager
@@ -366,16 +426,31 @@ class TimerManager:
         self._history: list[float] = []
 
     def __enter__(self):
+        """Start timing and return `self`."""
         return self.start()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop timing, recording the elapsed duration."""
         self.stop()
 
     def start(self):
+        """Start timing.
+
+        Returns:
+            `TimerManager`: `self`, for chaining.
+        """
         self._start = time.perf_counter()
         return self
 
     def stop(self) -> float:
+        """Stop timing and record the elapsed duration.
+
+        Returns:
+            `float`: Elapsed time, in seconds, since `start()`.
+
+        Raises:
+            RuntimeError: If the timer was never started.
+        """
         if self._start is None:
             raise RuntimeError("Timer was never started.")
         elapsed = time.perf_counter() - self._start
@@ -389,47 +464,51 @@ class TimerManager:
         return elapsed
 
     def reset(self):
+        """Clear all recorded durations."""
         self._history.clear()
 
     @property
     def last(self) -> float:
+        """The most recently recorded duration, in seconds (`0.0` if none recorded)."""
         return self._history[-1] if self._history else 0.0
 
     @property
     def avg(self) -> float:
+        """The average recorded duration, in seconds (`0.0` if none recorded)."""
         return mean(self._history) if self._history else 0.0
 
     @property
     def total(self) -> float:
+        """The sum of every recorded duration, in seconds."""
         return sum(self._history)
 
     @property
     def count(self) -> int:
+        """The number of recorded durations."""
         return len(self._history)
 
     @property
     def history(self) -> list[float]:
+        """A copy of every recorded duration, in seconds, oldest first."""
         return deepcopy(self._history)
 
     @property
     def fps_last(self) -> float:
+        """`1 / last`, or `0.0` if `last` is zero."""
         return 0.0 if self.last == 0 else 1.0 / self.last
 
     @property
     def fps_avg(self) -> float:
+        """`1 / avg`, or `0.0` if `avg` is zero."""
         return 0.0 if self.avg == 0 else 1.0 / self.avg
 
     def percentile(self, p: float) -> float:
-        """
-        Return the p-th percentile of recorded times.
-        """
+        """Return the p-th percentile of recorded times."""
         if not self._history:
             return 0.0
         return float(np.percentile(self._history, p))
 
     def fps_percentile(self, p: float) -> float:
-        """
-        FPS corresponding to the p-th percentile time.
-        """
+        """FPS corresponding to the p-th percentile time."""
         val = self.percentile(p)
         return 0.0 if val == 0 else 1.0 / val

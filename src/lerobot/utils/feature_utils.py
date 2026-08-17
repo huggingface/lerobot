@@ -60,7 +60,7 @@ def hw_to_dataset_features(
             joints) or shape (tuple for images).
         prefix (str): The prefix to add to the feature keys (e.g., "observation"
             or "action").
-        use_video (bool): If True, image features are marked as "video", otherwise "image".
+        use_video (bool, *optional*, defaults to `True`): If True, image features are marked as "video", otherwise "image".
 
     Returns:
         dict: A LeRobot features dictionary. Depth cameras carry ``info["is_depth_map"] = True``.
@@ -189,7 +189,8 @@ def combine_feature_dicts(*dicts: dict) -> dict:
     - For others (e.g. `observation.images.*`), the last one wins (if they are identical).
 
     Args:
-        *dicts: A variable number of LeRobot feature dictionaries to merge.
+        dicts (`dict`): Grouped feature dicts to merge, in order (later dicts take precedence for
+            non-mergeable specs).
 
     Returns:
         dict: A single merged feature dictionary.

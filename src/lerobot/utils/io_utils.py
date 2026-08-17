@@ -42,8 +42,8 @@ def write_json(data: JsonLike, fpath: Path) -> None:
     Creates parent directories if they don't exist.
 
     Args:
-        data: JSON-serializable data to write.
-        fpath (Path): The path to the output JSON file.
+        data (`JsonLike`): Data to serialize.
+        fpath (`Path`): The path to the output JSON file.
     """
     fpath.parent.mkdir(exist_ok=True, parents=True)
     with open(fpath, "w", encoding="utf-8") as f:
@@ -54,9 +54,9 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
     """Write a sequence of RGB frames to an MP4 video file using libx264.
 
     Args:
-        video_path: Output file path.
-        stacked_frames: List of HWC uint8 numpy arrays (RGB).
-        fps: Frames per second for the output video.
+        video_path (`str | pathlib.Path`): Output file path.
+        stacked_frames (`list`): RGB frames, each an `(H, W, 3)` array.
+        fps (`int`): Frame rate to encode at.
     """
     from .import_utils import require_package
 
@@ -91,22 +91,20 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
 
 
 def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
-    """
-    Loads the JSON data from `fpath` and recursively fills `obj` with the
-    corresponding values (strictly matching structure and types).
-    Tuples in `obj` are expected to be lists in the JSON data, which will be
-    converted back into tuples.
+    """Load the JSON data from `fpath` and recursively fill `obj` with the corresponding values.
+
+    Strictly matches structure and types. Tuples in `obj` are expected to be lists in the JSON
+    data, which are converted back into tuples.
     """
     with open(fpath, encoding="utf-8") as f:
         data = json.load(f)
 
     def _deserialize(target, source):
-        """
-        Recursively overwrite the structure in `target` with data from `source`,
-        performing strict checks on structure and type.
-        Returns the updated version of `target` (especially important for tuples).
-        """
+        """Recursively overwrite `target`'s structure with data from `source`.
 
+        Performs strict checks on structure and type. Returns the updated version of `target`
+        (especially important for tuples).
+        """
         # If the target is a dictionary, source must be a dictionary as well.
         if isinstance(target, dict):
             if not isinstance(source, dict):

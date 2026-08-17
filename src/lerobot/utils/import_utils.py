@@ -24,14 +24,14 @@ from draccus.choice_types import ChoiceRegistry
 def is_package_available(
     pkg_name: str, import_name: str | None = None, return_version: bool = False
 ) -> tuple[bool, str] | bool:
-    """
-    Check if the package spec exists and grab its version to avoid importing a local directory.
+    """Check if the package spec exists and grab its version to avoid importing a local directory.
 
     Args:
-        pkg_name: The name of the package as installed via pip (e.g. "python-can").
-        import_name: The actual name used to import the package (e.g. "can").
-                     Defaults to pkg_name if not provided.
-        return_version: Whether to return the version string.
+        pkg_name (`str`): Distribution name to look up the version for, e.g. `"torch"`.
+        import_name (`str | None`, *optional*): Module name to check importability of, when it
+            differs from `pkg_name`. Defaults to `pkg_name`.
+        return_version (`bool`, *optional*, defaults to `False`): Whether to also return the
+            detected version string.
     """
     if import_name is None:
         import_name = pkg_name
@@ -70,6 +70,11 @@ def is_package_available(
 
 
 def get_safe_default_video_backend():
+    """Return `"torchcodec"` if installed and loadable, else `"pyav"`.
+
+    Returns:
+        `str`: `"torchcodec"` or `"pyav"`.
+    """
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         # Despite being installed, torchcodec may not be loadable at runtime.
@@ -156,8 +161,7 @@ _wallx_deps_available = (
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:
-    """
-    Dynamically instantiates an object from its `ChoiceRegistry` configuration.
+    """Dynamically instantiates an object from its `ChoiceRegistry` configuration.
 
     This factory uses the module path and class name from the `config` object's
     type to locate and instantiate the corresponding device class (not the config).
@@ -221,8 +225,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
 
 
 def register_third_party_plugins() -> None:
-    """
-    Discover and import third-party LeRobot plugins so they can register themselves.
+    """Discover and import third-party LeRobot plugins so they can register themselves.
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
@@ -239,6 +242,7 @@ def register_third_party_plugins() -> None:
     failed: list[str] = []
 
     def attempt_import(module_name: str):
+        """Import `module_name`, recording it as imported or failed."""
         try:
             importlib.import_module(module_name)
             imported.append(module_name)

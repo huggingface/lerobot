@@ -55,6 +55,12 @@ class ProcessSignalHandler:
     The class exposes a shutdown_event attribute that is set when a shutdown
     signal is received. A counter tracks how many shutdown signals have been
     caught. On the second signal the process exits with status 1.
+
+    Args:
+        use_threads (`bool`): Whether `shutdown_event` should be a `threading.Event` (`True`) or a
+            `multiprocessing.Event` (`False`).
+        display_pid (`bool`, *optional*, defaults to `False`): Whether to prefix shutdown log
+            messages with the process's PID.
     """
 
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
@@ -83,6 +89,7 @@ class ProcessSignalHandler:
         """Attach the internal _signal_handler to a subset of POSIX signals."""
 
         def _signal_handler(signum, frame):
+            """Set `self.shutdown_event`, and force-exit on a second signal."""
             pid_str = ""
             if self._display_pid:
                 pid_str = f"[PID: {os.getpid()}]"

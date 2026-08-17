@@ -42,9 +42,9 @@ def find_latest_hub_checkpoint(
 
     Args:
         repo_id (str): The Hub model repo to inspect.
-        token (str | bool | None): Hub authentication token. Defaults to None (the token
+        token (str | bool | None, *optional*): Hub authentication token. Defaults to None (the token
             cached by `huggingface-cli login`).
-        revision (str | None): Repo revision to list. Defaults to None (the default branch).
+        revision (str | None, *optional*): Repo revision to list. Defaults to None (the default branch).
 
     Returns:
         str | None: The repo-relative path `checkpoints/<highest-step>`, or None if the repo
@@ -61,8 +61,7 @@ def find_latest_hub_checkpoint(
 
 
 class HubMixin:
-    """
-    A Mixin containing the functionality to push an object to the hub.
+    """A Mixin containing the functionality to push an object to the hub.
 
     This is similar to huggingface_hub.ModelHubMixin but is lighter and makes less assumptions about its
     subclasses (in particular, the fact that it's not necessarily a model).
@@ -79,8 +78,7 @@ class HubMixin:
         card_kwargs: dict[str, Any] | None = None,
         **push_to_hub_kwargs,
     ) -> str | None:
-        """
-        Save object in local directory.
+        """Save object in local directory.
 
         Args:
             save_directory (`str` or `Path`):
@@ -94,6 +92,7 @@ class HubMixin:
                 Additional arguments passed to the card template to customize the card.
             push_to_hub_kwargs:
                 Additional key word arguments passed along to the [`~HubMixin.push_to_hub`] method.
+
         Returns:
             `str` or `None`: url of the commit on the Hub if `push_to_hub=True`, `None` otherwise.
         """
@@ -111,8 +110,7 @@ class HubMixin:
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        """
-        Overwrite this method in subclass to define how to save your object.
+        """Overwrite this method in subclass to define how to save your object.
 
         Args:
             save_directory (`str` or `Path`):
@@ -135,8 +133,7 @@ class HubMixin:
         revision: str | None = None,
         **kwargs,
     ) -> T:
-        """
-        Download the object from the Huggingface Hub and instantiate it.
+        """Download the object from the Huggingface Hub and instantiate it.
 
         Args:
             pretrained_name_or_path (`str`, `Path`):
@@ -148,6 +145,9 @@ class HubMixin:
                 Defaults to the latest commit on `main` branch.
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether to force (re-)downloading the files from the Hub, overriding the existing cache.
+            resume_download (`bool`, *optional*):
+                Deprecated by `huggingface_hub`; downloads always resume when possible. Kept for
+                backward compatibility with callers that still pass it.
             proxies (`Dict[str, str]`, *optional*):
                 A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
                 'http://hostname': 'foo.bar:4012'}`. The proxies are used on every request.
@@ -178,8 +178,7 @@ class HubMixin:
         delete_patterns: list[str] | str | None = None,
         card_kwargs: dict[str, Any] | None = None,
     ) -> str | None:
-        """
-        Upload model checkpoint to the Hub.
+        """Upload model checkpoint to the Hub.
 
         Use `allow_patterns` and `ignore_patterns` to precisely filter which files should be pushed to the hub. Use
         `delete_patterns` to delete existing remote files in the same commit. See [`upload_folder`] reference for more

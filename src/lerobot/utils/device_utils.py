@@ -83,8 +83,15 @@ def resolve_safetensors_device(map_location: str | torch.device) -> str:
 
 
 def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
-    """
-    mps is currently not compatible with float64
+    """Downgrade `float64` to `float32` on devices that don't support double precision.
+
+    Args:
+        dtype (`torch.dtype`): Requested dtype.
+        device (`str | torch.device`): Target device.
+
+    Returns:
+        `torch.dtype`: `dtype`, or `float32` if `dtype` is `float64` and `device` (mps, or xpu
+            without FP64 support) can't handle it.
     """
     if isinstance(device, torch.device):
         device = device.type
@@ -110,6 +117,18 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
 
 
 def is_torch_device_available(try_device: str) -> bool:
+    """Whether `try_device` (cuda/mps/xpu/cpu) is available on this machine.
+
+    Args:
+        try_device (`str`): Device type to check, one of `"cuda"` (or `"cuda:<n>"`), `"mps"`,
+            `"xpu"`, `"cpu"`.
+
+    Returns:
+        `bool`: Whether the device is available.
+
+    Raises:
+        ValueError: If `try_device` isn't one of the supported device types.
+    """
     try_device = str(try_device)  # Ensure try_device is a string
     if try_device.startswith("cuda"):
         return torch.cuda.is_available()
@@ -124,6 +143,17 @@ def is_torch_device_available(try_device: str) -> bool:
 
 
 def is_amp_available(device: str):
+    """Whether automatic mixed precision is supported on `device`.
+
+    Args:
+        device (`str`): Device type: `"cuda"`, `"xpu"`, `"cpu"`, or `"mps"`.
+
+    Returns:
+        `bool`: Whether AMP is supported (always `False` for `"mps"`).
+
+    Raises:
+        ValueError: If `device` isn't one of the supported device types.
+    """
     if device in ["cuda", "xpu", "cpu"]:
         return True
     elif device == "mps":

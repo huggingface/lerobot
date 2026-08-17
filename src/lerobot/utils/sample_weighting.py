@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Sample weighting abstraction for training.
+"""Sample weighting abstraction for training.
 
 This module provides an abstract base class for sample weighting strategies (e.g., RA-BC)
 that can be used during training without polluting the training script with
@@ -47,9 +46,9 @@ if TYPE_CHECKING:
 
 
 class SampleWeighter(ABC):
-    """
-    Implementations compute per-sample weights that can be used to weight
-    the loss during training. This enables techniques like:
+    """Implementations compute per-sample loss weights for training.
+
+    This enables techniques like:
     - RA-BC (Reward-Aligned Behavior Cloning)
     - Importance sampling
     - Curriculum learning
@@ -58,25 +57,24 @@ class SampleWeighter(ABC):
 
     @abstractmethod
     def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:
-        """
-        Compute per-sample weights for a training batch.
+        """Compute per-sample weights for a training batch.
 
         Args:
-            batch: Training batch dictionary containing at minimum an "index" key
-                   with global frame indices.
+            batch (`dict`): Training batch dictionary containing at minimum an `"index"` key
+                with global frame indices.
+
+        Returns:
+            `tuple[torch.Tensor, dict]`: Per-sample weights, and a stats dict.
         """
 
     @abstractmethod
     def get_stats(self) -> dict:
-        """
-        Get global statistics about the weighting strategy.
-        """
+        """Get global statistics about the weighting strategy."""
 
 
 @dataclass
 class SampleWeightingConfig:
-    """
-    Configuration for sample weighting during training.
+    """Configuration for sample weighting during training.
 
     This is a generic config that supports multiple weighting strategies.
     The `type` field determines which implementation to use, and `extra_params`
@@ -107,17 +105,25 @@ def make_sample_weighter(
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
 ) -> SampleWeighter | None:
-    """
-    Factory function to create a SampleWeighter from config.
+    """Factory function to create a SampleWeighter from config.
 
     This keeps policy-specific initialization logic out of the training script.
 
     Args:
-        config: Sample weighting configuration, or None to disable weighting.
-        policy: The policy being trained (used to extract chunk_size, etc.)
-        device: Device to place weight tensors on.
-        dataset_root: Local path to dataset root (for auto-detecting progress_path).
-        dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        config (`SampleWeightingConfig | None`): Sample weighting configuration. `None` disables
+            weighting.
+        policy (`PreTrainedPolicy`): The policy being trained.
+        device (`torch.device`): Device to place weight tensors on.
+        dataset_root (`str | None`, *optional*): Local path to dataset root, for auto-detecting
+            `progress_path` when using RABC.
+        dataset_repo_id (`str | None`, *optional*): Hugging Face repo ID, for auto-detecting
+            `progress_path` when using RABC.
+
+    Returns:
+        `SampleWeighter | None`: The constructed weighter, or `None` if `config` is `None`.
+
+    Raises:
+        ValueError: If `config.type` isn't `"rabc"` or `"uniform"`.
     """
     if config is None:
         return None
@@ -186,11 +192,13 @@ def _make_rabc_weighter(
 
 
 class UniformWeighter(SampleWeighter):
-    """
-    No-op sample weighter that returns uniform weights.
+    """No-op sample weighter that returns uniform weights.
 
     Useful as a baseline or when you want to disable weighting without
     changing the training code structure.
+
+    Args:
+        device (`torch.device`): Device to allocate weight tensors on.
 
     Note:
         Batch size is determined by looking for tensor values in the batch
@@ -210,8 +218,7 @@ class UniformWeighter(SampleWeighter):
         return weights, stats
 
     def _determine_batch_size(self, batch: dict) -> int:
-        """
-        Determine batch size from the batch dictionary.
+        """Determine batch size from the batch dictionary.
 
         Checks common keys first, then scans all values for tensors.
 

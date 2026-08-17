@@ -25,17 +25,21 @@ _VALID_REDUCTIONS = ("none", "max", "mean", "sum")
 
 
 class AverageMeter:
-    """
-    Computes and stores the average and current value
+    """Computes and stores the average and current value.
+
     Adapted from https://github.com/pytorch/examples/blob/main/imagenet/main.py
 
     Args:
-        name: Display name of the metric.
-        fmt: Format string used when rendering the metric.
-        reduction: Cross-process reduction applied by :meth:`MetricsTracker.reduce_across_ranks`
-            before logging. One of ``"none"`` (per-rank value, default), ``"max"``, ``"mean"``,
-            or ``"sum"``. Use ``"max"`` for bottleneck-style metrics (e.g. dataloading or
-            update wall time) so multi-GPU runs report the slowest rank rather than rank 0.
+        name (`str`): Display name of the metric.
+        fmt (`str`, *optional*, defaults to `":f"`): Format string used when rendering the metric.
+        reduction (`str`, *optional*, defaults to `"none"`): Cross-process reduction applied by
+            `MetricsTracker.reduce_across_ranks` before logging. One of `"none"` (per-rank value),
+            `"max"`, `"mean"`, or `"sum"`. Use `"max"` for bottleneck-style metrics (e.g.
+            dataloading or update wall time) so multi-GPU runs report the slowest rank rather than
+            rank 0.
+
+    Raises:
+        ValueError: If `reduction` isn't one of `"none"`, `"max"`, `"mean"`, `"sum"`.
     """
 
     def __init__(self, name: str, fmt: str = ":f", reduction: str = "none"):
@@ -49,37 +53,44 @@ class AverageMeter:
         self.reset()
 
     def reset(self) -> None:
+        """Reset `val`/`avg`/`sum`/`count` to zero."""
         self.val = 0.0
         self.avg = 0.0
         self.sum = 0.0
         self.count = 0.0
 
     def update(self, val: float, n: int = 1) -> None:
+        """Accumulate one observation into the running sum/count/average.
+
+        Args:
+            val (`float`): Observed value.
+            n (`int`, *optional*, defaults to 1): Weight (e.g. batch size) of this observation.
+        """
         self.val = val
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
 
     def __str__(self):
+        """Render as `"<name>:<avg>"`, formatted with `self.fmt`."""
         fmtstr = "{name}:{avg" + self.fmt + "}"
         return fmtstr.format(**self.__dict__)
 
 
 class MetricsTracker:
-    """
-    A helper class to track and log metrics over time.
+    """A helper class to track and log metrics over time.
 
     Args:
-        batch_size (int): Per-process batch size (samples per micro-batch on each
+        batch_size (`int`): Per-process batch size (samples per micro-batch on each
             data-parallel worker).
-        num_frames (int): Total number of frames in the training dataset.
-        num_episodes (int): Total number of episodes in the training dataset.
-        metrics (dict[str, AverageMeter]): The meters to track, keyed by metric name.
-        initial_step (int): Step counter to start from (non-zero when resuming a run).
-            Defaults to 0.
-        dp_world_size (int): Number of distinct data-parallel workers
+        num_frames (`int`): Total number of frames in the training dataset.
+        num_episodes (`int`): Total number of episodes in the training dataset.
+        metrics (`dict[str, AverageMeter]`): The meters to track, keyed by metric name.
+        initial_step (`int`, *optional*, defaults to 0): Step counter to start from (non-zero when
+            resuming a run).
+        dp_world_size (`int`, *optional*, defaults to 1): Number of distinct data-parallel workers
             (`dp_replicate * dp_shard`), used to scale sample accounting; context-parallel
-            peers consume the same batch and must not be double counted. Defaults to 1.
+            peers consume the same batch and must not be double counted.
 
     Usage pattern:
 
@@ -157,6 +168,11 @@ class MetricsTracker:
         self._caller_metrics: set[str] = set(self.metrics)
 
     def __getattr__(self, name: str) -> int | dict[str, AverageMeter] | AverageMeter | Any:
+        """Fall back to `self.metrics[name]` for attributes not in `self.__dict__`.
+
+        Raises:
+            AttributeError: If `name` is in neither `self.__dict__` nor `self.metrics`.
+        """
         if name in self.__dict__:
             return self.__dict__[name]
         elif name in self.metrics:
@@ -165,6 +181,11 @@ class MetricsTracker:
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def __setattr__(self, name: str, value: Any) -> None:
+        """Route assignment to a tracked metric name into `self.metrics[name].update(value)`.
+
+        Raises:
+            AttributeError: If `name` is in neither `self.__dict__` nor `self.metrics`.
+        """
         if name in self.__dict__:
             super().__setattr__(name, value)
         elif name in self.metrics:
@@ -173,9 +194,7 @@ class MetricsTracker:
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def step(self) -> None:
-        """
-        Updates metrics that depend on 'step' for one step.
-        """
+        """Update metrics that depend on 'step' for one step."""
         self.steps += 1
         self.samples += self._batch_size * self._dp_world_size
         self.episodes = self.samples / self._avg_samples_per_ep
@@ -197,11 +216,10 @@ class MetricsTracker:
             self.metrics[name].update(float(value))
 
     def reduce_across_ranks(self) -> None:
-        """
-        Synchronises the running averages of every metric whose ``reduction`` is not ``"none"``
-        across all distributed processes (in-place).
+        """Synchronize the running averages of every non-`"none"`-reduction metric, in-place.
 
-        This is a collective operation and MUST be invoked on every rank — typically just before
+        Synchronizes across all distributed processes. This is a collective operation and MUST
+        be invoked on every rank — typically just before
         logging. Outside distributed runs it is a no-op. Without it, metrics reported by the
         main process only reflect rank 0; for bottleneck-style timings (``dataloading_s``,
         ``update_s``, ...) that means the slowest worker's stall is invisible.
@@ -242,6 +260,7 @@ class MetricsTracker:
                 meter.sum = value * meter.count
 
     def __str__(self) -> str:
+        """Render step/samples/episodes/epochs plus every tracked metric as one line."""
         display_list = [
             f"step:{format_big_number(self.steps)}",
             # number of samples seen during training
@@ -255,9 +274,7 @@ class MetricsTracker:
         return " ".join(display_list)
 
     def to_dict(self, use_avg: bool = True) -> dict[str, int | float]:
-        """
-        Returns the current metric values (or averages if `use_avg=True`) as a dict.
-        """
+        """Return the current metric values (or averages if `use_avg=True`) as a dict."""
         return {
             "steps": self.steps,
             "samples": self.samples,

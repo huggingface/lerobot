@@ -67,23 +67,22 @@ _SCALARS_SCHEMA = {
 
 
 def _is_scalar(x):
+    """Whether `x` is a Python/NumPy scalar number, or a zero-dimensional NumPy array."""
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0
     )
 
 
 def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
-    """
-    Starts a Foxglove WebSocket server for visualizing the control loop.
+    """Starts a Foxglove WebSocket server for visualizing the control loop.
 
     Connect to it from the Foxglove app at ``ws://<host>:<port>``. Calling this
     more than once is a no-op while a server is already running.
 
     Args:
-        host: Host interface to bind the WebSocket server to.
-        port: Port to bind the WebSocket server to (defaults to 8765).
+        host (`str`, *optional*, defaults to `"127.0.0.1"`): Interface to bind the WebSocket server to.
+        port (`int | None`, *optional*, defaults to 8765): Port to bind the WebSocket server to.
     """
-
     require_package("foxglove-sdk", extra="viz", import_name="foxglove")
     import foxglove
 
@@ -98,7 +97,6 @@ def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
 
 def shutdown_foxglove() -> None:
     """Stops the Foxglove WebSocket server and clears cached channels."""
-
     server = getattr(log_foxglove_data, "server", None)
     if server is not None:
         server.stop()
@@ -112,7 +110,6 @@ def _foxglove_safe_name(name: str) -> str:
     Foxglove treats ``.`` as a path separator, so an unsanitized name like ``observation.images.front``
     would split into nested segments instead of naming one topic.
     """
-
     return name.replace(".", "_")
 
 
@@ -123,7 +120,6 @@ def _foxglove_topic(key: str, *, is_image: bool = False) -> str:
     share one aggregate topic per source: ``/observation/state`` for observations, ``/action/state``
     for actions.
     """
-
     if is_image:
         name = str(key)
         for prefix in (f"{OBS_IMAGES}.", OBS_PREFIX):
@@ -147,7 +143,6 @@ def _log_foxglove_scalars(
     :func:`log_foxglove_data`; dataset playback passes its own local cache to stay self-contained).
     ``log_time`` is the message time in nanoseconds; when ``None`` the server's receive time is used.
     """
-
     if not values:
         return
 
@@ -167,7 +162,6 @@ def _log_foxglove_scalars(
 
 def _labeled_scalars(name: str, values, labels: list[str] | None = None) -> dict[str, float]:
     """Expand a 1D sequence into ``{label: value}`` entries with a consistent fallback."""
-
     flat = [float(v) for v in values]
     if labels is None or len(labels) != len(flat):
         labels = [f"{name}_{i}" for i in range(len(flat))]
@@ -206,7 +200,6 @@ def _log_foxglove_image(
             range, else the frame's own min/max is used. Ignored for ``mono8``/``rgb8``/``rgba8``.
         raw_depth_values: If True, depth values are not rescaled and are logged as is.
     """
-
     from foxglove.channels import CompressedImageChannel, RawImageChannel
     from foxglove.messages import CompressedImage, RawImage, Timestamp
 
@@ -285,8 +278,7 @@ def log_foxglove_data(
     action: RobotAction | None = None,
     compress_images: bool = False,
 ) -> None:
-    """
-    Logs observation and action data to a Foxglove WebSocket server for real-time visualization.
+    """Logs observation and action data to a Foxglove WebSocket server for real-time visualization.
 
     Mirrors ``log_rerun_data`` but emits Foxglove messages over the server started by
     :func:`init_foxglove`. Data is mapped as follows:
@@ -300,12 +292,11 @@ def log_foxglove_data(
       ``CompressedImage`` when ``compress_images`` is True).
 
     Args:
-        observation: An optional dictionary containing observation data to log.
-        action: An optional dictionary containing action data to log.
-        compress_images: Whether to JPEG-compress images before logging to save bandwidth in exchange
-            for CPU and quality.
+        observation (`dict[str, typing.Any] | None`, *optional*): Observation dict to log.
+        action (`dict[str, typing.Any] | None`, *optional*): Action dict to log.
+        compress_images (`bool`, *optional*, defaults to `False`): Whether to log images as JPEG
+            `CompressedImage` instead of raw `RawImage`.
     """
-
     require_package("foxglove-sdk", extra="viz", import_name="foxglove")
 
     if getattr(log_foxglove_data, "server", None) is None:
@@ -361,7 +352,6 @@ def _feature_dim_names(feature: dict | None) -> list[str] | None:
     (``{"delta_x": 0, "delta_y": 1}``). Each is handled, but labels are only returned when their count
     matches the feature's 1D shape, so a malformed/mismatched ``names`` can't silently mislabel series.
     """
-
     if not feature:
         return None
     shape = feature.get("shape")
@@ -389,7 +379,6 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
     live stream so series names agree. A scalar feature becomes a single entry. Missing or ``None``
     features yield an empty mapping.
     """
-
     v = sample.get(key)
     if v is None:
         return {}
@@ -422,15 +411,15 @@ def serve_foxglove_dataset_playback(
     their dataset timestamps, so the user can scrub anywhere in the episode. Blocks until interrupted.
 
     Args:
-        dataset: A ``LeRobotDataset`` loaded for the single episode to visualize.
-        episode_index: Index of the episode being visualized (used only for the session name).
-        host: Host interface to bind the WebSocket server to.
-        port: Port to bind the WebSocket server to.
-        compress_images: Whether to JPEG-compress camera frames before logging.
-        autoplay: If True, start playing automatically as soon as a client connects, instead of
-            waiting for the user to press play in the Foxglove app.
+        dataset (`LeRobotDataset`): Dataset to serve an episode from.
+        episode_index (`int`): Episode index to serve.
+        host (`str`, *optional*, defaults to `"127.0.0.1"`): Interface to bind the WebSocket server to.
+        port (`int`, *optional*, defaults to 8765): Port to bind the WebSocket server to.
+        compress_images (`bool`, *optional*, defaults to `False`): Whether to log images as JPEG
+            `CompressedImage` instead of raw `RawImage`.
+        autoplay (`bool`, *optional*, defaults to `True`): Whether playback starts automatically
+            once a client connects.
     """
-
     require_package("foxglove-sdk", extra="viz", import_name="foxglove")
     import bisect
     import threading
@@ -526,13 +515,17 @@ def serve_foxglove_dataset_playback(
     }
 
     def index_at(t_ns: int) -> int:
+        """Return the frame index whose timestamp is at or immediately before `t_ns`."""
         return max(0, min(n_frames - 1, bisect.bisect_right(times_ns, t_ns) - 1))
 
     # One-shot latch so autoplay fires only on the first client subscription.
     autoplay_started = threading.Event()
 
     class _PlaybackListener(ServerListener):
+        """Handles client subscription and playback-control requests from the Foxglove server."""
+
         def on_subscribe(self, client, channel):
+            """Start autoplay on the first client subscription, if `autoplay` is enabled."""
             # Start playing automatically once a client actually connects (subscribes). Using the
             # subscribe hook, rather than starting in Playing up front, means the timeline doesn't
             # advance before anyone is watching. Fires once; the user can still pause/seek after.
@@ -547,6 +540,11 @@ def serve_foxglove_dataset_playback(
             server.broadcast_playback_state(PlaybackState(PlaybackStatus.Playing, cursor, speed, False, ""))
 
         def on_playback_control_request(self, req: PlaybackControlRequest):
+            """Apply a seek/play/pause/speed request from the client to the shared playback state.
+
+            Returns:
+                `PlaybackState`: The resulting playback status, cursor, speed, and seek flag.
+            """
             # Only mutate state here; the playback loop performs all frame emission.
             with lock:
                 did_seek = False
@@ -580,6 +578,7 @@ def serve_foxglove_dataset_playback(
     )
 
     def playback_loop() -> None:
+        """Advance the playback cursor and emit frames at the configured speed, until stopped."""
         # Cap how far the cursor may advance in a single tick. A slow frame decode (or any stall)
         # would otherwise make ``dt`` huge and produce one enormous catch-up batch; clamping it makes
         # playback trail wall-clock under a slow decoder while each tick emits a bounded frame range.
