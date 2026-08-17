@@ -36,7 +36,6 @@ from lerobot.robots.unitree_g1.g1_utils import (
     G1_29_JointIndex,
     default_remote_input,
     get_gravity_orientation,
-    make_robot_controller,
 )
 
 
@@ -167,17 +166,6 @@ class TestGravityOrientation:
     def test_unit_quaternion_gives_unit_vector(self, quat):
         g = get_gravity_orientation(list(quat))
         np.testing.assert_allclose(np.linalg.norm(g), 1.0, atol=1e-6)
-
-
-class TestMakeRobotController:
-    def test_none_disables_controller(self):
-        assert make_robot_controller(None) is None
-
-    def test_unknown_name_raises(self):
-        with pytest.raises(ValueError, match="Unknown controller") as excinfo:
-            make_robot_controller("NotAController")
-        # The error should tell the user what they can pick instead.
-        assert "SonicWholeBodyController" in str(excinfo.value)
 
 
 class TestUnitreeG1Config:

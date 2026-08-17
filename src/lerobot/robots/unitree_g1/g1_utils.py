@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 from enum import IntEnum
-from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -99,55 +97,6 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
-
-
-@runtime_checkable
-class RobotController(Protocol):
-    """Interface for the controllers driving ``UnitreeG1``'s background control thread.
-
-    Covers both locomotion controllers (GR00T, Holosoma) and whole-body ones (SONIC).
-
-    Each tick the robot hands the controller the latest lowstate plus a snapshot of the
-    incoming action, and publishes the absolute joint targets it returns, keyed
-    ``<joint>.q``. It lives in this module rather than in ``controllers/`` so that
-    importing the robot does not pull in the controller implementations and their
-    onnxruntime dependency.
-
-    Controllers may also expose any of the following, which the robot picks up when present:
-
-    - ``kp`` / ``kd``: ``(29,)`` PD gains published with the targets, overriding the config.
-    - ``default_angles``: ``(29,)`` home pose that residual actions are applied onto.
-    - ``action_ft`` / ``observation_ft``: feature dicts that take over the robot's default
-      29-DoF action space and proprioceptive state (SONIC's 64-D latent token).
-    - ``observation_state()``: current values for the keys advertised in ``observation_ft``.
-    """
-
-    control_dt: float
-    """Control period in seconds; sets the rate of the robot's controller thread."""
-
-    def run_step(self, action: dict, lowstate) -> dict:
-        """Map one lowstate plus action into absolute joint targets keyed ``<joint>.q``."""
-        ...
-
-    def reset(self) -> None:
-        """Drop per-episode state, e.g. history buffers and held commands."""
-        ...
-
-
-def make_robot_controller(name: str | None) -> RobotController | None:
-    """Instantiate a robot controller by class name. Returns None if name is None."""
-    if name is None:
-        return None
-    controllers = {
-        "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
-        "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
-    }
-    module_path = controllers.get(name)
-    if module_path is None:
-        raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
-    module = importlib.import_module(module_path)
-    return getattr(module, name)()
 
 
 class G1_29_JointIndex(IntEnum):

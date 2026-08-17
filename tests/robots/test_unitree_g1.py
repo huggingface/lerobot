@@ -248,10 +248,25 @@ class TestInitialState:
 
     def test_stubs_satisfy_protocol(self):
         """Controllers are duck-typed against a runtime-checkable Protocol."""
-        from lerobot.robots.unitree_g1.g1_utils import RobotController
+        from lerobot.robots.unitree_g1.unitree_g1 import RobotController
 
         assert isinstance(TokenController(), RobotController)
         assert isinstance(LocomotionOnlyController(), RobotController)
+
+
+class TestMakeRobotController:
+    def test_none_disables_controller(self):
+        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
+
+        assert make_robot_controller(None) is None
+
+    def test_unknown_name_raises(self):
+        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
+
+        with pytest.raises(ValueError, match="Unknown controller") as excinfo:
+            make_robot_controller("NotAController")
+        # The error should tell the user what they can pick instead.
+        assert "SonicWholeBodyController" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

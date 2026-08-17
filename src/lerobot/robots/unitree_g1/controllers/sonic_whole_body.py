@@ -43,9 +43,9 @@ from ..g1_utils import (
     MUJOCO_TO_ISAACLAB,
     NUM_MOTORS,
     G1_29_JointIndex,
-    RobotController,
     get_gravity_orientation,
 )
+from ..unitree_g1 import RobotController
 
 logger = logging.getLogger(__name__)
 
