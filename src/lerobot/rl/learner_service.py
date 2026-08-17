@@ -48,6 +48,17 @@ class LearnerService(_ServicerBase):
 
     Sends policy parameters to the actor and receives transitions and interactions from it; see
     `transport.proto` for the gRPC service definition.
+
+    Args:
+        shutdown_event (`Event`): Set to stop `StreamParameters`'s push loop.
+        parameters_queue (`Queue`): Queue of serialized policy weights, drained and streamed to
+            the actor by `StreamParameters`.
+        seconds_between_pushes (`float`): Minimum interval between successive parameter pushes.
+        transition_queue (`Queue`): Queue filled by `SendTransitions` with received transitions.
+        interaction_message_queue (`Queue`): Queue filled by `SendInteractions` with received
+            interaction messages.
+        queue_get_timeout (`float`, *optional*, defaults to 0.001): Timeout used when polling
+            `parameters_queue`.
     """
 
     def __init__(
@@ -59,19 +70,6 @@ class LearnerService(_ServicerBase):
         interaction_message_queue: Queue,
         queue_get_timeout: float = 0.001,
     ):
-        """Create the servicer.
-
-        Args:
-            shutdown_event (`Event`): Set to stop `StreamParameters`'s push loop.
-            parameters_queue (`Queue`): Queue of serialized policy weights, drained and streamed to
-                the actor by `StreamParameters`.
-            seconds_between_pushes (`float`): Minimum interval between successive parameter pushes.
-            transition_queue (`Queue`): Queue filled by `SendTransitions` with received transitions.
-            interaction_message_queue (`Queue`): Queue filled by `SendInteractions` with received
-                interaction messages.
-            queue_get_timeout (`float`, *optional*, defaults to 0.001): Timeout used when polling
-                `parameters_queue`.
-        """
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
         self.seconds_between_pushes = seconds_between_pushes

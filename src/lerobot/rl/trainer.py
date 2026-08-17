@@ -27,7 +27,16 @@ from .data_sources.data_mixer import DataMixer
 class RLTrainer:
     """Unified training step orchestrator.
 
-    Holds the algorithm, a DataMixer, and an optional preprocessor.
+    Holds the algorithm, a DataMixer, and an optional preprocessor. Building an instance also calls
+    `make_optimizers_and_scheduler` on `algorithm`.
+
+    Args:
+        algorithm (`RLAlgorithm`): The RL algorithm to train. `make_optimizers_and_scheduler` is
+            called on it immediately.
+        data_mixer (`DataMixer`): Data source the training-batch iterator is built from.
+        batch_size (`int`): Batch size requested from `data_mixer` on each training step.
+        preprocessor (`Any | None`, *optional*): When set, each sampled batch is passed through
+            `preprocess_rl_batch` before reaching the algorithm.
     """
 
     def __init__(
@@ -38,16 +47,6 @@ class RLTrainer:
         *,
         preprocessor: Any | None = None,
     ):
-        """Build the trainer and its optimizers.
-
-        Args:
-            algorithm (`RLAlgorithm`): The RL algorithm to train. `make_optimizers_and_scheduler` is
-                called on it immediately.
-            data_mixer (`DataMixer`): Data source the training-batch iterator is built from.
-            batch_size (`int`): Batch size requested from `data_mixer` on each training step.
-            preprocessor (`Any | None`, *optional*): When set, each sampled batch is passed through
-                `preprocess_rl_batch` before reaching the algorithm.
-        """
         self.algorithm = algorithm
         self.data_mixer = data_mixer
         self.batch_size = batch_size

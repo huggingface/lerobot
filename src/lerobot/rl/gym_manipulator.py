@@ -121,7 +121,17 @@ def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> No
 
 
 class RobotEnv(gym.Env):
-    """Gym environment for robotic control with human intervention support."""
+    """Gym environment for robotic control with human intervention support.
+
+    Args:
+        robot: Robot interface for hardware communication.
+        use_gripper (`bool`, *optional*, defaults to `False`): Whether to include gripper in action
+            space.
+        display_cameras (`bool`, *optional*, defaults to `False`): Whether to show camera feeds during
+            execution.
+        reset_pose (`list[float] | None`, *optional*): Joint positions for environment reset.
+        reset_time_s (`float`, *optional*, defaults to 5.0): Time to wait during reset.
+    """
 
     def __init__(
         self,
@@ -131,15 +141,6 @@ class RobotEnv(gym.Env):
         reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
     ) -> None:
-        """Initialize robot environment with configuration options.
-
-        Args:
-            robot: Robot interface for hardware communication.
-            use_gripper: Whether to include gripper in action space.
-            display_cameras: Whether to show camera feeds during execution.
-            reset_pose: Joint positions for environment reset.
-            reset_time_s: Time to wait during reset.
-        """
         super().__init__()
 
         self.robot = robot

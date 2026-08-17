@@ -45,7 +45,16 @@ from .configuration_sac import SACAlgorithmConfig
 
 
 class SACAlgorithm(RLAlgorithm):
-    """Soft Actor-Critic. Owns critics, targets, temperature, and loss computation."""
+    """Soft Actor-Critic. Owns critics, targets, temperature, and loss computation.
+
+    Building an instance constructs the critic ensemble, target networks, and temperature from
+    `config`.
+
+    Args:
+        policy (`GaussianActorPolicy`): The actor policy this algorithm trains. Its observation
+            encoder is shared with the critics.
+        config (`SACAlgorithmConfig`): Algorithm configuration.
+    """
 
     config_class = SACAlgorithmConfig
     name = "sac"
@@ -55,15 +64,6 @@ class SACAlgorithm(RLAlgorithm):
         policy: GaussianActorPolicy,
         config: SACAlgorithmConfig,
     ):
-        """Build the critic ensemble, target networks, and temperature from `config`.
-
-        Args:
-            policy (`GaussianActorPolicy`):
-                The actor policy this algorithm trains. Its observation encoder is shared with the
-                critics.
-            config (`SACAlgorithmConfig`):
-                Algorithm configuration.
-        """
         self.config = config
         self.policy_config = config.policy_config
         self.policy = policy
@@ -603,7 +603,23 @@ def _split_prefix(state: dict[str, torch.Tensor], prefix: str) -> dict[str, torc
 
 
 class CriticHead(nn.Module):
-    """A single Q-value head: an MLP followed by a scalar linear output layer."""
+    """A single Q-value head: an MLP followed by a scalar linear output layer.
+
+    Args:
+        input_dim (`int`): Dimension of the concatenated observation-encoding + action input.
+        hidden_dims (`list[int]`): Hidden layer widths of the MLP trunk.
+        activations (`Callable[[torch.Tensor], torch.Tensor] | str`, *optional*, defaults to `nn.SiLU()`):
+            Activation used between hidden layers.
+        activate_final (`bool`, *optional*, defaults to `False`): Whether to apply `activations`
+            after the last hidden layer.
+        dropout_rate (`float | None`, *optional*): Dropout probability applied between hidden
+            layers. `None` disables dropout.
+        init_final (`float | None`, *optional*): When set, the output layer's weight and bias are
+            initialized uniformly in `[-init_final, init_final]` instead of the default
+            orthogonal initialization.
+        final_activation (`Callable[[torch.Tensor], torch.Tensor] | str | None`, *optional*):
+            Activation applied after the MLP trunk's last hidden layer, before the output layer.
+    """
 
     def __init__(
         self,
@@ -615,23 +631,6 @@ class CriticHead(nn.Module):
         init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
-        """Build the MLP trunk and scalar output layer.
-
-        Args:
-            input_dim (`int`): Dimension of the concatenated observation-encoding + action input.
-            hidden_dims (`list[int]`): Hidden layer widths of the MLP trunk.
-            activations (`Callable[[torch.Tensor], torch.Tensor] | str`, *optional*, defaults to `nn.SiLU()`):
-                Activation used between hidden layers.
-            activate_final (`bool`, *optional*, defaults to `False`): Whether to apply `activations`
-                after the last hidden layer.
-            dropout_rate (`float | None`, *optional*): Dropout probability applied between hidden
-                layers. `None` disables dropout.
-            init_final (`float | None`, *optional*): When set, the output layer's weight and bias are
-                initialized uniformly in `[-init_final, init_final]` instead of the default
-                orthogonal initialization.
-            final_activation (`Callable[[torch.Tensor], torch.Tensor] | str | None`, *optional*):
-                Activation applied after the MLP trunk's last hidden layer, before the output layer.
-        """
         super().__init__()
         self.net = MLP(
             input_dim=input_dim,
@@ -654,14 +653,15 @@ class CriticHead(nn.Module):
 
 
 class CriticEnsemble(nn.Module):
-    """CriticEnsemble wraps multiple CriticHead modules into an ensemble.
+    """Wraps multiple `CriticHead` modules into an ensemble.
+
+    `forward` returns a tensor of shape `(num_critics, batch_size)` containing Q-values.
 
     Args:
-        encoder (GaussianActorObservationEncoder): encoder for observations.
-        ensemble (List[CriticHead]): list of critic heads.
-        init_final (float | None, *optional*): optional initializer scale for final layers.
-
-    Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
+        encoder (`GaussianActorObservationEncoder`): Shared observation encoder for all critics.
+        ensemble (`list[CriticHead]`): The critic heads making up the ensemble.
+        init_final (`float | None`, *optional*): Stored for introspection; each `CriticHead` is
+            already initialized with it before being passed in here.
     """
 
     def __init__(
@@ -670,14 +670,6 @@ class CriticEnsemble(nn.Module):
         ensemble: list[CriticHead],
         init_final: float | None = None,
     ):
-        """Wrap `ensemble` behind the shared `encoder`.
-
-        Args:
-            encoder (`GaussianActorObservationEncoder`): Shared observation encoder for all critics.
-            ensemble (`list[CriticHead]`): The critic heads making up the ensemble.
-            init_final (`float | None`, *optional*): Stored for introspection; each `CriticHead` is
-                already initialized with it before being passed in here.
-        """
         super().__init__()
         self.encoder = encoder
         self.init_final = init_final

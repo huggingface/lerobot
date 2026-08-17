@@ -89,7 +89,30 @@ def random_shift(images: torch.Tensor, pad: int = 4):
 
 
 class ReplayBuffer:
-    """In-memory replay buffer of `Transition`s, sampled in batches for off-policy RL training."""
+    """In-memory replay buffer of `Transition`s, sampled in batches for off-policy RL training.
+
+    Storage tensors are allocated on `storage_device` once the first transition is added.
+
+    Args:
+        capacity (`int`): Maximum number of transitions to store in the buffer.
+        device (`str`, *optional*, defaults to `"cuda:0"`): The device where the tensors will be
+            moved when sampling.
+        state_keys (`Sequence[str] | None`, *optional*): The list of keys that appear in `state` and
+            `next_state`.
+        image_augmentation_function (`Callable | None`, *optional*): A function that takes a batch of
+            images and returns a batch of augmented images. If `None`, a default augmentation function
+            is used.
+        use_drq (`bool`, *optional*, defaults to `True`): Whether to use the default DRQ image
+            augmentation style, when sampling in the buffer.
+        storage_device (`str`, *optional*, defaults to `"cpu"`): The device where the data will be
+            stored. Using `"cpu"` can help save GPU memory.
+        optimize_memory (`bool`, *optional*, defaults to `False`): If `True`, optimizes memory by not
+            storing duplicate next_states when they can be derived from states. This is useful for
+            large datasets where `next_state[i] = state[i+1]`.
+
+    Raises:
+        ValueError: If `capacity` isn't greater than 0.
+    """
 
     def __init__(
         self,
@@ -101,24 +124,6 @@ class ReplayBuffer:
         storage_device: str = "cpu",
         optimize_memory: bool = False,
     ):
-        """Replay buffer for storing transitions.
-
-        It will allocate tensors on the specified device, when the first transition is added.
-        NOTE: If you encounter memory issues, you can try to use the `optimize_memory` flag to save memory or
-        and use the `storage_device` flag to store the buffer on a different device.
-
-        Args:
-            capacity (int): Maximum number of transitions to store in the buffer.
-            device (str): The device where the tensors will be moved when sampling ("cuda:0" or "cpu").
-            state_keys (list[str]): The list of keys that appear in `state` and `next_state`.
-            image_augmentation_function (Callable | None): A function that takes a batch of images
-                and returns a batch of augmented images. If None, a default augmentation function is used.
-            use_drq (bool): Whether to use the default DRQ image augmentation style, when sampling in the buffer.
-            storage_device: The device (e.g. "cpu" or "cuda:0") where the data will be stored.
-                Using "cpu" can help save GPU memory.
-            optimize_memory (bool): If True, optimizes memory by not storing duplicate next_states when
-                they can be derived from states. This is useful for large datasets where next_state[i] = state[i+1].
-        """
         if capacity <= 0:
             raise ValueError("Capacity must be greater than 0.")
 
