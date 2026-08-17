@@ -37,14 +37,12 @@ class AverageMeter:
             `"max"`, `"mean"`, or `"sum"`. Use `"max"` for bottleneck-style metrics (e.g.
             dataloading or update wall time) so multi-GPU runs report the slowest rank rather than
             rank 0.
+
+    Raises:
+        ValueError: If `reduction` isn't one of `"none"`, `"max"`, `"mean"`, `"sum"`.
     """
 
     def __init__(self, name: str, fmt: str = ":f", reduction: str = "none"):
-        """Initialize the meter and reset it to zero.
-
-        Raises:
-            ValueError: If `reduction` isn't one of `"none"`, `"max"`, `"mean"`, `"sum"`.
-        """
         if reduction not in _VALID_REDUCTIONS:
             raise ValueError(
                 f"Invalid reduction {reduction!r} for AverageMeter; expected one of {_VALID_REDUCTIONS}."
@@ -148,7 +146,6 @@ class MetricsTracker:
         initial_step: int = 0,
         dp_world_size: int = 1,
     ):
-        """Initialize the tracker's step/sample/episode/epoch counters from `initial_step`."""
         self.__dict__.update(dict.fromkeys(self.__keys__))
         self._batch_size = batch_size
         self._num_frames = num_frames

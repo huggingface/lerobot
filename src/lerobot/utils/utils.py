@@ -386,6 +386,12 @@ class SuppressProgressBars:
 class TimerManager:
     """Lightweight utility to measure elapsed time.
 
+    Args:
+        label (`str`, *optional*, defaults to `"Elapsed-time"`): Label prepended to log lines.
+        log (`bool`, *optional*, defaults to `True`): Whether to log each measured duration.
+        logger (`logging.Logger | None`, *optional*): Logger to use. Defaults to the root
+            logger when unset.
+
     Examples:
     --------
     ```python
@@ -413,14 +419,6 @@ class TimerManager:
         log: bool = True,
         logger: logging.Logger | None = None,
     ):
-        """Initialize the timer with no recorded history.
-
-        Args:
-            label (`str`, *optional*, defaults to `"Elapsed-time"`): Label prepended to log lines.
-            log (`bool`, *optional*, defaults to `True`): Whether to log each measured duration.
-            logger (`logging.Logger | None`, *optional*): Logger to use. Defaults to the root
-                logger when unset.
-        """
         self.label = label
         self.log = log
         self.logger = logger

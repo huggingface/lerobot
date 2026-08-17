@@ -14,29 +14,29 @@
 
 
 class DeviceNotConnectedError(ConnectionError):
-    """Exception raised when the device is not connected."""
+    # no-format
+    """Exception raised when the device is not connected.
+
+    Args:
+        message (`str`, *optional*): Error message.
+    """
 
     def __init__(self, message="This device is not connected. Try calling `connect()` first."):
-        """Initialize the error.
-
-        Args:
-            message (`str`, *optional*): Error message.
-        """
         self.message = message
         super().__init__(self.message)
 
 
 class DeviceAlreadyConnectedError(ConnectionError):
-    """Exception raised when the device is already connected."""
+    # no-format
+    """Exception raised when the device is already connected.
+
+    Args:
+        message (`str`, *optional*): Error message.
+    """
 
     def __init__(
         self,
         message="This device is already connected. Try not calling `connect()` twice.",
     ):
-        """Initialize the error.
-
-        Args:
-            message (`str`, *optional*): Error message.
-        """
         self.message = message
         super().__init__(self.message)

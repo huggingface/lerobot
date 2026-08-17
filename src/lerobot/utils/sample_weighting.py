@@ -197,6 +197,9 @@ class UniformWeighter(SampleWeighter):
     Useful as a baseline or when you want to disable weighting without
     changing the training code structure.
 
+    Args:
+        device (`torch.device`): Device to allocate weight tensors on.
+
     Note:
         Batch size is determined by looking for tensor values in the batch
         dictionary. The method checks common keys like "action", "index",
@@ -204,11 +207,6 @@ class UniformWeighter(SampleWeighter):
     """
 
     def __init__(self, device: torch.device):
-        """Initialize the weighter.
-
-        Args:
-            device (`torch.device`): Device to allocate weight tensors on.
-        """
         self.device = device
 
     def compute_batch_weights(self, batch: dict) -> tuple[torch.Tensor, dict]:

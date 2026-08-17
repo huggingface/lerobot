@@ -198,15 +198,13 @@ class TerminalKeyListener:
     crash or Ctrl-C never leaves the shell in a no-echo cbreak state. POSIX-only
     (``termios`` / ``tty`` / ``select``); those modules are imported lazily so this
     file stays importable on Windows (where ``pynput`` is used instead).
+
+    Args:
+        on_key (`Callable[[str], None]`): Called with each decoded key name once `start()`
+            begins reading. Runs on the reader thread.
     """
 
     def __init__(self, on_key: Callable[[str], None]):
-        """Initialize the listener.
-
-        Args:
-            on_key (`Callable[[str], None]`): Called with each decoded key name once `start()`
-                begins reading. Runs on the reader thread.
-        """
         self._on_key = on_key
         self._running = False
         self._thread: threading.Thread | None = None
