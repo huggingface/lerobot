@@ -1,0 +1,28 @@
+# Async Inference
+
+`src/lerobot/async_inference/` runs policy inference on a remote `PolicyServer` over gRPC, so a
+robot's control loop doesn't block on (slow) policy calls: a `RobotClient` streams observations to
+the server and receives predicted action chunks back, queuing them locally for the control loop to
+consume.
+
+## RobotClient
+
+[[autodoc]] lerobot.async_inference.robot_client.RobotClient
+    - all
+
+[[autodoc]] lerobot.async_inference.configs.RobotClientConfig
+
+## PolicyServer
+
+[[autodoc]] lerobot.async_inference.policy_server.PolicyServer
+    - all
+
+[[autodoc]] lerobot.async_inference.configs.PolicyServerConfig
+
+## Shared types
+
+[[autodoc]] lerobot.async_inference.helpers.TimedAction
+
+[[autodoc]] lerobot.async_inference.helpers.TimedObservation
+
+[[autodoc]] lerobot.async_inference.helpers.RemotePolicyConfig

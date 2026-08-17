@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""Run the async-inference policy server.
+
 Example:
 ```shell
 python -m lerobot.async_inference.policy_server \
@@ -62,6 +63,16 @@ from .helpers import (
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
+    """gRPC servicer that runs policy inference on behalf of a remote `RobotClient`.
+
+    Receives observations, runs the configured policy, and streams back predicted action chunks.
+    Initializing an instance starts the server with no policy loaded; a client selects one via
+    `SendPolicyInstructions`.
+
+    Args:
+        config (`PolicyServerConfig`): Server configuration (host, port, fps, timeouts).
+    """
+
     prefix = "policy_server"
     logger = get_logger(prefix)
 
@@ -90,10 +101,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     @property
     def running(self):
+        """Whether the server is currently accepting/processing observations."""
         return not self.shutdown_event.is_set()
 
     @property
     def policy_image_features(self):
+        """The loaded policy's expected image feature shapes."""
         return self.policy.config.image_features
 
     def _reset_server(self) -> None:
@@ -106,6 +119,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self._predicted_timesteps = set()
 
     def Ready(self, request, context):  # noqa: N802
+        """Handle a client's readiness handshake: reset server state and clear the shutdown flag.
+
+        Args:
+            request (`services_pb2.Empty`): Unused.
+            context (`grpc.ServicerContext`): gRPC call context, used to identify the client.
+
+        Returns:
+            `services_pb2.Empty`: Empty acknowledgement.
+        """
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
         self._reset_server()
@@ -114,8 +136,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return services_pb2.Empty()
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802
-        """Receive policy instructions from the robot client"""
-
+        """Receive policy instructions from the robot client."""
         if not self.running:
             self.logger.warning("Server is not running. Ignoring policy instructions.")
             return services_pb2.Empty()
@@ -171,7 +192,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return services_pb2.Empty()
 
     def SendObservations(self, request_iterator, context):  # noqa: N802
-        """Receive observations from the robot client"""
+        """Receive observations from the robot client."""
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
@@ -212,8 +233,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return services_pb2.Empty()
 
     def GetActions(self, request, context):  # noqa: N802
-        """Returns actions to the robot client. Actions are sent as a single
-        chunk, containing multiple actions."""
+        """Return actions to the robot client.
+
+        Actions are sent as a single chunk, containing multiple actions.
+        """
         client_id = context.peer()
         self.logger.debug(f"Client {client_id} connected for action streaming")
 
@@ -266,7 +289,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             return services_pb2.Empty()
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
-        """Check if the observation is valid to be processed by the policy"""
+        """Check if the observation is valid to be processed by the policy."""
         with self._predicted_timesteps_lock:
             predicted_timesteps = self._predicted_timesteps
 
@@ -285,8 +308,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _enqueue_observation(self, obs: TimedObservation) -> bool:
         """Enqueue an observation if it must go through processing, otherwise skip it.
-        Observations not in queue are never run through the policy network"""
 
+        Observations not in queue are never run through the policy network.
+        """
         if (
             obs.must_go
             or self.last_processed_obs is None
@@ -310,9 +334,10 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return False
 
     def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
-        """Turn a chunk of actions into a list of TimedAction instances,
-        with the first action corresponding to t_0 and the rest corresponding to
-        t_0 + i*environment_dt for i in range(len(action_chunk))
+        """Turn a chunk of actions into a list of `TimedAction` instances.
+
+        The first action corresponds to `t_0`, and the rest to `t_0 + i * environment_dt` for
+        `i in range(len(action_chunk))`.
         """
         return [
             TimedAction(timestamp=t_0 + i * self.config.environment_dt, timestep=i_0 + i, action=action)
@@ -320,7 +345,14 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         ]
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Get an action chunk from the policy. The chunk contains only"""
+        """Get an action chunk from the policy, truncated to `self.actions_per_chunk` actions.
+
+        Args:
+            observation (`dict[str, torch.Tensor]`): Preprocessed observation to predict from.
+
+        Returns:
+            `torch.Tensor`: Predicted actions, shape `(B, actions_per_chunk, action_dim)`.
+        """
         chunk = self.policy.predict_action_chunk(observation)
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
@@ -405,7 +437,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         return action_chunk
 
     def stop(self):
-        """Stop the server"""
+        """Stop the server."""
         self._reset_server()
         self.logger.info("Server stopping...")
 
@@ -415,7 +447,7 @@ def serve(cfg: PolicyServerConfig):
     """Start the PolicyServer with the given configuration.
 
     Args:
-        config: PolicyServerConfig instance. If None, uses default configuration.
+        cfg (`PolicyServerConfig`): Server configuration.
     """
     logging.info(pformat(asdict(cfg)))
 
