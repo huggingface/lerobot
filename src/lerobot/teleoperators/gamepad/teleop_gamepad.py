@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 class GripperAction(IntEnum):
+    """Gripper command levels produced by a gamepad's gripper buttons.
+
+    **Attributes**:
+        - **CLOSE** (`int`) -- Close the gripper.
+        - **STAY** (`int`) -- Leave the gripper where it is.
+        - **OPEN** (`int`) -- Open the gripper.
+    """
+
     CLOSE = 0
     STAY = 1
     OPEN = 2
@@ -45,8 +53,15 @@ gripper_action_map = {
 
 
 class GamepadTeleop(Teleoperator):
-    """
-    Teleop class to use gamepad inputs for control.
+    """Teleoperator that reads a gamepad's analog sticks and buttons via `pygame` (or `hidapi`).
+
+    [`~teleoperators.Teleoperator.get_action`] reports the left stick as `delta_x`/`delta_y` and the
+    right stick's vertical axis as `delta_z`, plus an optional gripper command. See `gamepad_utils.py`'s
+    `GamepadController` (`pygame`) and `GamepadControllerHID` (`hidapi`) for the exact axis/button
+    mapping.
+
+    Args:
+        config (`GamepadTeleopConfig`): Configuration for this gamepad teleoperator.
     """
 
     config_class = GamepadTeleopConfig
@@ -68,6 +83,12 @@ class GamepadTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Returns:
+            `dict`: A 3-element (or 4-element if `config.use_gripper` is `True`) `float32` vector named
+            `delta_x`, `delta_y`, `delta_z`, and optionally `gripper`.
+        """
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
@@ -83,9 +104,15 @@ class GamepadTeleop(Teleoperator):
 
     @property
     def feedback_features(self) -> dict:
+        """See [`~teleoperators.Teleoperator.feedback_features`]. `GamepadTeleop` accepts no feedback."""
         return {}
 
     def connect(self) -> None:
+        """See [`~teleoperators.Teleoperator.connect`].
+
+        Starts a `GamepadControllerHID` if `config.hidapi_fallback` is `True`, otherwise a
+        `GamepadController`.
+        """
         if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID as Gamepad
         else:
@@ -96,6 +123,18 @@ class GamepadTeleop(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Read the gamepad's current stick positions and gripper button state.
+
+        The left analog stick drives `delta_x`/`delta_y`; the right stick's vertical axis drives
+        `delta_z`. When `config.use_gripper` is `True`, the gripper buttons additionally produce a
+        `gripper` entry (one of `GripperAction.CLOSE`, `STAY`, or `OPEN`).
+
+        Returns:
+            `dict[str, Any]`: `delta_x`, `delta_y`, `delta_z`, and, if enabled, `gripper`.
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
+        """
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -121,16 +160,15 @@ class GamepadTeleop(Teleoperator):
         return action_dict
 
     def get_teleop_events(self) -> dict[str, Any]:
-        """
-        Get extra control events from the gamepad such as intervention status,
-        episode termination, success indicators, etc.
+        """Read auxiliary gamepad events used to drive episode control during recording.
+
+        Holding the intervention button counts as an active intervention; the success/failure/rerecord
+        buttons are read once as one-shot signals, then cleared.
 
         Returns:
-            Dictionary containing:
-                - is_intervention: bool - Whether human is currently intervening
-                - terminate_episode: bool - Whether to terminate the current episode
-                - success: bool - Whether the episode was successful
-                - rerecord_episode: bool - Whether to rerecord the episode
+            `dict[TeleopEvents, bool]`: Values for the [`~teleoperators.TeleopEvents`] keys
+            `IS_INTERVENTION`, `TERMINATE_EPISODE`, `SUCCESS`, and `RERECORD_EPISODE`. All `False` if
+            [`~teleoperators.Teleoperator.connect`] has not been called yet.
         """
         if self.gamepad is None:
             return {
@@ -163,32 +201,32 @@ class GamepadTeleop(Teleoperator):
         }
 
     def disconnect(self) -> None:
-        """Disconnect from the gamepad."""
+        """See [`~teleoperators.Teleoperator.disconnect`]. Stops and releases the underlying controller."""
         if self.gamepad is not None:
             self.gamepad.stop()
             self.gamepad = None
 
     @property
     def is_connected(self) -> bool:
-        """Check if gamepad is connected."""
+        """See [`~teleoperators.Teleoperator.is_connected`]."""
         return self.gamepad is not None
 
     def calibrate(self) -> None:
-        """Calibrate the gamepad."""
+        """See [`~teleoperators.Teleoperator.calibrate`]. No-op: the gamepad does not require calibration."""
         # No calibration needed for gamepad
         pass
 
     def is_calibrated(self) -> bool:
-        """Check if gamepad is calibrated."""
+        """See [`~teleoperators.Teleoperator.is_calibrated`]. Always `True`: no calibration is required."""
         # Gamepad doesn't require calibration
         return True
 
     def configure(self) -> None:
-        """Configure the gamepad."""
+        """See [`~teleoperators.Teleoperator.configure`]. No-op: the gamepad needs no configuration."""
         # No additional configuration needed
         pass
 
     def send_feedback(self, feedback: dict) -> None:
-        """Send feedback to the gamepad."""
+        """See [`~teleoperators.Teleoperator.send_feedback`]. No-op: `GamepadTeleop` accepts no feedback."""
         # Gamepad doesn't support feedback
         pass

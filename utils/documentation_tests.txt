@@ -15,4 +15,6 @@ src/lerobot/robots/robot.py
 src/lerobot/robots/so_follower/config_so_follower.py
 src/lerobot/robots/so_follower/so_follower.py
 src/lerobot/robots/utils.py
+src/lerobot/teleoperators/phone/config_phone.py
 src/lerobot/teleoperators/teleoperator.py
+src/lerobot/teleoperators/unitree_g1/unitree_g1.py

@@ -23,7 +23,23 @@ from ..openarm_leader import OpenArmLeaderConfigBase
 @TeleoperatorConfig.register_subclass("bi_openarm_leader")
 @dataclass
 class BiOpenArmLeaderConfig(TeleoperatorConfig):
-    """Configuration class for Bi OpenArm Leader teleoperators."""
+    """Configuration for a bimanual pair of OpenArm leader arms.
+
+    The two arms are configured independently, then driven as one teleoperator: action keys from each arm
+    are prefixed with `left_` and `right_`.
+
+    Calibration is per arm, taken from each arm config's own `id` and `calibration_dir`.
+
+    Args:
+        left_arm_config (`OpenArmLeaderConfigBase`):
+            Configuration for the left arm, including its own `port` and `motor_config`.
+        right_arm_config (`OpenArmLeaderConfigBase`):
+            Configuration for the right arm, including its own `port` and `motor_config`.
+        id (`str`, *optional*):
+            Identifier for the pair as a whole.
+        calibration_dir (`Path`, *optional*):
+            Unused at this level; each arm calibrates through its own config.
+    """
 
     left_arm_config: OpenArmLeaderConfigBase
     right_arm_config: OpenArmLeaderConfigBase

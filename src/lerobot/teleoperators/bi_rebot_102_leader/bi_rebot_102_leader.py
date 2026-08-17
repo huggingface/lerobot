@@ -31,9 +31,12 @@ logger = logging.getLogger(__name__)
 class BiRebot102Leader(BimanualMixin, Teleoperator):
     """Bimanual Seeed Studio StarArm102 / reBot Arm 102 leader.
 
-    Composes two single-arm :class:`RebotArm102Leader` instances. Action keys of
-    each arm are namespaced with a ``left_`` / ``right_`` prefix, so a bimanual
-    leader can teleoperate a bimanual reBot B601 follower.
+    Composes two single-arm [`~teleoperators.rebot_102_leader.RebotArm102Leader`] instances. Action
+    keys of each arm are namespaced with a `left_` / `right_` prefix, so a bimanual leader can
+    teleoperate a bimanual reBot B601 follower.
+
+    Args:
+        config (`BiRebot102LeaderConfig`): The teleoperator's configuration.
     """
 
     config_class = BiRebot102LeaderConfig
@@ -68,6 +71,11 @@ class BiRebot102Leader(BimanualMixin, Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """The union of both arms' action features, each key prefixed `left_` / `right_`.
+
+        Returns:
+            `dict[str, type]`: See [`~teleoperators.rebot_102_leader.RebotArm102Leader.action_features`].
+        """
         return {
             **{f"left_{k}": v for k, v in self.left_arm.action_features.items()},
             **{f"right_{k}": v for k, v in self.right_arm.action_features.items()},
@@ -75,14 +83,29 @@ class BiRebot102Leader(BimanualMixin, Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
+        """Neither arm accepts feedback.
+
+        Returns:
+            `dict[str, type]`: Always empty.
+        """
         return {}
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Read both arms' actions and merge them under `left_` / `right_` prefixed keys.
+
+        Returns:
+            `dict[str, float]`: See [`~teleoperators.rebot_102_leader.RebotArm102Leader.get_action`].
+        """
         action_dict = {}
         action_dict.update({f"left_{k}": v for k, v in self.left_arm.get_action().items()})
         action_dict.update({f"right_{k}": v for k, v in self.right_arm.get_action().items()})
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: neither arm has actuators to receive feedback.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")

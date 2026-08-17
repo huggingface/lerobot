@@ -37,8 +37,19 @@ logger = logging.getLogger(__name__)
 
 
 class HomunculusArm(Teleoperator):
-    """
-    Homunculus Arm designed by Hugging Face.
+    """Homunculus Arm designed by Hugging Face: a wearable exoskeleton arm read over a serial link.
+
+    The arm streams raw encoder values for each joint continuously over a background thread; readings are
+    smoothed with an exponential moving average before being normalized and returned as an action. It only
+    produces actions and accepts no feedback.
+
+    See [`~teleoperators.Teleoperator`] for the contract every method here implements.
+
+    Initializing an instance opens the serial connection and starts the background reader thread.
+
+    Args:
+        config (`HomunculusArmConfig`): The teleoperator's configuration. Its `port` determines what
+            is connected.
     """
 
     config_class = HomunculusArmConfig
@@ -88,19 +99,43 @@ class HomunculusArm(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        """The arm's joint positions.
+
+        Returns:
+            `dict`: `"<joint>.pos"` keys mapped to `float`, one per entry in `self.joints`.
+        """
         return {f"{joint}.pos": float for joint in self.joints}
 
     @property
     def feedback_features(self) -> dict:
+        """This arm accepts no feedback.
+
+        Returns:
+            `dict`: Always empty.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_connected`].
+
+        The serial port is open and the background reader thread is alive.
+        """
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Open the serial port, start the background reader thread, and wait for the first reading.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration when no calibration file exists yet. Calibration is
+                interactive and prompts on stdin.
+
+        Raises:
+            TimeoutError: If no state is received from the arm within 2 seconds of starting.
+        """
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()
@@ -116,9 +151,19 @@ class HomunculusArm(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """Whether a calibration file has been saved for this arm.
+
+        Returns:
+            `bool`: `True` if the calibration file exists on disk.
+        """
         return self.calibration_fpath.is_file()
 
     def calibrate(self) -> None:
+        """Interactively record each joint's range of motion and save it as the arm's calibration.
+
+        Prompts the operator to move every joint through its full range, then persists the observed
+        min/max encoder values to the calibration file.
+        """
         print(
             "\nMove all joints through their entire range of motion."
             "\nRecording positions. Press ENTER to stop..."
@@ -197,6 +242,7 @@ class HomunculusArm(Teleoperator):
         return mins, maxes
 
     def configure(self) -> None:
+        """No-op: the arm requires no runtime configuration beyond calibration."""
         pass
 
     # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
@@ -239,9 +285,9 @@ class HomunculusArm(Teleoperator):
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
     ) -> dict[str, int | float]:
-        """
-        Return the most recent (single) values from self.last_d,
-        optionally applying calibration.
+        """Return the most recent values from the reader thread.
+
+        Optionally applies calibration.
         """
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
@@ -265,9 +311,9 @@ class HomunculusArm(Teleoperator):
         return state
 
     def _read_loop(self):
-        """
-        Continuously read from the serial buffer in its own thread and sends values to the main thread through
-        a queue.
+        """Continuously read from the serial buffer in its own thread.
+
+        Sends values to the main thread through a queue.
         """
         while not self.stop_event.is_set():
             try:
@@ -305,14 +351,28 @@ class HomunculusArm(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
+        """Read the most recent EMA-smoothed, normalized joint positions.
+
+        Returns:
+            `dict[str, float]`: `"<joint>.pos"` keys mapped to their normalized position.
+
+        Raises:
+            TimeoutError: If no new reading arrives from the background thread within 1 second.
+        """
         joint_positions = self._read()
         return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: the arm has no actuators to receive feedback.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Stop the background reader thread and close the serial port."""
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()

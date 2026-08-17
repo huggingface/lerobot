@@ -29,8 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 class BiOpenArmLeader(BimanualMixin, Teleoperator):
-    """
-    Bimanual OpenArm Leader Arms
+    """A bimanual pair of [`~teleoperators.openarm_leader.OpenArmLeader`] arms.
+
+    Args:
+        config (`BiOpenArmLeaderConfig`): The teleoperator's configuration. Its `left_arm_config` and
+            `right_arm_config` determine what is connected on each side.
     """
 
     config_class = BiOpenArmLeaderConfig
@@ -75,6 +78,10 @@ class BiOpenArmLeader(BimanualMixin, Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Merges both arms' features, each key prefixed with `left_` or `right_`.
+        """
         left_arm_features = self.left_arm.action_features
         right_arm_features = self.right_arm.action_features
 
@@ -85,15 +92,31 @@ class BiOpenArmLeader(BimanualMixin, Teleoperator):
 
     @cached_property
     def feedback_features(self) -> dict[str, type]:
+        """See [`~teleoperators.Teleoperator.feedback_features`].
+
+        Always empty: feedback is not implemented for the OpenArm leader.
+        """
         return {}
 
     def setup_motors(self) -> None:
+        """Not supported: raises `NotImplementedError`.
+
+        Motor ID configuration for CAN motors is typically done via manufacturer tools rather than through
+        LeRobot.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """See [`~teleoperators.Teleoperator.get_action`].
+
+        Merges both arms' actions, each key prefixed with `left_` or `right_`.
+        """
         action_dict = {}
 
         # Add "left_" prefix
@@ -107,5 +130,14 @@ class BiOpenArmLeader(BimanualMixin, Teleoperator):
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: raises `NotImplementedError`.
+
+        Args:
+            feedback (`dict[str, float]`):
+                Unused.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         # TODO: Implement force feedback
         raise NotImplementedError

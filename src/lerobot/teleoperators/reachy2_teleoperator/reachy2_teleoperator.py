@@ -76,8 +76,11 @@ REACHY2_VEL = {
 
 
 class Reachy2Teleoperator(Teleoperator):
-    """
-    [Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
+    """[Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
+
+    Args:
+        config (`Reachy2TeleoperatorConfig`): The teleoperator's configuration. Its `ip_address` and
+            `with_*` flags determine what is read.
     """
 
     config_class = Reachy2TeleoperatorConfig
@@ -106,6 +109,13 @@ class Reachy2Teleoperator(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        """The joint positions (and mobile base velocity, if enabled) read from Reachy 2.
+
+        Returns:
+            `dict[str, type]`: `"<joint>.pos"` keys for each enabled part mapped to `float`, plus
+            `"mobile_base.vx"`, `"mobile_base.vy"`, and `"mobile_base.vtheta"` when
+            `config.with_mobile_base` is `True`.
+        """
         if self.config.with_mobile_base:
             return {
                 **dict.fromkeys(
@@ -122,14 +132,32 @@ class Reachy2Teleoperator(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """Always empty: this teleoperator does not accept feedback.
+
+        Returns:
+            `dict[str, type]`: An empty dictionary.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_connected`]."""
         return self.reachy.is_connected() if self.reachy is not None else False
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Open the gRPC connection to Reachy 2's teleoperation interface.
+
+        The `calibrate` argument is accepted for interface compatibility but has no effect: Reachy 2
+        manages its own calibration.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Unused.
+
+        Raises:
+            DeviceNotConnectedError: If the connection could not be established.
+        """
         self.reachy = ReachySDK(self.config.ip_address)
 
         if not self.is_connected:
@@ -138,16 +166,32 @@ class Reachy2Teleoperator(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """Always `True`: Reachy 2 manages its own calibration.
+
+        Returns:
+            `bool`: Always `True`.
+        """
         return True
 
     def calibrate(self) -> None:
+        """No-op: Reachy 2 manages its own calibration."""
         pass
 
     def configure(self) -> None:
+        """No-op: Reachy 2 requires no additional configuration."""
         pass
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
+        """Read the current (or goal) joint positions and mobile base velocity from Reachy 2.
+
+        Returns:
+            `dict[str, float]`: Values keyed as described by
+            [`~teleoperators.Teleoperator.action_features`].
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
+        """
         start = time.perf_counter()
 
         joint_action: dict[str, float] = {}
@@ -170,8 +214,14 @@ class Reachy2Teleoperator(Teleoperator):
         return {**joint_action, **vel_action}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported.
+
+        Raises:
+            NotImplementedError: Always. This teleoperator does not accept feedback.
+        """
         raise NotImplementedError
 
     def disconnect(self) -> None:
+        """Close the gRPC connection to Reachy 2, if it is open."""
         if self.is_connected:
             self.reachy.disconnect()

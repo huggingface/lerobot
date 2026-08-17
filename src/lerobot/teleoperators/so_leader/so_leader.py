@@ -31,7 +31,27 @@ logger = logging.getLogger(__name__)
 
 
 class SOLeader(Teleoperator):
-    """Generic SO leader base for SO-100/101/10X teleoperators."""
+    """The SO-family leader arm: a 5-DOF arm plus gripper on a Feetech bus, held to teleoperate a follower arm.
+
+    `SO100Leader` and `SO101Leader` are aliases of this class. The two arms differ in calibration and
+    gearing, not control code, so both are driven through the same implementation with a different
+    `config_class` and `name`.
+
+    Actions are keyed `"<motor>.pos"`. See [`~teleoperators.Teleoperator`] for the contract every method
+    here implements.
+
+    Args:
+        config (`SOLeaderTeleopConfig`): The teleoperator's configuration. Its `port` determines what
+            is connected.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+        >>> teleop = SO101Leader(SO101LeaderConfig(port="/dev/ttyACM0"))  # doctest: +SKIP
+        >>> with teleop:  # doctest: +SKIP
+        ...     action = teleop.get_action()
+        ```
+    """
 
     config_class = SOLeaderTeleopConfig
     name = "so_leader"
@@ -55,18 +75,42 @@ class SOLeader(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
+        """The arm's joint positions.
+
+        Returns:
+            `dict[str, type]`: `"<motor>.pos"` keys mapped to `float`.
+        """
         return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
     def feedback_features(self) -> dict[str, type]:
+        """The arm's target joint positions, used to sync this leader arm to another pose.
+
+        Shares the same keys as [`~teleoperators.Teleoperator.action_features`], since feedback for this
+        arm is a goal position written to each motor.
+
+        Returns:
+            `dict[str, type]`: `"<motor>.pos"` keys mapped to `float`.
+        """
         return self.action_features
 
     @property
     def is_connected(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_connected`]."""
         return self.bus.is_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect the motor bus, calibrating and configuring the arm.
+
+        Args:
+            calibrate (`bool`, *optional*, defaults to `True`):
+                Whether to run calibration when the motors disagree with the calibration file, or no file
+                exists yet. Calibration is interactive and prompts on stdin.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the teleoperator is already connected.
+        """
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -79,9 +123,15 @@ class SOLeader(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
+        """Same as [`~teleoperators.Teleoperator.is_calibrated`]."""
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """Calibrate the arm, writing the result to the motors and the calibration file.
+
+        This is interactive: it prompts on stdin to reuse an existing calibration file, and otherwise asks
+        you to move the arm to its middle position and then through each joint's full range.
+        """
         if self.calibration:
             # Calibration file exists, ask user whether to use it or run new calibration
             user_input = input(
@@ -125,18 +175,34 @@ class SOLeader(Teleoperator):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        """Disable torque and write the position-mode operating mode to every motor.
+
+        Torque is left disabled so the arm can be moved freely by hand while teleoperating.
+        """
         self.bus.disable_torque()
         self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
     def enable_torque(self) -> None:
+        """Enable torque on every motor.
+
+        Useful to briefly drive the arm to a position (e.g. via
+        [`~teleoperators.so_leader.SOLeader.send_feedback`]) before releasing it back to free movement with
+        [`~teleoperators.so_leader.SOLeader.disable_torque`].
+        """
         self.bus.enable_torque()
 
     def disable_torque(self) -> None:
+        """Disable torque on every motor, letting the arm be moved freely by hand."""
         self.bus.disable_torque()
 
     def setup_motors(self) -> None:
+        """Assign each motor its bus ID, one at a time.
+
+        Run this once when building an arm. It is interactive: it prompts you to connect the controller
+        board to a single motor at a time, working from the gripper back to the base.
+        """
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -144,6 +210,14 @@ class SOLeader(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
+        """Same as [`~teleoperators.Teleoperator.get_action`].
+
+        Returns:
+            `dict[str, float]`: `"<motor>.pos"` keys mapped to the arm's current joint positions.
+
+        Raises:
+            DeviceNotConnectedError: If the teleoperator is not connected.
+        """
         start = time.perf_counter()
         action = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
         action = {f"{motor}.pos": val for motor, val in action.items()}
@@ -153,12 +227,29 @@ class SOLeader(Teleoperator):
 
     @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Write goal positions to the arm's motors, e.g. to sync it to a follower's current pose.
+
+        Torque must be enabled (see [`~teleoperators.so_leader.SOLeader.enable_torque`]) for the arm to
+        actually move to the written positions.
+
+        Args:
+            feedback (`dict[str, float]`):
+                `"<motor>.pos"` keys mapped to target positions. Keys not ending in `.pos` are ignored.
+
+        Raises:
+            DeviceNotConnectedError: If the teleoperator is not connected.
+        """
         goals = {k.removesuffix(".pos"): v for k, v in feedback.items() if k.endswith(".pos")}
         if goals:
             self.bus.sync_write("Goal_Position", goals)
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Same as [`~teleoperators.Teleoperator.disconnect`].
+
+        Raises:
+            DeviceNotConnectedError: If the teleoperator is not connected.
+        """
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")
 

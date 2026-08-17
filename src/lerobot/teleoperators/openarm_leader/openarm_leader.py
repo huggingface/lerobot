@@ -30,11 +30,24 @@ logger = logging.getLogger(__name__)
 
 
 class OpenArmLeader(Teleoperator):
-    """
-    OpenArm Leader/Teleoperator Arm with Damiao motors.
+    """OpenArm Leader/Teleoperator Arm with Damiao motors.
 
-    This teleoperator uses CAN bus communication to read positions from
-    Damiao motors that are manually moved (torque disabled).
+    This teleoperator uses CAN bus communication to read positions from Damiao motors that are manually
+    moved (torque disabled). For the bimanual setup, see [`~teleoperators.bi_openarm_leader.BiOpenArmLeader`], which composes
+    two of these.
+
+    Args:
+        config (`OpenArmLeaderConfig`): The teleoperator's configuration. Its `port` and `motor_config`
+            determine what is connected and how the CAN bus is laid out.
+
+    Example:
+        ```python
+        >>> from lerobot.teleoperators.openarm_leader import OpenArmLeader, OpenArmLeaderConfig
+        >>> config = OpenArmLeaderConfig(port="can0")
+        >>> leader = OpenArmLeader(config)  # doctest: +SKIP
+        >>> leader.connect()  # doctest: +SKIP
+        >>> action = leader.get_action()  # doctest: +SKIP
+        ```
     """
 
     config_class = OpenArmLeaderConfig
@@ -66,7 +79,11 @@ class OpenArmLeader(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        """Features produced by this teleoperator."""
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Always includes `.pos` per motor; also includes `.vel` and `.torque` per motor when
+        `config.use_velocity_and_torque` is `True`.
+        """
         features: dict[str, type] = {}
         for motor in self.bus.motors:
             features[f"{motor}.pos"] = float
@@ -77,23 +94,23 @@ class OpenArmLeader(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        """Feedback features (not implemented for OpenArms)."""
+        """See [`~teleoperators.Teleoperator.feedback_features`].
+
+        Always empty: feedback is not implemented for the OpenArm leader.
+        """
         return {}
 
     @property
     def is_connected(self) -> bool:
-        """Check if teleoperator is connected."""
+        """See [`~teleoperators.Teleoperator.is_connected`]."""
         return self.bus.is_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """
-        Connect to the teleoperator.
+        """See [`~teleoperators.Teleoperator.connect`].
 
-        For manual control, we disable torque after connecting so the
-        arm can be moved by hand.
+        For manual control, torque is disabled after connecting so the arm can be moved by hand.
         """
-
         # Connect to CAN bus
         logger.info(f"Connecting arm on {self.config.port}...")
         self.bus.connect()
@@ -114,12 +131,11 @@ class OpenArmLeader(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        """Check if teleoperator is calibrated."""
+        """See [`~teleoperators.Teleoperator.is_calibrated`]."""
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        """
-        Run calibration procedure for OpenArms leader.
+        """See [`~teleoperators.Teleoperator.calibrate`].
 
         The calibration procedure:
         1. Disable torque (if not already disabled)
@@ -170,26 +186,29 @@ class OpenArmLeader(Teleoperator):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        """
-        Configure motors for manual teleoperation.
+        """See [`~teleoperators.Teleoperator.configure`].
 
-        For manual control, we disable torque so the arm can be moved by hand.
+        For manual control, torque is disabled so the arm can be moved by hand; otherwise the motors are
+        configured for MIT torque control.
         """
-
         return self.bus.disable_torque() if self.config.manual_control else self.bus.configure_motors()
 
     def setup_motors(self) -> None:
+        """Not supported: raises `NotImplementedError`.
+
+        Motor ID configuration for CAN motors is typically done via manufacturer tools rather than through
+        LeRobot.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
         )
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """
-        Get current action from the leader arm.
-
-        This is the main method for teleoperators - it reads the current state
-        of the leader arm and returns it as an action that can be sent to a follower.
+        """See [`~teleoperators.Teleoperator.get_action`].
 
         Reads all motor states (pos/vel/torque) in one CAN refresh cycle.
         """
@@ -212,12 +231,20 @@ class OpenArmLeader(Teleoperator):
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
+        """Not supported: raises `NotImplementedError`.
+
+        Args:
+            feedback (`dict[str, float]`):
+                Unused.
+
+        Raises:
+            NotImplementedError: Always.
+        """
         raise NotImplementedError("Feedback is not yet implemented for OpenArm leader.")
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        """Disconnect from teleoperator."""
-
+        """See [`~teleoperators.Teleoperator.disconnect`]."""
         # Disconnect CAN bus
         # For manual control, ensure torque is disabled before disconnecting
         self.bus.disconnect(disable_torque=self.config.manual_control)

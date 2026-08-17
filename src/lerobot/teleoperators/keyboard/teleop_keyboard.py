@@ -43,8 +43,19 @@ if PYNPUT_AVAILABLE:
 
 
 class KeyboardTeleop(Teleoperator):
-    """
-    Teleop class to use keyboard inputs for control.
+    """Teleoperator that reads raw keyboard key states via `pynput` for manual control.
+
+    [`~teleoperators.Teleoperator.get_action`] reports every key currently held down. Requires an
+    interactive desktop session capable of capturing global key events — an X11 session (Linux), a
+    Windows desktop, or macOS with Accessibility / Input Monitoring permission granted. On Wayland or a
+    headless machine, [`~teleoperators.Teleoperator.connect`] logs a warning and the teleoperator produces
+    no actions.
+
+    Args:
+        config (`KeyboardTeleopConfig`): Configuration for this keyboard teleoperator.
+
+    Raises:
+        ImportError: If `pynput` is not installed.
     """
 
     config_class = KeyboardTeleopConfig
@@ -63,6 +74,11 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Returns:
+            `dict`: Motor count and names taken from `self.arm`.
+        """
         return {
             "dtype": "float32",
             "shape": (len(self.arm),),
@@ -71,18 +87,26 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def feedback_features(self) -> dict:
+        """See [`~teleoperators.Teleoperator.feedback_features`]. `KeyboardTeleop` accepts no feedback."""
         return {}
 
     @property
     def is_connected(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_connected`]."""
         return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener) and self.listener.is_alive()
 
     @property
     def is_calibrated(self) -> bool:
+        """See [`~teleoperators.Teleoperator.is_calibrated`]. Keyboard input does not require calibration."""
         pass
 
     @check_if_already_connected
     def connect(self) -> None:
+        """See [`~teleoperators.Teleoperator.connect`].
+
+        Starts a `pynput` keyboard listener if the current session can capture key events; otherwise logs
+        a warning and leaves the teleoperator producing no actions.
+        """
         if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
@@ -101,6 +125,7 @@ class KeyboardTeleop(Teleoperator):
             self.listener = None
 
     def calibrate(self) -> None:
+        """See [`~teleoperators.Teleoperator.calibrate`]. No-op: keyboard input does not require calibration."""
         pass
 
     def _on_press(self, key):
@@ -123,10 +148,20 @@ class KeyboardTeleop(Teleoperator):
             self.current_pressed[key_char] = is_pressed
 
     def configure(self):
+        """See [`~teleoperators.Teleoperator.configure`]. No-op: keyboard input needs no configuration."""
         pass
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Read the keys currently held down.
+
+        Returns:
+            `dict[str, Any]`: One entry per key character currently pressed, each mapped to `None`. An
+            empty dict means no key is currently held.
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
+        """
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()
@@ -138,18 +173,25 @@ class KeyboardTeleop(Teleoperator):
         return dict.fromkeys(action, None)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
+        """See [`~teleoperators.Teleoperator.send_feedback`]. No-op: `KeyboardTeleop` accepts no feedback."""
         pass
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """See [`~teleoperators.Teleoperator.disconnect`]. Stops the keyboard listener, if one is running."""
         if self.listener is not None:
             self.listener.stop()
 
 
 class KeyboardEndEffectorTeleop(KeyboardTeleop):
-    """
-    Teleop class to use keyboard inputs for end effector control.
-    Designed to be used with the `So100FollowerEndEffector` robot.
+    """Keyboard teleoperator for end-effector (Cartesian delta) control.
+
+    Arrow keys and shift map to `delta_x`/`delta_y`/`delta_z`; `ctrl_l`/`ctrl_r` map to the gripper.
+    Designed for use with the `So100FollowerEndEffector` robot.
+
+    Args:
+        config (`KeyboardEndEffectorTeleopConfig`): Configuration for this keyboard end-effector
+            teleoperator.
     """
 
     config_class = KeyboardEndEffectorTeleopConfig
@@ -162,6 +204,12 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     @property
     def action_features(self) -> dict:
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Returns:
+            `dict`: A 3-element (or 4-element if `config.use_gripper` is `True`) `float32` vector named
+            `delta_x`, `delta_y`, `delta_z`, and optionally `gripper`.
+        """
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
@@ -177,6 +225,19 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        """Translate held-down keys into an end-effector Cartesian delta.
+
+        Arrow keys drive `delta_x`/`delta_y`; `shift`/`shift_r` drive `delta_z`. `ctrl_r` opens the
+        gripper and `ctrl_l` closes it (only present when `config.use_gripper` is `True`); any other
+        pressed key is queued for [`~teleoperators.keyboard.KeyboardEndEffectorTeleop.get_teleop_events`]
+        instead of affecting the action.
+
+        Returns:
+            `dict[str, Any]`: `delta_x`, `delta_y`, `delta_z`, and, if enabled, `gripper`.
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
+        """
         self._drain_pressed_keys()
         delta_x = 0.0
         delta_y = 0.0
@@ -220,22 +281,15 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         return action_dict
 
     def get_teleop_events(self) -> dict[str, Any]:
-        """
-        Get extra control events from the keyboard such as intervention status,
-        episode termination, success indicators, etc.
+        """Read auxiliary keyboard events used to drive episode control during recording.
 
-        Keyboard mappings:
-        - Any movement keys pressed = intervention active
-        - 's' key = success (terminate episode successfully)
-        - 'r' key = rerecord episode (terminate and rerecord)
-        - 'q' key = quit episode (terminate without success)
+        Any of the movement/gripper keys held down counts as an active intervention. `s`, `r`, and `q`
+        are read once as one-shot signals for success, rerecord, and quit respectively; reading this
+        method clears the currently tracked key state.
 
         Returns:
-            Dictionary containing:
-                - is_intervention: bool - Whether human is currently intervening
-                - terminate_episode: bool - Whether to terminate the current episode
-                - success: bool - Whether the episode was successful
-                - rerecord_episode: bool - Whether to rerecord the episode
+            `dict[TeleopEvents, bool]`: Values for the [`~teleoperators.TeleopEvents`] keys
+            `IS_INTERVENTION`, `TERMINATE_EPISODE`, `SUCCESS`, and `RERECORD_EPISODE`.
         """
         if not self.is_connected:
             return {
@@ -286,49 +340,27 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
 
 class KeyboardRoverTeleop(KeyboardTeleop):
-    """
-    Keyboard teleoperator for mobile robots like EarthRover Mini Plus.
+    """Keyboard teleoperator for mobile robots such as EarthRover Mini Plus.
 
-    Provides intuitive WASD-style controls for driving a mobile robot:
-    - Linear movement (forward/backward)
-    - Angular movement (turning/rotation)
-    - Speed adjustment
-    - Emergency stop
+    Provides WASD-style driving controls: `w`/`s` drive forward/backward, `a`/`d` turn (with a forward
+    motion assist), `q`/`e` rotate in place, `x` is an emergency stop, and `+`/`-` adjust speed. `ESC`
+    disconnects the teleoperator.
 
-    Keyboard Controls:
-        Movement:
-            - W: Move forward
-            - S: Move backward
-            - A: Turn left (with forward motion)
-            - D: Turn right (with forward motion)
-            - Q: Rotate left in place
-            - E: Rotate right in place
-            - X: Emergency stop
-
-        Speed Control:
-            - +/=: Increase speed
-            - -: Decrease speed
-
-        System:
-            - ESC: Disconnect teleoperator
+    Args:
+        config (`KeyboardRoverTeleopConfig`): Configuration for this keyboard rover teleoperator.
 
     **Attributes**:
-        - **config** -- Teleoperator configuration
-        - **current_linear_speed** -- Current linear velocity magnitude
-        - **current_angular_speed** -- Current angular velocity magnitude
+        - **current_linear_speed** (`float`) -- Current linear velocity magnitude, adjustable at runtime
+          with `+`/`-`.
+        - **current_angular_speed** (`float`) -- Current angular velocity magnitude, adjustable at
+          runtime with `+`/`-`.
 
     Example:
         ```python
-        from lerobot.teleoperators.keyboard import KeyboardRoverTeleop, KeyboardRoverTeleopConfig
-
-        teleop = KeyboardRoverTeleop(
-            KeyboardRoverTeleopConfig(linear_speed=1.0, angular_speed=1.0, speed_increment=0.1)
-        )
-        teleop.connect()
-
-        while teleop.is_connected:
-            action = teleop.get_action()
-            robot.send_action(action)
+        >>> from lerobot.teleoperators.keyboard import KeyboardRoverTeleop, KeyboardRoverTeleopConfig
+        >>> teleop = KeyboardRoverTeleop(KeyboardRoverTeleopConfig(linear_speed=1.0))  # doctest: +SKIP
+        >>> teleop.connect()  # doctest: +SKIP
+        >>> teleop.get_action()  # doctest: +SKIP
         ```
     """
 
@@ -343,7 +375,11 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
     @property
     def action_features(self) -> dict:
-        """Return action format for rover (linear and angular velocities)."""
+        """See [`~teleoperators.Teleoperator.action_features`].
+
+        Returns:
+            `dict`: `linear_velocity` and `angular_velocity`, each mapped to `float`.
+        """
         return {
             "linear_velocity": float,
             "angular_velocity": float,
@@ -351,11 +387,11 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
     @property
     def is_calibrated(self) -> bool:
-        """Rover teleop doesn't require calibration."""
+        """See [`~teleoperators.Teleoperator.is_calibrated`]. Rover teleop does not require calibration."""
         return True
 
     def _drain_pressed_keys(self):
-        """Update current_pressed state from event queue without clearing held keys"""
+        """Update current_pressed state from event queue without clearing held keys."""
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
             if is_pressed:
@@ -366,11 +402,18 @@ class KeyboardRoverTeleop(KeyboardTeleop):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """
-        Get the current action based on pressed keys.
+        """Translate held-down WASD-style keys into linear and angular rover velocities.
+
+        `w`/`s` set the linear velocity; `a`/`d` turn while adding a forward-motion assist
+        (`config.turn_assist_ratio`) when not already moving; `q`/`e` rotate in place; `x` stops both
+        axes. `+`/`-` adjust `current_linear_speed` and `current_angular_speed` in place, clamped to
+        `config.min_linear_speed` / `config.min_angular_speed`.
 
         Returns:
-            RobotAction with 'linear_velocity' and 'angular_velocity' keys.
+            `dict[str, float]`: `linear_velocity` and `angular_velocity`.
+
+        Raises:
+            DeviceNotConnectedError: If [`~teleoperators.Teleoperator.connect`] has not been called.
         """
         before_read_t = time.perf_counter()
 
