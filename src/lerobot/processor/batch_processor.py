@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This script defines processor steps for adding a batch dimension to various components of an environment transition.
+"""This script defines processor steps for adding a batch dimension to various components of an environment transition.
 
 These steps are designed to process actions, observations, and complementary data, making them suitable for batch processing by adding a leading dimension. This is a common requirement before feeding data into a neural network model.
 """
@@ -41,15 +40,13 @@ from .pipeline import (
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_action")
 class AddBatchDimensionActionStep(PolicyActionProcessorStep):
-    """
-    Processor step to add a batch dimension to a 1D tensor action.
+    """Processor step to add a batch dimension to a 1D tensor action.
 
     This is useful for creating a batch of size 1 from a single action sample.
     """
 
     def action(self, action: PolicyAction) -> PolicyAction:
-        """
-        Adds a batch dimension to the action if it's a 1D tensor.
+        """Adds a batch dimension to the action if it's a 1D tensor.
 
         Args:
             action: The action tensor.
@@ -64,8 +61,7 @@ class AddBatchDimensionActionStep(PolicyActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Returns the input features unchanged.
+        """Returns the input features unchanged.
 
         Adding a batch dimension does not alter the feature definition.
 
@@ -81,8 +77,7 @@ class AddBatchDimensionActionStep(PolicyActionProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_observation")
 class AddBatchDimensionObservationStep(ObservationProcessorStep):
-    """
-    Processor step to add a batch dimension to observations.
+    """Processor step to add a batch dimension to observations.
 
     It handles different types of observations:
     - State vectors (1D tensors).
@@ -91,8 +86,7 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
     """
 
     def observation(self, observation: dict[str, Tensor]) -> dict[str, Tensor]:
-        """
-        Adds a batch dimension to tensor-based observations in the observation dictionary.
+        """Adds a batch dimension to tensor-based observations in the observation dictionary.
 
         Args:
             observation: The observation dictionary.
@@ -122,8 +116,7 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Returns the input features unchanged.
+        """Returns the input features unchanged.
 
         Adding a batch dimension does not alter the feature definition.
 
@@ -139,8 +132,7 @@ class AddBatchDimensionObservationStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor_complementary_data")
 class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
-    """
-    Processor step to add a batch dimension to complementary data fields.
+    """Processor step to add a batch dimension to complementary data fields.
 
     Handles specific keys like 'task', 'index', and 'task_index' to make them batched.
     - 'task' (str) is wrapped in a list.
@@ -148,8 +140,7 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
     """
 
     def complementary_data(self, complementary_data: dict) -> dict:
-        """
-        Adds a batch dimension to specific fields in the complementary data dictionary.
+        """Adds a batch dimension to specific fields in the complementary data dictionary.
 
         Args:
             complementary_data: The complementary data dictionary.
@@ -194,8 +185,7 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Returns the input features unchanged.
+        """Returns the input features unchanged.
 
         Adding a batch dimension does not alter the feature definition.
 
@@ -211,8 +201,7 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor")
 class AddBatchDimensionProcessorStep(ProcessorStep):
-    """
-    A composite processor step that adds a batch dimension to the entire environment transition.
+    """A composite processor step that adds a batch dimension to the entire environment transition.
 
     This step combines individual processors for actions, observations, and complementary data
     to create a batched transition (batch size 1) from a single-instance transition.
@@ -236,8 +225,7 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
     )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Applies the batching process to all relevant parts of an environment transition.
+        """Applies the batching process to all relevant parts of an environment transition.
 
         Args:
             transition: The environment transition to process.
@@ -256,8 +244,7 @@ class AddBatchDimensionProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Returns the input features unchanged.
+        """Returns the input features unchanged.
 
         Adding a batch dimension does not alter the feature definition.
 

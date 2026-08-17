@@ -14,11 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This module defines a generic, sequential data processing pipeline framework, primarily designed for
-transforming robotics data (observations, actions, rewards, etc.).
+"""This module defines a generic, sequential data processing pipeline framework.
 
-The core components are:
+It is primarily designed for transforming robotics data (observations, actions, rewards, etc.). The core
+components are:
 - ProcessorStep: An abstract base class for a single data transformation operation.
 - ProcessorStepRegistry: A mechanism to register and retrieve ProcessorStep classes by name.
 - DataProcessorPipeline: A class that chains multiple ProcessorStep instances together to form a complete
@@ -249,7 +248,13 @@ class ProcessorKwargs(TypedDict, total=False):
 
 
 class ProcessorMigrationError(Exception):
-    """Raised when a model needs migration to the processor format"""
+    """Raised when a model needs migration to the processor format.
+
+    Args:
+        model_path (`str | Path`): Path or Hub repo ID of the model that needs migration.
+        migration_command (`str`): Shell command the user should run to migrate it.
+        original_error (`str`): The underlying error that triggered this migration check.
+    """
 
     def __init__(self, model_path: str | Path, migration_command: str, original_error: str):
         self.model_path = model_path
@@ -1486,6 +1491,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         feature_types = {feature_type.value for feature_type in FeatureType}
 
         def is_policy_feature_mapping(features: Any) -> bool:
+            """Return `True` if `features` looks like a serialized `dict[str, PolicyFeature]`."""
             return (
                 isinstance(features, dict)
                 and bool(features)

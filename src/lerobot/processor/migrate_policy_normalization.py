@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-A generic script to migrate LeRobot policies with built-in normalization layers to the new
-pipeline-based processor system.
+"""A generic script to migrate LeRobot policies with built-in normalization layers.
 
-This script performs the following steps:
+Migrates them to the new pipeline-based processor system. This script performs the following steps:
 1.  Loads a pretrained policy model and its configuration from a local path or the
     Hugging Face Hub.
 2.  Scans the model's state dictionary to extract normalization statistics (e.g., mean,
@@ -63,15 +61,14 @@ from lerobot.utils.constants import ACTION
 
 
 def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
-    """
-    Scans a model's state_dict to find and extract normalization statistics.
+    """Scans a model's state_dict to find and extract normalization statistics.
 
     This function identifies keys corresponding to normalization layers (e.g., those
     for mean, std, min, max) based on a set of predefined patterns and organizes
     them into a nested dictionary.
 
     Args:
-        state_dict: The state dictionary of a pretrained policy model.
+        state_dict (`dict[str, torch.Tensor]`): The model's state dictionary to scan.
 
     Returns:
         A nested dictionary where outer keys are feature names (e.g.,
@@ -125,8 +122,7 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
 def detect_features_and_norm_modes(
     config: dict[str, Any], stats: dict[str, dict[str, torch.Tensor]]
 ) -> tuple[dict[str, PolicyFeature], dict[FeatureType, NormalizationMode]]:
-    """
-    Infers policy features and normalization modes from the model config and stats.
+    """Infers policy features and normalization modes from the model config and stats.
 
     This function first attempts to find feature definitions and normalization
     mappings directly from the policy's configuration file. If this information is
@@ -136,8 +132,9 @@ def detect_features_and_norm_modes(
     It applies sensible defaults if inference is not possible.
 
     Args:
-        config: The policy's configuration dictionary from `config.json`.
-        stats: The normalization statistics extracted from the model's state_dict.
+        config (`dict[str, Any]`): The policy's configuration dictionary (from `config.json`).
+        stats (`dict[str, dict[str, torch.Tensor]]`): The normalization statistics extracted by
+            `extract_normalization_stats`.
 
     Returns:
         A tuple containing:
@@ -248,14 +245,13 @@ def detect_features_and_norm_modes(
 
 
 def remove_normalization_layers(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """
-    Creates a new state_dict with all normalization-related layers removed.
+    """Creates a new state_dict with all normalization-related layers removed.
 
     This function filters the original state dictionary, excluding any keys that
     match a set of predefined patterns associated with normalization modules.
 
     Args:
-        state_dict: The original model state dictionary.
+        state_dict (`dict[str, torch.Tensor]`): The original model state dictionary.
 
     Returns:
         A new state dictionary containing only the core model weights, without
@@ -286,12 +282,11 @@ def remove_normalization_layers(state_dict: dict[str, torch.Tensor]) -> dict[str
 def clean_state_dict(
     state_dict: dict[str, torch.Tensor], remove_str: str = "._orig_mod"
 ) -> dict[str, torch.Tensor]:
-    """
-    Remove a substring (e.g. '._orig_mod') from all keys in a state dict.
+    """Remove a substring (e.g. '._orig_mod') from all keys in a state dict.
 
     Args:
         state_dict (dict): The original state dict.
-        remove_str (str): The substring to remove from the keys.
+        remove_str (str, *optional*, defaults to `"._orig_mod"`): The substring to remove from the keys.
 
     Returns:
         dict: A new state dict with cleaned keys.
@@ -309,18 +304,18 @@ def load_state_dict_with_missing_key_handling(
     policy_type: str,
     known_missing_keys_whitelist: dict[str, list[str]],
 ) -> list[str]:
-    """
-    Load state dict into policy with graceful handling of missing keys.
+    """Load state dict into policy with graceful handling of missing keys.
 
     This function loads the state dict with strict=False, filters out whitelisted
     missing keys, and provides detailed reporting about any issues found.
 
     Args:
-        policy: The policy model to load the state dict into.
-        state_dict: The cleaned state dictionary to load.
-        policy_type: The type of policy (used for whitelist lookup).
-        known_missing_keys_whitelist: Dictionary mapping policy types to lists of
-                                     known acceptable missing keys.
+        policy (`torch.nn.Module`): The policy module to load the state dict into.
+        state_dict (`dict[str, torch.Tensor]`): The cleaned state dict to load.
+        policy_type (`str`): The policy type name, used to look up the whitelist (matched
+            case-insensitively).
+        known_missing_keys_whitelist (`dict[str, list[str]]`): A mapping from policy type to the list of
+            key names that are expected to be missing for that policy.
 
     Returns:
         List of problematic missing keys that weren't in the whitelist.
@@ -363,12 +358,11 @@ def load_state_dict_with_missing_key_handling(
 
 
 def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[str, PolicyFeature]:
-    """
-    Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
+    """Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
 
     Args:
-        features_dict: The feature dictionary in the old format, where values are
-                       simple dictionaries (e.g., `{"shape": [7]}`).
+        features_dict (`dict[str, dict]`): A mapping from feature name to its old-format config dict
+            (with a `"shape"` or `"dim"` key).
 
     Returns:
         A dictionary mapping feature names to `PolicyFeature` dataclass objects.
@@ -396,11 +390,10 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
 
 
 def display_migration_summary_with_warnings(problematic_missing_keys: list[str]) -> None:
-    """
-    Display final migration summary with warnings about problematic missing keys.
+    """Display final migration summary with warnings about problematic missing keys.
 
     Args:
-        problematic_missing_keys: List of missing keys that weren't in the whitelist.
+        problematic_missing_keys (`list[str]`): List of missing keys that weren't in the whitelist.
     """
     if not problematic_missing_keys:
         return
@@ -434,12 +427,11 @@ def display_migration_summary_with_warnings(problematic_missing_keys: list[str])
 def load_model_from_hub(
     repo_id: str, revision: str | None = None
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any] | None]:
-    """
-    Downloads and loads a model's state_dict and configs from the Hugging Face Hub.
+    """Downloads and loads a model's state_dict and configs from the Hugging Face Hub.
 
     Args:
-        repo_id: The repository ID on the Hub (e.g., 'lerobot/aloha').
-        revision: The specific git revision (branch, tag, or commit hash) to use.
+        repo_id (`str`): The Hugging Face Hub repo ID of the pretrained model.
+        revision (`str | None`, *optional*): The Hub revision (branch, tag, or commit hash) to download.
 
     Returns:
         A tuple containing the model's state dictionary, the policy configuration,
@@ -470,6 +462,7 @@ def load_model_from_hub(
 
 
 def main():
+    """CLI entry point: parse arguments and migrate a pretrained policy to the processor pipeline format."""
     parser = argparse.ArgumentParser(
         description="Migrate policy models with normalization layers to new pipeline system"
     )

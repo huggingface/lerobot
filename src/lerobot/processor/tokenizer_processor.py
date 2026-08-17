@@ -14,8 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This script defines a processor for tokenizing natural language instructions from an environment transition.
+"""This script defines a processor for tokenizing natural language instructions from an environment transition.
 
 It uses a tokenizer from the Hugging Face `transformers` library to convert task descriptions (text) into
 token IDs and attention masks, which are then added to the observation dictionary.
@@ -56,8 +55,7 @@ else:
 @dataclass
 @ProcessorStepRegistry.register(name="tokenizer_processor")
 class TokenizerProcessorStep(ObservationProcessorStep):
-    """
-    Processor step to tokenize a natural language task description.
+    """Processor step to tokenize a natural language task description.
 
     This step extracts a task string from the `complementary_data` of an `EnvTransition`,
     tokenizes it using a Hugging Face `transformers` tokenizer, and adds the resulting
@@ -90,8 +88,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
     input_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
-        """
-        Initializes the tokenizer after the dataclass is created.
+        """Initializes the tokenizer after the dataclass is created.
 
         It checks for the availability of the `transformers` library and loads the tokenizer
         either from a provided object or by name from the Hugging Face Hub.
@@ -120,8 +117,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             )
 
     def get_task(self, transition: EnvTransition) -> list[str] | None:
-        """
-        Extracts the task description(s) from the transition's complementary data.
+        """Extracts the task description(s) from the transition's complementary data.
 
         Args:
             transition: The environment transition.
@@ -146,8 +142,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         return None
 
     def get_subtask(self, transition: EnvTransition) -> list[str] | None:
-        """
-        Extracts the subtask from the transition's complementary data.
+        """Extracts the subtask from the transition's complementary data.
 
         Args:
             transition: The environment transition.
@@ -172,8 +167,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         return None
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
-        """
-        Tokenizes the task description and adds it to the observation dictionary.
+        """Tokenizes the task description and adds it to the observation dictionary.
 
         This method retrieves the task, tokenizes it, moves the resulting tensors to the
         same device as other data in the transition, and updates the observation.
@@ -229,8 +223,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         return new_observation
 
     def _detect_device(self, transition: EnvTransition) -> torch.device | None:
-        """
-        Detects the torch.device from existing tensors in the transition.
+        """Detects the torch.device from existing tensors in the transition.
 
         It checks tensors in the observation dictionary first, then the action tensor.
 
@@ -255,8 +248,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         return None  # No tensors found, default will be CPU
 
     def _tokenize_text(self, text: str | list[str]) -> dict[str, torch.Tensor]:
-        """
-        A wrapper around the tokenizer call.
+        """A wrapper around the tokenizer call.
 
         Args:
             text: A string or list of strings to tokenize.
@@ -274,8 +266,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         )
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the serializable configuration of the processor.
+        """Returns the serializable configuration of the processor.
 
         Note: The tokenizer object itself is not serialized. If the processor was initialized
         with a tokenizer name, that name will be included in the config.
@@ -309,8 +300,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Adds feature definitions for the language tokens and attention mask.
+        """Adds feature definitions for the language tokens and attention mask.
 
         This updates the policy features dictionary to include the new data added to the
         observation, ensuring downstream components are aware of their shape and type.
@@ -339,8 +329,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="action_tokenizer_processor")
 class ActionTokenizerProcessorStep(ActionProcessorStep):
-    """
-    Processor step to tokenize action data using a fast action tokenizer.
+    """Processor step to tokenize action data using a fast action tokenizer.
 
     This step takes action tensors from an `EnvTransition`, tokenizes them using
     a Hugging Face `transformers` AutoProcessor (such as the Physical Intelligence "fast" tokenizer),
@@ -373,8 +362,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
-        """
-        Initializes the action tokenizer after the dataclass is created.
+        """Initializes the action tokenizer after the dataclass is created.
 
         It checks for the availability of the `transformers` library and loads the tokenizer
         either from a provided object or by name from the Hugging Face Hub.
@@ -412,8 +400,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         )
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """
-        Applies action tokenization to the transition.
+        """Applies action tokenization to the transition.
 
         This overrides the base class to handle both tokens and mask.
 
@@ -445,14 +432,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         return new_transition
 
     def _act_tokens_to_paligemma_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Converts action tokens to PaliGemma tokens.
-        """
+        """Converts action tokens to PaliGemma tokens."""
         return self._paligemma_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
 
     def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Tokenizes the action tensor and creates a mask.
+        """Tokenizes the action tensor and creates a mask.
 
         Args:
             action: The input action tensor to tokenize. Shape: (B, H, action_dim) or (H, action_dim,)
@@ -568,16 +552,15 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         return tokens_batch, masks_batch, code_masks_batch
 
     def action(self, action: torch.Tensor) -> torch.Tensor:
-        """
-        This method is not used since we override __call__.
-        Required by ActionProcessorStep ABC.
+        """This method is not used since we override `__call__`.
+
+        Required by the `ActionProcessorStep` ABC.
         """
         tokens, _, _ = self._tokenize_action(action)
         return tokens
 
     def get_config(self) -> dict[str, Any]:
-        """
-        Returns the serializable configuration of the processor.
+        """Returns the serializable configuration of the processor.
 
         Note: The tokenizer object itself is not serialized. If the processor was initialized
         with a tokenizer name, that name will be included in the config.
@@ -600,6 +583,11 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         return config
 
     def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the action tokenizer so object-provided instances reload without overrides.
+
+        Raises:
+            TypeError: If `action_tokenizer` doesn't implement `save_pretrained`.
+        """
         artifact_path = Path("action_tokenizer")
         save_pretrained = getattr(self.action_tokenizer, "save_pretrained", None)
         if save_pretrained is None:
@@ -610,8 +598,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """
-        Updates feature definitions to reflect tokenized actions.
+        """Updates feature definitions to reflect tokenized actions.
 
         This updates the policy features dictionary to indicate that the action
         has been tokenized into a sequence of token IDs with shape (max_action_tokens,).

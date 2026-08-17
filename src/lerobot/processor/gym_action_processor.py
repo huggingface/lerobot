@@ -27,8 +27,7 @@ from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 @ProcessorStepRegistry.register("torch2numpy_action_processor")
 @dataclass
 class Torch2NumpyActionProcessorStep(ActionProcessorStep):
-    """
-    Converts a PyTorch tensor action to a NumPy array.
+    """Converts a PyTorch tensor action to a NumPy array.
 
     This step is useful when the output of a policy (typically a torch.Tensor)
     needs to be passed to an environment or component that expects a NumPy array.
@@ -41,6 +40,11 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     squeeze_batch_dim: bool = True
 
     def action(self, action: PolicyAction) -> EnvAction:
+        """Convert `action` to a NumPy array, squeezing a size-1 batch dimension if `squeeze_batch_dim`.
+
+        Raises:
+            TypeError: If `action` is not a `PolicyAction`.
+        """
         if not isinstance(action, PolicyAction):
             raise TypeError(
                 f"Expected PolicyAction or None, got {type(action).__name__}. "
@@ -64,6 +68,7 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A dtype conversion; features are unchanged."""
         return features
 
 
@@ -99,4 +104,5 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """See [`~processor.ProcessorStep.transform_features`]. A dtype conversion; features are unchanged."""
         return features

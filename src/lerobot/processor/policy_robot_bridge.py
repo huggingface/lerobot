@@ -34,14 +34,21 @@ class RobotActionToPolicyActionProcessorStep(ActionProcessorStep):
     motor_names: list[str]
 
     def action(self, action: RobotAction) -> PolicyAction:
+        """Stack `action`'s `"{motor}.pos"` entries, in `motor_names` order, into a single tensor.
+
+        Raises:
+            ValueError: If `action` doesn't have exactly `len(motor_names)` entries.
+        """
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"motor_names": [...]}`."""
         return asdict(self)
 
     def transform_features(self, features):
+        """Replace the per-motor action features with a single stacked action feature."""
         features[PipelineFeatureType.ACTION][ACTION] = PolicyFeature(
             type=FeatureType.ACTION, shape=(len(self.motor_names),)
         )
@@ -56,14 +63,21 @@ class PolicyActionToRobotActionProcessorStep(ActionProcessorStep):
     motor_names: list[str]
 
     def action(self, action: PolicyAction) -> RobotAction:
+        """Split `action`, in `motor_names` order, into a `"{motor}.pos"`-keyed dict.
+
+        Raises:
+            ValueError: If `action` doesn't have exactly `len(motor_names)` elements.
+        """
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return {f"{name}.pos": action[i] for i, name in enumerate(self.motor_names)}
 
     def get_config(self) -> dict[str, Any]:
+        """Returns `{"motor_names": [...]}`."""
         return asdict(self)
 
     def transform_features(self, features):
+        """Replace the stacked action feature with one per-motor `"{motor}.pos"` action feature."""
         for name in self.motor_names:
             features[PipelineFeatureType.ACTION][f"{name}.pos"] = PolicyFeature(
                 type=FeatureType.ACTION, shape=(1,)

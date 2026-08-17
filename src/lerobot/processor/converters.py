@@ -34,16 +34,16 @@ def to_tensor(
     dtype: torch.dtype | None = torch.float32,
     device: torch.device | str | None = None,
 ) -> torch.Tensor:
-    """
-    Convert various data types to PyTorch tensors with configurable options.
+    """Convert various data types to PyTorch tensors with configurable options.
 
     This is a unified tensor conversion function using single dispatch to handle
     different input types appropriately.
 
     Args:
-        value: Input value to convert (tensor, array, scalar, sequence, etc.).
-        dtype: Target tensor dtype. If None, preserves original dtype.
-        device: Target device for the tensor.
+        value (`Any`): Input value to convert (tensor, array, scalar, sequence, etc.).
+        dtype (`torch.dtype | None`, *optional*, defaults to `torch.float32`): Target tensor dtype. If
+            None, preserves original dtype.
+        device (`torch.device | str | None`, *optional*): Target device for the tensor.
 
     Returns:
         A PyTorch tensor.
@@ -137,13 +137,12 @@ def _(value: dict, *, device=None, **kwargs) -> dict:
 
 
 def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | Any:
-    """
-    Convert a PyTorch tensor to a numpy array or scalar if applicable.
+    """Convert a PyTorch tensor to a numpy array or scalar if applicable.
 
     If the input is not a tensor, it is returned unchanged.
 
     Args:
-        x: The input, which can be a tensor or any other type.
+        x (`torch.Tensor | Any`): The input, which can be a tensor or any other type.
 
     Returns:
         A numpy array, a scalar, or the original input.
@@ -188,17 +187,16 @@ def create_transition(
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
 ) -> EnvTransition:
-    """
-    Create an `EnvTransition` dictionary with sensible defaults.
+    """Create an `EnvTransition` dictionary with sensible defaults.
 
     Args:
-        observation: Observation dictionary.
-        action: Action dictionary.
-        reward: Scalar reward value.
-        done: Episode termination flag.
-        truncated: Episode truncation flag.
-        info: Additional info dictionary.
-        complementary_data: Complementary data dictionary.
+        observation (`RobotObservation | None`, *optional*): Observation dictionary.
+        action (`PolicyAction | RobotAction | None`, *optional*): Action dictionary.
+        reward (`float`, *optional*, defaults to 0.0): Scalar reward value.
+        done (`bool`, *optional*, defaults to `False`): Episode termination flag.
+        truncated (`bool`, *optional*, defaults to `False`): Episode truncation flag.
+        info (`dict[str, Any] | None`, *optional*): Additional info dictionary.
+        complementary_data (`dict[str, Any] | None`, *optional*): Complementary data dictionary.
 
     Returns:
         A complete `EnvTransition` dictionary.
@@ -217,15 +215,15 @@ def create_transition(
 def robot_action_observation_to_transition(
     action_observation: tuple[RobotAction, RobotObservation],
 ) -> EnvTransition:
-    """
-    Convert a raw robot action and observation dictionary into a standardized `EnvTransition`.
+    """Convert a raw robot action and observation dictionary into a standardized `EnvTransition`.
 
     Args:
-        action: The raw action dictionary from a teleoperation device or controller.
-        observation: The raw observation dictionary from the environment.
+        action_observation (`tuple[RobotAction, RobotObservation]`): A `(action, observation)` tuple, where
+            `action` is the raw action dictionary from a teleoperation device or controller, and
+            `observation` is the raw observation dictionary from the environment.
 
     Returns:
-        An `EnvTransition` containing the formatted observation.
+        An `EnvTransition` containing the formatted action and observation.
     """
     if not isinstance(action_observation, tuple):
         raise ValueError("action_observation should be a tuple type with an action and observation")
@@ -242,11 +240,10 @@ def robot_action_observation_to_transition(
 
 
 def robot_action_to_transition(action: RobotAction) -> EnvTransition:
-    """
-    Convert a raw robot action dictionary into a standardized `EnvTransition`.
+    """Convert a raw robot action dictionary into a standardized `EnvTransition`.
 
     Args:
-        action: The raw action dictionary from a teleoperation device or controller.
+        action (`RobotAction`): The raw action dictionary from a teleoperation device or controller.
 
     Returns:
         An `EnvTransition` containing the formatted action.
@@ -257,11 +254,10 @@ def robot_action_to_transition(action: RobotAction) -> EnvTransition:
 
 
 def observation_to_transition(observation: RobotObservation) -> EnvTransition:
-    """
-    Convert a raw robot observation dictionary into a standardized `EnvTransition`.
+    """Convert a raw robot observation dictionary into a standardized `EnvTransition`.
 
     Args:
-        observation: The raw observation dictionary from the environment.
+        observation (`RobotObservation`): The raw observation dictionary from the environment.
 
     Returns:
         An `EnvTransition` containing the formatted observation.
@@ -272,14 +268,13 @@ def observation_to_transition(observation: RobotObservation) -> EnvTransition:
 
 
 def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
-    """
-    Extract a raw robot action dictionary for a robot from an `EnvTransition`.
+    """Extract a raw robot action dictionary for a robot from an `EnvTransition`.
 
     This function searches for keys in the format "action.*.pos" or "action.*.vel"
     and converts them into a flat dictionary suitable for sending to a robot controller.
 
     Args:
-        transition: The `EnvTransition` containing the action.
+        transition (`EnvTransition`): The `EnvTransition` containing the action.
 
     Returns:
         A dictionary representing the raw robot action.
@@ -294,8 +289,16 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
 
 
 def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
-    """
-    Convert an `EnvTransition` to a `PolicyAction`.
+    """Convert an `EnvTransition` to a `PolicyAction`.
+
+    Args:
+        transition (`EnvTransition`): The `EnvTransition` containing the action.
+
+    Returns:
+        The extracted `PolicyAction`.
+
+    Raises:
+        ValueError: If `transition` is not a dict, or its action is not a `PolicyAction`.
     """
     if not isinstance(transition, dict):
         raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
@@ -307,8 +310,16 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
 
 
 def transition_to_observation(transition: EnvTransition) -> RobotObservation:
-    """
-    Convert an `EnvTransition` to a `RobotObservation`.
+    """Convert an `EnvTransition` to a `RobotObservation`.
+
+    Args:
+        transition (`EnvTransition`): The `EnvTransition` containing the observation.
+
+    Returns:
+        The extracted `RobotObservation`.
+
+    Raises:
+        ValueError: If `transition` is not a dict, or its observation is not a dict.
     """
     if not isinstance(transition, dict):
         raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
@@ -320,8 +331,16 @@ def transition_to_observation(transition: EnvTransition) -> RobotObservation:
 
 
 def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
-    """
-    Convert a `PolicyAction` to an `EnvTransition`.
+    """Convert a `PolicyAction` to an `EnvTransition`.
+
+    Args:
+        action (`PolicyAction`): The `PolicyAction` to wrap.
+
+    Returns:
+        An `EnvTransition` containing the formatted action.
+
+    Raises:
+        ValueError: If `action` is not a `PolicyAction`.
     """
     if not isinstance(action, PolicyAction):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
@@ -329,14 +348,13 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
-    """
-    Convert a batch dictionary from a dataset/dataloader into an `EnvTransition`.
+    """Convert a batch dictionary from a dataset/dataloader into an `EnvTransition`.
 
     This function maps recognized keys from a batch to the `EnvTransition` structure,
     filling in missing keys with sensible defaults.
 
     Args:
-        batch: A batch dictionary.
+        batch (`dict[str, Any]`): A batch dictionary.
 
     Returns:
         An `EnvTransition` dictionary.
@@ -344,7 +362,6 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     Raises:
         ValueError: If the input is not a dictionary.
     """
-
     # Validate input type.
     if not isinstance(batch, dict):
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
@@ -369,13 +386,12 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
 
 
 def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
-    """
-    Convert an `EnvTransition` back to the canonical batch format used in LeRobot.
+    """Convert an `EnvTransition` back to the canonical batch format used in LeRobot.
 
     This is the inverse of `batch_to_transition`.
 
     Args:
-        transition: The `EnvTransition` to convert.
+        transition (`EnvTransition`): The `EnvTransition` to convert.
 
     Returns:
         A batch dictionary with canonical LeRobot field names.
@@ -405,13 +421,12 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
 
 
 def identity_transition(transition: EnvTransition) -> EnvTransition:
-    """
-    An identity function for transitions, returning the input unchanged.
+    """An identity function for transitions, returning the input unchanged.
 
     Useful as a default or placeholder in processing pipelines.
 
     Args:
-        tr: An `EnvTransition`.
+        transition (`EnvTransition`): An `EnvTransition`.
 
     Returns:
         The same `EnvTransition`.
