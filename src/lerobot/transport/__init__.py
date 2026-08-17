@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-gRPC transport layer for async inference.
+"""gRPC transport layer for async inference.
 
 Requires: ``pip install 'lerobot[grpcio-dep]'``
 
