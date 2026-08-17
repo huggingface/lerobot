@@ -360,7 +360,6 @@ python -m lerobot.async_inference.robot_client \
 
 A few things to keep in mind:
 
-- Start the client as a module (`python -m`); running the file path directly fails on its relative imports.
 - `--policy_device` is the device the _server_ loads the policy onto — the client sends it during the handshake.
 - `--actions_per_chunk` must not exceed the checkpoint's chunk size (50 for `nepyope/sonic_walk`).
 - With `SonicWholeBodyController` the observation state is the 64-D token echo instead of the 29 joint positions, so the checkpoint has to be trained against that same state.
