@@ -1,0 +1,34 @@
+# Common
+
+`src/lerobot/common/` holds shared infrastructure used by `lerobot-train`: WandB logging, and the
+checkpoint save/resume/publish machinery, plus a couple of control-loop helpers shared by
+`lerobot-record`/`lerobot-eval`.
+
+## WandBLogger
+
+[[autodoc]] lerobot.common.wandb_utils.WandBLogger
+    - all
+
+## Checkpointing and resume
+
+[[autodoc]] lerobot.common.train_utils.save_checkpoint
+
+[[autodoc]] lerobot.common.train_utils.save_training_state
+
+[[autodoc]] lerobot.common.train_utils.resume_before_prepare
+
+[[autodoc]] lerobot.common.train_utils.resume_after_prepare
+
+## Publishing to the Hub
+
+[[autodoc]] lerobot.common.train_utils.push_checkpoint_to_hub
+
+[[autodoc]] lerobot.common.train_utils.publish_trained_model
+
+## Control loop helpers
+
+[[autodoc]] lerobot.common.control_utils.predict_action
+
+[[autodoc]] lerobot.common.control_utils.sanity_check_dataset_name
+
+[[autodoc]] lerobot.common.control_utils.sanity_check_dataset_robot_compatibility

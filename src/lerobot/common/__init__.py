@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Cross-cutting modules that bridge multiple lerobot packages.
+"""Cross-cutting modules that bridge multiple lerobot packages.
 
 Unlike ``lerobot.utils`` (which must remain dependency-free), modules here
 are allowed to import from ``lerobot.policies``, ``lerobot.processor``,

@@ -202,7 +202,7 @@ def save_checkpoint(
     postprocessor: PolicyProcessorPipeline | None = None,
     accelerator: "Accelerator | None" = None,
 ) -> None:
-    """This function creates the following directory structure:
+    """This function creates the following directory structure.
 
     005000/  #  training step at checkpoint
     ├── pretrained_model/
@@ -226,19 +226,17 @@ def save_checkpoint(
     call site needs no rank branches.
 
     Args:
-        checkpoint_dir (Path): The checkpoint step directory to write (e.g. `.../checkpoints/005000`).
-        step (int): The training step at that checkpoint.
-        cfg (TrainPipelineConfig): The training config used for this run.
-        policy (PreTrainedPolicy): The policy to save.
-        optimizer (Optimizer): The optimizer to save the state from.
-        scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
-        preprocessor (PolicyProcessorPipeline | None, optional): The preprocessor/pipeline to save.
-            Defaults to None.
-        postprocessor (PolicyProcessorPipeline | None, optional): The postprocessor/pipeline to save.
-            Defaults to None.
-        accelerator (Accelerator | None, optional): The accelerator the policy was prepared with;
+        checkpoint_dir (`Path`): The checkpoint step directory to write (e.g. `.../checkpoints/005000`).
+        step (`int`): The training step at that checkpoint.
+        cfg (`TrainPipelineConfig`): The training config used for this run.
+        policy (`PreTrainedPolicy`): The policy to save.
+        optimizer (`Optimizer`): The optimizer to save the state from.
+        scheduler (`LRScheduler | None`, *optional*): The scheduler to save the state from.
+        preprocessor (`PolicyProcessorPipeline | None`, *optional*): The preprocessor/pipeline to save.
+        postprocessor (`PolicyProcessorPipeline | None`, *optional*): The postprocessor/pipeline to save.
+        accelerator (`Accelerator | None`, *optional*): The accelerator the policy was prepared with;
             used to unwrap the model and required on sharded runs, where it owns the DCP save
-            channels. Defaults to None (plain single-process saves).
+            channels. `None` means a plain single-process save.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     fmt = cfg.checkpoint_format
@@ -298,15 +296,15 @@ def save_training_state(
         step (int): The training step at that checkpoint.
         cfg (TrainPipelineConfig): The training config used for this run (its topology and
             accumulation settings are recorded in `training_step.json`).
-        optimizer (Optimizer | dict[str, Optimizer] | None, optional): The optimizer(s) to save
+        optimizer (Optimizer | dict[str, Optimizer] | None, optional, *optional*): The optimizer(s) to save
             the state from. Defaults to None.
-        scheduler (LRScheduler | None, optional): The scheduler to save the state from.
+        scheduler (LRScheduler | None, optional, *optional*): The scheduler to save the state from.
             Defaults to None.
-        accelerator (Accelerator | None, optional): Required when `sharded` is True — it owns
+        accelerator (Accelerator | None, optional, *optional*): Required when `sharded` is True — it owns
             the DCP optimizer save channel. Defaults to None.
-        sharded (bool): The model's sharding state, computed once in `save_checkpoint` and
+        sharded (bool, *optional*, defaults to `False`): The model's sharding state, computed once in `save_checkpoint` and
             threaded here so the two sites cannot disagree. Defaults to False.
-        model (PreTrainedPolicy | None, optional): Required only for the sharded optimizer
+        model (PreTrainedPolicy | None, optional, *optional*): Required only for the sharded optimizer
             channel: torch's optimizer DCP APIs are model-coupled (the state dict is keyed by
             model FQNs), so accelerate's `save_fsdp_optimizer` needs the sharded module
             alongside the optimizer. Defaults to None.
@@ -518,7 +516,7 @@ def push_checkpoint_to_hub(
     Args:
         checkpoint_dir (Path): The local checkpoint step directory to upload.
         repo_id (str): The Hub model repo to push to (created idempotently if missing).
-        private (bool | None): Whether a newly created repo should be private. Defaults to
+        private (bool | None, *optional*): Whether a newly created repo should be private. Defaults to
             None (public unless the organization's default is private).
     """
     api = HfApi()
@@ -605,7 +603,7 @@ def publish_trained_model(
             alongside the model, if any.
         dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata for the model card, if
             available.
-        peft_model (Any | None): The PEFT wrapper when training adapters; its adapter weights
+        peft_model (Any | None, *optional*): The PEFT wrapper when training adapters; its adapter weights
             replace the full model weights in the published repo. Defaults to None.
 
     Raises:
@@ -743,9 +741,9 @@ def generate_model_card(
     Args:
         model_cfg (PreTrainedConfig | RewardModelConfig): The model config providing type,
             license, tags, repo id, and — for policies — the feature declarations.
-        cfg (TrainPipelineConfig | None, optional): The training config for the training and
+        cfg (TrainPipelineConfig | None, optional, *optional*): The training config for the training and
             dataset card sections. Defaults to None.
-        dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
+        dataset_meta (LeRobotDatasetMetadata | None, optional, *optional*): Dataset metadata for the
             dataset card sections. Defaults to None.
 
     Returns:
