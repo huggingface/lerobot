@@ -112,6 +112,22 @@ class VLABenchEnv(gym.Env):
 
     Wraps the dm_control-based VLABench simulator behind a standard gym.Env interface.
     Supports multiple cameras (front, second, wrist) and end-effector control.
+
+    Args:
+        task (`str`, *optional*, defaults to `"select_fruit"`): VLABench task name.
+        obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`): Observation type:
+            `"pixels"` or `"pixels_agent_pos"` (`"state"` is not implemented).
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+        render_resolution (`tuple[int, int]`, *optional*, defaults to `(480, 480)`):
+            `(height, width)` of the rendered camera observations.
+        robot (`str`, *optional*, defaults to `"franka"`): Robot embodiment to simulate.
+        max_episode_steps (`int`, *optional*, defaults to 500): Maximum number of steps per episode.
+        action_mode (`str`, *optional*, defaults to `"eef"`): Action space: end-effector
+            (`"eef"`) or joint-space control.
+
+    Raises:
+        NotImplementedError: If `obs_type` is `"state"`.
+        ValueError: If `obs_type` is otherwise unsupported.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 10}
@@ -126,24 +142,6 @@ class VLABenchEnv(gym.Env):
         max_episode_steps: int = DEFAULT_MAX_EPISODE_STEPS,
         action_mode: str = "eef",
     ):
-        """Build the env wrapper (the dm_control simulator itself is created lazily on first use).
-
-        Args:
-            task (`str`, *optional*, defaults to `"select_fruit"`): VLABench task name.
-            obs_type (`str`, *optional*, defaults to `"pixels_agent_pos"`): Observation type:
-                `"pixels"` or `"pixels_agent_pos"` (`"state"` is not implemented).
-            render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
-            render_resolution (`tuple[int, int]`, *optional*, defaults to `(480, 480)`):
-                `(height, width)` of the rendered camera observations.
-            robot (`str`, *optional*, defaults to `"franka"`): Robot embodiment to simulate.
-            max_episode_steps (`int`, *optional*): Maximum number of steps per episode.
-            action_mode (`str`, *optional*, defaults to `"eef"`): Action space: end-effector
-                (`"eef"`) or joint-space control.
-
-        Raises:
-            NotImplementedError: If `obs_type` is `"state"`.
-            ValueError: If `obs_type` is otherwise unsupported.
-        """
         super().__init__()
         self.task = task
         self.obs_type = obs_type

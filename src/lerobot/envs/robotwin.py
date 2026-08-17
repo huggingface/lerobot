@@ -343,6 +343,27 @@ class RoboTwinEnv(gym.Env):
     ``setup_demo`` and ``take_action`` drive CuRobo's Newton trajectory
     optimizer, which calls ``cost.backward()`` internally. lerobot_eval wraps
     the rollout in ``torch.no_grad()``, so both call sites re-enable grad.
+
+    Args:
+        task_name (`str`): RoboTwin task name.
+        episode_index (`int`, *optional*, defaults to 0): Index tying this sub-env to a fixed
+            initial state (offset by `n_envs` on each reset).
+        n_envs (`int`, *optional*, defaults to 1): Number of parallel sub-envs; used to stride
+            `episode_index` between resets.
+        camera_names (`Sequence[str]`, *optional*, defaults to `('head_camera', 'left_camera', 'right_camera')`): RoboTwin
+            camera names to render.
+        observation_height (`int | None`, *optional*): Height of rendered camera observations.
+            `None` uses the D435 default.
+        observation_width (`int | None`, *optional*): Width of rendered camera observations.
+            `None` uses the D435 default.
+        episode_length (`int`, *optional*, defaults to 1200): Maximum steps per episode.
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+        action_mode (`str`, *optional*, defaults to `"joint"`): `"joint"` for 14-d joint-space
+            actions via `take_action`, or `"ee"` for 16-d end-effector-pose deltas (added onto
+            the episode's initial eef pose) executed via `take_action(.., "ee")` + IK.
+
+    Raises:
+        ValueError: If `action_mode` is not `"joint"` or `"ee"`.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 25}
@@ -359,28 +380,6 @@ class RoboTwinEnv(gym.Env):
         render_mode: str = "rgb_array",
         action_mode: str = "joint",
     ):
-        """Build the env wrapper (the SAPIEN simulator itself is created lazily on first use).
-
-        Args:
-            task_name (`str`): RoboTwin task name.
-            episode_index (`int`, *optional*, defaults to 0): Index tying this sub-env to a fixed
-                initial state (offset by `n_envs` on each reset).
-            n_envs (`int`, *optional*, defaults to 1): Number of parallel sub-envs; used to stride
-                `episode_index` between resets.
-            camera_names (`Sequence[str]`, *optional*): RoboTwin camera names to render.
-            observation_height (`int | None`, *optional*): Height of rendered camera observations.
-                `None` uses the D435 default.
-            observation_width (`int | None`, *optional*): Width of rendered camera observations.
-                `None` uses the D435 default.
-            episode_length (`int`, *optional*): Maximum steps per episode.
-            render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
-            action_mode (`str`, *optional*, defaults to `"joint"`): `"joint"` for 14-d joint-space
-                actions via `take_action`, or `"ee"` for 16-d end-effector-pose deltas (added onto
-                the episode's initial eef pose) executed via `take_action(.., "ee")` + IK.
-
-        Raises:
-            ValueError: If `action_mode` is not `"joint"` or `"ee"`.
-        """
         super().__init__()
         self.task_name = task_name
         self.task = task_name  # used by add_envs_task() in utils.py

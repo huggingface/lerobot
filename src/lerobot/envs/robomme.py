@@ -47,7 +47,18 @@ ROBOMME_TASKS = [
 
 
 class RoboMMEGymEnv(gym.Env):
-    """Thin Gymnasium wrapper around a single RoboMME episode env."""
+    """Thin Gymnasium wrapper around a single RoboMME episode env.
+
+    Args:
+        task (`str`, *optional*, defaults to `"PickXtimes"`): RoboMME task name.
+        action_space_type (`str`, *optional*, defaults to `"joint_angle"`): `"joint_angle"`
+            (8-d) or `"ee_pose"` (7-d).
+        dataset (`str`, *optional*, defaults to `"test"`): Dataset split: `"train"`, `"val"`, or
+            `"test"`.
+        episode_idx (`int`, *optional*, defaults to 0): Episode index within the dataset split,
+            used to build the per-episode env in `reset`.
+        max_steps (`int`, *optional*, defaults to 300): Maximum steps per episode.
+    """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 10}
 
@@ -59,18 +70,6 @@ class RoboMMEGymEnv(gym.Env):
         episode_idx: int = 0,
         max_steps: int = 300,
     ):
-        """Build the env wrapper and its `BenchmarkEnvBuilder`.
-
-        Args:
-            task (`str`, *optional*, defaults to `"PickXtimes"`): RoboMME task name.
-            action_space_type (`str`, *optional*, defaults to `"joint_angle"`): `"joint_angle"`
-                (8-d) or `"ee_pose"` (7-d).
-            dataset (`str`, *optional*, defaults to `"test"`): Dataset split: `"train"`, `"val"`, or
-                `"test"`.
-            episode_idx (`int`, *optional*, defaults to 0): Episode index within the dataset split,
-                used to build the per-episode env in `reset`.
-            max_steps (`int`, *optional*, defaults to 300): Maximum steps per episode.
-        """
         super().__init__()
         from robomme.env_record_wrapper import BenchmarkEnvBuilder
 

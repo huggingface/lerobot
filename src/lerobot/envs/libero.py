@@ -120,6 +120,48 @@ class LiberoEnv(gym.Env):
 
     The underlying simulator is deferred and created lazily on the first `reset()` call inside the
     worker subprocess, so construction itself is safe to do before forking.
+
+    Args:
+        task_suite (`Any`): A LIBERO `benchmark.Benchmark` instance.
+        task_id (`int`): Index of the task within `task_suite`.
+        task_suite_name (`str`): Name of the task suite, used to look up the default max
+            episode length in `TASK_SUITE_MAX_STEPS`.
+        episode_length (`int | None`, *optional*): Maximum steps per episode. `None` uses the
+            suite's default.
+        camera_name (`str | Sequence[str]`, *optional*, defaults to `"agentview_image,robot0_eye_in_hand_image"`):
+            Camera name(s) to render.
+        obs_type (`str`, *optional*, defaults to `"pixels"`): Observation type.
+        render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
+        observation_width (`int`, *optional*, defaults to 256): Width of rendered camera
+            observations.
+        observation_height (`int`, *optional*, defaults to 256): Height of rendered camera
+            observations.
+        visualization_width (`int`, *optional*, defaults to 640): Width of the rendered
+            visualization frame.
+        visualization_height (`int`, *optional*, defaults to 480): Height of the rendered
+            visualization frame.
+        init_states (`bool`, *optional*, defaults to `True`): Whether to reset from LIBERO's
+            precomputed initial states.
+        episode_index (`int`, *optional*, defaults to 0): Index tying this sub-env to a fixed
+            initial state (offset by `n_envs` on each reset).
+        n_envs (`int`, *optional*, defaults to 1): Number of parallel sub-envs; used to stride
+            `init_state_id` between resets.
+        camera_name_mapping (`dict[str, str] | None`, *optional*): Maps raw camera names to
+            short names (`"image"`/`"image2"`) used in the LeRobot observation namespace.
+            Defaults to the standard agentview/wrist mapping when `None`.
+        num_steps_wait (`int`, *optional*, defaults to 10): Number of simulation steps to let
+            objects settle after reset before returning the first observation.
+        control_freq (`int`, *optional*, defaults to 20): Simulator control frequency, in Hz.
+        control_mode (`str`, *optional*, defaults to `"relative"`): Action control mode:
+            `"relative"` or `"absolute"`.
+        is_libero_plus (`bool`, *optional*, defaults to `False`): Whether to use LIBERO-plus's
+            initial-state file naming and perturbation variants.
+        hard_reset (`bool`, *optional*, defaults to `True`): Whether to fully reset the
+            simulator between episodes. Requires `init_states=True` when `False`.
+
+    Raises:
+        ValueError: If `control_freq` is non-positive, or `hard_reset=False` without
+            `init_states=True`.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
@@ -147,50 +189,6 @@ class LiberoEnv(gym.Env):
         is_libero_plus: bool = False,
         hard_reset: bool = True,
     ):
-        """Build the env wrapper (the simulator itself is created lazily on first `reset()`).
-
-        Args:
-            task_suite (`Any`): A LIBERO `benchmark.Benchmark` instance.
-            task_id (`int`): Index of the task within `task_suite`.
-            task_suite_name (`str`): Name of the task suite, used to look up the default max
-                episode length in `TASK_SUITE_MAX_STEPS`.
-            episode_length (`int | None`, *optional*): Maximum steps per episode. `None` uses the
-                suite's default.
-            camera_name (`str | Sequence[str]`, *optional*, defaults to `"agentview_image,robot0_eye_in_hand_image"`):
-                Camera name(s) to render.
-            obs_type (`str`, *optional*, defaults to `"pixels"`): Observation type.
-            render_mode (`str`, *optional*, defaults to `"rgb_array"`): Gym render mode.
-            observation_width (`int`, *optional*, defaults to 256): Width of rendered camera
-                observations.
-            observation_height (`int`, *optional*, defaults to 256): Height of rendered camera
-                observations.
-            visualization_width (`int`, *optional*, defaults to 640): Width of the rendered
-                visualization frame.
-            visualization_height (`int`, *optional*, defaults to 480): Height of the rendered
-                visualization frame.
-            init_states (`bool`, *optional*, defaults to `True`): Whether to reset from LIBERO's
-                precomputed initial states.
-            episode_index (`int`, *optional*, defaults to 0): Index tying this sub-env to a fixed
-                initial state (offset by `n_envs` on each reset).
-            n_envs (`int`, *optional*, defaults to 1): Number of parallel sub-envs; used to stride
-                `init_state_id` between resets.
-            camera_name_mapping (`dict[str, str] | None`, *optional*): Maps raw camera names to
-                short names (`"image"`/`"image2"`) used in the LeRobot observation namespace.
-                Defaults to the standard agentview/wrist mapping when `None`.
-            num_steps_wait (`int`, *optional*, defaults to 10): Number of simulation steps to let
-                objects settle after reset before returning the first observation.
-            control_freq (`int`, *optional*, defaults to 20): Simulator control frequency, in Hz.
-            control_mode (`str`, *optional*, defaults to `"relative"`): Action control mode:
-                `"relative"` or `"absolute"`.
-            is_libero_plus (`bool`, *optional*, defaults to `False`): Whether to use LIBERO-plus's
-                initial-state file naming and perturbation variants.
-            hard_reset (`bool`, *optional*, defaults to `True`): Whether to fully reset the
-                simulator between episodes. Requires `init_states=True` when `False`.
-
-        Raises:
-            ValueError: If `control_freq` is non-positive, or `hard_reset=False` without
-                `init_states=True`.
-        """
         super().__init__()
         if control_freq <= 0:
             raise ValueError(f"control_freq must be positive, got {control_freq}")

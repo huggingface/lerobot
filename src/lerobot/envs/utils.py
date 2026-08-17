@@ -222,14 +222,12 @@ class FreezeAfterEpisodeEnd(gym.Wrapper):
 
     `AutoresetMode.DISABLED` is not an alternative here — Gymnasium asserts that no
     terminated env is ever stepped in that mode, so the wrapper is never reached.
+
+    Args:
+        env (`gym.Env`): The environment to wrap.
     """
 
     def __init__(self, env: gym.Env):
-        """Wrap `env`, starting unfrozen.
-
-        Args:
-            env (`gym.Env`): The environment to wrap.
-        """
         super().__init__(env)
         self._frozen: tuple | None = None
 
@@ -294,6 +292,14 @@ class _LazyAsyncVectorEnv:
     are evaluated sequentially, only one task's workers need to be alive at a
     time. This wrapper stores the factory functions and creates the real
     AsyncVectorEnv on first reset()/step()/call(), keeping peak process count = n_envs.
+
+    Args:
+        env_fns (`list[Callable]`): Factory functions, one per sub-env.
+        observation_space (*optional*): Observation space. When any of `observation_space`,
+            `action_space`, or `metadata` is `None`, all three are inferred by building and
+            immediately closing one sub-env via `env_fns[0]`.
+        action_space (*optional*): Action space. See `observation_space`.
+        metadata (*optional*): Gym metadata dict. See `observation_space`.
     """
 
     def __init__(
@@ -303,16 +309,6 @@ class _LazyAsyncVectorEnv:
         action_space=None,
         metadata=None,
     ):
-        """Store the env factories; the real `AsyncVectorEnv` is created lazily.
-
-        Args:
-            env_fns (`list[Callable]`): Factory functions, one per sub-env.
-            observation_space (*optional*): Observation space. When any of `observation_space`,
-                `action_space`, or `metadata` is `None`, all three are inferred by building and
-                immediately closing one sub-env via `env_fns[0]`.
-            action_space (*optional*): Action space. See `observation_space`.
-            metadata (*optional*): Gym metadata dict. See `observation_space`.
-        """
         self._env_fns = env_fns
         self._env: gym.vector.AsyncVectorEnv | None = None
         self.num_envs = len(env_fns)

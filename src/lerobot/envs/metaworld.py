@@ -80,6 +80,23 @@ class MetaworldEnv(gym.Env):
 
     The underlying simulator is deferred and created lazily on the first use inside the worker
     subprocess, so each worker gets its own clean rendering context.
+
+    Args:
+        task (`str`): Meta-World task name, with or without a `"metaworld-"` prefix.
+        camera_name (*optional*, defaults to `"corner2"`): Meta-World camera name to render.
+        obs_type (*optional*, defaults to `"pixels"`): Observation type: `"pixels"` or
+            `"pixels_agent_pos"` (`"state"` is not implemented).
+        render_mode (*optional*, defaults to `"rgb_array"`): Gym render mode.
+        observation_width (*optional*, defaults to 480): Width of rendered camera observations.
+        observation_height (*optional*, defaults to 480): Height of rendered camera
+            observations.
+        visualization_width (*optional*, defaults to 640): Width of the rendered visualization
+            frame.
+        visualization_height (*optional*, defaults to 480): Height of the rendered
+            visualization frame.
+
+    Raises:
+        NotImplementedError: If `obs_type` is `"state"`.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 80}
@@ -95,25 +112,6 @@ class MetaworldEnv(gym.Env):
         visualization_width=640,
         visualization_height=480,
     ):
-        """Build the env wrapper (the simulator itself is created lazily on first use).
-
-        Args:
-            task: Meta-World task name, with or without a `"metaworld-"` prefix.
-            camera_name (*optional*, defaults to `"corner2"`): Meta-World camera name to render.
-            obs_type (*optional*, defaults to `"pixels"`): Observation type: `"pixels"` or
-                `"pixels_agent_pos"` (`"state"` is not implemented).
-            render_mode (*optional*, defaults to `"rgb_array"`): Gym render mode.
-            observation_width (*optional*, defaults to 480): Width of rendered camera observations.
-            observation_height (*optional*, defaults to 480): Height of rendered camera
-                observations.
-            visualization_width (*optional*, defaults to 640): Width of the rendered visualization
-                frame.
-            visualization_height (*optional*, defaults to 480): Height of the rendered
-                visualization frame.
-
-        Raises:
-            NotImplementedError: If `obs_type` is `"state"`.
-        """
         super().__init__()
         self.task = task.replace("metaworld-", "")
         self.obs_type = obs_type
