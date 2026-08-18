@@ -181,6 +181,52 @@ cd ~/lerobot
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
+### Serve Several Cameras
+
+`--camera` publishes one camera (device index 4) under the name `head_camera`. For manipulation you usually want a head view and both wrists, which is what `--cameras` is for:
+
+```bash
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera-fps 30 \
+  --cameras "head_camera=/dev/video4,left_wrist=/dev/v4l/by-path/<PATH>-video-index0@1280x720,right_wrist=/dev/v4l/by-path/<PATH>-video-index0@1280x720"
+```
+
+Each entry is `name=device[@WxH]`. The device is an index or a path, and `@WxH` sets that camera's resolution when it can't do the default `--camera-width`/`--camera-height` — cameras on the same robot rarely agree on one. List them with `ls /dev/v4l/by-path/*-video-index0` and identify them with `udevadm info -q property -n /dev/videoN | grep ID_MODEL`.
+
+Prefer the `by-path` names: bare `/dev/videoN` indices reshuffle when a camera re-enumerates, and `by-id` names collide when two cameras share a serial number. `=` and `@` are the separators precisely because those paths contain colons.
+
+All cameras are published on one ZMQ socket, so a client picks a stream by name:
+
+```bash
+--robot.cameras='{"left_wrist": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "left_wrist", "width": 1280, "height": 720, "fps": 30}}'
+```
+
+A camera that refuses its requested rate, or reports a failed resolution change that actually took effect, is a warning rather than a fatal error, and a device that's slow or briefly busy at startup is retried. USB cameras on a shared bus need this often enough that the alternative is a bridge that won't come up.
+
+### Control the Grippers
+
+The G1's hands are OpenArm Damiao grippers on CAN, one per side. Bring the buses up first, then enable them:
+
+```bash
+lerobot-setup-can --mode=setup --interfaces=can1,can0
+lerobot-setup-can --mode=test  --interfaces=can1,can0   # expect motor 0x08 found, replying 0x18, on both
+
+python src/lerobot/robots/unitree_g1/run_g1_server.py --grippers --gripper-kp 1
+```
+
+Left is `can1` and right is `can0` by default (`--gripper-port-left`/`--gripper-port-right`). Grip force is roughly `kp × (close target − actual position)`, and the jaw stalls on an object well before reaching the close target, so a high `--gripper-kp` keeps pushing and crushes it. Step down per object — 15 is fine for rigid things, 1 for a drinks can — and use `--gripper-close-deg` to stop the jaw earlier. The CAN ids, motor type and travel come from the OpenArm follower config, since these are the same grippers.
+
+Commands arrive as JSON `{"L": 0/1, "R": 0/1}` on port 6002, where 1 means close, and only reach the bus when a side actually changes state:
+
+```python
+import json, zmq
+
+sock = zmq.Context().socket(zmq.PUSH)
+sock.connect("tcp://<ROBOT_IP>:6002")
+sock.send_string(json.dumps({"L": 1, "R": 0}))  # close left, open right
+```
+
+If the grippers fail to connect, the bridge warns and carries on without them, so a camera-only or locomotion-only session isn't blocked by an unpowered CAN bus.
+
 ### Run the Locomotion Policy
 
 You can run the teleoperation client from your laptop over Ethernet, over WiFi (experimental), or directly on the robot itself. Mind potential latency introduced by your network.
