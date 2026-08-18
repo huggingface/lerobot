@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remote SO-100 over WebRTC</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    h3 { margin: 0 0 12px; }
+    img { width: 480px; border: 1px solid #ccc; display: block; background: #111; }
+    .row { margin: 6px 0; }
+    span.j { display: inline-block; width: 130px; }
+    button { width: 36px; height: 32px; font-size: 16px; }
+    b { margin-left: 8px; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <h3>Remote SO-100 over WebRTC — live camera + jog</h3>
+  <img src="/stream" alt="remote camera" />
+  <div id="ctrl"></div>
+  <div class="row" style="margin-top:12px">
+    <button id="home" style="width:auto;height:34px;padding:0 14px;font-size:14px">Reset to Home</button>
+  </div>
+  <script>
+    let STEP = 3;
+    function jog(m, sign) { fetch(`/jog?motor=${m}&delta=${sign * STEP}`); }
+    function home() { fetch("/home"); }
+    async function poll() {
+      try {
+        const j = await (await fetch("/state")).json();
+        for (const m in j) {
+          const e = document.getElementById("v_" + m);
+          if (e) e.textContent = j[m].toFixed(1);
+        }
+      } catch (e) { /* transient */ }
+    }
+    async function init() {
+      const cfg = await (await fetch("/config")).json();
+      STEP = cfg.step;
+      const c = document.getElementById("ctrl");
+      for (const m of cfg.motors) {
+        const r = document.createElement("div");
+        r.className = "row";
+        r.innerHTML =
+          `<span class="j">${m}</span>` +
+          `<button onclick="jog('${m}', -1)">−</button> ` +
+          `<button onclick="jog('${m}', 1)">+</button>` +
+          `<b id="v_${m}">–</b>`;
+        c.appendChild(r);
+      }
+      document.getElementById("home").onclick = home;
+      setInterval(poll, 300);
+    }
+    init();
+  </script>
+</body>
+</html>
