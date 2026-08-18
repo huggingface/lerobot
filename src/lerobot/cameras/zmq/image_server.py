@@ -31,8 +31,9 @@ import cv2
 import numpy as np
 import zmq
 
-from ..configs import ColorMode
-from ..opencv import OpenCVCamera, OpenCVCameraConfig
+from ..camera import Camera
+from ..configs import CameraConfig
+from ..utils import make_cameras_from_configs
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def encode_image(image: np.ndarray, quality: int = 80) -> str:
 class CameraCaptureThread:
     """Background thread that continuously captures and encodes frames from a camera."""
 
-    def __init__(self, camera: OpenCVCamera, name: str):
+    def __init__(self, camera: Camera, name: str):
         self.camera = camera
         self.name = name
         self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
@@ -89,30 +90,58 @@ class CameraCaptureThread:
 
 
 class ImageServer:
-    def __init__(self, config: dict, port: int = 5555):
+    def __init__(
+        self,
+        cameras: dict[str, CameraConfig],
+        fps: int = 30,
+        port: int = 5555,
+        open_attempts: int = 5,
+        open_retry_delay_s: float = 2.0,
+    ):
         # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
-        self.fps = config.get("fps", 30)
-        self.cameras: dict[str, OpenCVCamera] = {}
+        self.fps = fps
+        # Flaky USB cameras intermittently fail the first open or first-frame read;
+        # retry a few times before giving up.
+        self.open_attempts = open_attempts
+        self.open_retry_delay_s = open_retry_delay_s
+        self.cameras: dict[str, Camera] = make_cameras_from_configs(cameras)
         self.capture_threads: dict[str, CameraCaptureThread] = {}
+        self._stop = threading.Event()
 
-        for name, cfg in config.get("cameras", {}).items():
-            shape = cfg.get("shape", [480, 640])
-            cam_config = OpenCVCameraConfig(
-                index_or_path=cfg.get("device_id", 0),
-                fps=self.fps,
-                width=shape[1],
-                height=shape[0],
-                fourcc=cfg.get("fourcc", "MJPG"),
-                color_mode=ColorMode.RGB,
-            )
-            camera = OpenCVCamera(cam_config)
-            camera.connect()
-            self.cameras[name] = camera
-            logger.info(f"Camera {name}: {shape[1]}x{shape[0]}")
+        # If any camera fails to open, release the ones we already opened so the V4L2
+        # devices get a clean STREAMOFF instead of staying busy until the next reboot.
+        try:
+            for name, camera in self.cameras.items():
+                last_err: Exception | None = None
+                for attempt in range(1, self.open_attempts + 1):
+                    try:
+                        camera.connect()
+                        last_err = None
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last_err = e
+                        logger.warning(
+                            "Camera %s open attempt %d/%d failed: %s",
+                            name,
+                            attempt,
+                            self.open_attempts,
+                            e,
+                        )
+                        with contextlib.suppress(Exception):
+                            camera.disconnect()
+                        if attempt < self.open_attempts:
+                            time.sleep(self.open_retry_delay_s)
+                if last_err is not None:
+                    raise RuntimeError(
+                        f"Camera {name} failed to open after {self.open_attempts} attempts"
+                    ) from last_err
 
-            # Create capture thread for this camera
-            capture_thread = CameraCaptureThread(camera, name)
-            self.capture_threads[name] = capture_thread
+                logger.info(f"Camera {name}: {cameras[name].width}x{cameras[name].height}")
+                self.capture_threads[name] = CameraCaptureThread(camera, name)
+        except Exception:
+            logger.exception("Failed to open cameras; releasing any already-opened devices.")
+            self._release_cameras()
+            raise
 
         # ZMQ PUB socket
         self.context = zmq.Context()
@@ -123,10 +152,31 @@ class ImageServer:
 
         logger.info(f"ImageServer running on port {port}")
 
+    def stop(self) -> None:
+        """Signal the publish loop to exit so ``run()`` reaches its cleanup.
+
+        Call this from the owning process on shutdown (e.g. Ctrl-C) — otherwise a
+        daemon thread running ``run()`` is killed abruptly and the cameras never get
+        released, leaving the V4L2 devices wedged until reboot.
+        """
+        self._stop.set()
+
+    def _release_cameras(self) -> None:
+        """Stop capture threads and disconnect all cameras (safe to call twice).
+
+        Ensures each V4L2 device gets a clean STREAMOFF/release so a failed or
+        interrupted run doesn't leave devices busy until the next reboot.
+        """
+        for capture_thread in self.capture_threads.values():
+            with contextlib.suppress(Exception):
+                capture_thread.stop()
+        for cam in self.cameras.values():
+            with contextlib.suppress(Exception):
+                cam.disconnect()
+
     def run(self):
         frame_count = 0
         frame_times = deque(maxlen=60)
-        last_published_ts: dict[str, float] = {}
 
         # Start all capture threads
         for capture_thread in self.capture_threads.values():
@@ -135,26 +185,28 @@ class ImageServer:
         # Wait for first frames to be captured and encoded
         logger.info("Waiting for cameras to start capturing...")
         for name, capture_thread in self.capture_threads.items():
-            while capture_thread.get_latest()[0] is None:
+            while capture_thread.get_latest()[0] is None and not self._stop.is_set():
                 time.sleep(0.01)
             logger.info(f"Camera {name} ready (capture + encode in background)")
 
         try:
-            while True:
+            while not self._stop.is_set():
                 t0 = time.time()
 
-                # Build message
+                # Build message. Always include EVERY camera's latest frame so each message
+                # is complete: clients pick their own stream by name, and a partial message
+                # makes them fall back to another camera's image (cross-feed flicker).
                 message = {"timestamps": {}, "images": {}}
                 for name, capture_thread in self.capture_threads.items():
                     encoded, timestamp = capture_thread.get_latest()
-                    if encoded is not None and timestamp > last_published_ts.get(name, 0.0):
+                    if encoded is not None:
                         message["timestamps"][name] = timestamp
                         message["images"][name] = encoded
-                        last_published_ts[name] = timestamp
 
                 # Send as JSON string (suppress if buffer full)
-                with contextlib.suppress(zmq.Again):
-                    self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
+                if message["images"]:
+                    with contextlib.suppress(zmq.Again):
+                        self.socket.send_string(json.dumps(message), zmq.NOBLOCK)
 
                 frame_count += 1
                 frame_times.append(time.time() - t0)
@@ -169,15 +221,17 @@ class ImageServer:
         except KeyboardInterrupt:
             pass
         finally:
-            for capture_thread in self.capture_threads.values():
-                capture_thread.stop()
-            for cam in self.cameras.values():
-                cam.disconnect()
+            self._release_cameras()
             self.socket.close()
             self.context.term()
 
 
 if __name__ == "__main__":
+    from ..configs import Cv2Backends
+    from ..opencv import OpenCVCameraConfig
+
     logging.basicConfig(level=logging.INFO)
-    config = {"fps": 30, "cameras": {"head_camera": {"device_id": 4, "shape": [480, 640]}}}
-    ImageServer(config, port=5555).run()
+    config = OpenCVCameraConfig(
+        index_or_path=4, fps=30, width=640, height=480, fourcc="MJPG", backend=Cv2Backends.V4L2
+    )
+    ImageServer({"head_camera": config}, fps=30, port=5555).run()
