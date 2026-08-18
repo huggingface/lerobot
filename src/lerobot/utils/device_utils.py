@@ -18,20 +18,34 @@ import logging
 
 import torch
 
+logger = logging.getLogger(__name__)
+
+
+def detect_gpu_vendor() -> str:
+    """Detect the GPU vendor from the active PyTorch backend.
+
+    Returns ``"amd"`` (ROCm/HIP), ``"nvidia"`` (CUDA), or ``"cpu"``.
+    """
+    if torch.version.hip is not None:
+        return "amd"
+    if torch.cuda.is_available():
+        return "nvidia"
+    return "cpu"
+
 
 def auto_select_torch_device() -> torch.device:
     """Tries to select automatically a torch device."""
     if torch.cuda.is_available():
-        logging.info("Cuda backend detected, using cuda.")
+        logger.info("Cuda backend detected, using cuda.")
         return torch.device("cuda")
     elif torch.backends.mps.is_available():
-        logging.info("Metal backend detected, using mps.")
+        logger.info("Metal backend detected, using mps.")
         return torch.device("mps")
     elif torch.xpu.is_available():
-        logging.info("Intel XPU backend detected, using xpu.")
+        logger.info("Intel XPU backend detected, using xpu.")
         return torch.device("xpu")
     else:
-        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
+        logger.warning("No accelerated backend detected. Using default cpu, this will be slow.")
         return torch.device("cpu")
 
 
@@ -60,11 +74,11 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     elif try_device == "cpu":
         device = torch.device("cpu")
         if log:
-            logging.warning("Using CPU, this will be slow.")
+            logger.warning("Using CPU, this will be slow.")
     else:
         device = torch.device(try_device)
         if log:
-            logging.warning(f"Using custom {try_device} device.")
+            logger.warning(f"Using custom {try_device} device.")
     return device
 
 
@@ -97,10 +111,10 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
             # The `has_fp64` flag is returned by `torch.xpu.get_device_capability()`
             # when available; if False, we fall back to float32 for compatibility.
             if not device_capability.get("has_fp64", False):
-                logging.warning(f"Device {device} does not support float64, using float32 instead.")
+                logger.warning(f"Device {device} does not support float64, using float32 instead.")
                 return torch.float32
         else:
-            logging.warning(
+            logger.warning(
                 f"Device {device} capability check failed. Assuming no support for float64, using float32 instead."
             )
             return torch.float32
