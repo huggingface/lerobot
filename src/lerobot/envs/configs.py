@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import abc
+import importlib
 import importlib.util
 from dataclasses import dataclass, field, fields
 from typing import Any

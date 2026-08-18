@@ -63,7 +63,7 @@ def test_libero_create_envs_without_simulator_raises_clear_error(monkeypatch):
 
     monkeypatch.setattr(importlib_util, "find_spec", fake_find_spec)
 
-    with pytest.raises(ImportError, match="Linux") as exc_info:
+    with pytest.raises(ModuleNotFoundError, match="Linux") as exc_info:
         LiberoEnv().create_envs(n_envs=1)
 
     message = str(exc_info.value)
