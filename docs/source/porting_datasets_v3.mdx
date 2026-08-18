@@ -58,6 +58,89 @@ Before porting large datasets, ensure you have:
 - **Cluster access** (recommended for large datasets): SLURM or similar job scheduler
 - **Dataset-specific dependencies**: For DROID, you'll need TensorFlow Dataset utilities
 
+## Start with a Small Local Dataset
+
+Before scaling to a cluster, validate the mapping on a few local episodes. A simple
+JSON Lines interchange works well for this: keep one frame per line, keep frames from
+the same episode contiguous, and include the task with every frame.
+
+```json
+{"episode_index": 0, "task": "move forward", "observation.state": [0.0, 0.1], "action": [0.2, 0.3]}
+```
+
+The following minimal converter writes a local Dataset v3 without uploading data:
+
+```python
+import json
+from itertools import chain
+from pathlib import Path
+
+import numpy as np
+
+from lerobot.datasets import LeRobotDataset
+
+
+def read_jsonl(path: Path):
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            if line.strip():
+                yield json.loads(line)
+
+
+records = read_jsonl(Path("records.jsonl"))
+try:
+    first = next(records)
+except StopIteration as exc:
+    raise ValueError("records.jsonl is empty") from exc
+
+state_size = len(first["observation.state"])
+action_size = len(first["action"])
+features = {
+    "observation.state": {
+        "dtype": "float32",
+        "shape": (state_size,),
+        "names": {"axes": [f"state_{index}" for index in range(state_size)]},
+    },
+    "action": {
+        "dtype": "float32",
+        "shape": (action_size,),
+        "names": {"axes": [f"action_{index}" for index in range(action_size)]},
+    },
+}
+
+dataset = LeRobotDataset.create(
+    repo_id="local/vendor_log",
+    root=Path("converted/vendor_log"),
+    fps=30,
+    features=features,
+    use_videos=False,
+)
+
+current_episode = None
+for record in chain([first], records):
+    episode_index = int(record["episode_index"])
+    if current_episode is not None and episode_index != current_episode:
+        if episode_index < current_episode:
+            raise ValueError("episode_index must be monotonic")
+        dataset.save_episode()
+
+    dataset.add_frame(
+        {
+            "task": record["task"],
+            "observation.state": np.asarray(record["observation.state"], dtype=np.float32),
+            "action": np.asarray(record["action"], dtype=np.float32),
+        }
+    )
+    current_episode = episode_index
+
+dataset.save_episode()
+dataset.finalize()
+```
+
+Replace the placeholder axis names with the source device's documented joint or control
+order. Keep the original logs alongside the converted dataset so unsupported fields remain
+available for later migrations. Once this small conversion loads correctly, move to the
+DROID/SLURM workflow below for sharded or multi-terabyte datasets.
 ## Understanding the DROID Dataset
 
 [DROID 1.0.1](https://droid-dataset.github.io/droid/the-droid-dataset) is an excellent example of a large-scale robotic dataset:
