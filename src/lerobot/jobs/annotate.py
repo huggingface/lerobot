@@ -79,7 +79,13 @@ def build_pod_setup(lerobot_ref: str) -> str:
     spec = f"lerobot @ git+{LEROBOT_GIT_URL}@{lerobot_ref}"
     return (
         # git to install from the repo, ffmpeg to decode the dataset's videos.
-        "apt-get update -qq && apt-get install -y -qq git ffmpeg && "
+        # Retry apt: the Ubuntu archive mirrors intermittently 503, which would
+        # otherwise kill the whole (long) job at setup. --fix-missing tolerates a
+        # partially-fetched index; the subshell fails the chain only if all
+        # retries fail.
+        "( for i in 1 2 3; do apt-get update -qq && "
+        "apt-get install -y -qq --fix-missing git ffmpeg && exit 0; "
+        "echo 'apt-get failed (mirror down?); retrying in 15s...'; sleep 15; done; exit 1 ) && "
         f"pip install --no-deps {shlex.quote(spec)} && "
         f"pip install --upgrade-strategy only-if-needed {_RUNTIME_REQUIREMENTS} && "
         # vLLM's cudagraph memory estimate over-reserves and starves the KV cache;
