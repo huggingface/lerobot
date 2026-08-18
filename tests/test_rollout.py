@@ -1176,10 +1176,11 @@ def _relative_pre_post(exclude_joints=None):
 def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
     """Fake relative-action policy for the sync engine.
 
-    ``chunking=True`` buffers a chunk and serves it one action per tick, calling the
-    public ``predict_action_chunk`` only on refill (pi0/fastwam/lingbot). ``False``
-    returns an action directly and never calls it. The engine's anchor probe keys off
-    that public call, so the fake routes through it rather than any private queue.
+    ``chunking=True`` buffers a chunk and serves it one action per tick, computing a fresh
+    chunk only on refill (pi0/fastwam/lingbot/act). ``chunking=False`` returns an action
+    directly and never queues (e.g. ACT with temporal ensembling). ``queued_action_count()``
+    mirrors the real ``PreTrainedPolicy`` contract: it reads the same queue ``select_action``
+    drains, so the engine sees an accurate depth *before* this tick's call runs.
     """
     from collections import deque
 
@@ -1204,6 +1205,7 @@ def _fake_relative_policy(chunk_rel, n_action_steps, chunking=True):
     policy.predict_action_chunk.side_effect = predict_action_chunk
     policy.select_action.side_effect = select_action
     policy.reset.side_effect = queue.clear
+    policy.queued_action_count.side_effect = lambda: len(queue)
     policy._predict_state = state
     return policy
 
@@ -1274,7 +1276,7 @@ def test_sync_relative_reset_reanchors_new_episode():
     engine.get_action(_obs_frame([1.0, 1.0, 1.0, 1.0]))
     assert policy._predict_state["predict_calls"] == 1
 
-    engine.reset()  # clears the queue and the per-episode chunk flags
+    engine.reset()  # clears the policy's action queue via policy.reset()
 
     # Episode 2: a fresh state must produce a fresh chunk anchored to that state,
     # not carry over the previous episode's anchor.
@@ -1333,16 +1335,3 @@ def test_sync_relative_exclude_joints_stay_absolute():
         # relative dims: anchor held at s0; excluded gripper dim: raw predicted value.
         expected = chunk_rel[tick] + torch.tensor(s0) * mask
         torch.testing.assert_close(outputs[tick], expected)
-
-
-def test_sync_relative_stop_restores_policy_method():
-    """``stop()`` un-patches the probe so the policy object isn't permanently modified."""
-    n = 3
-    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.2) for _ in range(n)])
-    pre, post, _ = _relative_pre_post()
-    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
-    original = policy.predict_action_chunk
-    engine = _build_sync_engine(policy, pre, post)
-    assert policy.predict_action_chunk is not original  # probe installed
-    engine.stop()
-    assert policy.predict_action_chunk is original  # restored
