@@ -31,6 +31,19 @@ from lerobot.envs.factory import make_env  # noqa: E402
 
 RESOLUTION = 128
 
+# Resetting to the *same* initial state does not reproduce pixels exactly --
+# robosuite's placement sampler draws from global RNG, so two resets onto one
+# initial state still differ by a little. Mean absolute pixel difference at
+# 128x128 on libero_spatial, measured on two machines:
+#
+#                            CUDA (RTX 4070)      MPS (Apple Silicon)
+#   same initial state       median 1.79 max 2.65  median 1.16 max 2.88
+#   different initial state  median 5.38 min 4.42  median 5.80 min 4.97
+#
+# so this threshold separates the two with room on both. Asserting a magnitude
+# rather than mere inequality means the test cannot pass on jitter alone.
+DISTINCT_SCENE_THRESHOLD = 3.5
+
 
 @pytest.fixture(scope="module")
 def env():
@@ -52,6 +65,10 @@ def _first_frame(env, seed):
     return np.asarray(obs["pixels"]["image"])[0].copy()
 
 
+def _mean_abs_diff(a, b):
+    return float(np.abs(a.astype(np.float64) - b.astype(np.float64)).mean())
+
+
 def test_same_seed_gives_same_initial_state(env):
     """`reset(seed=s)` must be reproducible regardless of intervening resets."""
     first = _first_frame(env, 42)
@@ -68,8 +85,20 @@ def test_same_seed_gives_same_initial_state(env):
 
 
 def test_different_seeds_give_different_initial_states(env):
-    """Deriving the initial state from the seed must not collapse seeds together."""
-    assert not np.array_equal(_first_frame(env, 1), _first_frame(env, 2))
+    """Deriving the initial state from the seed must not collapse seeds together.
+
+    Note this is deliberately not a pair 50 apart: the index space is periodic in
+    `len(self._init_states)`, so seeds that far apart *do* share an initial state.
+    That is a property of the pre-existing `%`, not of deriving the id from the
+    seed, and pinning it here would make it harder to change later.
+    """
+    diff = _mean_abs_diff(_first_frame(env, 3), _first_frame(env, 17))
+    assert diff > DISTINCT_SCENE_THRESHOLD, (
+        f"seeds 3 and 17 differ by only {diff:.2f} mean pixel value, below the "
+        f"{DISTINCT_SCENE_THRESHOLD} threshold that separates two initial states "
+        "from two resets onto the same one -- the seed is likely not reaching "
+        "init_state_id"
+    )
 
 
 def test_unseeded_reset_still_advances(env):
