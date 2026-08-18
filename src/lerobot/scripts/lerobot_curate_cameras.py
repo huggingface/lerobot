@@ -31,6 +31,14 @@ Examples:
 
   # Run the VLM decision on a GPU via HF Jobs:
   uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --job.target=h200
+
+  # Nested collection (no root meta/info.json): curate specific sub-datasets:
+  uv run lerobot-curate-cameras --repo_id=lerobot/community_dataset_v3 \\
+      --subpaths='[00ri/so100_battery, 1g0rrr/demo2_frame_holder]' --mode=report
+
+  # Whole nested collection (auto-discovers every sub-dataset) on a GPU job:
+  uv run lerobot-curate-cameras --repo_id=lerobot/community_dataset_v3 \\
+      --mode=rename --branch=curated --job.target=h200 --job.timeout=24h
 """
 
 import json
@@ -46,7 +54,6 @@ from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
 from lerobot.annotations.steerable_pipeline.reader import iter_episodes
 from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
 from lerobot.configs import parser
-from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _datasets_available, require_package
 
 if TYPE_CHECKING or _datasets_available:
@@ -55,13 +62,16 @@ if TYPE_CHECKING or _datasets_available:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_root(cfg: CameraCurationConfig) -> Path:
-    """Concrete, writable root for the dataset (never the symlinked snapshot cache)."""
-    if cfg.root is not None:
-        return Path(cfg.root)
-    if cfg.repo_id is not None:
-        return HF_LEROBOT_HOME / cfg.repo_id
-    raise ValueError("Either --repo_id or --root must be provided.")
+def _write_and_echo_report(report: dict, cfg: CameraCurationConfig, default_name: str) -> Path:
+    """Write the report to a persistent path (never a temp dir) and echo to stdout."""
+    out = Path(cfg.report_path) if cfg.report_path is not None else Path(default_name)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    logger.info("curate-cameras: report written to %s", out)
+    print("===== camera curation report =====", flush=True)
+    print(json.dumps(report, indent=2), flush=True)
+    print("===== end camera curation report =====", flush=True)
+    return out
 
 
 def _uniform_indices(n: int, k: int) -> list[int]:
@@ -82,13 +92,19 @@ def _to_uint8_frame(frame: Any) -> Any:
     return frame
 
 
-def _sample_frames(dataset: "LeRobotDataset", cfg: CameraCurationConfig) -> dict[str, list[Any]]:
+def _sample_frames(
+    root: Path,
+    meta: Any,
+    cfg: CameraCurationConfig,
+    dataset: "LeRobotDataset | None" = None,
+) -> dict[str, list[Any]]:
     """Sample ``n_frames`` from the inspected episode for each (non-depth) camera.
 
-    Video cameras go through the annotation frame provider (uint8 frames); image
-    cameras are read straight from the dataset rows and scaled to uint8.
+    Video cameras go through the annotation frame provider (uint8 frames, works
+    from a bare dataset ``root``). Image cameras need decoded rows, so they are
+    only sampled when a full ``LeRobotDataset`` is supplied (the single-dataset
+    path); in sub-path mode they are reported unlabeled with a warning.
     """
-    meta = dataset.meta
     depth_keys = set(meta.depth_keys)
     video_keys = set(meta.video_keys)
     image_keys = set(meta.image_keys)
@@ -98,8 +114,8 @@ def _sample_frames(dataset: "LeRobotDataset", cfg: CameraCurationConfig) -> dict
 
     video_cameras = [k for k in cameras if k in video_keys]
     if video_cameras:
-        provider = make_frame_provider(dataset.root, video_backend=cfg.video_backend)
-        records = list(iter_episodes(dataset.root, only_episodes=(cfg.episode_index,)))
+        provider = make_frame_provider(root, video_backend=cfg.video_backend)
+        records = list(iter_episodes(root, only_episodes=(cfg.episode_index,)))
         record = records[0] if records else None
         if record is not None:
             for key in video_cameras:
@@ -107,30 +123,39 @@ def _sample_frames(dataset: "LeRobotDataset", cfg: CameraCurationConfig) -> dict
 
     image_cameras = [k for k in cameras if k in image_keys]
     if image_cameras:
-        n = len(dataset)
-        for i in _uniform_indices(n, cfg.n_frames):
-            item = dataset[i]
-            for key in image_cameras:
-                if key in item:
-                    frames[key].append(_to_uint8_frame(item[key]))
+        if dataset is not None:
+            n = len(dataset)
+            for i in _uniform_indices(n, cfg.n_frames):
+                item = dataset[i]
+                for key in image_cameras:
+                    if key in item:
+                        frames[key].append(_to_uint8_frame(item[key]))
+        else:
+            logger.warning(
+                "image cameras %s are not sampled in sub-path mode; they are reported unlabeled",
+                image_cameras,
+            )
 
     return frames
 
 
 def _apply_rename(
     root: Path,
-    dataset: "LeRobotDataset",
+    meta: Any,
     cfg: CameraCurationConfig,
     mapping: dict[str, str],
     verdicts: list["curator.CameraVerdict"],
+    *,
+    path_prefix: str | None = None,
+    dataset: "LeRobotDataset | None" = None,
 ) -> None:
     """Apply the computed ``{old: new}`` camera-key mapping.
 
-    Video datasets on the Hub → download-free server-side rename commit.
-    Otherwise (image dataset, local-only, or a swap/cycle) → local
-    ``rename_features`` over a full copy of the dataset.
+    Video datasets on the Hub → download-free server-side rename commit (scoped to
+    ``path_prefix`` for a sub-dataset). Otherwise (image dataset, local-only, or a
+    swap/cycle) → local ``rename_features`` over a full copy — single-dataset only.
     """
-    video_keys = set(dataset.meta.video_keys)
+    video_keys = set(meta.video_keys)
     all_video = set(mapping) <= video_keys
     has_swap = bool(set(mapping.values()) & set(mapping))
 
@@ -149,14 +174,24 @@ def _apply_rename(
                 cfg.repo_id,
                 mapping,
                 work,
+                path_prefix=path_prefix,
                 branch=cfg.branch,
                 commit_message=cfg.push_commit_message,
             )
             oid = getattr(commit, "oid", None)
             ref = cfg.branch or "main"
-            logger.info("Hub rename committed to %s@%s (%s)", cfg.repo_id, ref, oid)
+            target = f"{cfg.repo_id}/{path_prefix}" if path_prefix else cfg.repo_id
+            logger.info("Hub rename committed to %s@%s (%s)", target, ref, oid)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+        return
+
+    if path_prefix is not None:
+        logger.warning(
+            "sub-path %s: rename needs the server-side video path (image/swap not supported "
+            "in sub-path mode); skipping rename for this sub-dataset (verdicts still recorded).",
+            path_prefix,
+        )
         return
 
     # Local path: needs the full dataset, so re-load without the episode filter.
@@ -183,9 +218,156 @@ def _apply_rename(
         renamed.push_to_hub()
 
 
+def _decide(
+    root: Path,
+    meta: Any,
+    cfg: CameraCurationConfig,
+    vlm: Any,
+    *,
+    label: str,
+    dataset: "LeRobotDataset | None" = None,
+) -> tuple[list["curator.CameraVerdict"], dict[str, str]]:
+    """Sample frames, run the VLM, and compute the rename mapping for one dataset."""
+    frames = _sample_frames(root, meta, cfg, dataset=dataset)
+    n_with_frames = sum(1 for v in frames.values() if v)
+    logger.info("curate-cameras[%s]: %d camera(s), %d with sampled frames", label, len(frames), n_with_frames)
+    verdicts = curator.curate_cameras(frames, cfg, vlm)
+    for v in verdicts:
+        logger.info(
+            "  [%s] %s -> label=%s usable=%s%s",
+            label,
+            v.camera_key,
+            v.view_label,
+            v.usable,
+            "" if v.usable else f" (blur_reason={v.blur_reason!r})",
+        )
+    mapping = curator.build_name_mapping(verdicts, meta.features, cfg)
+    logger.info("  [%s] proposed rename mapping: %s", label, mapping or "(none)")
+    return verdicts, mapping
+
+
+def _materialize_subdataset(repo_id: str, subpath: str, work_dir: Path, episode_index: int):
+    """Download a sub-dataset's ``meta/`` + first-episode files into ``work_dir/subpath``.
+
+    Returns ``(sub_root, meta)``. Only the first episode's data/video shards are
+    fetched, matching the single-dataset partial-download behavior.
+    """
+    from huggingface_hub import snapshot_download
+
+    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+    snapshot_download(
+        repo_id, repo_type="dataset", allow_patterns=[f"{subpath}/meta/**"], local_dir=str(work_dir)
+    )
+    sub_root = Path(work_dir) / subpath
+    meta = LeRobotDatasetMetadata("local", root=sub_root)
+
+    rels = [meta.get_data_file_path(episode_index).as_posix()]
+    rels += [meta.get_video_file_path(episode_index, vk).as_posix() for vk in meta.video_keys]
+    snapshot_download(
+        repo_id,
+        repo_type="dataset",
+        allow_patterns=[f"{subpath}/{rel}" for rel in rels],
+        local_dir=str(work_dir),
+    )
+    return sub_root, meta
+
+
+def _discover_subpaths(repo_id: str) -> list[str] | None:
+    """Enumerate sub-dataset prefixes in a nested collection on the Hub.
+
+    Returns the sorted list of ``<prefix>`` for every ``<prefix>/meta/info.json``,
+    or ``None`` when the repo has a root ``meta/info.json`` (a single dataset).
+    """
+    from huggingface_hub import HfApi
+
+    files = HfApi().list_repo_files(repo_id, repo_type="dataset")
+    if "meta/info.json" in files:
+        return None  # standard single dataset
+    prefixes = sorted(f[: -len("/meta/info.json")] for f in files if f.endswith("/meta/info.json"))
+    return prefixes
+
+
+def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> None:
+    """Curate each sub-dataset of a nested collection.
+
+    Each sub-dataset is materialized into its own temp dir, and that dir is
+    removed as soon as the sub-dataset is done — the disk footprint stays at one
+    sub-dataset's first episode at a time, never the whole sweep.
+    """
+    if cfg.repo_id is None:
+        raise ValueError("nested curation requires --repo_id (the collection repo on the Hub).")
+
+    collection: dict[str, Any] = {}
+    for i, subpath in enumerate(subpaths, 1):
+        logger.info("===== sub-dataset %d/%d: %s =====", i, len(subpaths), subpath)
+        sub_work = Path(tempfile.mkdtemp(prefix="lerobot_curate_sub_"))
+        try:
+            sub_root, meta = _materialize_subdataset(cfg.repo_id, subpath, sub_work, cfg.episode_index)
+            verdicts, mapping = _decide(sub_root, meta, cfg, vlm, label=subpath)
+            curator.stamp_verdicts_into_info(sub_root, verdicts)
+            if cfg.mode == "rename" and mapping:
+                _apply_rename(sub_root, meta, cfg, mapping, verdicts, path_prefix=subpath)
+            collection[subpath] = curator.build_report(verdicts, mapping, cfg)
+        except Exception as exc:  # noqa: BLE001 - one bad sub-dataset shouldn't sink the sweep
+            logger.error("sub-dataset %s failed: %s", subpath, exc)
+            collection[subpath] = {"error": str(exc)}
+        finally:
+            # Drop this sub-dataset's downloaded files immediately (see rename cleanup).
+            shutil.rmtree(sub_work, ignore_errors=True)
+            logger.info("curate-cameras: cleaned up temporary download at %s", sub_work)
+
+    report = {"repo_id": cfg.repo_id, "mode": cfg.mode, "subdatasets": collection}
+    _write_and_echo_report(report, cfg, default_name="camera_curation_collection.json")
+
+
+def _run_single(cfg: CameraCurationConfig, vlm: Any) -> None:
+    """Curate one standalone dataset (root-level ``meta/``).
+
+    Unless the user pointed at their own ``--root``, the first-episode download
+    goes to a temp dir that is removed once curation (and any rename) is done, so
+    no video files are left behind in the cache.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    if cfg.root is None and cfg.repo_id is None:
+        raise ValueError("Either --repo_id or --root must be provided.")
+
+    user_root = cfg.root is not None
+    root = Path(cfg.root) if user_root else Path(tempfile.mkdtemp(prefix="lerobot_curate_"))
+    logger.info("curate-cameras: repo_id=%s root=%s mode=%s", cfg.repo_id, root, cfg.mode)
+
+    try:
+        # Only episode ``cfg.episode_index`` is fetched (a cheap partial download).
+        dataset = LeRobotDataset(
+            cfg.repo_id or "local",
+            root=root,
+            episodes=[cfg.episode_index],
+            download_videos=True,
+        )
+
+        verdicts, mapping = _decide(
+            dataset.root, dataset.meta, cfg, vlm, label=cfg.repo_id or str(root), dataset=dataset
+        )
+        # Stamp the verdict into info.json so a rename commit carries it.
+        curator.stamp_verdicts_into_info(dataset.root, verdicts)
+        report = curator.build_report(verdicts, mapping, cfg)
+        _write_and_echo_report(report, cfg, default_name="camera_curation.json")
+
+        if cfg.mode == "rename":
+            if not mapping:
+                logger.info("curate-cameras: nothing to rename (no confident new labels)")
+            else:
+                _apply_rename(dataset.root, dataset.meta, cfg, mapping, verdicts, dataset=dataset)
+    finally:
+        if not user_root:
+            shutil.rmtree(root, ignore_errors=True)
+            logger.info("curate-cameras: cleaned up temporary download at %s", root)
+
+
 @parser.wrap()
 def curate_cameras(cfg: CameraCurationConfig) -> None:
-    """Run the camera-view curation pipeline over a dataset's first episode."""
+    """Run the camera-view curation pipeline over a dataset (or nested collection)."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if cfg.mode not in ("report", "rename"):
@@ -197,51 +379,25 @@ def curate_cameras(cfg: CameraCurationConfig) -> None:
         return submit_curate_to_hf(cfg)
 
     require_package("datasets", "dataset")
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    root = _resolve_root(cfg)
-    logger.info("curate-cameras: repo_id=%s root=%s mode=%s", cfg.repo_id, root, cfg.mode)
+    # Resolve which sub-datasets (if any) to process. Explicit --subpaths wins;
+    # otherwise, on a Hub repo with no root meta/info.json, discover them all.
+    subpaths: list[str] | None = list(cfg.subpaths) if cfg.subpaths else None
+    if subpaths is None and cfg.repo_id is not None and cfg.root is None:
+        discovered = _discover_subpaths(cfg.repo_id)
+        if discovered is not None:
+            logger.info("curate-cameras: nested collection — discovered %d sub-dataset(s)", len(discovered))
+            subpaths = discovered
 
-    # Only episode ``cfg.episode_index`` is fetched (a cheap partial download).
-    dataset = LeRobotDataset(
-        cfg.repo_id or "local",
-        root=root,
-        episodes=[cfg.episode_index],
-        download_videos=True,
-    )
-
-    frames = _sample_frames(dataset, cfg)
-    n_with_frames = sum(1 for v in frames.values() if v)
-    logger.info("curate-cameras: %d camera(s), %d with sampled frames", len(frames), n_with_frames)
+    if subpaths is not None and cfg.limit is not None:
+        subpaths = subpaths[: cfg.limit]
+        logger.info("curate-cameras: limited to first %d sub-dataset(s)", len(subpaths))
 
     vlm = make_vlm_client(cfg.vlm)
-    verdicts = curator.curate_cameras(frames, cfg, vlm)
-    for v in verdicts:
-        logger.info(
-            "  %s -> label=%s usable=%s%s",
-            v.camera_key,
-            v.view_label,
-            v.usable,
-            "" if v.usable else f" (blur_reason={v.blur_reason!r})",
-        )
-
-    mapping = curator.build_name_mapping(verdicts, dataset.meta.features, cfg)
-    report_path = curator.write_report(dataset.root, verdicts, mapping, cfg)
-    logger.info("curate-cameras: report written to %s", report_path)
-    logger.info("curate-cameras: proposed rename mapping: %s", mapping or "(none)")
-
-    # Print the full report to stdout so results survive in the job logs even
-    # when the pod's filesystem (and meta/camera_curation.json) is discarded.
-    report = curator.build_report(verdicts, mapping, cfg)
-    print("===== camera curation report =====", flush=True)
-    print(json.dumps(report, indent=2), flush=True)
-    print("===== end camera curation report =====", flush=True)
-
-    if cfg.mode == "rename":
-        if not mapping:
-            logger.info("curate-cameras: nothing to rename (no confident labels differ from current keys)")
-            return
-        _apply_rename(dataset.root, dataset, cfg, mapping, verdicts)
+    if subpaths is not None:
+        _run_nested(cfg, vlm, subpaths)
+    else:
+        _run_single(cfg, vlm)
 
 
 def main() -> None:

@@ -273,6 +273,22 @@ uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --branch=cura
 uv run lerobot-curate-cameras --repo_id=user/dataset --mode=rename --job.target=h200
 ```
 
+### Nested collections
+
+Some repos are **collections** of many independent datasets under per-dataset
+subfolders (e.g. `lerobot/community_dataset_v3` → `<user>/<task>/…`) and have no
+root `meta/info.json`. List the sub-datasets to curate with `--subpaths`; each is
+materialized (its `meta/` + first episode only) and curated in turn, and — in
+`--mode=rename` — renamed in place under its own prefix. Results are written to a
+single aggregated `camera_curation_collection.json` (and echoed to stdout).
+
+```bash
+uv run lerobot-curate-cameras \
+    --repo_id=lerobot/community_dataset_v3 \
+    --subpaths='[00ri/so100_battery, 1g0rrr/demo2_frame_holder]' \
+    --mode=report
+```
+
 Notes:
 
 - The Hub rename is **in place** on the source repo — the Hub does not support

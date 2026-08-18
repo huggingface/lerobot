@@ -43,6 +43,18 @@ class CameraCurationConfig:
     # Local dataset directory (skips the Hub download).
     root: Path | None = None
 
+    # Nested collections: a repo that holds many independent LeRobotDatasets under
+    # per-dataset subfolders (e.g. ``lerobot/community_dataset_v3`` → ``<user>/<task>/``)
+    # has no root ``meta/info.json``. List the sub-dataset prefixes to curate each in
+    # turn — each is materialized (meta + first episode) and, in rename mode, renamed
+    # in place under its own prefix on the Hub. Leave unset on a nested repo to
+    # auto-discover and process EVERY sub-dataset.
+    subpaths: tuple[str, ...] | None = None
+
+    # Cap the number of sub-datasets processed (after discovery/sorting). Handy for
+    # a trial run over a large collection; None processes all.
+    limit: int | None = None
+
     # "report": write mapping + verdicts into meta/, no file moves.
     # "rename": physically rename camera keys to observation.images.<label>.
     mode: str = "report"

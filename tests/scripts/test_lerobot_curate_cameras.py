@@ -21,7 +21,13 @@ import torch
 # which only ships under the ``dataset`` extra.
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.scripts.lerobot_curate_cameras import _to_uint8_frame, _uniform_indices  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
+
+from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
+    _discover_subpaths,
+    _to_uint8_frame,
+    _uniform_indices,
+)
 
 
 @pytest.mark.parametrize(
@@ -50,3 +56,21 @@ def test_to_uint8_frame_passthrough_uint8():
     frame = torch.zeros(3, 4, 4, dtype=torch.uint8)
     out = _to_uint8_frame(frame)
     assert out is frame  # uint8 passes through untouched
+
+
+def test_discover_subpaths_nested_and_single():
+    api = MagicMock()
+    # Nested collection: two sub-datasets, sorted, prefixes stripped.
+    api.list_repo_files.return_value = [
+        "b/y/meta/info.json",
+        "a/x/meta/info.json",
+        "a/x/videos/observation.images.cam/chunk-000/file-000.mp4",
+        "README.md",
+    ]
+    with patch("huggingface_hub.HfApi", return_value=api):
+        assert _discover_subpaths("repo") == ["a/x", "b/y"]
+
+    # Standard single dataset (root meta/info.json) -> None.
+    api.list_repo_files.return_value = ["meta/info.json", "data/chunk-000/file-000.parquet"]
+    with patch("huggingface_hub.HfApi", return_value=api):
+        assert _discover_subpaths("repo") is None

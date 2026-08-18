@@ -239,6 +239,33 @@ def test_rename_camera_keys_on_hub_builds_ops(tmp_path):
     assert new_key in info.features and camera_key not in info.features
 
 
+def test_rename_camera_keys_on_hub_with_path_prefix(tmp_path):
+    from huggingface_hub import CommitOperationAdd, CommitOperationCopy, CommitOperationDelete
+
+    camera_key = "observation.images.cam_0"
+    new_key = "observation.images.left_wrist"
+    prefix = "user/task1"
+    _make_min_meta(tmp_path, camera_key, dtype="video")
+    old_mp4 = f"{prefix}/videos/{camera_key}/chunk-000/file-000.mp4"
+
+    fake_api = MagicMock()
+    fake_api.list_repo_files.return_value = [old_mp4, f"{prefix}/meta/info.json"]
+    fake_api.create_commit.return_value = MagicMock(oid="cafe")
+
+    with patch("huggingface_hub.HfApi", return_value=fake_api):
+        rename_camera_keys_on_hub("user/collection", {camera_key: new_key}, tmp_path, path_prefix=prefix)
+
+    ops = fake_api.create_commit.call_args.kwargs["operations"]
+    copies = [o for o in ops if isinstance(o, CommitOperationCopy)]
+    deletes = [o for o in ops if isinstance(o, CommitOperationDelete)]
+    adds = [o for o in ops if isinstance(o, CommitOperationAdd)]
+    new_mp4 = f"{prefix}/videos/{new_key}/chunk-000/file-000.mp4"
+    assert any(o.src_path_in_repo == old_mp4 and o.path_in_repo == new_mp4 for o in copies)
+    assert any(o.path_in_repo == old_mp4 for o in deletes)
+    # meta files are committed under the sub-dataset prefix too
+    assert any(o.path_in_repo == f"{prefix}/meta/info.json" for o in adds)
+
+
 def test_rename_camera_keys_on_hub_rejects_image_keys(tmp_path):
     camera_key = "observation.images.cam_0"
     _make_min_meta(tmp_path, camera_key, dtype="image")

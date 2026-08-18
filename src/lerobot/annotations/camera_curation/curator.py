@@ -284,14 +284,23 @@ def write_report(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(report, report_path)
 
+    stamp_verdicts_into_info(root, verdicts)
+    return report_path
+
+
+def stamp_verdicts_into_info(root: Path, verdicts: list[CameraVerdict]) -> None:
+    """Record each camera's verdict under ``features[key]["info"]["curation"]``.
+
+    Written into ``meta/info.json`` so the verdict travels with the dataset. A
+    no-op for cameras absent from ``info.json``.
+    """
     info = load_info(root)
     changed = False
     for v in verdicts:
         feature = info.features.get(v.camera_key)
         if feature is None:
             continue
-        feature.setdefault("info", {})
-        if feature["info"] is None:
+        if feature.get("info") is None:
             feature["info"] = {}
         feature["info"]["curation"] = {
             "view_label": v.view_label,
@@ -303,13 +312,13 @@ def write_report(
     if changed:
         write_info(info, root)
 
-    return report_path
 
-
-def _swap_key_in_path(path: str, old_key: str, new_key: str) -> str:
-    """Rewrite the ``<old_key>`` path segment of a ``videos/<key>/...`` repo path."""
-    prefix = f"videos/{old_key}/"
-    return f"videos/{new_key}/{path[len(prefix):]}" if path.startswith(prefix) else path
+def _swap_key_in_path(path: str, old_key: str, new_key: str, path_prefix: str | None = None) -> str:
+    """Rewrite the ``<old_key>`` segment of a ``[<prefix>/]videos/<key>/...`` repo path."""
+    repo_prefix = f"{path_prefix}/" if path_prefix else ""
+    old = f"{repo_prefix}videos/{old_key}/"
+    new = f"{repo_prefix}videos/{new_key}/"
+    return f"{new}{path[len(old):]}" if path.startswith(old) else path
 
 
 def rename_camera_keys_on_hub(
@@ -317,6 +326,7 @@ def rename_camera_keys_on_hub(
     name_mapping: dict[str, str],
     local_root: Path,
     *,
+    path_prefix: str | None = None,
     revision: str | None = None,
     branch: str | None = None,
     token: str | None = None,
@@ -331,10 +341,16 @@ def rename_camera_keys_on_hub(
     for the edited meta files. Renames in place on ``repo_id`` (cross-repo copies
     are unsupported); pass ``branch`` to commit to a branch and keep ``main`` intact.
 
+    ``path_prefix`` scopes every repo path to a sub-dataset within a nested
+    collection (e.g. ``user/task`` in ``lerobot/community_dataset_v3``); the local
+    ``meta/`` still lives directly under ``local_root``.
+
     Only video keys can be moved this way — reject swaps/cycles and image keys
     (handled by the local ``rename_features`` path instead).
     """
     from huggingface_hub import CommitOperationAdd, CommitOperationCopy, CommitOperationDelete, HfApi
+
+    repo_prefix = f"{path_prefix}/" if path_prefix else ""
 
     # A swap/cycle (a target that is also a source) cannot be expressed in a
     # single base-revision commit; defer to the local rename path.
@@ -375,18 +391,20 @@ def rename_camera_keys_on_hub(
     meta_files.extend(sorted((meta_dir / "episodes").glob("*/*.parquet")))
     for fpath in meta_files:
         rel = fpath.relative_to(local_root).as_posix()
-        operations.append(CommitOperationAdd(path_in_repo=rel, path_or_fileobj=str(fpath)))
+        operations.append(CommitOperationAdd(path_in_repo=f"{repo_prefix}{rel}", path_or_fileobj=str(fpath)))
 
     # 3. Move video LFS files server-side (copy + delete), no download.
     repo_files = api.list_repo_files(repo_id, repo_type="dataset", revision=revision)
     n_moved = 0
     for old in video_old_keys:
         new = name_mapping[old]
-        prefix = f"videos/{old}/"
+        prefix = f"{repo_prefix}videos/{old}/"
         for f in repo_files:
             if f.startswith(prefix):
                 operations.append(
-                    CommitOperationCopy(src_path_in_repo=f, path_in_repo=_swap_key_in_path(f, old, new))
+                    CommitOperationCopy(
+                        src_path_in_repo=f, path_in_repo=_swap_key_in_path(f, old, new, path_prefix)
+                    )
                 )
                 operations.append(CommitOperationDelete(path_in_repo=f))
                 n_moved += 1
