@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 # state at prediction time, but the sync engine reruns the pre/post pipeline every
 # tick, so ``RelativeActionsProcessorStep`` would re-anchor cached actions to the
 # current (moved) state and drift through the chunk. We pin the anchor per chunk:
-# a probe on the policy's public ``predict_action_chunk`` flags the ticks that
-# predict a fresh chunk; on the others the engine restores the anchor the relative
-# step overwrote. ``select_action`` stays on the hot path, so per-tick side effects
-# (e.g. LingBot-VA keyframe feedback) are preserved.
+# ``PreTrainedPolicy.queued_action_count()`` reports whether this tick will serve an
+# already-computed action (hold the anchor) or force a fresh prediction (let it
+# advance). ``select_action`` stays on the hot path, so per-tick side effects (e.g.
+# LingBot-VA keyframe feedback) are preserved.
 
 
 class SyncInferenceEngine(InferenceEngine):
@@ -81,10 +81,6 @@ class SyncInferenceEngine(InferenceEngine):
             ),
             None,
         )
-        # Set by the probe for the current tick / ever, respectively.
-        self._chunk_predicted = False
-        self._ever_predicted_chunk = False
-        self._original_predict_action_chunk = None  # set while the probe is installed
         if self._relative_step is not None:
             # ``action_names`` is optional on the step; fill it lazily from the
             # policy/dataset so the relative<->absolute mask is built correctly. This is
@@ -92,7 +88,6 @@ class SyncInferenceEngine(InferenceEngine):
             if self._relative_step.action_names is None:
                 cfg_names = getattr(policy.config, "action_feature_names", None)
                 self._relative_step.action_names = list(cfg_names) if cfg_names else list(ordered_action_keys)
-            self._install_chunk_probe()
             logger.info("Relative actions enabled: chunk anchor pinned per predicted chunk")
 
         logger.info(
@@ -107,11 +102,6 @@ class SyncInferenceEngine(InferenceEngine):
 
     def stop(self) -> None:
         """No background resources to stop."""
-        # Undo the probe so the policy object isn't left permanently patched
-        # (it may outlive this engine or be reused by another).
-        if self._original_predict_action_chunk is not None:
-            self._policy.predict_action_chunk = self._original_predict_action_chunk
-            self._original_predict_action_chunk = None
         logger.info("SyncInferenceEngine stopped")
 
     def reset(self) -> None:
@@ -122,27 +112,6 @@ class SyncInferenceEngine(InferenceEngine):
         self._postprocessor.reset()
         # The policy was just reset, so a pending task change has nothing stale to flush.
         self._discard_task_change()
-        # New episode: the next tick predicts a fresh chunk and re-anchors.
-        self._chunk_predicted = False
-        self._ever_predicted_chunk = False
-
-    def _install_chunk_probe(self) -> None:
-        """Wrap the policy's public ``predict_action_chunk`` so we learn which ticks
-        predict a fresh chunk (when the anchor must advance) without introspecting any
-        private action queue. Chunking policies call it from ``select_action``.
-
-        Wraps whatever callable is currently bound (e.g. an already-``torch.compile``d
-        one, since ``build_rollout_context`` compiles before building the engine); undone
-        in ``stop()``."""
-        self._original_predict_action_chunk = self._policy.predict_action_chunk
-        inner = self._original_predict_action_chunk
-
-        def probe(*args, **kwargs):
-            self._chunk_predicted = True
-            self._ever_predicted_chunk = True
-            return inner(*args, **kwargs)
-
-        self._policy.predict_action_chunk = probe
 
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Run the full inference pipeline on ``obs_frame`` and return an action tensor."""
@@ -158,15 +127,6 @@ class SyncInferenceEngine(InferenceEngine):
             else nullcontext()
         )
         task, task_changed = self._take_task()
-        # Snapshot the chunk anchor before the preprocessor overwrites it with this
-        # tick's state; restore it below if this tick only served a cached action.
-        # ``clone`` so the snapshot survives even if the cached tensor is ever mutated
-        # in place (today it is only rebound, but the copy is cheap for a state vector).
-        anchor_before = None
-        if self._relative_step is not None:
-            cached = self._relative_step.get_cached_state()
-            anchor_before = cached.clone() if cached is not None else None
-        self._chunk_predicted = False
         with torch.inference_mode(), autocast_ctx:
             if task_changed:
                 # Chunking policies queue actions computed under the previous instruction,
@@ -174,12 +134,19 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
+            # A non-empty queue means this tick will serve an already-computed action, so
+            # the anchor must hold; snapshot it before the preprocessor overwrites it below.
+            # ``clone`` so the snapshot survives even if the cached tensor is ever mutated
+            # in place (today it is only rebound, but the copy is cheap for a state vector).
+            will_drain_cached = self._relative_step is not None and self._policy.queued_action_count() > 0
+            anchor_before = None
+            if will_drain_cached:
+                cached = self._relative_step.get_cached_state()
+                anchor_before = cached.clone() if cached is not None else None
             observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
             observation = self._preprocessor(observation)
             action = self._policy.select_action(observation)
-            # Hold the anchor only for a chunking policy serving a cached action this
-            # tick; policies that never chunk or that recomputed keep refreshing.
-            if self._relative_step is not None and self._ever_predicted_chunk and not self._chunk_predicted:
+            if will_drain_cached:
                 self._relative_step.set_cached_state(anchor_before)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
