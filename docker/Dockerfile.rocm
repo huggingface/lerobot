@@ -53,9 +53,9 @@ COPY . .
 # so this image does not carry a second copy of the dependency list.
 RUN uv pip install --no-cache --python "$(which python)" -e ".[pi,training]"
 
-# Fail the build rather than ship an image whose GPUs are unusable. Runs without a GPU,
-# so it only checks that the ROCm build survived resolution; torch.cuda.is_available()
-# needs the devices and is covered by the smoke test in docker/README.md.
+# Fail the build rather than ship an image whose ROCm Python stack was replaced. This
+# runs without a GPU, so device availability must still be checked after launch with
+# torch.cuda.is_available().
 RUN python -c "\
 import numpy, torch, torchvision;\
 from lerobot.policies.factory import get_policy_class;\
