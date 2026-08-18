@@ -51,9 +51,8 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
             "delta_x": action[0].item(),
             "delta_y": action[1].item(),
             "delta_z": action[2].item(),
+            "gripper": action[3].item() if self.use_gripper else 1.0,
         }
-        if self.use_gripper:
-            delta_action["gripper"] = action[3].item()
         return delta_action
 
     def transform_features(
@@ -64,10 +63,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
                 type=FeatureType.ACTION, shape=(1,)
             )
 
-        if self.use_gripper:
-            features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
-                type=FeatureType.ACTION, shape=(1,)
-            )
+        features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         return features
 
 
