@@ -42,7 +42,6 @@ def test_latency_tracker_initialization():
     """Test LatencyTracker initializes correctly."""
     tracker = LatencyTracker(maxlen=50)
     assert len(tracker) == 0
-    assert tracker.max_latency == 0.0
     assert tracker.max() == 0.0
 
 
@@ -100,16 +99,16 @@ def test_add_converts_to_float(tracker):
     assert tracker.max() == 5.0
 
 
-def test_add_updates_max_latency(tracker):
-    """Test that max_latency is updated correctly."""
+def test_add_updates_max(tracker):
+    """Test that max() is updated correctly as samples are added."""
     tracker.add(0.5)
-    assert tracker.max_latency == 0.5
+    assert tracker.max() == 0.5
 
     tracker.add(0.3)
-    assert tracker.max_latency == 0.5  # Should not decrease
+    assert tracker.max() == 0.5  # Should not decrease while 0.5 is in window
 
     tracker.add(0.9)
-    assert tracker.max_latency == 0.9  # Should increase
+    assert tracker.max() == 0.9  # Should increase
 
 
 # ====================== reset() Tests ======================
@@ -124,16 +123,16 @@ def test_reset_clears_values(tracker):
 
     tracker.reset()
     assert len(tracker) == 0
-    assert tracker.max_latency == 0.0
+    assert tracker.max() == 0.0
 
 
-def test_reset_clears_max_latency(tracker):
-    """Test reset() resets max_latency."""
+def test_reset_clears_max(tracker):
+    """Test reset() resets max()."""
     tracker.add(1.5)
-    assert tracker.max_latency == 1.5
+    assert tracker.max() == 1.5
 
     tracker.reset()
-    assert tracker.max_latency == 0.0
+    assert tracker.max() == 0.0
 
 
 def test_reset_allows_new_values(tracker):
@@ -163,18 +162,19 @@ def test_max_returns_maximum_value(tracker):
     assert tracker.max() == 0.8
 
 
-def test_max_persists_after_sliding_window(small_tracker):
-    """Test max() persists even after values slide out of window."""
-    # Add values that will exceed maxlen=5
-    small_tracker.add(0.1)
-    small_tracker.add(0.9)  # This is max
-    small_tracker.add(0.2)
-    small_tracker.add(0.3)
-    small_tracker.add(0.4)
-    small_tracker.add(0.5)  # This pushes out 0.1
+def test_max_respects_sliding_window(small_tracker):
+    """Test max() drops a stale spike once it slides out of the window.
 
-    # Max should still be 0.9 even though only last 5 values kept
-    assert small_tracker.max() == 0.9
+    Regression test: a one-time warm-up inference spike must stop inflating
+    the RTC delay estimate after it is evicted from the recent-latency window.
+    """
+    small_tracker.add(0.9)  # warm-up spike (maxlen=5)
+    for val in (0.1, 0.2, 0.3, 0.4):
+        small_tracker.add(val)
+    assert small_tracker.max() == 0.9  # spike still inside the window
+
+    small_tracker.add(0.5)  # pushes the 0.9 spike out
+    assert small_tracker.max() == 0.5
 
 
 def test_max_after_reset(tracker):

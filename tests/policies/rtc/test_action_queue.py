@@ -517,6 +517,47 @@ def test_merge_no_log_when_delays_match(action_queue_rtc_enabled, sample_actions
     assert "Indexes diff is not equal to real delay" not in caplog.text
 
 
+def test_merge_uses_actual_consumption_on_mismatch(action_queue_rtc_enabled, sample_actions):
+    """Test merge() discards by actual consumption, not the latency estimate, on mismatch."""
+    action_queue_rtc_enabled.merge(sample_actions["short"], sample_actions["short"], real_delay=0)
+
+    # Robot consumed 5 actions while inference was running
+    for _ in range(5):
+        action_queue_rtc_enabled.get()
+
+    action_queue_rtc_enabled.merge(
+        sample_actions["original"],
+        sample_actions["processed"],
+        real_delay=8,  # over-estimate: trusting it would skip 3 not-yet-executed actions
+        action_index_before_inference=0,
+    )
+
+    # First served action must be the one right after the 5 actually-consumed steps
+    assert action_queue_rtc_enabled.qsize() == len(sample_actions["original"]) - 5
+    first_action = action_queue_rtc_enabled.get()
+    assert torch.equal(first_action, sample_actions["processed"][5])
+
+
+def test_merge_first_chunk_on_idle_robot_starts_at_beginning(action_queue_rtc_enabled, sample_actions):
+    """Test the first chunk of an episode is not truncated by warm-up latency.
+
+    Regression test: with an empty queue the robot is standing still (zero
+    actions consumed), but the first inference latency can be large (warm-up).
+    Trusting the latency estimate skips deep into the chunk and commands a
+    far-future action from standstill — a violent position jump on real robots.
+    """
+    action_queue_rtc_enabled.merge(
+        sample_actions["original"],
+        sample_actions["processed"],
+        real_delay=21,  # large warm-up latency estimate
+        action_index_before_inference=0,  # but nothing was consumed
+    )
+
+    assert action_queue_rtc_enabled.qsize() == len(sample_actions["original"])
+    first_action = action_queue_rtc_enabled.get()
+    assert torch.equal(first_action, sample_actions["processed"][0])
+
+
 def test_merge_skips_validation_when_action_index_none(action_queue_rtc_enabled, sample_actions, caplog):
     """Test merge() skips delay validation when action_index_before_inference is None."""
     import logging
@@ -821,8 +862,10 @@ def test_typical_rtc_workflow(action_queue_rtc_enabled, sample_actions):
 
     assert action_queue_rtc_enabled.qsize() == 40
 
-    # Second inference with delay
+    # Second inference starts; robot keeps executing 5 actions while it runs
     action_index_before = action_queue_rtc_enabled.get_action_index()
+    for _ in range(5):
+        action_queue_rtc_enabled.get()
 
     action_queue_rtc_enabled.merge(
         sample_actions["original"],
@@ -831,7 +874,7 @@ def test_typical_rtc_workflow(action_queue_rtc_enabled, sample_actions):
         action_index_before_inference=action_index_before,
     )
 
-    # Queue should be replaced, minus delay
+    # Queue should be replaced, minus the actions consumed during inference
     assert action_queue_rtc_enabled.qsize() == 45
     assert action_queue_rtc_enabled.get_action_index() == 0
 
