@@ -17,6 +17,7 @@ Monkey-patch the `policy` attribute with a stub so that no real model inference 
 
 from __future__ import annotations
 
+import pickle
 import time
 
 import pytest
@@ -187,6 +188,30 @@ def test_obs_sanity_checks(policy_server):
     # Case 3 – genuinely new & dissimilar observation passes
     obs_ok = _make_obs(torch.ones(6) * 5, timestep=3)
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
+
+
+def test_send_observations_logs_receive_and_decode_separately(monkeypatch, policy_server):
+    """Transport wait time must not be attributed to pickle deserialization."""
+    import lerobot.async_inference.policy_server as policy_server_module
+
+    observation = _make_obs(torch.zeros(6), must_go=True)
+    payload = pickle.dumps(observation)
+    messages = []
+    perf_counter_values = iter((10.0, 12.0, 12.0, 12.01))
+
+    monkeypatch.setattr(policy_server_module, "receive_bytes_in_chunks", lambda *_: payload)
+    monkeypatch.setattr(policy_server_module.time, "perf_counter", lambda: next(perf_counter_values))
+    monkeypatch.setattr(policy_server.logger, "debug", messages.append)
+
+    class Context:
+        def peer(self):
+            return "test-client"
+
+    policy_server.SendObservations(iter(()), Context())
+
+    assert any("Receive time: 2.000000s" in message for message in messages)
+    assert any("Deserialization time: 0.010000s" in message for message in messages)
+    assert any(f"Payload size: {len(payload)} bytes" in message for message in messages)
 
 
 def test_predict_action_chunk(monkeypatch, policy_server):

@@ -175,13 +175,16 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
-        receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
+        start_receive = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
             request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
+        receive_duration = time.perf_counter() - start_receive
+
+        receive_time = time.time()  # comparing timestamps so need time.time()
+        start_deserialize = time.perf_counter()
         timed_observation = pickle.loads(received_bytes)  # nosec
-        deserialize_time = time.perf_counter() - start_deserialize
+        deserialize_duration = time.perf_counter() - start_deserialize
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -201,7 +204,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(
             f"Server timestamp: {receive_time:.6f} | "
             f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
+            f"Receive time: {receive_duration:.6f}s | "
+            f"Deserialization time: {deserialize_duration:.6f}s | "
+            f"Payload size: {len(received_bytes)} bytes"
         )
 
         if not self._enqueue_observation(
