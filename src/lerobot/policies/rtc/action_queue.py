@@ -267,13 +267,22 @@ class ActionQueue:
         effective_delay = max(0, real_delay)
 
         if action_index_before_inference is not None:
+            # ``indexes_diff`` is the ground-truth count of actions the robot actually
+            # consumed while this chunk was being computed. The fps/latency estimate
+            # ``real_delay`` overshoots it whenever the control loop runs slower than
+            # --fps (or during the cold first inference), so discarding ``real_delay``
+            # from the fresh chunk skips actions the robot never executed and the
+            # relative-action prefix is re-anchored to a future state that never
+            # happened — the trajectory plays ahead of reality and the arms lurch.
+            # Discard exactly what was consumed so playback is real-time regardless of
+            # loop rate.
             indexes_diff = max(0, self.last_index - action_index_before_inference)
             if indexes_diff != real_delay:
                 logger.info(
-                    "Indexes diff is not equal to real delay. indexes_diff=%d, real_delay=%d",
+                    "Re-anchoring RTC chunk on actual consumed actions: indexes_diff=%d, real_delay=%d",
                     indexes_diff,
                     real_delay,
                 )
-                return real_delay
+            return indexes_diff
 
         return effective_delay
