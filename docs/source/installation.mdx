@@ -268,6 +268,58 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
+### Verify your Python environment
+
+After activating your virtual environment, verify that `python` and `pip` are using the same environment:
+
+```bash
+which python
+python --version
+python -m pip --version
+python -c "import sys; print(sys.executable)"
+```
+
+The output should point to your active virtual environment, for example:
+
+```bash
+/path/to/lerobot/.venv/bin/python
+```
+
+We recommend using:
+
+```bash
+python -m pip install -e .
+```
+
+instead of:
+
+```bash
+pip install -e .
+```
+
+This helps avoid installing packages into a different Python environment.
+
+If you encounter:
+
+```bash
+No module named pip
+```
+
+you can install pip into the active environment with:
+
+```bash
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
+```
+
+### Verify your LeRobot installation
+
+After installation, verify that LeRobot is correctly installed:
+
+```bash
+python -c "import lerobot; print(lerobot.__file__)"
+```
+
 ## Optional dependencies
 
 LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`. If you are using `uv`, replace `pip install` with `uv pip install` in the commands below.
