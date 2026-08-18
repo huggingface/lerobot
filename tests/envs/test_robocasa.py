@@ -49,3 +49,61 @@ def test_explicit_episode_length_overrides_registered_horizons(monkeypatch: pyte
     assert envs["CloseFridge"][0][0]._max_episode_steps == 1234
     assert envs["SearingMeat"][0][0]._max_episode_steps == 1234
     get_task_horizon.assert_not_called()
+
+
+def test_robocasa_config_defaults_task_prompt_to_env_id() -> None:
+    cfg = RoboCasaEnvConfig()
+    assert cfg.task_prompt == "env_id"
+    assert cfg.gym_kwargs["task_prompt"] == "env_id"
+
+
+def test_robocasa_config_rejects_unknown_task_prompt() -> None:
+    with pytest.raises(ValueError, match="task_prompt"):
+        RoboCasaEnvConfig(task_prompt="nope")
+
+
+def test_task_description_defaults_to_env_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(robocasa, "_get_task_horizon", Mock(return_value=100))
+    env = robocasa.RoboCasaEnv(task="CloseFridge")
+    assert env.task_prompt == "env_id"
+    assert env.task_description == "CloseFridge"
+    env._update_task_description({"lang": "Close the fridge doors."})
+    assert env.task_description == "CloseFridge"
+
+
+def test_task_description_language_uses_ep_meta_lang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(robocasa, "_get_task_horizon", Mock(return_value=100))
+    env = robocasa.RoboCasaEnv(task="CloseFridge", task_prompt="language")
+    env._update_task_description({"lang": "Close the fridge doors."})
+    assert env.task_description == "Close the fridge doors."
+
+
+def test_task_description_language_falls_back_to_env_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(robocasa, "_get_task_horizon", Mock(return_value=100))
+    env = robocasa.RoboCasaEnv(task="CloseFridge", task_prompt="language")
+    env._update_task_description({})
+    assert env.task_description == "CloseFridge"
+
+
+def test_unknown_task_prompt_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(robocasa, "_get_task_horizon", Mock(return_value=100))
+    with pytest.raises(ValueError, match="task_prompt"):
+        robocasa.RoboCasaEnv(task="CloseFridge", task_prompt="nope")
+
+
+def test_create_envs_honors_task_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(robocasa, "_get_task_horizon", Mock(return_value=100))
+    envs = robocasa.create_robocasa_envs(
+        task="CloseFridge",
+        n_envs=1,
+        env_cls=_instantiate_envs,
+        gym_kwargs={"task_prompt": "language"},
+    )
+    env = envs["CloseFridge"][0][0]
+    assert env.task_prompt == "language"
+    env._update_task_description({"lang": "Close the fridge doors."})
+    assert env.task_description == "Close the fridge doors."
