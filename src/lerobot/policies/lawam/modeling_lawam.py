@@ -17,9 +17,6 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import replace
-from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -27,7 +24,7 @@ from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
     _diffusers_available,
     _transformers_available,
@@ -39,27 +36,17 @@ from .configuration_lawam import LaWAMConfig
 _lawam_deps_available = _transformers_available and _diffusers_available
 
 if TYPE_CHECKING or _lawam_deps_available:
-    from lerobot.policies.lawam.latent_world.batch_builder import LatentWorldPolicyInferBatchBuilder
-    from lerobot.policies.lawam.latent_world.processor_utils import build_latent_world_processor_spec
     from lerobot.policies.lawam.latent_world.runtime.freeze_policy import (
         apply_policy_freeze,
         parse_policy_freeze_config,
     )
-    from lerobot.policies.lawam.latent_world.runtime.runner import LatentWorldPolicyRunner
-    from lerobot.policies.lawam.latent_world.train_collator import LatentWorldTrainCollator
-    from lerobot.policies.lawam.latent_world.vlm_adapter import LatentWorldPolicyVLMAdapter
     from lerobot.policies.lawam.vlas.flowmatching_expert import ConditionalFlowMatchingConfig
     from lerobot.policies.lawam.vlas.lawam import LatentWorldPolicyBackend, LatentWorldPolicyConfig
 else:
     ConditionalFlowMatchingConfig = None
     LatentWorldPolicyBackend = None
     LatentWorldPolicyConfig = None
-    LatentWorldPolicyInferBatchBuilder = None
-    LatentWorldPolicyRunner = None
-    LatentWorldPolicyVLMAdapter = None
-    LatentWorldTrainCollator = None
     apply_policy_freeze = None
-    build_latent_world_processor_spec = None
     parse_policy_freeze_config = None
 
 
@@ -67,11 +54,6 @@ def _require_lawam_packages() -> None:
     """Require the optional packages used by the LaWAM implementation."""
     require_package("transformers", extra="lawam")
     require_package("diffusers", extra="lawam")
-
-
-def _build_prompt_config() -> SimpleNamespace:
-    """Build the minimal prompt configuration consumed by the VLM adapter."""
-    return SimpleNamespace(datasets=SimpleNamespace(vla_data={}))
 
 
 def _build_freeze_config(config: LaWAMConfig):
@@ -96,7 +78,6 @@ def _build_lam_config(config: LaWAMConfig) -> dict[str, Any]:
         "num_heads": config.lam_num_heads,
         "ffn_expansion_factor": config.lam_ffn_expansion_factor,
         "enc_layers": config.lam_enc_layers,
-        "codebook_size": config.lam_codebook_size,
         "code_dim": config.lam_code_dim,
         "max_state_dim": config.lam_max_state_dim,
         "num_frames": config.num_video_frames,
@@ -104,13 +85,10 @@ def _build_lam_config(config: LaWAMConfig) -> dict[str, Any]:
         "vq_kwargs": {"layer_norm": config.lam_vq_layer_norm},
         "dec_layers": config.lam_dec_layers,
         "dropout": config.lam_dropout,
-        "vq_type": config.lam_vq_type,
         "norm_latents": config.lam_norm_latents,
         "norm_latents_type": config.lam_norm_latents_type,
-        "enc_add_state": config.lam_enc_add_state,
         "enc_modal_mask": config.lam_enc_modal_mask,
         "latent_layer_to_use": config.lam_latent_layer_to_use,
-        "multi_input": config.lam_multi_input,
         "num_embodiments": config.lam_num_embodiments,
         "image_hw": config.lam_image_hw,
         "patch_size": config.lam_patch_size,
@@ -157,7 +135,6 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
     )
     policy_cfg = LatentWorldPolicyConfig(flow_cfg=flow_cfg)
     policy_cfg.action_horizon = config.effective_action_horizon
-    policy_cfg.hf_cache_dir = config.hf_cache_dir
     policy_cfg.lam_config = _build_lam_config(config)
     policy_cfg.latent_action_placeholder_token = str(config.latent_action_placeholder_token)
     policy_cfg.perceptual_weight = float(config.perceptual_weight)
@@ -172,43 +149,23 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
 
 
 class LaWAMModel(nn.Module):
-    """Compose the native LaWAM backend, VLM adapter, and runtime helpers."""
+    """Thin module wrapper around the native LaWAM backend."""
 
     def __init__(self, config: LaWAMConfig) -> None:
         super().__init__()
         self.config = config
         self.policy_cfg = _build_native_policy_config(config)
-        self.policy_backend = LatentWorldPolicyBackend(
-            self.policy_cfg, vlm_model_id=str(config.base_vlm_source)
-        )
+        self.policy_backend = LatentWorldPolicyBackend(self.policy_cfg, vlm_model_id=str(config.base_vlm))
         apply_policy_freeze(self.policy_backend, _build_freeze_config(config))
-        self.policy_vlm_adapter = LatentWorldPolicyVLMAdapter(
-            model=self.policy_backend.vlm,
-            processor=self.policy_backend.processor,
-            config=_build_prompt_config(),
-            placeholder_token=self.policy_cfg.latent_action_placeholder_token,
-            act_queries=int(self.policy_backend.num_action_queries),
-            flow_queries=int(self.policy_backend.flow_action_query.shape[0]),
-        )
-        self.policy_infer_batch_builder = LatentWorldPolicyInferBatchBuilder(
-            policy_cfg=self.policy_cfg,
-            policy_backend=self.policy_backend,
-            policy_vlm_adapter=self.policy_vlm_adapter,
-            enable_primary_random_resized_crop=bool(config.enable_primary_random_resized_crop),
-        )
-        self.policy_runner = LatentWorldPolicyRunner(
-            policy_backend=self.policy_backend,
-            infer_batch_builder=self.policy_infer_batch_builder,
-        )
 
     def forward(self, batch):
         """Run one native LaWAM training step for a prepared batch."""
-        return self.policy_runner.train_step(batch)
+        return self.policy_backend(batch=batch)
 
     @torch.inference_mode()
-    def predict_action(self, examples, **kwargs):
-        """Predict normalized action chunks for prepared inference examples."""
-        return self.policy_runner.infer_step(examples, **kwargs)
+    def predict_action(self, batch, **kwargs):
+        """Predict normalized action chunks from a processor-prepared batch."""
+        return self.policy_backend.predict_action(batch=batch, **kwargs)
 
 
 class LaWAMPolicy(PreTrainedPolicy):
@@ -235,44 +192,17 @@ class LaWAMPolicy(PreTrainedPolicy):
         if not isinstance(self.model, nn.Module):
             raise TypeError(f"`native_model` must be a torch.nn.Module, got {type(self.model)}.")
 
-        self._collator = kwargs.pop("native_collator", None)
-        if self._collator is None:
-            self._collator = self._build_train_collator()
-
         self.model.to(config.device)
         self.reset()
 
-    def _save_pretrained(self, save_directory: Path) -> None:
-        """Save a portable checkpoint without machine-specific runtime paths."""
-        runtime_config = self.config
-        self.config = replace(
-            runtime_config,
-            base_vlm_path=None,
-            hf_cache_dir=None,
-        )
-        try:
-            super()._save_pretrained(save_directory)
-        finally:
-            self.config = runtime_config
-
-    def _build_train_collator(self):
-        """Build the native training collator from the instantiated backend."""
-        policy_cfg = getattr(self.model, "policy_cfg", None)
-        if policy_cfg is None:
-            raise ValueError("Loaded LaWAM model does not expose `policy_cfg`; cannot build train collator.")
-
-        processor_spec = build_latent_world_processor_spec(
-            policy_cfg=policy_cfg, vlm_model_id=str(self.config.base_vlm_source)
-        )
-        collator = LatentWorldTrainCollator(
-            policy_cfg=policy_cfg,
-            processor_spec=processor_spec,
-            act_queries=int(policy_cfg.num_action_queries),
-            flow_queries=int(policy_cfg.flow_action_num_queries),
-            enable_primary_video_aug=self.config.enable_primary_video_aug,
-            enable_primary_random_resized_crop=self.config.enable_primary_random_resized_crop,
-        )
-        return collator.train()
+    @classmethod
+    def _load_as_safetensor(
+        cls, model: LaWAMPolicy, model_file: str, map_location: str, strict: bool
+    ) -> LaWAMPolicy:
+        """Stage LaWAM checkpoint loading on CPU to avoid duplicate accelerator weights."""
+        del map_location
+        model.to("cpu")
+        return super()._load_as_safetensor(model, model_file, "cpu", strict)
 
     def reset(self) -> None:
         """Clear the queued action chunk used by step-wise inference."""
@@ -282,137 +212,11 @@ class LaWAMPolicy(PreTrainedPolicy):
         """Return model parameters exposed to the LeRobot optimizer factory."""
         return self.model.parameters()
 
-    @staticmethod
-    def _is_wrist_image_key(key: str) -> bool:
-        """Return whether a feature key follows a supported wrist-camera convention."""
-        key_lower = key.lower()
-        leaf = key_lower.rsplit(".", 1)[-1]
-        return "wrist" in key_lower or "eye_in_hand" in key_lower or leaf == "image2"
-
-    def _image_feature_groups(self) -> tuple[list[str], list[str]]:
-        """Partition configured image features into primary and wrist views."""
-        image_keys = list(self.config.image_features.keys())
-        wrist_keys = (
-            list(self.config.wrist_image_features)
-            if self.config.wrist_image_features is not None
-            else [key for key in image_keys if self._is_wrist_image_key(key)]
-        )
-        primary_keys = (
-            list(self.config.primary_image_features)
-            if self.config.primary_image_features is not None
-            else [key for key in image_keys if key not in wrist_keys]
-        )
-        if not primary_keys:
-            primary_keys = [image_keys[0]]
-            wrist_keys = [key for key in wrist_keys if key != image_keys[0]]
-        return primary_keys, wrist_keys
-
-    @staticmethod
-    def _to_uint8_video(tensor: Tensor) -> Tensor:
-        """Convert one frame or video to contiguous channel-first uint8 data."""
-        if tensor.ndim == 3:
-            tensor = tensor.unsqueeze(0)
-        if tensor.ndim != 4:
-            raise ValueError(f"Expected image tensor [C,H,W] or [T,C,H,W], got {tuple(tensor.shape)}.")
-        tensor = tensor.detach().float()
-        if tensor.max() <= 1.0 and tensor.min() >= 0.0:
-            tensor = tensor * 255.0
-        return tensor.round().clamp(0, 255).to(dtype=torch.uint8).contiguous()
-
-    @staticmethod
-    def _to_uint8_frame(tensor: Tensor) -> Tensor:
-        """Convert an image tensor to one contiguous channel-first uint8 frame."""
-        video = LaWAMPolicy._to_uint8_video(tensor)
-        return video[0].contiguous()
-
-    @staticmethod
-    def _task_list(tasks: Any, batch_size: int, default_task: str) -> list[str]:
-        """Normalize scalar or batched task instructions into a string list."""
-        if tasks is None:
-            return [default_task] * batch_size
-        if isinstance(tasks, str):
-            return [tasks] * batch_size
-        return [str(task) for task in tasks]
-
-    def _state_dim(self) -> int:
-        """Return the state width expected by the native flow head."""
-        policy_cfg = getattr(self.model, "policy_cfg", None)
-        flow_cfg = getattr(policy_cfg, "flow_cfg", None)
-        state_dim = getattr(flow_cfg, "state_dim", None)
-        if state_dim is not None:
-            return int(state_dim)
-        if self.config.robot_state_feature is not None:
-            return int(self.config.robot_state_feature.shape[0])
-        return 1
-
-    def _prepare_train_samples(self, batch: dict[str, Tensor]) -> list[dict[str, Any]]:
-        """Translate a LeRobot training batch into native LaWAM samples."""
-        primary_keys, wrist_keys = self._image_feature_groups()
-        first = batch[primary_keys[0]]
-        batch_size = int(first.shape[0])
-        tasks = self._task_list(batch.get("task"), batch_size, self.config.default_task)
-
-        action_tensor = batch.get(ACTION)
-        if action_tensor is None:
-            raise KeyError("LaWAM training requires `action` in the batch.")
-        state_tensor = batch.get(OBS_STATE)
-
-        samples: list[dict[str, Any]] = []
-        for idx in range(batch_size):
-            primary_videos = torch.stack(
-                [self._to_uint8_video(batch[key][idx]) for key in primary_keys], dim=0
-            )
-            wrist_images = (
-                torch.stack([self._to_uint8_frame(batch[key][idx]) for key in wrist_keys], dim=0)
-                if wrist_keys
-                else torch.empty(
-                    (0, 3, primary_videos.shape[-2], primary_videos.shape[-1]),
-                    dtype=torch.uint8,
-                    device=primary_videos.device,
-                )
-            )
-            action = action_tensor[idx].detach().float()
-            if action.ndim == 1:
-                action = action.unsqueeze(0)
-            action = action[: self.config.effective_action_horizon]
-
-            if state_tensor is None:
-                state = torch.zeros(
-                    (1, self._state_dim()),
-                    dtype=torch.float32,
-                    device=action.device,
-                )
-            else:
-                state = state_tensor[idx].detach().float()
-                if state.ndim == 1:
-                    state = state.unsqueeze(0)
-
-            samples.append(
-                {
-                    "primary_videos": primary_videos,
-                    "wrist_images": wrist_images,
-                    "lang": tasks[idx],
-                    "state": state,
-                    "action": action,
-                    "embodiment_id": self.config.embodiment_id,
-                    "action_hz": float(self.config.action_hz),
-                }
-            )
-        return samples
-
-    def _move_batch_to_device(self, batch: Any) -> Any:
-        """Move tensor values in a prepared batch to the policy device."""
-        device = torch.device(str(self.config.device))
-        return {
-            key: value.to(device=device, non_blocking=True) if torch.is_tensor(value) else value
-            for key, value in batch.items()
-        }
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, float]]:
         """Compute the LaWAM training loss and scalar logging values."""
-        samples = self._prepare_train_samples(batch)
-        lawam_batch = self._move_batch_to_device(self._collator(samples))
-        output = self.model(lawam_batch)
+        if "actions" not in batch:
+            raise KeyError("LaWAM training requires processor-prepared `actions`.")
+        output = self.model(batch)
 
         loss = output.get("total_loss")
         if loss is None:
@@ -433,51 +237,15 @@ class LaWAMPolicy(PreTrainedPolicy):
         logs["loss"] = float(loss.detach().item())
         return loss, logs
 
-    def _prepare_infer_examples(self, batch: dict[str, Tensor]) -> list[dict[str, Any]]:
-        """Translate a LeRobot observation batch into native inference examples."""
-        primary_keys, wrist_keys = self._image_feature_groups()
-        first = batch[primary_keys[0]]
-        batch_size = int(first.shape[0])
-        tasks = self._task_list(batch.get("task"), batch_size, self.config.default_task)
-        state_tensor = batch.get(OBS_STATE)
-
-        examples: list[dict[str, Any]] = []
-        for idx in range(batch_size):
-            primary_images = [
-                self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).cpu().numpy() for key in primary_keys
-            ]
-            example: dict[str, Any] = {
-                "primary_image": primary_images,
-                "lang": tasks[idx],
-                "embodiment_id": self.config.embodiment_id,
-                "action_hz": float(self.config.action_hz),
-            }
-            if wrist_keys:
-                example["wrist_image"] = [
-                    self._to_uint8_frame(batch[key][idx]).permute(1, 2, 0).cpu().numpy() for key in wrist_keys
-                ]
-            if state_tensor is not None:
-                state = state_tensor[idx].detach().float().cpu()
-                if state.ndim == 1:
-                    state = state.unsqueeze(0)
-                example["state"] = state.numpy()
-            examples.append(example)
-        return examples
-
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Predict a normalized action chunk for each observation in the batch."""
         del noise
         self.eval()
-        examples = self._prepare_infer_examples(batch)
-        output = self.model.predict_action(
-            examples,
-            guidance_scale=self.config.guidance_scale,
-            num_inference_steps=self.config.num_inference_steps,
-        )
-        actions = output.get("normalized_actions")
+        output = self.model.predict_action(batch)
+        actions = output.get("normalized_actions") if isinstance(output, dict) else output
         if actions is None:
-            raise KeyError(f"LaWAM inference output missing `normalized_actions`: {sorted(output.keys())}")
+            raise KeyError("LaWAM inference output is missing normalized actions.")
         actions_tensor = torch.as_tensor(actions, device=self.config.device, dtype=torch.float32)
         if actions_tensor.ndim == 2:
             actions_tensor = actions_tensor.unsqueeze(0)

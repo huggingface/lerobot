@@ -48,8 +48,7 @@ class LatentWorldPolicyConfig:
     # Action chunk (Qwen-compatible schema)
     action_horizon: int = 8
 
-    # Base checkpoints
-    hf_cache_dir: str | None = None
+    # Model architecture
     lam_config: dict[str, Any] = field(default_factory=dict)
 
     # VLM dtype
@@ -148,11 +147,10 @@ class VLMToLAMQFormer(nn.Module):
 def _load_vlm_and_processor(
     cfg: LatentWorldPolicyConfig,
     vlm_model_id: str,
-) -> tuple[nn.Module, Any, Any, int]:
+) -> tuple[nn.Module, Any, int]:
     processor_spec = build_latent_world_processor_spec(policy_cfg=cfg, vlm_model_id=vlm_model_id)
     vlm, processor = load_qwen3vl(
         processor_spec.model_id,
-        processor_spec.cache_dir,
         dtype=cfg.vlm_dtype,
     )
     processor, tokenizer, placeholder_token_id = configure_latent_world_processor(
@@ -179,7 +177,7 @@ def _load_vlm_and_processor(
 
     remove_lm_head(vlm)
 
-    return vlm, processor, tokenizer, placeholder_token_id
+    return vlm, tokenizer, placeholder_token_id
 
 
 def _apply_flow_only_grad_to_h_vlm(
@@ -259,8 +257,8 @@ class LatentWorldPolicyBackend(nn.Module):
         self.model_cfg = model_cfg
         self.vlm_model_id = str(vlm_model_id)
 
-        # 1) Load VLM + processor/tokenizer and register placeholder token.
-        self.vlm, self.processor, self.tokenizer, self.placeholder_token_id = _load_vlm_and_processor(
+        # 1) Load VLM/tokenizer and register the placeholder token.
+        self.vlm, self.tokenizer, self.placeholder_token_id = _load_vlm_and_processor(
             self.model_cfg,
             self.vlm_model_id,
         )

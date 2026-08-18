@@ -32,15 +32,14 @@ from lerobot.policies.factory import get_policy_class, make_policy_config, make_
 from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
 from lerobot.policies.lawam.lam_core.core.lam_model import LatentLAMModel, build_latent_action_model
 from lerobot.policies.lawam.lam_core.core.utils.modules import build_modal_block_attention_mask
-from lerobot.policies.lawam.latent_world.processor_utils import LatentWorldProcessorSpec
-from lerobot.policies.lawam.latent_world.train_collator import (
-    LatentWorldTrainCollator,
-    valid_action_horizon_steps,
-)
 from lerobot.policies.lawam.modeling_lawam import (
     LaWAMPolicy,
     _build_freeze_config,
     _build_native_policy_config,
+)
+from lerobot.policies.lawam.processor_lawam import (
+    LaWAMQwenInputsProcessorStep,
+    LaWAMResizeImagesProcessorStep,
 )
 from lerobot.policies.lawam.vlas.qwen3vl import (
     freeze_qwen3vl,
@@ -48,6 +47,8 @@ from lerobot.policies.lawam.vlas.qwen3vl import (
     remove_lm_head,
     unfreeze_last_n_llm_layers,
 )
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -66,18 +67,25 @@ def make_config() -> LaWAMConfig:
         base_vlm="dummy-qwen",
         action_hz=20.0,
         embodiment_id=25,
+        primary_image_features=["observation.images.front"],
+        wrist_image_features=["observation.images.wrist"],
     )
 
 
-class _FakeCollator:
-    def __init__(self) -> None:
-        self.samples = None
+class _FakeProcessor:
+    def __init__(self, placeholder_token_id: int = 99) -> None:
+        self.placeholder_token_id = placeholder_token_id
+        self.messages = None
 
-    def __call__(self, samples):
-        self.samples = samples
+    def apply_chat_template(self, messages, **kwargs):
+        del kwargs
+        self.messages = messages
+        batch_size = len(messages)
         return {
-            "actions": torch.stack([sample["action"] for sample in samples]),
-            "state": torch.stack([sample["state"][-1] for sample in samples]),
+            "input_ids": torch.full((batch_size, 16), self.placeholder_token_id, dtype=torch.long),
+            "attention_mask": torch.ones((batch_size, 16), dtype=torch.long),
+            "pixel_values": torch.zeros((batch_size, 3, 256, 256)),
+            "image_grid_thw": torch.ones((batch_size, 3), dtype=torch.long),
         }
 
 
@@ -100,15 +108,15 @@ class _FakeNativeLaWAM(nn.Module):
         loss_total = loss_flow + batch["state"].mean() * 0.0
         return {"total_loss": loss_total, "loss_flow": loss_flow}
 
-    def predict_action(self, examples, **kwargs):
+    def predict_action(self, batch, **kwargs):
         del kwargs
         self.predict_calls += 1
-        batch_size = len(examples)
+        batch_size = int(batch["input_ids"].shape[0])
         actions = torch.arange(
             batch_size * self.chunk_size * self.action_dim,
             dtype=torch.float32,
         ).reshape(batch_size, self.chunk_size, self.action_dim)
-        return {"normalized_actions": actions}
+        return actions
 
 
 class _FakeQwen3VL(nn.Module):
@@ -139,9 +147,30 @@ def make_batch(batch_size: int = 2) -> dict:
 
 def make_policy(config: LaWAMConfig | None = None):
     native_model = _FakeNativeLaWAM()
-    collator = _FakeCollator()
-    policy = LaWAMPolicy(config or make_config(), native_model=native_model, native_collator=collator)
-    return policy, native_model, collator
+    policy = LaWAMPolicy(config or make_config(), native_model=native_model)
+    return policy, native_model
+
+
+def inject_fake_processor(preprocessor) -> LaWAMQwenInputsProcessorStep:
+    step = next(step for step in preprocessor.steps if isinstance(step, LaWAMQwenInputsProcessorStep))
+    step._processor = _FakeProcessor()
+    step._placeholder_token_id = 99
+    return step
+
+
+def make_prepared_batch(batch_size: int = 2) -> dict:
+    return {
+        "input_ids": torch.zeros((batch_size, 4), dtype=torch.long),
+        "attention_mask": torch.ones((batch_size, 4), dtype=torch.long),
+        "pixel_values": torch.zeros((batch_size, 3, 8, 8)),
+        "primary_image": torch.zeros((batch_size, 3, 8, 8)),
+        "state": torch.rand(batch_size, 32),
+        "state_mask": torch.ones(batch_size, 32, dtype=torch.bool),
+        "embodiment_id": torch.full((batch_size,), 25, dtype=torch.long),
+        "action_hz": torch.full((batch_size,), 20.0),
+        "actions": torch.rand(batch_size, 4, 32),
+        "actions_mask": torch.ones(batch_size, 4, 32, dtype=torch.bool),
+    }
 
 
 def test_factory_registers_lawam() -> None:
@@ -159,7 +188,7 @@ def test_lawam_defaults_match_native_state_normalization() -> None:
     assert make_config().normalization_mapping["STATE"] is NormalizationMode.MIN_MAX
 
 
-def test_dataset_stats_are_used_for_eval_processors() -> None:
+def test_unused_state_stats_are_excluded_from_eval_processors() -> None:
     dataset_stats = {
         OBS_STATE: {
             "min": torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
@@ -178,6 +207,7 @@ def test_dataset_stats_are_used_for_eval_processors() -> None:
     cfg = make_config()
 
     preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_stats)
+    inject_fake_processor(preprocessor)
     batch = {
         "observation.images.front": torch.zeros(3, 8, 8),
         "observation.images.wrist": torch.zeros(3, 8, 8),
@@ -194,12 +224,33 @@ def test_dataset_stats_are_used_for_eval_processors() -> None:
         )
     )
 
-    assert torch.allclose(processed_batch[OBS_STATE], torch.zeros(1, 7))
+    assert torch.equal(processed_batch["state"], torch.zeros(1, 32))
+    assert not processed_batch["state_mask"].any()
     assert torch.allclose(
         processed_action[:, :2],
         torch.tensor([[11.0, 22.0], [12.0, 24.0]]),
     )
     assert processed_action[:, -1].tolist() == [0.5, 1.0]
+
+
+def test_state_conditioned_flow_uses_standard_lerobot_state() -> None:
+    cfg = make_config()
+    cfg.flow_use_state = True
+    dataset_stats = {
+        OBS_STATE: {
+            "min": torch.zeros(7),
+            "max": torch.full((7,), 2.0),
+        }
+    }
+    preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=dataset_stats)
+    inject_fake_processor(preprocessor)
+    batch = make_batch(batch_size=1)
+    batch[OBS_STATE] = torch.ones(1, 7)
+
+    processed_batch = preprocessor(batch)
+
+    assert torch.allclose(processed_batch["state"][:, :7], torch.zeros(1, 7))
+    assert processed_batch["state_mask"][:, :7].all()
 
 
 def test_native_checkpoint_freeze_config_is_loaded(tmp_path) -> None:
@@ -254,10 +305,21 @@ def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
     preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
     postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
 
-    _, loaded_postprocessor = make_pre_post_processors(cfg, pretrained_path=str(tmp_path))
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(cfg, pretrained_path=str(tmp_path))
     configs = [step.get_config() for step in loaded_postprocessor.steps]
+    loaded_qwen_step = next(
+        step for step in loaded_preprocessor.steps if isinstance(step, LaWAMQwenInputsProcessorStep)
+    )
+    loaded_resize_step = next(
+        step for step in loaded_preprocessor.steps if isinstance(step, LaWAMResizeImagesProcessorStep)
+    )
 
     assert {"gripper_dim": 3, "threshold": 0.25} in configs
+    assert loaded_qwen_step.model_id == "dummy-qwen"
+    assert loaded_resize_step.image_features == [
+        "observation.images.front",
+        "observation.images.wrist",
+    ]
 
 
 def test_native_config_uses_padded_lawam_action_space() -> None:
@@ -276,7 +338,6 @@ def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
         "num_heads": 4,
         "ffn_expansion_factor": 2,
         "enc_layers": 1,
-        "codebook_size": 8,
         "code_dim": 8,
         "max_state_dim": 7,
         "num_frames": 2,
@@ -284,13 +345,10 @@ def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
         "vq_kwargs": {"layer_norm": True},
         "dec_layers": 1,
         "dropout": 0.0,
-        "vq_type": "vae",
         "norm_latents": True,
         "norm_latents_type": "ln",
-        "enc_add_state": False,
         "enc_modal_mask": True,
         "latent_layer_to_use": -2,
-        "multi_input": False,
         "num_embodiments": 32,
         "image_hw": (32, 32),
         "patch_size": 16,
@@ -309,9 +367,11 @@ def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
     assert all(not parameter.requires_grad for parameter in loaded_model.parameters())
 
 
-def test_train_collator_masks_only_flow_horizon_steps() -> None:
-    assert valid_action_horizon_steps(window_size=50, horizon_sec=1.2, action_hz=20.0) == 24
-    assert valid_action_horizon_steps(window_size=8, horizon_sec=0.4, action_hz=20.0) == 8
+def test_effective_action_horizon_respects_control_frequency() -> None:
+    cfg = make_config()
+    cfg.chunk_size = 50
+    cfg.flow_horizon_sec = 1.2
+    assert cfg.effective_action_horizon == 24
 
 
 def test_action_hz_is_derived_from_dataset_metadata() -> None:
@@ -323,7 +383,6 @@ def test_action_hz_is_derived_from_dataset_metadata() -> None:
         cfg,
         dataset_meta=SimpleNamespace(fps=25),
         native_model=_FakeNativeLaWAM(),
-        native_collator=_FakeCollator(),
     )
 
     assert policy.config.action_hz == 25.0
@@ -347,48 +406,43 @@ def test_dataset_sampling_uses_the_derived_action_horizon() -> None:
     assert delta_timestamps is not None
     assert len(delta_timestamps[ACTION]) == 10
     assert delta_timestamps[ACTION][-1] == pytest.approx(9 / 25)
+    assert delta_timestamps["observation.images.front"] == pytest.approx([0.0, 1 / 25])
 
 
-def test_train_collator_resizes_all_model_inputs() -> None:
-    class FakeProcessor:
-        def apply_chat_template(self, messages, **kwargs):
-            del messages, kwargs
-            return {
-                "input_ids": torch.full((1, 4), 99, dtype=torch.long),
-                "attention_mask": torch.ones((1, 4), dtype=torch.long),
-                "pixel_values": torch.zeros((1, 3, 256, 256)),
-            }
-
-    policy_cfg = SimpleNamespace(
-        action_horizon=4,
-        flow_cfg=SimpleNamespace(action_dim=7, state_dim=7, horizon_sec=0.4),
-        lam_config={"image_hw": (256, 256)},
-    )
-    collator = LatentWorldTrainCollator(
-        policy_cfg=policy_cfg,
-        processor_spec=LatentWorldProcessorSpec(model_id="unused", placeholder_token="<ACT_PH>"),
-        act_queries=2,
-        flow_queries=2,
-        enable_primary_video_aug=False,
-        enable_primary_random_resized_crop=False,
-    )
-    collator._processor = FakeProcessor()
-    collator._placeholder_token_id = 99
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    sample = {
-        "primary_videos": torch.rand(1, 2, 3, 480, 640, device=device),
-        "wrist_images": torch.rand(1, 3, 480, 640, device=device),
-        "lang": "pick",
-        "state": torch.rand(1, 7, device=device),
-        "action": torch.rand(4, 7, device=device),
-        "embodiment_id": 25,
-        "action_hz": 20.0,
+def test_preprocessor_builds_complete_resized_training_batch() -> None:
+    preprocessor, _ = make_pre_post_processors(make_config(), dataset_stats=None)
+    prepare_step = inject_fake_processor(preprocessor)
+    raw_batch = {
+        "observation.images.front": torch.rand(1, 2, 3, 480, 640),
+        "observation.images.wrist": torch.rand(1, 2, 3, 480, 640),
+        OBS_STATE: torch.rand(1, 7),
+        ACTION: torch.rand(1, 4, 7),
+        "task": ["pick"],
     }
 
-    batch = collator([sample])
+    batch = preprocessor(raw_batch)
 
     assert batch["primary_video"].shape == (1, 2, 3, 256, 256)
-    assert batch["actions"].device.type == device.type
+    assert batch["primary_image"].shape == (1, 3, 256, 256)
+    assert batch["actions"].shape == (1, 4, 32)
+    assert batch["actions_mask"][:, :, :7].all()
+    assert batch["state"].shape == (1, 32)
+    assert prepare_step._processor.messages is not None
+
+
+@pytest.mark.parametrize("shape", [(2, 3, 20, 40), (2, 4, 3, 20, 40)])
+def test_lawam_resize_processor_supports_current_and_temporal_images(shape: tuple[int, ...]) -> None:
+    image_key = "observation.images.front"
+    images = torch.rand(shape)
+    step = LaWAMResizeImagesProcessorStep(image_features=[image_key], image_hw=(8, 12))
+
+    processed = step({TransitionKey.OBSERVATION: {image_key: images}})
+
+    output = processed[TransitionKey.OBSERVATION][image_key]
+    assert output.shape == (*shape[:-2], 8, 12)
+    assert output.dtype == images.dtype
+    assert output.device == images.device
+    assert torch.isfinite(output).all()
 
 
 def test_action_steps_cannot_exceed_flow_horizon() -> None:
@@ -439,35 +493,22 @@ def test_qwen3vl_freeze_and_layer_selection() -> None:
     assert not hasattr(model, "lm_head")
 
 
-def test_training_forward_converts_batch_to_lawam_samples() -> None:
-    policy, _, collator = make_policy()
-    loss, logs = policy.forward(make_batch())
+def test_training_forward_consumes_processor_prepared_batch() -> None:
+    policy, _ = make_policy()
+    loss, logs = policy.forward(make_prepared_batch())
 
     assert loss.ndim == 0
     assert "loss" in logs
-    assert len(collator.samples) == 2
-    first = collator.samples[0]
-    assert first["primary_videos"].shape == (1, 2, 3, 8, 8)
-    assert first["wrist_images"].shape == (1, 3, 8, 8)
-    assert first["action"].shape == (4, 7)
-    assert first["state"].shape == (1, 7)
-    assert first["lang"] == "task 0"
-    assert first["embodiment_id"] == 25
-    assert first["action_hz"] == 20.0
 
 
 def test_saved_policy_uses_safetensors_without_torch_load(tmp_path, monkeypatch) -> None:
     cfg = make_config()
-    cfg.base_vlm_path = "/private/qwen3-vl"
-    cfg.hf_cache_dir = "/private/huggingface-cache"
-    policy, _, _ = make_policy(cfg)
+    policy, _ = make_policy(cfg)
 
     policy.save_pretrained(tmp_path)
     saved_config = json.loads((tmp_path / "config.json").read_text())
 
     assert saved_config["base_vlm"] == "dummy-qwen"
-    assert saved_config["base_vlm_path"] is None
-    assert saved_config["hf_cache_dir"] is None
 
     def fail_torch_load(*args, **kwargs):
         del args, kwargs
@@ -478,23 +519,47 @@ def test_saved_policy_uses_safetensors_without_torch_load(tmp_path, monkeypatch)
     loaded_policy = LaWAMPolicy.from_pretrained(
         tmp_path,
         native_model=_FakeNativeLaWAM(),
-        native_collator=_FakeCollator(),
     )
     assert torch.equal(loaded_policy.model.weight, policy.model.weight)
 
 
-def test_base_vlm_path_overrides_portable_model_id_at_runtime() -> None:
+def test_pretrained_load_stages_lawam_checkpoint_on_cpu(tmp_path, monkeypatch) -> None:
     cfg = make_config()
+    cfg.device = "cuda"
+    events = {}
 
-    assert cfg.base_vlm_source == "dummy-qwen"
+    def fake_load(cls, model, model_file, map_location, strict):
+        del cls, model_file, strict
+        events["load_device"] = map_location
+        events["parameter_device_during_load"] = next(model.parameters()).device.type
+        return model
 
-    cfg.base_vlm_path = "/local/qwen3-vl"
+    def fake_to(self, device):
+        events["final_device"] = str(device)
+        if str(device).startswith("cpu"):
+            return nn.Module.to(self, device)
+        return self
 
-    assert cfg.base_vlm_source == "/local/qwen3-vl"
+    monkeypatch.setattr(PreTrainedPolicy, "_load_as_safetensor", classmethod(fake_load))
+    monkeypatch.setattr(LaWAMPolicy, "to", fake_to)
+
+    policy = LaWAMPolicy.from_pretrained(
+        tmp_path,
+        config=cfg,
+        native_model=_FakeNativeLaWAM(),
+    )
+
+    assert events == {
+        "load_device": "cpu",
+        "parameter_device_during_load": "cpu",
+        "final_device": "cuda",
+    }
+    assert cfg.device == "cuda"
+    assert policy.config.device == "cuda"
 
 
 def test_base_vlm_rejects_local_paths() -> None:
-    with pytest.raises(ValueError, match="Use `base_vlm_path` for a local Qwen directory"):
+    with pytest.raises(ValueError, match="portable Hugging Face model ID"):
         LaWAMConfig(base_vlm="/local/qwen3-vl")
 
 
@@ -504,52 +569,49 @@ def test_primary_image_feature_override(primary_features: list[str] | None) -> N
     cfg.primary_image_features = primary_features
     if primary_features is not None:
         cfg.wrist_image_features = []
-    policy, _, collator = make_policy(cfg)
-
-    policy.forward(make_batch(batch_size=1))
+    preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=None)
+    prepare_step = inject_fake_processor(preprocessor)
+    preprocessor(make_batch(batch_size=1))
 
     expected_views = 1 if primary_features is None else 2
-    assert collator.samples[0]["primary_videos"].shape[0] == expected_views
+    assert len(prepare_step._processor.messages[0][0]["content"]) >= expected_views
+    assert len(prepare_step.primary_image_features) == expected_views
 
 
-def test_libero_image2_defaults_to_wrist_view() -> None:
+def test_multiple_cameras_require_explicit_roles() -> None:
     cfg = make_config()
     cfg.input_features = {
         "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
         "observation.images.image2": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
         OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(7,)),
     }
-    batch = {
-        "observation.images.image": torch.rand(1, 2, 3, 8, 8),
-        "observation.images.image2": torch.rand(1, 2, 3, 8, 8),
-        OBS_STATE: torch.rand(1, 7),
-        ACTION: torch.rand(1, 4, 7),
-        "task": ["task 0"],
-    }
-    policy, _, collator = make_policy(cfg)
+    cfg.primary_image_features = None
+    cfg.wrist_image_features = None
 
-    policy.forward(batch)
-
-    assert collator.samples[0]["primary_videos"].shape[0] == 1
-    assert collator.samples[0]["wrist_images"].shape[0] == 1
+    with pytest.raises(ValueError, match="explicit `primary_image_features`"):
+        make_policy(cfg)
 
 
-def test_inference_examples_convert_device_images_to_numpy() -> None:
-    policy, _, _ = make_policy()
+def test_preprocessor_keeps_inference_inputs_as_tensors() -> None:
+    preprocessor, _ = make_pre_post_processors(make_config(), dataset_stats=None)
+    prepare_step = inject_fake_processor(preprocessor)
     batch = make_batch(batch_size=1)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    batch = {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
+    batch.pop(ACTION)
 
-    examples = policy._prepare_infer_examples(batch)
+    prepared = preprocessor(batch)
 
-    assert examples[0]["primary_image"][0].shape == (8, 8, 3)
-    assert examples[0]["wrist_image"][0].shape == (8, 8, 3)
-    assert examples[0]["state"].shape == (1, 7)
+    assert prepared["primary_image"].shape == (1, 3, 256, 256)
+    assert "actions" not in prepared
+    image_items = [
+        item for item in prepare_step._processor.messages[0][0]["content"] if item["type"] == "image"
+    ]
+    assert image_items
+    assert all(torch.is_tensor(item["image"]) for item in image_items)
 
 
 def test_select_action_uses_action_queue_before_refill() -> None:
-    policy, native_model, _ = make_policy()
-    batch = make_batch(batch_size=1)
+    policy, native_model = make_policy()
+    batch = make_prepared_batch(batch_size=1)
 
     first = policy.select_action(batch)
     second = policy.select_action(batch)

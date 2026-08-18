@@ -28,7 +28,6 @@ class LatentWorldProcessorSpec:
 
     model_id: str
     placeholder_token: str
-    cache_dir: str | None = None
 
 
 def build_latent_world_processor_spec(*, policy_cfg: Any, vlm_model_id: str) -> LatentWorldProcessorSpec:
@@ -36,7 +35,6 @@ def build_latent_world_processor_spec(*, policy_cfg: Any, vlm_model_id: str) -> 
     return LatentWorldProcessorSpec(
         model_id=str(vlm_model_id),
         placeholder_token=str(policy_cfg.latent_action_placeholder_token),
-        cache_dir=None if getattr(policy_cfg, "hf_cache_dir", None) is None else str(policy_cfg.hf_cache_dir),
     )
 
 
@@ -64,10 +62,7 @@ def load_latent_world_processor(
     spec: LatentWorldProcessorSpec,
 ) -> tuple[Any, Any, int]:
     """Load and configure the Qwen processor described by a portable spec."""
-    processor = AutoProcessor.from_pretrained(
-        spec.model_id,
-        cache_dir=spec.cache_dir,
-    )
+    processor = AutoProcessor.from_pretrained(spec.model_id)
     return configure_latent_world_processor(
         processor,
         placeholder_token=spec.placeholder_token,

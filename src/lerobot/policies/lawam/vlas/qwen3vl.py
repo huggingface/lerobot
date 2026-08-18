@@ -27,31 +27,22 @@ logger = logging.getLogger(__name__)
 
 def load_qwen3vl(
     model_id: str,
-    cache_dir: str | None = None,
     dtype: torch.dtype = torch.bfloat16,
 ) -> tuple[nn.Module, AutoProcessor]:
-    cache_path = str(cache_dir) if cache_dir is not None else None
-    config = AutoConfig.from_pretrained(
-        model_id,
-        cache_dir=cache_path,
-    )
+    config = AutoConfig.from_pretrained(model_id)
     if config.model_type != "qwen3_vl":
         raise ValueError(
             "The LeRobot LaWAM adapter supports Qwen3-VL backbones only; "
             f"got model_type={config.model_type!r} for {model_id!r}."
         )
 
-    processor = AutoProcessor.from_pretrained(
-        model_id,
-        cache_dir=cache_path,
-    )
+    processor = AutoProcessor.from_pretrained(model_id)
     if processor.chat_template is None and getattr(
         getattr(processor, "tokenizer", None), "chat_template", None
     ):
         processor.chat_template = processor.tokenizer.chat_template
 
     base_kwargs = {
-        "cache_dir": cache_path,
         "torch_dtype": dtype,
     }
     errors = []

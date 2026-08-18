@@ -36,10 +36,9 @@ LaWAM `.pt` files are not loaded by the adapter. The LAM and DINOv3 architecture
 are represented directly by `LaWAMConfig` and do not require separate checkpoint
 downloads.
 
-Keep `policy.base_vlm` set to the portable Hub model ID. To load Qwen from an existing local
-download without recording that machine-specific path in the saved policy, additionally pass
-`--policy.base_vlm_path=/path/to/qwen3_weights`. The runtime uses the local directory, while
-`base_vlm_path` is removed from the published `config.json`.
+Keep `policy.base_vlm` set to the portable Hub model ID. Hugging Face's standard cache settings,
+such as `HF_HOME`, control where the Qwen files are stored locally without adding machine-specific
+paths to the policy or processor configuration.
 
 ## Fine-Tuning
 
@@ -53,6 +52,8 @@ lerobot-train \
 ```
 
 The adapter uses LeRobot dataset statistics for action and state normalization before building LaWAM train batches. During training, `policy.action_hz` defaults to the dataset FPS. The effective action chunk is `min(policy.chunk_size, floor(policy.flow_horizon_sec * policy.action_hz))`; `policy.n_action_steps` cannot exceed it. `policy.num_video_frames` controls the observation frame window.
+
+The released LaWAM pretraining and LIBERO SFT recipes do not use random image augmentation. The policy processor applies only the deterministic resize and ImageNet normalization required by the Qwen and LAM backbones. LeRobot's dataset-level image transforms remain available for separately designed training recipes.
 
 Released LaWAM checkpoints use a 32-dimensional padded action/state space internally. Keep `policy.flow_action_dim=32` and `policy.flow_state_dim=32` unless you trained a checkpoint with different flow dimensions.
 
@@ -106,12 +107,14 @@ Reference results for the released LIBERO SFT checkpoint with 50 episodes per ta
 
 ## Camera Selection
 
-By default, visual features whose names include `wrist`, `eye_in_hand`, or the LIBERO `image2` camera are passed as wrist views, and the remaining visual features are passed as primary views. Override this mapping explicitly when your dataset uses different camera names:
+LaWAM checkpoints store primary and wrist camera roles explicitly instead of inferring semantics from names such as `image2`. When constructing a new multi-camera LaWAM policy, configure both roles:
 
 ```bash
 --policy.primary_image_features='["observation.images.front"]' \
 --policy.wrist_image_features='["observation.images.wrist"]'
 ```
+
+`policy.lam_image_feature` selects the primary camera whose temporal frames are consumed by the latent action model. It defaults to the first configured primary camera and is written explicitly when the policy config is saved.
 
 ## Runtime Fields
 
@@ -120,7 +123,6 @@ Common LaWAM-specific policy fields:
 | Field              | Description                                                                                           |
 | ------------------ | ----------------------------------------------------------------------------------------------------- |
 | `base_vlm`         | Portable Qwen/Qwen3-VL Hub model ID stored in the published policy config.                            |
-| `base_vlm_path`    | Optional local Qwen directory used only at runtime and removed when the policy is saved.              |
 | `flow_action_dim`  | Internal padded action dimension used by the LaWAM flow head.                                         |
 | `flow_state_dim`   | Internal padded state dimension used by the LaWAM flow head.                                          |
 | `flow_horizon_sec` | Time horizon, in seconds, used for the flow-matching action loss.                                     |

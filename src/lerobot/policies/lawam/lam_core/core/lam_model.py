@@ -35,7 +35,6 @@ class LatentLAMModel(nn.Module):
         num_heads: int = 16,
         ffn_expansion_factor: int = 2,
         enc_layers: int = 6,
-        codebook_size: int = 16,
         code_dim: int = 256,
         max_state_dim: int = 32,
         num_frames: int = 5,
@@ -43,15 +42,12 @@ class LatentLAMModel(nn.Module):
         vq_kwargs: dict[str, Any] | None = None,
         dec_layers: int = 6,
         dropout: float = 0.1,
-        vq_type: str = "vae",
         disable_vq: bool = False,
         norm_latents: bool = False,
         norm_latents_type: str = "l2",
         dinov3_config: dict[str, Any] | None = None,
-        enc_add_state: bool = False,
         enc_modal_mask: bool = False,
         latent_layer_to_use: int = -2,
-        multi_input: bool = False,
         num_embodiments: int = 32,
         image_hw: tuple[int, int] = LAM_IMAGE_HW,
         patch_size: int = LAM_PATCH_SIZE,
@@ -59,15 +55,9 @@ class LatentLAMModel(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        del codebook_size, kwargs
-        if vq_type not in {"vae", "beta_vae"}:
-            raise ValueError(f"The released LaWAM LAM requires vq_type='vae', got {vq_type!r}.")
+        del kwargs
         if disable_vq:
             raise ValueError("The released LaWAM LAM does not support disable_vq=true.")
-        if enc_add_state:
-            raise ValueError("The released LaWAM LAM requires enc_add_state=false.")
-        if multi_input:
-            raise ValueError("The released LaWAM LAM requires multi_input=false.")
         if not isinstance(latent_layer_to_use, int):
             raise ValueError("The released LaWAM LAM requires one integer latent_layer_to_use.")
 

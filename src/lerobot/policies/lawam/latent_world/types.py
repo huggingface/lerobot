@@ -12,44 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Typed sample and batch contracts shared by LaWAM adapters."""
+"""Typed tensor batch contracts consumed by the LaWAM backend."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import NotRequired, Required
-
-import numpy as np
 import torch
 from typing_extensions import TypedDict
-
-TensorLike2D = torch.Tensor | np.ndarray | Sequence[float] | Sequence[Sequence[float]]
-FrameArray = np.ndarray
-ImageViews = Sequence[FrameArray]
-
-
-class LatentWorldPolicyTrainRawSample(TypedDict):
-    """Raw per-example fields accepted by the LaWAM training collator."""
-
-    primary_videos: torch.Tensor
-    wrist_images: torch.Tensor
-    lang: str
-    state: torch.Tensor
-    action: torch.Tensor
-    embodiment_id: int
-    action_hz: float
-
-
-class LatentWorldPolicyInferExample(TypedDict, total=False):
-    """Validated user-facing fields accepted by the inference batch builder."""
-
-    primary_image: Required[ImageViews]
-    lang: Required[str]
-    embodiment_id: Required[int]
-    action_hz: Required[float]
-    state: NotRequired[TensorLike2D]
-    state_mask: NotRequired[TensorLike2D]
-    wrist_image: NotRequired[ImageViews]
 
 
 class LatentWorldPolicyInferBatch(TypedDict):

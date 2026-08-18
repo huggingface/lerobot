@@ -50,27 +50,21 @@ class LaWAMConfig(PreTrainedConfig):
     )
 
     base_vlm: str = "Qwen/Qwen3-VL-2B-Instruct"
-    base_vlm_path: str | None = None
-    hf_cache_dir: str | None = None
 
     lam_dim: int = 1024
     lam_num_heads: int = 16
     lam_ffn_expansion_factor: int = 4
     lam_enc_layers: int = 24
-    lam_codebook_size: int = 32
     lam_code_dim: int = 32
     lam_max_state_dim: int = 14
     lam_num_queries: int = 1
     lam_dec_layers: int = 12
     lam_dropout: float = 0.0
-    lam_vq_type: str = "vae"
     lam_vq_layer_norm: bool = True
     lam_norm_latents: bool = True
     lam_norm_latents_type: str = "ln"
-    lam_enc_add_state: bool = False
     lam_enc_modal_mask: bool = True
     lam_latent_layer_to_use: int = -2
-    lam_multi_input: bool = False
     lam_num_embodiments: int = 32
     lam_image_hw: tuple[int, int] = (256, 256)
     lam_patch_size: int = 16
@@ -83,14 +77,10 @@ class LaWAMConfig(PreTrainedConfig):
 
     primary_image_features: list[str] | None = None
     wrist_image_features: list[str] | None = None
+    lam_image_feature: str | None = None
     default_task: str = "Execute the robot action."
     action_hz: float | None = None
     embodiment_id: int = 25
-
-    enable_primary_video_aug: bool = False
-    enable_primary_random_resized_crop: bool = False
-    guidance_scale: float | None = None
-    num_inference_steps: int | None = None
 
     latent_action_placeholder_token: str = "<ACT_PH>"
     num_action_queries: int = 8
@@ -156,10 +146,7 @@ class LaWAMConfig(PreTrainedConfig):
         try:
             validate_repo_id(self.base_vlm)
         except HFValidationError as exc:
-            raise ValueError(
-                "`base_vlm` must be a portable Hugging Face model ID. "
-                "Use `base_vlm_path` for a local Qwen directory."
-            ) from exc
+            raise ValueError("`base_vlm` must be a portable Hugging Face model ID.") from exc
         if self.n_action_steps is not None and self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
         if self.num_video_frames < 1:
@@ -200,11 +187,6 @@ class LaWAMConfig(PreTrainedConfig):
         self.resolve_dataset_metadata(dataset_meta)
 
     @property
-    def base_vlm_source(self) -> str:
-        """Return the local VLM override or the portable Hub model ID."""
-        return self.base_vlm_path or self.base_vlm
-
-    @property
     def effective_action_horizon(self) -> int:
         """Return the action count supported by the configured time horizon."""
         if self.action_hz is None:
@@ -223,6 +205,50 @@ class LaWAMConfig(PreTrainedConfig):
             raise ValueError("LaWAM requires at least one visual input feature.")
         if self.action_feature is None:
             raise ValueError("LaWAM requires an action output feature.")
+
+        image_keys = list(self.image_features)
+        primary = None if self.primary_image_features is None else list(self.primary_image_features)
+        wrist = None if self.wrist_image_features is None else list(self.wrist_image_features)
+        if primary is None and wrist is None:
+            if len(image_keys) != 1:
+                raise ValueError(
+                    "LaWAM requires explicit `primary_image_features` and `wrist_image_features` "
+                    "when more than one visual feature is configured."
+                )
+            primary, wrist = image_keys, []
+        elif primary is None:
+            primary = [key for key in image_keys if key not in wrist]
+        elif wrist is None:
+            wrist = [key for key in image_keys if key not in primary]
+
+        if primary is None or wrist is None:
+            raise RuntimeError("LaWAM camera roles were not resolved.")
+        configured = primary + wrist
+        unknown = sorted(set(configured) - set(image_keys))
+        duplicates = sorted({key for key in configured if configured.count(key) > 1})
+        unassigned = sorted(set(image_keys) - set(configured))
+        if unknown:
+            raise ValueError(f"LaWAM camera features are not policy inputs: {unknown}.")
+        if duplicates:
+            raise ValueError(f"LaWAM camera features must have exactly one role: {duplicates}.")
+        if unassigned:
+            raise ValueError(f"LaWAM camera features are missing a primary/wrist role: {unassigned}.")
+        if not primary:
+            raise ValueError("LaWAM requires at least one primary image feature.")
+
+        lam_image_feature = self.lam_image_feature or primary[0]
+        if lam_image_feature not in primary:
+            raise ValueError("`lam_image_feature` must be one of `primary_image_features`.")
+        if self.action_feature.shape[0] > self.flow_action_dim:
+            raise ValueError("LaWAM action feature width cannot exceed `flow_action_dim`.")
+        if self.robot_state_feature is not None and self.robot_state_feature.shape[0] > self.flow_state_dim:
+            raise ValueError("LaWAM state feature width cannot exceed `flow_state_dim`.")
+        if not 0 <= self.embodiment_id < min(self.lam_num_embodiments, self.flow_num_embodiments):
+            raise ValueError("`embodiment_id` is outside the configured embodiment tables.")
+
+        self.primary_image_features = primary
+        self.wrist_image_features = wrist
+        self.lam_image_feature = lam_image_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         """Build the default AdamW optimizer configuration for LaWAM."""
@@ -245,8 +271,18 @@ class LaWAMConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list[int]:
-        """Return the frame indices used to construct each visual observation."""
+        """Return the current timestep for non-visual observations."""
+        return [0]
+
+    @property
+    def image_observation_delta_indices(self) -> list[int]:
+        """Return current and future frames required by the LAM teacher."""
         return list(range(self.num_video_frames))
+
+    @property
+    def state_observation_delta_indices(self) -> list[int]:
+        """Return only the current robot state."""
+        return [0]
 
     @property
     def action_delta_indices(self) -> list[int]:
