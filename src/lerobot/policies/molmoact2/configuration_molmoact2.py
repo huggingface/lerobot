@@ -115,7 +115,7 @@ class MolmoAct2Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 200
-    scheduler_decay_steps: int = 100_000
+    scheduler_decay_steps: int | None = 100_000
     scheduler_decay_lr: float = 1e-6
 
     normalization_mapping: dict[str, NormalizationMode] = field(
