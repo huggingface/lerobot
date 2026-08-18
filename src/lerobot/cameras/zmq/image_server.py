@@ -32,14 +32,20 @@ import numpy as np
 import zmq
 
 from ..camera import Camera
-from ..configs import CameraConfig
+from ..configs import CameraConfig, ColorMode
 from ..utils import make_cameras_from_configs
 
 logger = logging.getLogger(__name__)
 
 
-def encode_image(image: np.ndarray, quality: int = 80) -> str:
-    """Encode RGB image to base64 JPEG string."""
+def encode_image(image: np.ndarray, quality: int = 80, is_rgb: bool = False) -> str:
+    """Encode an image to a base64 JPEG string.
+
+    ``cv2.imencode`` reads its input as BGR, so an RGB frame has to be converted first
+    or the JPEG comes out with red and blue swapped.
+    """
+    if is_rgb:
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     _, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return base64.b64encode(buffer).decode("utf-8")
 
@@ -47,9 +53,20 @@ def encode_image(image: np.ndarray, quality: int = 80) -> str:
 class CameraCaptureThread:
     """Background thread that continuously captures and encodes frames from a camera."""
 
-    def __init__(self, camera: Camera, name: str):
+    def __init__(
+        self,
+        camera: Camera,
+        name: str,
+        publish_size: tuple[int, int] | None = None,
+        is_rgb: bool = False,
+    ):
         self.camera = camera
         self.name = name
+        # Optional (width, height) to shrink frames to before encoding. Capture resolution
+        # is dictated by what the camera will negotiate, which can be far more than a
+        # policy needs; publishing it unchanged just spends link bandwidth.
+        self.publish_size = publish_size
+        self.is_rgb = is_rgb
         self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
         self.latest_timestamp: float = 0.0
         self.frame_lock = threading.Lock()
@@ -74,8 +91,10 @@ class CameraCaptureThread:
             try:
                 frame = self.camera.read()  # Blocks at camera's native rate
                 timestamp = time.time()
+                if self.publish_size is not None and frame.shape[1::-1] != self.publish_size:
+                    frame = cv2.resize(frame, self.publish_size, interpolation=cv2.INTER_AREA)
                 # Encode immediately in capture thread (this is the slow part)
-                encoded = encode_image(frame)
+                encoded = encode_image(frame, is_rgb=self.is_rgb)
                 with self.frame_lock:
                     self.latest_encoded = encoded
                     self.latest_timestamp = timestamp
@@ -95,6 +114,7 @@ class ImageServer:
         cameras: dict[str, CameraConfig],
         fps: int = 30,
         port: int = 5555,
+        publish_size: tuple[int, int] | None = None,
         open_attempts: int = 5,
         open_retry_delay_s: float = 2.0,
     ):
@@ -136,8 +156,15 @@ class ImageServer:
                         f"Camera {name} failed to open after {self.open_attempts} attempts"
                     ) from last_err
 
-                logger.info(f"Camera {name}: {cameras[name].width}x{cameras[name].height}")
-                self.capture_threads[name] = CameraCaptureThread(camera, name)
+                published = publish_size or (cameras[name].width, cameras[name].height)
+                logger.info(
+                    f"Camera {name}: capture {cameras[name].width}x{cameras[name].height}, "
+                    f"publish {published[0]}x{published[1]}"
+                )
+                # Only some camera types expose a color mode; anything else is assumed to
+                # hand us BGR already, which is what the JPEG encoder wants.
+                is_rgb = getattr(cameras[name], "color_mode", None) == ColorMode.RGB
+                self.capture_threads[name] = CameraCaptureThread(camera, name, publish_size, is_rgb)
         except Exception:
             logger.exception("Failed to open cameras; releasing any already-opened devices.")
             self._release_cameras()

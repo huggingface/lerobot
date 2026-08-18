@@ -322,6 +322,14 @@ def main() -> None:
     parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
     parser.add_argument("--camera-height", type=int, default=480, help="Camera height (default: 480)")
     parser.add_argument("--camera-port", type=int, default=5555, help="Camera ZMQ port (default: 5555)")
+    parser.add_argument(
+        "--camera-publish-size",
+        default=None,
+        help=(
+            "Downscale every camera to 'WxH' before publishing, e.g. '640x480'. Useful when a "
+            "camera only negotiates a resolution larger than the consumer needs."
+        ),
+    )
     # Grippers: identity and travel come from the OpenArm config; these are the knobs that
     # actually change between sessions (which CAN port per side, and squeeze strength).
     parser.add_argument("--grippers", action="store_true", help="Enable Damiao gripper control")
@@ -346,7 +354,13 @@ def main() -> None:
     if args.camera or args.cameras:
         spec = args.cameras or f"head_camera={args.camera_device}"
         cameras = parse_camera_specs(spec, args.camera_fps, args.camera_width, args.camera_height)
-        camera_server = ImageServer(cameras, fps=args.camera_fps, port=args.camera_port)
+        publish_size = None
+        if args.camera_publish_size:
+            w, h = (int(v) for v in args.camera_publish_size.lower().split("x"))
+            publish_size = (w, h)
+        camera_server = ImageServer(
+            cameras, fps=args.camera_fps, port=args.camera_port, publish_size=publish_size
+        )
         camera_thread = threading.Thread(target=camera_server.run, daemon=True)
         camera_thread.start()
         cam_summary = ", ".join(

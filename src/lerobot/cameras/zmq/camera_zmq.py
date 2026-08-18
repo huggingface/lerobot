@@ -90,6 +90,10 @@ class ZMQCamera(Camera):
         self.camera_name = config.camera_name
         self.color_mode = config.color_mode
         self.timeout_ms = config.timeout_ms
+        # Restated from the base class so their type is visible here: the resolution stays
+        # None until connect() learns it from the first frame.
+        self.width: int | None = config.width
+        self.height: int | None = config.height
 
         # ZMQ Context and Socket
         self.context: zmq.Context | None = None
@@ -210,6 +214,12 @@ class ZMQCamera(Camera):
 
         if frame is None:
             raise RuntimeError(f"{self} failed to decode image")
+
+        # JPEG decodes to BGR; convert so the frames match the configured color mode.
+        # Skipping this silently hands policies red and blue swapped against their
+        # training data, which is invisible in the tensor shapes.
+        if self.color_mode == ColorMode.RGB:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         return frame
 
