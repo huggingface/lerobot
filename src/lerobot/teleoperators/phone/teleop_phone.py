@@ -21,7 +21,7 @@
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -69,7 +69,7 @@ class BasePhone:
     @property
     def feedback_features(self) -> dict[str, type]:
         # No haptic or other feedback implemented yet
-        pass
+        return {}
 
     def configure(self) -> None:
         # No additional configuration required for phone teleop
@@ -88,14 +88,14 @@ class IOSPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._group = None
+        self._group: Any = None
 
     @property
     def is_connected(self) -> bool:
         return self._group is not None
 
     @check_if_already_connected
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
         time.sleep(2.0)
@@ -132,7 +132,7 @@ class IOSPhone(BasePhone, Teleoperator):
         """
         while True:
             has_pose, position, rotation, fb_pose = self._read_current_pose()
-            if not has_pose:
+            if not has_pose or position is None or rotation is None:
                 time.sleep(0.01)
                 continue
 
@@ -184,7 +184,7 @@ class IOSPhone(BasePhone, Teleoperator):
     @check_if_not_connected
     def get_action(self) -> dict:
         has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
-        if not has_pose or not self.is_calibrated:
+        if not has_pose or raw_position is None or raw_rotation is None or not self.is_calibrated:
             return {}
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
@@ -209,9 +209,12 @@ class IOSPhone(BasePhone, Teleoperator):
         if enable and not self._enabled:
             self._reapply_position_calibration(raw_position)
 
-        # Apply calibration
-        pos_cal = self._calib_rot_inv.apply(raw_position - self._calib_pos)
-        rot_cal = self._calib_rot_inv * raw_rotation
+        # Apply calibration. The `is_calibrated` check above already guarantees both
+        # are set; binding them to locals is what lets the type checker see that.
+        calib_pos, calib_rot_inv = self._calib_pos, self._calib_rot_inv
+        assert calib_pos is not None and calib_rot_inv is not None
+        pos_cal = calib_rot_inv.apply(raw_position - calib_pos)
+        rot_cal = calib_rot_inv * raw_rotation
 
         self._enabled = enable
 
@@ -235,10 +238,10 @@ class AndroidPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._teleop = None
-        self._teleop_thread = None
-        self._latest_pose = None
-        self._latest_message = None
+        self._teleop: Any = None
+        self._teleop_thread: threading.Thread | None = None
+        self._latest_pose: Any = None
+        self._latest_message: dict[str, Any] | None = None
         self._android_lock = threading.Lock()
 
     @property
@@ -246,7 +249,7 @@ class AndroidPhone(BasePhone, Teleoperator):
         return self._teleop is not None
 
     @check_if_already_connected
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
         self._teleop.subscribe(self._android_callback)
@@ -287,7 +290,7 @@ class AndroidPhone(BasePhone, Teleoperator):
 
             if bool(msg.get("move", False)):
                 ok, pos, rot, _pose = self._read_current_pose()
-                if ok:
+                if ok and pos is not None and rot is not None:
                     return pos, rot
 
             time.sleep(0.01)
@@ -337,7 +340,7 @@ class AndroidPhone(BasePhone, Teleoperator):
     @check_if_not_connected
     def get_action(self) -> dict:
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
-        if not ok or not self.is_calibrated:
+        if not ok or raw_pos is None or raw_rot is None or not self.is_calibrated:
             return {}
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
@@ -354,9 +357,12 @@ class AndroidPhone(BasePhone, Teleoperator):
         if enable and not self._enabled:
             self._reapply_position_calibration(raw_pos)
 
-        # Apply calibration
-        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
-        rot_cal = self._calib_rot_inv * raw_rot
+        # Apply calibration. The `is_calibrated` check above already guarantees both
+        # are set; binding them to locals is what lets the type checker see that.
+        calib_pos, calib_rot_inv = self._calib_pos, self._calib_rot_inv
+        assert calib_pos is not None and calib_rot_inv is not None
+        pos_cal = calib_rot_inv.apply(raw_pos - calib_pos)
+        rot_cal = calib_rot_inv * raw_rot
 
         self._enabled = enable
 
@@ -405,7 +411,7 @@ class Phone(Teleoperator):
     def is_connected(self) -> bool:
         return self._phone_impl.is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         return self._phone_impl.connect()
 
     def calibrate(self) -> None:
