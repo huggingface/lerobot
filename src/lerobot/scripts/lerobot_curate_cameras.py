@@ -45,6 +45,9 @@ import json
 import logging
 import shutil
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -148,12 +151,16 @@ def _apply_rename(
     *,
     path_prefix: str | None = None,
     dataset: "LeRobotDataset | None" = None,
+    commit_lock: "threading.Lock | None" = None,
 ) -> None:
     """Apply the computed ``{old: new}`` camera-key mapping.
 
     Video datasets on the Hub → download-free server-side rename commit (scoped to
     ``path_prefix`` for a sub-dataset). Otherwise (image dataset, local-only, or a
     swap/cycle) → local ``rename_features`` over a full copy — single-dataset only.
+
+    ``commit_lock`` serializes the Hub commit across concurrent workers so
+    parallel renames don't race on the branch head ref.
     """
     video_keys = set(meta.video_keys)
     all_video = set(mapping) <= video_keys
@@ -170,14 +177,18 @@ def _apply_rename(
         work = Path(tempfile.mkdtemp(prefix="lerobot_curate_"))
         try:
             shutil.copytree(root / "meta", work / "meta")
-            commit = curator.rename_camera_keys_on_hub(
-                cfg.repo_id,
-                mapping,
-                work,
-                path_prefix=path_prefix,
-                branch=cfg.branch,
-                commit_message=cfg.push_commit_message,
-            )
+            # Serialize the commit: concurrent create_commit calls to the same
+            # branch race on its head ref. The remap is local and quick, so the
+            # lock barely dents parallelism.
+            with commit_lock or nullcontext():
+                commit = curator.rename_camera_keys_on_hub(
+                    cfg.repo_id,
+                    mapping,
+                    work,
+                    path_prefix=path_prefix,
+                    branch=cfg.branch,
+                    commit_message=cfg.push_commit_message,
+                )
             oid = getattr(commit, "oid", None)
             ref = cfg.branch or "main"
             target = f"{cfg.repo_id}/{path_prefix}" if path_prefix else cfg.repo_id
@@ -299,38 +310,75 @@ def _discover_subpaths(repo_id: str) -> list[str] | None:
     return prefixes
 
 
+def _process_subdataset(
+    cfg: CameraCurationConfig,
+    vlm: Any,
+    subpath: str,
+    index: int,
+    total: int,
+    commit_lock: "threading.Lock",
+) -> tuple[str, dict[str, Any]]:
+    """Curate one sub-dataset end to end; returns ``(subpath, report_entry)``.
+
+    Self-contained so it is safe to run concurrently: its own temp dir (removed
+    on exit), its own metadata/frame provider, and the shared VLM server. A
+    failure is captured as ``{"error": ...}`` so one bad sub-dataset never sinks
+    the sweep.
+    """
+    logger.info("===== sub-dataset %d/%d: %s =====", index, total, subpath)
+    sub_work = Path(tempfile.mkdtemp(prefix="lerobot_curate_sub_"))
+    try:
+        sub_root, meta = _materialize_subdataset(cfg.repo_id, subpath, sub_work, cfg.episode_index)
+        verdicts, mapping, mapping_error = _decide(sub_root, meta, cfg, vlm, label=subpath)
+        # Record verdicts first — a collision below must not lose the quality report.
+        curator.stamp_verdicts_into_info(sub_root, verdicts)
+        entry = curator.build_report(verdicts, mapping, cfg)
+        if mapping_error:
+            entry["rename_error"] = mapping_error
+        if cfg.mode == "rename" and mapping:
+            _apply_rename(
+                sub_root, meta, cfg, mapping, verdicts, path_prefix=subpath, commit_lock=commit_lock
+            )
+        return subpath, entry
+    except Exception as exc:  # noqa: BLE001 - one bad sub-dataset shouldn't sink the sweep
+        logger.error("sub-dataset %s failed: %s", subpath, exc)
+        return subpath, {"error": str(exc)}
+    finally:
+        # Drop this sub-dataset's downloaded files immediately (see rename cleanup).
+        shutil.rmtree(sub_work, ignore_errors=True)
+
+
 def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> None:
     """Curate each sub-dataset of a nested collection.
 
-    Each sub-dataset is materialized into its own temp dir, and that dir is
-    removed as soon as the sub-dataset is done — the disk footprint stays at one
-    sub-dataset's first episode at a time, never the whole sweep.
+    Sub-datasets are processed with up to ``cfg.parallelism`` workers sharing the
+    one VLM server; the work is download/latency-bound, so this overlaps I/O for a
+    large speedup on a single GPU. Each worker uses its own temp dir (removed as
+    soon as it is done), and Hub rename commits are serialized via ``commit_lock``
+    so parallel renames don't race on the branch head.
     """
     if cfg.repo_id is None:
         raise ValueError("nested curation requires --repo_id (the collection repo on the Hub).")
 
+    total = len(subpaths)
+    parallelism = max(1, min(cfg.parallelism, total))
+    commit_lock = threading.Lock()
     collection: dict[str, Any] = {}
-    for i, subpath in enumerate(subpaths, 1):
-        logger.info("===== sub-dataset %d/%d: %s =====", i, len(subpaths), subpath)
-        sub_work = Path(tempfile.mkdtemp(prefix="lerobot_curate_sub_"))
-        try:
-            sub_root, meta = _materialize_subdataset(cfg.repo_id, subpath, sub_work, cfg.episode_index)
-            verdicts, mapping, mapping_error = _decide(sub_root, meta, cfg, vlm, label=subpath)
-            # Record verdicts first — a collision below must not lose the quality report.
-            curator.stamp_verdicts_into_info(sub_root, verdicts)
-            entry = curator.build_report(verdicts, mapping, cfg)
-            if mapping_error:
-                entry["rename_error"] = mapping_error
-            if cfg.mode == "rename" and mapping:
-                _apply_rename(sub_root, meta, cfg, mapping, verdicts, path_prefix=subpath)
-            collection[subpath] = entry
-        except Exception as exc:  # noqa: BLE001 - one bad sub-dataset shouldn't sink the sweep
-            logger.error("sub-dataset %s failed: %s", subpath, exc)
-            collection[subpath] = {"error": str(exc)}
-        finally:
-            # Drop this sub-dataset's downloaded files immediately (see rename cleanup).
-            shutil.rmtree(sub_work, ignore_errors=True)
-            logger.info("curate-cameras: cleaned up temporary download at %s", sub_work)
+
+    logger.info("curate-cameras: processing %d sub-dataset(s) with parallelism=%d", total, parallelism)
+    if parallelism == 1:
+        for i, subpath in enumerate(subpaths, 1):
+            sp, entry = _process_subdataset(cfg, vlm, subpath, i, total, commit_lock)
+            collection[sp] = entry
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as pool:
+            futures = [
+                pool.submit(_process_subdataset, cfg, vlm, subpath, i, total, commit_lock)
+                for i, subpath in enumerate(subpaths, 1)
+            ]
+            for fut in as_completed(futures):
+                sp, entry = fut.result()
+                collection[sp] = entry
 
     # Hard failures (couldn't process at all) vs rename-skipped (verdicts kept,
     # rename skipped — e.g. a label collision). Both surfaced top-level so they

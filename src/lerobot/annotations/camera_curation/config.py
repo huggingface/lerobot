@@ -66,6 +66,12 @@ class CameraCurationConfig:
     # a trial run over a large collection; None processes all.
     limit: int | None = None
 
+    # Sub-datasets processed concurrently in a nested sweep (one shared VLM server
+    # feeds all workers). The work is download/latency-bound, so >1 overlaps I/O
+    # for a large speedup on a single GPU. Hub rename commits are serialized
+    # internally to avoid branch-ref races.
+    parallelism: int = 4
+
     # "report": write mapping + verdicts into meta/, no file moves.
     # "rename": physically rename camera keys to observation.images.<label>.
     mode: str = "report"
