@@ -16,7 +16,7 @@
 """``lerobot-curate-cameras`` — VLM camera-view curation for a LeRobot dataset.
 
 Downloads only the first episode, asks a VLM to (1) flag blurry/unusable views
-and (2) label each view (``top``/``wrist``/``front``/…), then either records the
+and (2) label each view (``front``/``rear``/``left_side``/``top``/``wrist``/…), then either records the
 result in ``meta/`` (``--mode=report``) or renames the camera keys to
 ``observation.images.<label>`` (``--mode=rename``). For video datasets the
 rename is a download-free, server-side Hub commit.

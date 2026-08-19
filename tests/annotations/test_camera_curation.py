@@ -42,7 +42,7 @@ from lerobot.datasets.io_utils import load_info, write_info  # noqa: E402
 from lerobot.datasets.utils import DatasetInfo  # noqa: E402
 from lerobot.utils.io_utils import load_json, write_json  # noqa: E402
 
-VOCAB = ("top", "wrist", "front", "bottom", "left", "right")
+VOCAB = ("front", "rear", "side", "top", "bottom", "wrist", "left", "right")
 
 
 def _queued_vlm(responses: list) -> StubVlmClient:
@@ -126,11 +126,17 @@ def test_curate_cameras_parses_and_validates(tmp_path):
 
 def test_curate_cameras_canonicalizes_combo_order():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
-    frames = {"observation.images.a": [_tiny_image()]}
-    # VLM emits the combo in the "wrong" order; we normalize to <side>_wrist.
-    vlm = _queued_vlm([{"usable": True, "blur_reason": None, "view_label": "wrist_left"}])
-    (verdict,) = curate_cameras(frames, cfg, vlm)
-    assert verdict.view_label == "left_wrist"
+    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
+    # VLM emits combos direction-last; we normalize to <direction>_<position>.
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "blur_reason": None, "view_label": "wrist_left"},
+            {"usable": True, "blur_reason": None, "view_label": "side_right"},
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].view_label == "left_wrist"
+    assert verdicts["observation.images.b"].view_label == "right_side"
 
 
 def test_build_name_mapping_and_collision():

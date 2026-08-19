@@ -245,10 +245,13 @@ Every module is on by default and can be toggled independently (set to
 VLM backend for a **dataset-filtering / curation** pass. It downloads only the
 **first episode**, then for each camera view asks the VLM to:
 
-1. **flag** whether the view is blurry / unusable, and
-2. **label** the view with a canonical name from a closed vocabulary
-   (`top`, `wrist`, `front`, `bottom`, `left`, `right`, plus two-word combos
-   like `left_wrist`).
+1. **flag** whether the view is blurry / unusable (including a visible human
+   teleoperator), and
+2. **label** the view with a canonical name from a closed vocabulary describing
+   where the camera sits relative to the robot: `front` (facing the robot),
+   `rear` (behind it), `side` (qualified as `left_side` / `right_side`), `top`
+   (overhead), `bottom` (from below), and `wrist` (on the arm, qualified as
+   `left_wrist` / `right_wrist`).
 
 It runs in one of two modes:
 

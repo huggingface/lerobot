@@ -22,14 +22,24 @@ Do two things and return them as one JSON object.
    Set "blur_reason" to the reason for any UNUSABLE verdict (e.g. "out of focus",
    "human operator visible").
 
-2. VIEW LABEL. Choose the single best label for where this camera is mounted /
-   what it looks at, using ONLY this closed vocabulary:
+2. VIEW LABEL. Choose the best label for where this camera sits relative to the
+   robot, using ONLY this closed vocabulary:
 
      {vocabulary}
 
-   {combo_rule}Pick the label that best matches the viewpoint (e.g. a
-   downward overhead shot is "top"; a camera on the robot's gripper/hand that
-   moves with the arm is "wrist"). Do not invent words outside the vocabulary.
+   What each label means:
+   - front  : the camera faces the robot head-on — a frontal view of the robot.
+   - rear   : the camera is behind the robot, looking at its back.
+   - side   : the camera views the robot from the side. ALWAYS qualify it with
+              the side it is on — "left_side" or "right_side".
+   - top    : the camera looks down on the workspace from above (overhead).
+   - bottom : the camera looks up at the workspace from below.
+   - wrist  : the camera is mounted on the robot's arm/gripper and moves with it;
+              qualify with the arm when there are two — "left_wrist" / "right_wrist".
+
+   {combo_rule}When you combine a direction with a position, put the direction
+   first ("left_side", "right_wrist"). Use "left"/"right" only as such a
+   qualifier, never on their own. Do not invent words outside the vocabulary.
 
 Output strictly valid JSON, no prose, no code fences, with exactly these keys:
 

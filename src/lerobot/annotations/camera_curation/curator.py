@@ -203,16 +203,20 @@ def _extract_vocab_tokens(camera_key: str, vocabulary: tuple[str, ...]) -> list[
     return [tok for tok in vocabulary if tok in parts]
 
 
-def _order_combo(tokens: list[str], vocabulary: tuple[str, ...]) -> str:
-    """Join vocab tokens into a combo label, ``wrist`` last, else vocab order.
+# Directional qualifiers that prefix a position word (left_side, right_wrist).
+_QUALIFIERS = ("left", "right")
 
-    Keeps the mount word (``wrist``) as the suffix so directional words read
-    first — ``{wrist, left}`` → ``left_wrist``.
+
+def _order_combo(tokens: list[str], vocabulary: tuple[str, ...]) -> str:
+    """Join vocab tokens into a combo label with the direction first.
+
+    A left/right qualifier leads, the position word follows — ``{wrist, left}`` →
+    ``left_wrist``, ``{side, right}`` → ``right_side``.
     """
     uniq = list(dict.fromkeys(tokens))
 
     def sort_key(tok: str) -> tuple[bool, int]:
-        return (tok == "wrist", vocabulary.index(tok) if tok in vocabulary else len(vocabulary))
+        return (tok not in _QUALIFIERS, vocabulary.index(tok) if tok in vocabulary else len(vocabulary))
 
     return "_".join(sorted(uniq, key=sort_key))
 
