@@ -336,7 +336,7 @@ class DM05Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
-        """Load DM05 from a LeRobot checkpoint or a one-time converted source."""
+        """Load DM05 from a self-contained LeRobot checkpoint."""
         model_id = str(pretrained_name_or_path)
         saved_config = None
         processor_load_kwargs = {
@@ -463,7 +463,7 @@ class DM05Policy(PreTrainedPolicy):
         return self.parameters()
 
     def _uses_quantile_clipping(self, feature_type: str) -> bool:
-        """Return whether a feature should be clipped before normalization."""
+        """Return whether a normalized feature should be clipped to the model range."""
         return self.config.norm_clip and self.config.normalization_mapping.get(feature_type) in {
             NormalizationMode.QUANTILES,
             NormalizationMode.QUANTILE10,
