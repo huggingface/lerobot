@@ -45,6 +45,7 @@ DEFAULT_SAMPLE_SEED = 0
 
 
 def _summarize(values: np.ndarray) -> dict[str, np.ndarray]:
+    """Summarize one numeric array into the DM05 normalization statistics."""
     if not np.isfinite(values).all():
         raise ValueError("DM05 normalization samples contain non-finite values.")
     q01, q10, q90, q99 = np.quantile(values, (0.01, 0.10, 0.90, 0.99), axis=0).astype(np.float32)
@@ -156,6 +157,7 @@ def compute_dm05_stats(
 
 
 def _write_stats_atomic(stats: dict[str, Any], dataset_root: Path) -> Path:
+    """Write ``meta/stats.json`` atomically under the dataset root."""
     stats_path = dataset_root / STATS_PATH
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = stats_path.with_suffix(f"{stats_path.suffix}.tmp")
@@ -192,6 +194,7 @@ def prepare_dm05_stats(
 
 
 def _training_episodes(dataset: LeRobotDataset, eval_split: float) -> list[int] | None:
+    """Select the DM05 training episodes after task-balanced eval splitting."""
     if eval_split == 0:
         return dataset.episodes
     if not 0 < eval_split < 1:
@@ -214,6 +217,7 @@ def _training_episodes(dataset: LeRobotDataset, eval_split: float) -> list[int] 
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for DM05 stats preparation."""
     parser = argparse.ArgumentParser(
         description="Generate missing DM05 state/action stats in a LeRobot dataset's meta/stats.json."
     )
@@ -231,6 +235,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Run the DM05 stats-preparation CLI."""
     args = _parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", force=True)
     dataset = LeRobotDataset(
