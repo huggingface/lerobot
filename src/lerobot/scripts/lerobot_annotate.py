@@ -24,7 +24,14 @@ Example:
       --root=/path/to/dataset \\
       --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 
-For distributed runs, see ``examples/annotations/run_hf_job.py``.
+Pass ``--job.target=<flavor>`` to run the same command on a Hugging Face
+Jobs GPU instead of this machine (see ``lerobot.jobs.annotate``):
+
+  uv run lerobot-annotate \\
+      --repo_id=user/dataset \\
+      --new_repo_id=user/dataset_annotated \\
+      --push_to_hub=true \\
+      --job.target=h200
 """
 
 import logging
@@ -69,6 +76,14 @@ def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
 def annotate(cfg: AnnotationPipelineConfig) -> None:
     """Run the steerable annotation pipeline against a dataset."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if cfg.job.is_remote:
+        # Imported lazily: the submitter pulls in LeRobotDataset (the `dataset`
+        # extra), which a local annotation run over --root doesn't need.
+        from lerobot.jobs.annotate import submit_annotate_to_hf
+
+        return submit_annotate_to_hf(cfg)
+
     root = _resolve_root(cfg)
     logger.info("annotate: root=%s", root)
 
@@ -139,14 +154,14 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
     repo_id = cfg.new_repo_id or cfg.repo_id
     commit_message = cfg.push_commit_message or "Add steerable annotations (lerobot-annotate)"
     api = HfApi()
-    print(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...", flush=True)
+    logger.info(f"[lerobot-annotate] creating/locating dataset repo {repo_id}...")
     api.create_repo(
         repo_id=repo_id,
         repo_type="dataset",
         private=cfg.push_private,
         exist_ok=True,
     )
-    print(f"[lerobot-annotate] uploading {root} -> {repo_id}...", flush=True)
+    logger.info(f"[lerobot-annotate] uploading {root} -> {repo_id}...")
     commit_info = api.upload_folder(
         folder_path=str(root),
         repo_id=repo_id,
@@ -157,7 +172,7 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         # at the source dataset; a fresh card is generated below instead.
         ignore_patterns=[".annotate_staging/**", "**/.DS_Store", "README.md"],
     )
-    print(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}", flush=True)
+    logger.info(f"[lerobot-annotate] uploaded to https://huggingface.co/datasets/{repo_id}")
 
     dataset_info = load_info(root)
     card = create_lerobot_dataset_card(dataset_info=dataset_info, license="apache-2.0", repo_id=repo_id)
@@ -185,14 +200,13 @@ def _push_to_hub(root: Path, cfg: AnnotationPipelineConfig) -> None:
         with suppress(RevisionNotFoundError):
             api.delete_tag(repo_id, tag=version_tag, repo_type="dataset")
         api.create_tag(**tag_kwargs)
-        print(f"[lerobot-annotate] tagged {repo_id} as {version_tag}", flush=True)
+        logger.info(f"[lerobot-annotate] tagged {repo_id} as {version_tag}")
     except Exception as exc:  # noqa: BLE001
-        print(
+        logger.warning(
             f"[lerobot-annotate] WARNING: could not create tag {version_tag!r} on {repo_id}: {exc}. "
             "Dataset is uploaded but ``LeRobotDataset`` won't be able to load it until it's tagged. "
             "Run: from huggingface_hub import HfApi; "
-            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)",
-            flush=True,
+            f"HfApi().create_tag({repo_id!r}, tag={version_tag!r}, repo_type='dataset', exist_ok=True)"
         )
 
 

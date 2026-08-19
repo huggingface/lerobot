@@ -16,6 +16,7 @@
 
 import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -23,14 +24,19 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import datasets  # noqa: E402
+import numpy as np
+import pandas as pd
 import torch
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
-from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.aggregate import aggregate_datasets, merge_video_feature_info_for_aggregate
 from lerobot.datasets.feature_utils import features_equal_for_merge
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import EPISODES_DIR
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
+    DUMMY_DEPTH_FEATURES,
+    DUMMY_DEPTH_KEY,
     DUMMY_REPO_ID,
 )
 
@@ -280,6 +286,45 @@ def assert_video_timestamps_within_bounds(aggr_ds):
                 raise AssertionError(
                     f"Failed to verify timestamps for episode {ep_idx}, {vid_key}: {e}"
                 ) from e
+
+
+@pytest.mark.parametrize(
+    "legacy_info, legacy_video_info",
+    [
+        ({"video.is_depth_map": True}, None),  # legacy marker inside info
+        ({}, {"video.is_depth_map": True}),  # legacy marker in separate video_info dict
+    ],
+)
+def test_depth_marker_legacy_names(legacy_info, legacy_video_info):
+    """A recent (canonical) depth dataset stays mergeable with legacy marker forms, and the
+    merged metadata is canonicalized. A genuine non-depth feature stays a mismatch."""
+
+    def _feature(info: dict, video_info: dict | None = None) -> dict:
+        ft = {**DUMMY_DEPTH_FEATURES[DUMMY_DEPTH_KEY], "info": dict(info)}
+        if video_info is not None:
+            ft["video_info"] = dict(video_info)
+        return ft
+
+    key = DUMMY_DEPTH_KEY
+    canonical = _feature({"is_depth_map": True})
+    legacy = _feature(legacy_info, legacy_video_info)
+
+    assert features_equal_for_merge({key: canonical}, {key: legacy})
+    assert not features_equal_for_merge({key: canonical}, {key: _feature({})})
+
+    # Non-depth features must stay mergeable regardless of how "not depth" is spelled:
+    # legacy ``video.is_depth_map: False``, explicit ``is_depth_map: False``, or no marker.
+    assert features_equal_for_merge(
+        {key: _feature({"video.is_depth_map": False})}, {key: _feature({"is_depth_map": False})}
+    )
+    assert features_equal_for_merge({key: _feature({"is_depth_map": False})}, {key: _feature({})})
+
+    meta_legacy = SimpleNamespace(features={key: legacy})
+    meta_recent = SimpleNamespace(features={key: canonical})
+    merged = merge_video_feature_info_for_aggregate([meta_legacy, meta_recent])
+    assert merged[key]["info"]["is_depth_map"] is True
+    assert "video.is_depth_map" not in merged[key]["info"]
+    assert "video_info" not in merged[key]
 
 
 def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
@@ -857,3 +902,65 @@ def test_aggregate_already_merged_dataset(tmp_path, lerobot_dataset_factory):
 
     # This would raise FileNotFoundError before the fix
     assert_dataset_iteration_works(ds_abc)
+
+
+def test_aggregate_updates_per_episode_stats(tmp_path):
+    """episode_index/index/task_index per-episode stats follow the merge; all other stats are copied verbatim."""
+    features = {"observation.state": {"dtype": "float32", "shape": (2,), "names": None}}
+
+    def _make_dataset(suffix, tasks):
+        ds = LeRobotDataset.create(
+            f"{DUMMY_REPO_ID}_{suffix}", fps=10, features=features, root=tmp_path / suffix
+        )
+        for task in tasks:
+            for _ in range(4):
+                ds.add_frame({"observation.state": torch.randn(2), "task": task})
+            ds.save_episode()
+        ds.finalize()
+        return ds
+
+    # Overlapping tasks so relabeling collapses shared "b" and introduces new "c".
+    sources = [_make_dataset("s0", ["a", "b"]), _make_dataset("s1", ["b", "c"])]
+    aggr_root = tmp_path / "aggr"
+    aggregate_datasets(
+        repo_ids=[d.repo_id for d in sources],
+        roots=[d.root for d in sources],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_aggr",
+        aggr_root=aggr_root,
+    )
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(aggr_root)),
+    ):
+        aggr = LeRobotDataset(f"{DUMMY_REPO_ID}_aggr", root=aggr_root)
+    assert aggr.meta.total_tasks == 3  # "b" deduped, "c" added
+
+    def _load_stats(root):
+        # load_episodes drops stats/* columns, so read the episodes parquet shards directly.
+        shards = sorted((root / EPISODES_DIR).rglob("*.parquet"))
+        return pd.concat([pd.read_parquet(s) for s in shards]).set_index("episode_index")
+
+    merged = _load_stats(aggr_root)
+    src_rows, ep_off, fr_off = [], 0, 0
+    for d in sources:
+        src = _load_stats(d.root)
+        src_rows += [(src.loc[ep], ep_off, fr_off) for ep in range(d.num_episodes)]
+        ep_off, fr_off = ep_off + d.num_episodes, fr_off + d.num_frames
+
+    shift = {"min", "max", "mean", "q01", "q10", "q50", "q90", "q99"}
+    for ep, (src_row, e_off, f_off) in enumerate(src_rows):
+        row = merged.loc[ep]
+        new_id = float(aggr.meta.tasks.loc[row["tasks"][0], "task_index"])
+        for col in (c for c in merged.columns if c.startswith("stats/")):
+            feat, key = col[len("stats/") :].rsplit("/", 1)
+            got = np.asarray(row[col], dtype=np.float64).reshape(-1)
+            base = np.asarray(src_row[col], dtype=np.float64).reshape(-1)
+            if feat == "episode_index":
+                expected = base + e_off if key in shift else base
+            elif feat == "index":
+                expected = base + f_off if key in shift else base
+            elif feat == "task_index":
+                expected = base if key == "count" else np.full_like(base, 0.0 if key == "std" else new_id)
+            else:
+                expected = base
+            assert np.allclose(got, expected), f"ep{ep} {col}: {got} != {expected}"

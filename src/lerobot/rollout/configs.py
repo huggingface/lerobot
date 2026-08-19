@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import draccus
 
@@ -45,6 +46,10 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     Use ``--strategy.type=<name>`` on the CLI to select a strategy.
     """
 
+    # Whether the strategy honours the restartable-run() contract that
+    # ``--interactive=true`` requires (see ``RolloutStrategy``).
+    supports_interactive: ClassVar[bool] = False
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
@@ -55,7 +60,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
 class BaseStrategyConfig(RolloutStrategyConfig):
     """Autonomous rollout with no data recording."""
 
-    pass
+    supports_interactive: ClassVar[bool] = True
 
 
 @RolloutStrategyConfig.register_subclass("sentry")
@@ -70,6 +75,8 @@ class SentryStrategyConfig(RolloutStrategyConfig):
     ``push_to_hub`` call uploads complete video files rather than
     re-uploading a growing file that hasn't crossed the chunk boundary.
     """
+
+    supports_interactive: ClassVar[bool] = True
 
     upload_every_n_episodes: int = 5
     # Target video file size in MB for episode rotation.  Episodes are
@@ -149,6 +156,15 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
     # Note that leader -> follower handover is only supported when the leader has `send_feedback` capability.
     smooth_leader_to_follower_handover: bool = True
 
+    # Whether to turn on or off the smooth handover behavior at the start of the
+    # reset phase: the leader is driven to the follower position (actuated
+    # teleops, see `smooth_leader_to_follower_handover`), or the follower is
+    # slid to the teleop pose (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the reset phase.
+    smooth_handover: bool = True
+
 
 @RolloutStrategyConfig.register_subclass("dagger")
 @dataclass
@@ -180,6 +196,14 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     # Target video file size in MB for episode rotation (record_autonomous
     # mode only).  Defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB when None.
     target_video_file_size_mb: int | None = None
+    # Whether to turn on or off the smooth handover behavior at phase transitions:
+    # the leader is driven to the follower position on pause (teleops with
+    # `send_feedback` capability), and the follower is slid to the teleop pose when
+    # a correction starts (non-actuated teleops). Disable for clutch-style
+    # teleoperators (e.g. VR controllers) that re-reference at the current robot
+    # pose on engage: the handover is already continuous there, and the blocking
+    # interpolation only delays the start of the correction.
+    smooth_handover: bool = True
     input_device: str = "keyboard"
     keyboard: DAggerKeyboardConfig = field(default_factory=DAggerKeyboardConfig)
     pedal: DAggerPedalConfig = field(default_factory=DAggerPedalConfig)
@@ -210,7 +234,7 @@ class RolloutConfig:
     # Policy (loaded from --policy.path via __post_init__)
     policy: PreTrainedConfig | None = None
 
-    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger)
+    # Strategy (polymorphic: --strategy.type=base|sentry|highlight|dagger|episodic)
     strategy: RolloutStrategyConfig = field(default_factory=BaseStrategyConfig)
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
@@ -221,7 +245,22 @@ class RolloutConfig:
 
     # Runtime
     fps: float = 30.0
-    duration: float = 0.0  # 0 = infinite (24/7 mode)
+    # Run time in seconds; 0 = infinite (24/7 mode).  In interactive mode this
+    # bounds each /start segment, not the whole session.
+    duration: float = 0.0
+    # Control the rollout from stdin with chat-style commands (/start, /subtask,
+    # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
+    # robot does not move until /start, and logs below ERROR are muted for the
+    # session's duration.
+    interactive: bool = False
+    # /autosteer: seconds of robot motion between two "what is the next subtask?"
+    # queries, measured from the moment a subtask is applied.  Lower values
+    # re-plan sooner but spend more of the loop generating text instead of acting.
+    autosteer_interval_s: float = 10.0
+    # Robot commands sent per policy action.  Values > 1 linearly interpolate
+    # between consecutive policy actions for smoother motion: commands go to
+    # the robot at ``fps × multiplier`` Hz while policy inference and dataset
+    # recording stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
     device: str | None = None
     task: str = ""
@@ -255,6 +294,9 @@ class RolloutConfig:
 
     def __post_init__(self):
         """Validate config invariants and load the policy config from ``--policy.path``."""
+        if self.interpolation_multiplier < 1:
+            raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+
         # --- Strategy-specific validation ---
         if isinstance(self.strategy, DAggerStrategyConfig) and self.teleop is None:
             raise ValueError("DAgger strategy requires --teleop.type to be set")
@@ -276,6 +318,23 @@ class RolloutConfig:
             raise ValueError(
                 "Base strategy does not record data. Use sentry, highlight, or dagger for recording."
             )
+
+        # Interactive mode calls strategy.run() once per segment, so only strategies
+        # declaring ``supports_interactive`` may be driven by it.
+        if self.interactive and not self.strategy.supports_interactive:
+            supported = " or ".join(
+                sorted(
+                    name
+                    for name, choice_cls in RolloutStrategyConfig.get_known_choices().items()
+                    if choice_cls.supports_interactive
+                )
+            )
+            raise ValueError(
+                f"--interactive=true supports --strategy.type={supported} (got '{self.strategy.type}')."
+            )
+
+        if self.autosteer_interval_s < 0:
+            raise ValueError(f"--autosteer_interval_s must be >= 0 (got {self.autosteer_interval_s}).")
 
         # Sentry MUST use streaming encoding to avoid disk I/O blocking the control loop
         if (
@@ -326,8 +385,17 @@ class RolloutConfig:
 
         policy_path = parser.get_path_arg("policy")
         if policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            yaml_overrides = parser.get_yaml_overrides("policy")
+            cli_overrides = parser.get_cli_overrides("policy") or []
+            policy_overrides = yaml_overrides + cli_overrides
+            pretrained_revision = parser.parse_arg("pretrained_revision", cli_overrides)
+            if pretrained_revision is None:
+                pretrained_revision = parser.parse_arg("pretrained_revision", yaml_overrides)
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path,
+                revision=pretrained_revision,
+                cli_overrides=policy_overrides,
+            )
             self.policy.pretrained_path = policy_path
         if self.policy is None:
             raise ValueError("--policy.path is required for rollout")

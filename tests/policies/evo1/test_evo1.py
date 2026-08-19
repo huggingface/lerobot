@@ -496,6 +496,60 @@ def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
     assert "embodiment_id" in processed
 
 
+def test_reconcile_evo1_processors_repads_overridden_stats(tmp_path):
+    """Loading a checkpoint and injecting raw (unpadded) dataset stats must be re-padded.
+
+    Regression test: lerobot-train passes the raw dataset stats as normalizer/unnormalizer
+    overrides when resuming from a checkpoint (e.g. stage2 from a stage1 checkpoint). Those stats
+    are at the dataset dims (e.g. LIBERO state=8/action=7), but EVO1 pads state/action to
+    max_state_dim/max_action_dim before normalization, so reconcile_evo1_processors must re-pad the
+    stats or normalization crashes with a shape mismatch.
+    """
+    config = make_config()
+    preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=make_stats())
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    # Reload with the generic override path injecting raw, unpadded dataset stats.
+    raw_stats = make_stats()
+    loaded_pre = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+        overrides={"normalizer_processor": {"stats": raw_stats}},
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+    )
+    loaded_post = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+        overrides={"unnormalizer_processor": {"stats": raw_stats}},
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+    )
+
+    # Sanity: the override really injected unpadded stats before reconciliation.
+    normalizer = next(step for step in loaded_pre.steps if isinstance(step, NormalizerProcessorStep))
+    assert normalizer._tensor_stats[OBS_STATE]["min"].shape == (STATE_DIM,)
+
+    loaded_pre, loaded_post = reconcile_evo1_processors(config, loaded_pre, loaded_post)
+
+    normalizer = next(step for step in loaded_pre.steps if isinstance(step, NormalizerProcessorStep))
+    unnormalizer = next(step for step in loaded_post.steps if isinstance(step, UnnormalizerProcessorStep))
+    assert normalizer._tensor_stats[OBS_STATE]["min"].shape == (MAX_STATE_DIM,)
+    assert normalizer._tensor_stats[ACTION]["min"].shape == (MAX_ACTION_DIM,)
+    assert unnormalizer._tensor_stats[ACTION]["min"].shape == (MAX_ACTION_DIM,)
+
+    # Normalizing a padded state must not raise (this is the exact runtime path that crashed).
+    processed = loaded_pre(
+        {
+            "task": "pick the block",
+            OBS_STATE: torch.zeros(STATE_DIM),
+            f"{OBS_IMAGES}.front": torch.rand(3, 16, 16),
+        }
+    )
+    assert processed[OBS_STATE].shape == (1, MAX_STATE_DIM)
+
+
 def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
     monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
     policy = modeling_evo1.Evo1Policy(make_config())

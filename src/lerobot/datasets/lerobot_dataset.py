@@ -65,6 +65,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
+        *,
+        token: str | bool | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -197,6 +199,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
+            token: Authentication token used while downloading this dataset
+                from the Hub. Pass a string token, ``True`` to require the
+                locally stored token, ``False`` to disable authentication, or
+                ``None`` to use the Hugging Face Hub default. The token is not
+                retained on the dataset instance after initialization.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -220,7 +227,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
+            token=token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
@@ -260,8 +271,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
             if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
-            self._download(download_videos)
+                if token is None:
+                    self.revision = get_safe_version(self.repo_id, self.revision)
+                else:
+                    self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+            self._download(download_videos, token=token)
             self.reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
@@ -455,7 +469,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Check if there are unsaved frames in the episode buffer."""
         if self.writer is None:
             return False
-        return self.writer.episode_buffer is not None and self.writer.episode_buffer["size"] > 0
+        # save_episode pops "size", so a buffer abandoned mid-save has nothing pending.
+        return self.writer.episode_buffer is not None and self.writer.episode_buffer.get("size", 0) > 0
 
     def finalize(self):
         """Flush all pending work and close writers.
@@ -478,18 +493,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Return the number of frames in the selected episodes."""
         return self.num_frames
 
-    def __getitem__(self, idx) -> dict:
-        """Return a single frame by index, with all transforms applied.
+    def __getitem__(self, idx: int | slice) -> dict | list[dict]:
+        """Return one frame or a slice of frames, with all transforms applied.
 
         Loads the frame from the underlying HF dataset, expands delta-timestamp
         windows, decodes video frames, and applies image transforms. Delegates
-        the core logic to :meth:`DatasetReader.get_item`.
+        the core logic to :class:`DatasetReader`.
 
         Args:
-            idx: Index into the (possibly episode-filtered) dataset.
+            idx: Integer index or slice into the possibly episode-filtered dataset.
 
         Returns:
-            Dict mapping feature names to their tensor values for this frame.
+            A frame dictionary for an integer index, or a list of frame
+            dictionaries for a slice.
 
         Raises:
             RuntimeError: If the dataset is currently being recorded and
@@ -499,6 +515,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             raise RuntimeError(
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
+        if isinstance(idx, slice):
+            return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
+
         reader = self._ensure_reader()
         if reader.hf_dataset is None:
             # One-shot load after finalize()
@@ -622,10 +641,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
             hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    def _download(self, download_videos: bool = True) -> None:
+    def _download(self, download_videos: bool = True, *, token: str | bool | None = None) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
         ignore_patterns = None if download_videos else "videos/"
         files = None
+        token_kwargs = {} if token is None else {"token": token}
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
@@ -639,6 +659,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=files,
                     ignore_patterns=ignore_patterns,
+                    **token_kwargs,
                 )
             )
         else:
@@ -650,6 +671,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 local_dir=self._requested_root,
                 allow_patterns=files,
                 ignore_patterns=ignore_patterns,
+                **token_kwargs,
             )
             self.meta.root = self._requested_root
 
@@ -789,6 +811,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
+        *,
+        token: str | bool | None = None,
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
@@ -822,6 +846,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_encoding: If ``True``, encode video in real-time during
                 capture.
             encoder_queue_maxsize: Max buffered frames per camera for streaming.
+            token: Authentication token used if metadata must be downloaded
+                from the Hub. The token is not retained on the dataset instance.
 
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
@@ -850,7 +876,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(
-            obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
+            obj.repo_id,
+            obj._requested_root,
+            obj.revision,
+            force_cache_sync=force_cache_sync,
+            token=token,
         )
 
         obj._encoder_threads = encoder_threads

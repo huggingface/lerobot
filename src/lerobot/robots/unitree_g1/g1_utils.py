@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 from enum import IntEnum
 
 import numpy as np
@@ -22,6 +21,43 @@ import numpy as np
 # ruff: noqa: N801, N815
 
 NUM_MOTORS = 29
+
+# Joint-order permutation between IsaacLab and Mujoco convention
+ISAACLAB_TO_MUJOCO = np.array(
+    [
+        0,
+        3,
+        6,
+        9,
+        13,
+        17,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        21,
+        23,
+        25,
+        27,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28,
+    ],
+    dtype=np.int32,
+)
+MUJOCO_TO_ISAACLAB = np.argsort(ISAACLAB_TO_MUJOCO).astype(np.int32)
 
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
@@ -61,21 +97,6 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
-
-
-def make_locomotion_controller(name: str | None):
-    """Instantiate a locomotion controller by class name. Returns None if name is None."""
-    if name is None:
-        return None
-    controllers = {
-        "GrootLocomotionController": "lerobot.robots.unitree_g1.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.holosoma_locomotion",
-    }
-    module_path = controllers.get(name)
-    if module_path is None:
-        raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
-    module = importlib.import_module(module_path)
-    return getattr(module, name)()
 
 
 class G1_29_JointIndex(IntEnum):

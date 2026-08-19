@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from torch import Tensor, nn
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import is_amp_available
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -38,6 +40,21 @@ from .action_head import VLAJEPAActionHead
 from .configuration_vla_jepa import VLAJEPAConfig
 from .qwen_interface import Qwen3VLInterface
 from .world_model import ActionConditionedVideoPredictor
+
+
+def _get_autocast_context(device_type: str, dtype: torch.dtype = torch.bfloat16):
+    """Return an autocast context appropriate for the device.
+
+    MPS does not support ``torch.autocast`` at all.  On CUDA devices
+    without bfloat16 support (compute capability < 8.0) we fall back to
+    float16.
+    """
+    if not is_amp_available(device_type):
+        return nullcontext()
+    if device_type == "cuda" and dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        dtype = torch.float16
+    return torch.autocast(device_type=device_type, dtype=dtype)
+
 
 # ============================================================================
 # Native VLA-JEPA Model - follows original starVLA VLA_JEPA.py implementation
@@ -183,7 +200,7 @@ class VLAJEPAModel(nn.Module):
             action_idx = action_mask.nonzero(as_tuple=True)
 
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        with _get_autocast_context(device_type, torch.bfloat16):
             last_hidden = self._qwen_last_decoder_hidden(qwen_inputs)  # [B, seq_len, H]
             b, _, h = last_hidden.shape
             embodied_action_tokens = last_hidden[embodied_idx[0], embodied_idx[1], :].view(b, -1, h)
@@ -193,6 +210,23 @@ class VLAJEPAModel(nn.Module):
                 else None
             )
         return embodied_action_tokens, action_tokens
+
+    def _causal_video_embeddings(self, video_pixels: Tensor, tubelet_size: int, num_positions: int) -> Tensor:
+        """Encode `num_positions` leading temporal positions from only their own raw-frame prefix.
+
+        A single V-JEPA2 pass over the full clip lets bidirectional attention leak future frames
+        into every position's embedding, including the context positions used as predictor input
+        (#4153). Running one prefix-only pass per context position keeps position i blind to frames
+        after it, at the cost of `num_positions` encoder calls instead of one.
+        """
+        positions = []
+        for position in range(num_positions):
+            prefix = self.video_encoder.get_vision_features(
+                pixel_values_videos=video_pixels[:, : (position + 1) * tubelet_size]
+            )
+            tokens_per_position = prefix.shape[1] // (position + 1)
+            positions.append(prefix[:, -tokens_per_position:])
+        return torch.cat(positions, dim=1)
 
     def _world_model_loss(self, videos: Tensor, action_tokens: Tensor) -> Tensor:
         """JEPA encode + predictor L1 loss. `videos` is [B, V, T, C, H, W] float in [0, 1]."""
@@ -214,12 +248,12 @@ class VLAJEPAModel(nn.Module):
             do_rescale=False,
         )["pixel_values_videos"]  # [B*V, T, C, H, W]
 
+        tubelet_size = self.video_encoder.config.tubelet_size
         with torch.no_grad():
             video_embeddings = self.video_encoder.get_vision_features(pixel_values_videos=video_pixels)
             # Merge views: [B*V, ...] -> [B, ..., V*embed_dim]
             video_embeddings = torch.cat(torch.chunk(video_embeddings, chunks=v, dim=0), dim=2)
 
-        tubelet_size = self.video_encoder.config.tubelet_size
         # num_video_frames raw frames → t_enc_total temporal positions after tubelet compression
         t_enc_total = self.config.num_video_frames // tubelet_size
         if t_enc_total < 2:
@@ -228,7 +262,15 @@ class VLAJEPAModel(nn.Module):
         # Shift-by-one JEPA split: input_states = positions 0..T-2, gt_states = positions 1..T-1
         t_enc_ctx = t_enc_total - 1
         tokens_per_frame = video_embeddings.shape[1] // t_enc_total
-        input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
+        if self.config.causal_world_model_context:
+            # The shared pass above lets bidirectional attention leak future frames into the context
+            # positions used as predictor input (#4153). Recompute input_states causally instead;
+            # gt_states keeps the full-pass embeddings (a target encoder seeing full context is fine).
+            with torch.no_grad():
+                input_states = self._causal_video_embeddings(video_pixels, tubelet_size, t_enc_ctx)
+                input_states = torch.cat(torch.chunk(input_states, chunks=v, dim=0), dim=2)
+        else:
+            input_states = video_embeddings[:, : tokens_per_frame * t_enc_ctx, :]
         gt_states = video_embeddings[:, tokens_per_frame:, :]
 
         expected_actions = t_enc_ctx * self.config.num_action_tokens_per_timestep
@@ -250,7 +292,7 @@ class VLAJEPAModel(nn.Module):
     ) -> Tensor:
         """Flow-matching action-head loss, repeated over `repeated_diffusion_steps`."""
         device_type = next(self.parameters()).device.type
-        with torch.autocast(device_type=device_type, dtype=torch.float32):
+        with _get_autocast_context(device_type, torch.float32):
             r = self.config.repeated_diffusion_steps
             horizon = self.config.chunk_size
             actions_target = actions[:, -horizon:, :].to(torch.float32).repeat(r, 1, 1)
@@ -399,7 +441,8 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         state = batch.get(OBS_STATE)
         if state is not None:
             if state.ndim > 2:
-                state = state[:, -1, :]
+                # deltas are forward-looking here, so index 0 is the current observation, not -1.
+                state = state[:, 0, :]
             inputs["state"] = (state.unsqueeze(1) if state.ndim == 2 else state).float()  # [B, 1, dim]
 
         return inputs

@@ -49,6 +49,7 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
 )
 
 from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
@@ -63,6 +64,7 @@ from ..common.vla_utils import (
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
+from .memory import encode_video_with_mem, sample_observation_history
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -281,13 +283,31 @@ class PaliGemmaWithExpertModel(
         if self.train_expert_only:
             self.paligemma.eval()
 
-    def embed_image(self, image: torch.Tensor):
+    def embed_image(
+        self,
+        image: torch.Tensor,
+        *,
+        frame_mask: torch.Tensor | None = None,
+        temporal_attention_every: int = 4,
+    ):
         # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32).
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-        image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output
+        if image.ndim == 5:
+            if frame_mask is None:
+                frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
+            vision_transformer = self.paligemma.model.vision_tower.vision_model
+            features = encode_video_with_mem(
+                vision_transformer,
+                image,
+                frame_mask,
+                temporal_attention_every=temporal_attention_every,
+            )
+            features = self.paligemma.model.multi_modal_projector(features)
+        else:
+            image_outputs = self.paligemma.model.get_image_features(image)
+            features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
@@ -429,6 +449,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
+        self.proprio_history_proj = (
+            nn.Linear(config.max_state_dim, paligemma_config.width)
+            if config.use_proprioceptive_memory
+            else None
+        )
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -481,9 +506,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
     def embed_prefix(
-        self, images, img_masks, tokens, masks
+        self, images, img_masks, tokens, masks, states=None, state_masks=None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        """Embed images, optional MEM state history, and language tokens."""
         embs = []
         pad_masks = []
         att_masks = []
@@ -491,15 +516,31 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
 
-            def image_embed_func(img):
+            def image_embed_func(img, img_mask):
+                if img.ndim == 5:
+                    return self.paligemma_with_expert.embed_image(
+                        img,
+                        frame_mask=img_mask,
+                        temporal_attention_every=self.config.memory_temporal_attention_every,
+                    )
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            img_emb = self._apply_checkpoint(image_embed_func, img, img_mask)
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+            current_img_mask = img_mask[:, -1] if img_mask.ndim == 2 else img_mask
+            pad_masks.append(current_img_mask[:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
+
+        proprio_history_proj = getattr(self, "proprio_history_proj", None)
+        if proprio_history_proj is not None:
+            if states is None or state_masks is None:
+                raise ValueError("proprioceptive memory requires states and state_masks")
+            state_embs = self._apply_checkpoint(proprio_history_proj, states)
+            embs.append(state_embs)
+            pad_masks.append(state_masks)
+            att_masks += [0] * state_embs.shape[1]
 
         # Process language tokens
         def lang_embed_func(tokens):
@@ -524,8 +565,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
-        embs = []
-        pad_masks = []
         att_masks = []
 
         # Embed timestep using sine-cosine positional encoding
@@ -551,31 +590,38 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return F.silu(x)
 
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
-        action_time_emb = action_emb
         adarms_cond = time_emb
 
-        embs.append(action_time_emb)
-        bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
-        pad_masks.append(action_time_mask)
+        bsize, action_time_dim = action_emb.shape[:2]
+        pad_masks = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.chunk_size - 1))
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = torch.tensor(att_masks, dtype=action_emb.dtype, device=action_emb.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks, adarms_cond
+        return action_emb, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
+    def forward(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        actions,
+        noise,
+        time,
+        states=None,
+        state_masks=None,
+    ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tokens, masks, states, state_masks
+        )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
@@ -625,6 +671,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         img_masks,
         tokens,
         masks,
+        states=None,
+        state_masks=None,
         noise=None,
         num_steps=None,
         **kwargs: Unpack[ActionSelectKwargs],
@@ -645,7 +693,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tokens, masks, states, state_masks
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -721,6 +771,9 @@ class PI05Policy(PreTrainedPolicy):
 
     config_class = PI05Config
     name = "pi05"
+
+    def supports_rtc(self) -> bool:
+        return True
 
     def __init__(
         self,
@@ -835,6 +888,8 @@ class PI05Policy(PreTrainedPolicy):
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
 
+            remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
+
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
 
@@ -865,6 +920,19 @@ class PI05Policy(PreTrainedPolicy):
             print(f"Warning: Could not load state dict: {e}")
 
         return model
+
+    def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        # MEM's continuous proprioceptive projection is new relative to
+        # lerobot/pi05_base. Preserve its fresh initialization on first load,
+        # while loading learned values from subsequent MEM checkpoints.
+        if getattr(self.config, "use_proprioceptive_memory", False):
+            current = self.state_dict()
+            for key in (
+                "model.proprio_history_proj.weight",
+                "model.proprio_history_proj.bias",
+            ):
+                state_dict.setdefault(key, current[key])
+        return state_dict
 
     def _fix_pytorch_state_dict_keys(
         self, state_dict, model_config
@@ -932,11 +1000,31 @@ class PI05Policy(PreTrainedPolicy):
         return self.parameters()
 
     def reset(self):
-        """Reset internal state - called when environment resets."""
+        """Reset internal state at the shared boundary of a batched rollout.
+
+        ``lerobot-eval`` calls this before every rollout and before resetting the
+        vector environment. MEM inference queues therefore assume all batch rows
+        share episode boundaries; independently autoresetting rows is unsupported.
+        """
         self._action_queue = deque(maxlen=self.config.n_action_steps)
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
+            # The sampled ages are relative to the current step, so every step shifts
+            # all of them: a dense ring buffer spanning the whole horizon is the
+            # smallest structure that keeps inference aligned with the training
+            # `delta_indices`. Storing only `memory_frames` observations would pin the
+            # history to an absolute grid and drift up to `memory_stride` out of phase.
+            history_length = (self.config.memory_frames - 1) * self.config.memory_stride + 1
+            memory_keys = []
+            if self.config.use_visual_memory:
+                memory_keys.extend(self.config.image_features)
+            if self.config.use_proprioceptive_memory:
+                memory_keys.append(OBS_STATE)
+            self._memory_queues = {key: deque(maxlen=history_length) for key in memory_keys}
+            self._memory_steps_seen = 0
+            self._memory_batch_size = None
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -987,28 +1075,40 @@ class PI05Policy(PreTrainedPolicy):
             if img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
-            # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
-            is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
+            # Handle [B,C,H,W], [B,H,W,C], and their [B,T,...] memory variants.
+            is_video = img.ndim == 5
+            channel_dim = 2 if is_video else 1
+            is_channels_first = img.shape[channel_dim] == 3
 
             if is_channels_first:
-                # Convert [B, C, H, W] to [B, H, W, C] for processing
-                img = img.permute(0, 2, 3, 1)
+                img = img.permute(0, 1, 3, 4, 2) if is_video else img.permute(0, 2, 3, 1)
 
             # from openpi preprocess_observation_pytorch: Resize with padding if needed
-            if img.shape[1:3] != self.config.image_resolution:
-                img = resize_with_pad_torch(img, *self.config.image_resolution)
+            spatial_shape = img.shape[2:4] if is_video else img.shape[1:3]
+            if spatial_shape != self.config.image_resolution:
+                if is_video:
+                    batch_size, num_frames = img.shape[:2]
+                    img = resize_with_pad_torch(img.flatten(0, 1), *self.config.image_resolution).unflatten(
+                        0, (batch_size, num_frames)
+                    )
+                else:
+                    img = resize_with_pad_torch(img, *self.config.image_resolution)
 
             # Normalize from [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
             # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
             if is_channels_first:
-                img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+                img = img.permute(0, 1, 4, 2, 3) if is_video else img.permute(0, 3, 1, 2)
 
             images.append(img)
-            # Create mask (all ones for real images)
             bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            pad_key = f"{key}_is_pad"
+            if is_video and pad_key in batch:
+                mask = ~batch[pad_key].bool()
+            else:
+                mask_shape = img.shape[:2] if is_video else (bsize,)
+                mask = torch.ones(mask_shape, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
         # Create image features not present in the batch as fully 0 padded images
@@ -1019,6 +1119,52 @@ class PI05Policy(PreTrainedPolicy):
             img_masks.append(mask)
 
         return images, img_masks
+
+    def _prepare_memory_states(self, batch: dict[str, Tensor]) -> tuple[Tensor | None, Tensor | None]:
+        if not self.config.use_proprioceptive_memory:
+            return None, None
+        states = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
+        if states.ndim == 2:
+            states = states[:, None]
+        pad_key = f"{OBS_STATE}_is_pad"
+        state_masks = (
+            ~batch[pad_key].bool()
+            if pad_key in batch
+            else torch.ones(states.shape[:2], dtype=torch.bool, device=states.device)
+        )
+        return states, state_masks
+
+    def _stack_inference_memory(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Record one homogeneous-batch observation and attach MEM histories."""
+        if not (self.config.use_visual_memory or self.config.use_proprioceptive_memory):
+            return batch
+        result = dict(batch)
+        for key, queue in self._memory_queues.items():
+            if key not in batch:
+                continue
+            value = batch[key]
+            batch_size = value.shape[0]
+            if self._memory_batch_size is None:
+                self._memory_batch_size = batch_size
+            elif batch_size != self._memory_batch_size:
+                raise ValueError(
+                    "MEM inference batch size changed without policy.reset(); "
+                    f"expected {self._memory_batch_size}, got {batch_size}"
+                )
+            if not queue:
+                # Queue entries are snapshots that are never mutated in place, so the
+                # pre-episode fill can share one clone instead of `maxlen` copies.
+                queue.extend([value.clone()] * queue.maxlen)
+            else:
+                queue.append(value.clone())
+            result[key], result[f"{key}_is_pad"] = sample_observation_history(
+                list(queue),
+                num_frames=self.config.memory_frames,
+                stride=self.config.memory_stride,
+                steps_seen=self._memory_steps_seen + 1,
+            )
+        self._memory_steps_seen += 1
+        return result
 
     def prepare_action(self, batch):
         """Pad action"""
@@ -1033,6 +1179,8 @@ class PI05Policy(PreTrainedPolicy):
         )
 
         self.eval()
+        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
+            batch = self._stack_inference_memory(batch)
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
@@ -1047,12 +1195,25 @@ class PI05Policy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
+        # Direct chunk callers provide single observations. ``select_action``
+        # already supplies a temporal batch, so avoid recording it twice.
+        has_temporal_input = any(
+            key in batch and batch[key].ndim == 5 for key in self.config.image_features
+        ) or (OBS_STATE in batch and batch[OBS_STATE].ndim == 3)
+        if (
+            self.config.use_visual_memory or self.config.use_proprioceptive_memory
+        ) and not has_temporal_input:
+            batch = self._stack_inference_memory(batch)
+
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, tokens, masks, states=states, state_masks=state_masks, **kwargs
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1071,6 +1232,7 @@ class PI05Policy(PreTrainedPolicy):
         """
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.prepare_action(batch)
@@ -1079,7 +1241,17 @@ class PI05Policy(PreTrainedPolicy):
         time = self.model.sample_time(actions.shape[0], actions.device)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
+        losses = self.model.forward(
+            images,
+            img_masks,
+            tokens,
+            masks,
+            actions,
+            noise,
+            time,
+            states=states,
+            state_masks=state_masks,
+        )
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1106,7 +1278,12 @@ class PI05Policy(PreTrainedPolicy):
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
         )
         target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
+        # MEM's proprioceptive projection does not exist in `lerobot/pi05_base`, so a
+        # LoRA adapter cannot start from pretrained weights for it. Train and save it
+        # in full, otherwise it stays frozen at its random init and is absent from
+        # adapter checkpoints.
+        modules_to_save = ["model.proprio_history_proj"] if self.config.use_proprioceptive_memory else []
         return {
             "target_modules": target_modules,
-            "modules_to_save": [],
+            "modules_to_save": modules_to_save,
         }
