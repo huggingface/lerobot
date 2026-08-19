@@ -45,16 +45,13 @@ from lerobot.utils.io_utils import load_json, write_json  # noqa: E402
 VOCAB = ("front", "rear", "side", "top", "bottom", "wrist", "left", "right")
 
 
-def _queued_vlm(responses: list) -> StubVlmClient:
-    """Stub VLM that returns queued responses in batch order."""
-    state = {"i": 0}
+def _joint_vlm(camera_entries: list) -> StubVlmClient:
+    """Stub VLM that returns one joint ``{"cameras": [...]}`` response.
 
-    def responder(_messages):
-        r = responses[state["i"]]
-        state["i"] += 1
-        return r
-
-    return StubVlmClient(responder=responder)
+    Mirrors the real single-call flow: ``curate_cameras`` issues one request over
+    all cameras and expects an ordered ``cameras`` array back.
+    """
+    return StubVlmClient(responder=lambda _messages: {"cameras": camera_entries})
 
 
 def _tiny_image() -> PIL.Image.Image:
@@ -108,7 +105,8 @@ def test_curate_cameras_parses_and_validates(tmp_path):
         "observation.images.b": [_tiny_image()],
         "observation.images.c": [],  # no frames -> reported, not sent to the VLM
     }
-    vlm = _queued_vlm(
+    # Joint response: one entry per camera-with-frames, in order (a, b).
+    vlm = _joint_vlm(
         [
             {"usable": True, "blur_reason": None, "view_label": "Left Wrist", "confidence": 0.9},
             {"usable": False, "blur_reason": "out of focus", "view_label": "banana", "confidence": 0.2},
@@ -128,7 +126,7 @@ def test_curate_cameras_canonicalizes_combo_order():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
     # VLM emits combos direction-last; we normalize to <direction>_<position>.
-    vlm = _queued_vlm(
+    vlm = _joint_vlm(
         [
             {"usable": True, "blur_reason": None, "view_label": "wrist_left"},
             {"usable": True, "blur_reason": None, "view_label": "side_right"},

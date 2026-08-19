@@ -76,7 +76,15 @@ def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: b
     return all(tok in vocabulary for tok in tokens) and len(set(tokens)) == len(tokens)
 
 
-def _build_messages(frames: list[Any], cfg: CameraCurationConfig) -> list[dict[str, Any]]:
+def _build_messages(
+    frames_by_camera: dict[str, list[Any]], camera_keys: list[str], cfg: CameraCurationConfig
+) -> list[dict[str, Any]]:
+    """One joint message showing every camera's frames, grouped and numbered.
+
+    Presenting all cameras together lets the model assign DISTINCT viewpoints
+    (front / side / wrist …) instead of independently defaulting several to the
+    same label — which is what causes rename collisions.
+    """
     if cfg.allow_combos:
         combo_rule = (
             "You may combine at most two of these words with an underscore when "
@@ -88,7 +96,11 @@ def _build_messages(frames: list[Any], cfg: CameraCurationConfig) -> list[dict[s
         vocabulary=", ".join(cfg.view_vocabulary),
         combo_rule=combo_rule,
     )
-    content = [*to_image_blocks(frames), {"type": "text", "text": prompt}]
+    content: list[dict[str, Any]] = []
+    for i, key in enumerate(camera_keys, 1):
+        content.append({"type": "text", "text": f'Camera {i} ("{key}"):'})
+        content.extend(to_image_blocks(frames_by_camera[key]))
+    content.append({"type": "text", "text": prompt})
     return [{"role": "user", "content": content}]
 
 
@@ -136,12 +148,12 @@ def curate_cameras(
     cfg: CameraCurationConfig,
     vlm: Any,
 ) -> list[CameraVerdict]:
-    """Judge each camera's quality + view label from a few sampled frames.
+    """Judge every camera's quality + view label in ONE joint VLM call.
 
     ``frames_by_camera`` maps a camera key to a list of decoded frames (torch
-    tensors or PIL images). One batched ``generate_json`` call is issued across
-    all cameras. Cameras with no frames are still reported (usable, unlabeled)
-    so the caller sees the full camera set.
+    tensors or PIL images). All cameras with frames are shown together so the
+    model can assign distinct viewpoints (avoiding the collisions that
+    per-camera calls produce). Cameras with no frames are reported unlabeled.
     """
     ordered_keys = list(frames_by_camera)
     callable_keys = [k for k in ordered_keys if frames_by_camera[k]]
@@ -151,12 +163,29 @@ def curate_cameras(
     }
 
     if callable_keys:
-        messages_batch = [_build_messages(frames_by_camera[k], cfg) for k in callable_keys]
-        results = vlm.generate_json(messages_batch)
-        for key, result in zip(callable_keys, results, strict=True):
-            verdicts[key] = _parse_verdict(key, result, cfg)
+        results = vlm.generate_json([_build_messages(frames_by_camera, callable_keys, cfg)])
+        verdicts.update(_parse_joint(results[0] if results else None, callable_keys, cfg))
 
     return [verdicts[k] for k in ordered_keys]
+
+
+def _parse_joint(
+    result: Any, camera_keys: list[str], cfg: CameraCurationConfig
+) -> dict[str, CameraVerdict]:
+    """Parse the joint response's ``cameras`` array into per-camera verdicts.
+
+    Entries are matched to ``camera_keys`` by position. A missing/short/garbled
+    response degrades gracefully to unlabeled verdicts rather than raising.
+    """
+    items = result.get("cameras") if isinstance(result, dict) else None
+    if not isinstance(items, list):
+        logger.warning("VLM joint response missing a 'cameras' list; leaving cameras unlabeled")
+        items = []
+    out: dict[str, CameraVerdict] = {}
+    for i, key in enumerate(camera_keys):
+        item = items[i] if i < len(items) else None
+        out[key] = _parse_verdict(key, item, cfg)
+    return out
 
 
 def build_name_mapping(

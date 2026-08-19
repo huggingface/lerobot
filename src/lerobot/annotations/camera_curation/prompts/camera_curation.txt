@@ -1,33 +1,27 @@
-You are inspecting frames from ONE camera of a robot manipulation dataset. All
-frames come from the same fixed camera during a single episode; use them
-together to judge the camera, not any single moment.
+You are inspecting ALL the camera views of ONE robot-manipulation episode. The
+frames above are grouped and numbered "Camera 1", "Camera 2", ... in order — each
+group is a different camera of the same setup during the same episode. Judge the
+cameras together, comparing them against each other.
 
-Do two things and return them as one JSON object.
+For EACH camera decide two things.
 
-1. QUALITY. Decide whether this camera view is usable for training a policy.
-   Mark it UNUSABLE if EITHER:
+1. QUALITY. Is the view usable for training a policy? Mark it UNUSABLE if EITHER:
    - it has a genuine capture defect: blurry / out of focus, badly over- or
      under-exposed, static/frozen, corrupted, or otherwise not showing the scene
      clearly; OR
    - a human is visible in the frame. These are teleoperated recordings and the
      human operator must never appear — any visible person, human hand, arm, or
      body part (as opposed to the robot) makes the view unusable.
-   Otherwise it is usable.
+   Otherwise it is usable. Do NOT mark a view unusable because the robot's own
+   gripper, arm, or end-effector is visible or partially blocks it — that is
+   EXPECTED, especially for a wrist-mounted camera. Carefully distinguish the
+   robot (a metal/plastic manipulator) from a human limb.
 
-   Do NOT mark a view unusable because the robot's own gripper, arm, or
-   end-effector is visible or partially blocks the view — that is EXPECTED,
-   especially for a wrist-mounted camera where the gripper is normally in frame.
-   Carefully distinguish the robot (a metal/plastic manipulator) from a human
-   limb: the robot occluding its own workspace is fine; a human in frame is not.
-   Set "blur_reason" to the reason for any UNUSABLE verdict (e.g. "out of focus",
-   "human operator visible").
-
-2. VIEW LABEL. Choose the best label for where this camera sits relative to the
-   robot, using ONLY this closed vocabulary:
+2. VIEW LABEL. Where does this camera sit relative to the robot? Use ONLY this
+   closed vocabulary:
 
      {vocabulary}
 
-   What each label means:
    - front  : the camera faces the robot head-on — a frontal view of the robot.
    - rear   : the camera is behind the robot, looking at its back.
    - side   : the camera views the robot from the side. ALWAYS qualify it with
@@ -41,11 +35,20 @@ Do two things and return them as one JSON object.
    first ("left_side", "right_wrist"). Use "left"/"right" only as such a
    qualifier, never on their own. Do not invent words outside the vocabulary.
 
-Output strictly valid JSON, no prose, no code fences, with exactly these keys:
+   IMPORTANT: the cameras of one setup almost always have DIFFERENT viewpoints.
+   Compare them and give each a DISTINCT label — only assign two cameras the same
+   label if they genuinely share the same viewpoint.
+
+Output strictly valid JSON, no prose, no code fences: one entry per camera, IN
+THE SAME ORDER as the numbered groups above:
 
   {{
-    "usable": true or false,
-    "blur_reason": "<short reason if unusable, else null>",
-    "view_label": "<one label from the vocabulary, combos joined by '_'>",
-    "confidence": <number between 0 and 1>
+    "cameras": [
+      {{
+        "usable": true or false,
+        "blur_reason": "<short reason if unusable, else null>",
+        "view_label": "<one label from the vocabulary, combos joined by '_'>",
+        "confidence": <number between 0 and 1>
+      }}
+    ]
   }}
