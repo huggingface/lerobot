@@ -237,13 +237,15 @@ def _decide(
     *,
     label: str,
     dataset: "LeRobotDataset | None" = None,
-) -> tuple[list["curator.CameraVerdict"], dict[str, str], str | None]:
+) -> tuple[list["curator.CameraVerdict"], dict[str, str], dict[str, Any]]:
     """Sample frames, run the VLM, and compute the rename mapping for one dataset.
 
-    Returns ``(verdicts, mapping, mapping_error)``. A label collision does NOT
-    abort: the verdicts are kept, ``mapping`` is empty, and ``mapping_error``
-    carries the message so the quality report survives and the rename is simply
-    skipped for this dataset.
+    Returns ``(verdicts, mapping, rename_notes)``. ``mapping`` renames only the
+    unambiguous cameras; cameras in an unresolved label conflict are left out and
+    recorded in ``rename_notes["collisions"]`` (so those cameras are skipped while
+    the rest are still renamed). ``on_collision="error"`` instead records
+    ``rename_notes["rename_error"]`` and renames nothing for this dataset. Either
+    way the verdicts (quality report) are always kept.
     """
     frames = _sample_frames(root, meta, cfg, dataset=dataset)
     n_with_frames = sum(1 for v in frames.values() if v)
@@ -258,14 +260,23 @@ def _decide(
             v.usable,
             "" if v.usable else f" (blur_reason={v.blur_reason!r})",
         )
+    rename_notes: dict[str, Any] = {}
     try:
-        mapping = curator.build_name_mapping(verdicts, meta.features, cfg)
-        mapping_error = None
-        logger.info("  [%s] proposed rename mapping: %s", label, mapping or "(none)")
-    except ValueError as exc:
-        mapping, mapping_error = {}, str(exc)
+        mapping, collisions = curator.build_name_mapping(verdicts, meta.features, cfg)
+        logger.info("  [%s] rename mapping: %s", label, mapping or "(none)")
+        if collisions:
+            rename_notes["collisions"] = collisions
+            logger.warning(
+                "  [%s] %d camera(s) skipped due to label conflicts (rest still renamed): %s",
+                label,
+                len(collisions),
+                sorted(collisions),
+            )
+    except ValueError as exc:  # on_collision="error": skip the whole dataset's rename
+        mapping = {}
+        rename_notes["rename_error"] = str(exc)
         logger.warning("  [%s] rename skipped, verdicts kept: %s", label, exc)
-    return verdicts, mapping, mapping_error
+    return verdicts, mapping, rename_notes
 
 
 def _materialize_subdataset(repo_id: str, subpath: str, work_dir: Path, episode_index: int):
@@ -329,13 +340,13 @@ def _process_subdataset(
     sub_work = Path(tempfile.mkdtemp(prefix="lerobot_curate_sub_"))
     try:
         sub_root, meta = _materialize_subdataset(cfg.repo_id, subpath, sub_work, cfg.episode_index)
-        verdicts, mapping, mapping_error = _decide(sub_root, meta, cfg, vlm, label=subpath)
+        verdicts, mapping, rename_notes = _decide(sub_root, meta, cfg, vlm, label=subpath)
         # Record verdicts first — a collision below must not lose the quality report.
         curator.stamp_verdicts_into_info(sub_root, verdicts)
         entry = curator.build_report(verdicts, mapping, cfg)
-        if mapping_error:
-            entry["rename_error"] = mapping_error
+        entry.update(rename_notes)  # "collisions" (partial skip) and/or "rename_error"
         if cfg.mode == "rename" and mapping:
+            # ``mapping`` is only the unambiguous cameras; conflicting ones are left out.
             _apply_rename(
                 sub_root, meta, cfg, mapping, verdicts, path_prefix=subpath, commit_lock=commit_lock
             )
@@ -380,24 +391,31 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
                 sp, entry = fut.result()
                 collection[sp] = entry
 
-    # Hard failures (couldn't process at all) vs rename-skipped (verdicts kept,
-    # rename skipped — e.g. a label collision). Both surfaced top-level so they
-    # are easy to find and re-run rather than grepping every entry.
+    # Three top-level tallies, surfaced so they're easy to find/re-run:
+    #  - failed: couldn't process the dataset at all.
+    #  - rename_skipped: whole-dataset rename skipped (on_collision="error").
+    #  - conflicts: some cameras skipped for a label conflict but the rest renamed.
     failed = {sp: e["error"] for sp, e in collection.items() if isinstance(e, dict) and "error" in e}
     rename_skipped = {
         sp: e["rename_error"] for sp, e in collection.items() if isinstance(e, dict) and "rename_error" in e
     }
+    conflicts = {
+        sp: e["collisions"] for sp, e in collection.items() if isinstance(e, dict) and "collisions" in e
+    }
     logger.info(
-        "curate-cameras: %d ok, %d failed, %d rename-skipped (of %d)",
+        "curate-cameras: %d ok, %d failed, %d whole-rename-skipped, %d with camera conflicts (of %d)",
         len(subpaths) - len(failed) - len(rename_skipped),
         len(failed),
         len(rename_skipped),
+        len(conflicts),
         len(subpaths),
     )
     if failed:
         logger.warning("curate-cameras: failed sub-dataset(s): %s", sorted(failed))
     if rename_skipped:
-        logger.warning("curate-cameras: rename-skipped sub-dataset(s): %s", sorted(rename_skipped))
+        logger.warning("curate-cameras: whole-rename-skipped sub-dataset(s): %s", sorted(rename_skipped))
+    if conflicts:
+        logger.warning("curate-cameras: sub-dataset(s) with skipped cameras: %s", sorted(conflicts))
 
     report = {
         "repo_id": cfg.repo_id,
@@ -405,8 +423,10 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
         "n_total": len(subpaths),
         "n_failed": len(failed),
         "n_rename_skipped": len(rename_skipped),
+        "n_conflicts": len(conflicts),
         "failed": failed,
         "rename_skipped": rename_skipped,
+        "conflicts": conflicts,
         "subdatasets": collection,
     }
     _write_and_echo_report(report, cfg, default_name="camera_curation_collection.json")
@@ -437,14 +457,13 @@ def _run_single(cfg: CameraCurationConfig, vlm: Any) -> None:
             download_videos=True,
         )
 
-        verdicts, mapping, mapping_error = _decide(
+        verdicts, mapping, rename_notes = _decide(
             dataset.root, dataset.meta, cfg, vlm, label=cfg.repo_id or str(root), dataset=dataset
         )
         # Stamp the verdict into info.json so a rename commit carries it.
         curator.stamp_verdicts_into_info(dataset.root, verdicts)
         report = curator.build_report(verdicts, mapping, cfg)
-        if mapping_error:
-            report["rename_error"] = mapping_error
+        report.update(rename_notes)  # "collisions" (partial skip) and/or "rename_error"
         _write_and_echo_report(report, cfg, default_name="camera_curation.json")
 
         if cfg.mode == "rename":

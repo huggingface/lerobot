@@ -183,15 +183,32 @@ def test_build_name_mapping_and_collision():
         # already canonical -> skipped by build_name_mapping
         CameraVerdict("observation.images.top", usable=True, view_label="top"),
     ]
-    mapping = build_name_mapping(verdicts, existing, cfg)
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
     assert mapping == {
         "observation.images.cam_0": "observation.images.left_wrist",
         "observation.images.cam_1": "observation.images.front",
     }
+    assert skipped == {}
     # proposed_new_key stamped back onto the verdicts
     assert verdicts[0].proposed_new_key == "observation.images.left_wrist"
 
-    # two cameras wanting the same label collide under the default policy
+
+def test_build_name_mapping_partial_skip_on_conflict():
+    # Default policy "skip": rename the unambiguous camera, skip only the colliding ones.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    existing = {f"observation.images.cam_{i}": {} for i in range(3)}
+    verdicts = [
+        CameraVerdict("observation.images.cam_0", usable=True, view_label="front"),  # collides
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="front"),  # collides
+        CameraVerdict("observation.images.cam_2", usable=True, view_label="top"),  # unique -> renamed
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {"observation.images.cam_2": "observation.images.top"}
+    assert set(skipped) == {"observation.images.cam_0", "observation.images.cam_1"}
+
+
+def test_build_name_mapping_error_mode_raises():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, on_collision="error")
     clash = [
         CameraVerdict("observation.images.cam_0", usable=True, view_label="top"),
         CameraVerdict("observation.images.cam_1", usable=True, view_label="top"),
@@ -207,23 +224,12 @@ def test_build_name_mapping_disambiguates_two_wrists_from_source_names():
         CameraVerdict("observation.images.cam_left", usable=True, view_label="wrist"),
         CameraVerdict("observation.images.cam_right", usable=True, view_label="wrist"),
     ]
-    mapping = build_name_mapping(verdicts, existing, cfg)
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
     assert mapping == {
         "observation.images.cam_left": "observation.images.left_wrist",
         "observation.images.cam_right": "observation.images.right_wrist",
     }
-
-
-def test_build_name_mapping_conflict_without_hint_still_errors():
-    # Source keys carry no directional vocab word -> cannot disambiguate -> error.
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=True)
-    existing = {"observation.images.cam_0": {}, "observation.images.cam_1": {}}
-    verdicts = [
-        CameraVerdict("observation.images.cam_0", usable=True, view_label="wrist"),
-        CameraVerdict("observation.images.cam_1", usable=True, view_label="wrist"),
-    ]
-    with pytest.raises(ValueError, match="collision"):
-        build_name_mapping(verdicts, existing, cfg)
+    assert skipped == {}
 
 
 def test_write_report(tmp_path):

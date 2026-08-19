@@ -95,8 +95,12 @@ class CameraCurationConfig:
     # a quality verdict across cameras.
     relabel_on_conflict: bool = True
 
-    # "error" raises on colliding target labels; "suffix" disambiguates (top -> top_2).
-    on_collision: str = "error"
+    # What to do when cameras still collide on a label after the relabel pass:
+    #   "skip"   : rename only the unambiguous cameras; leave the colliding ones
+    #              as-is and record them (partial rename — the default).
+    #   "suffix" : rename all, disambiguating with a numeric suffix (top, top_2).
+    #   "error"  : skip the whole dataset's rename and report the conflict.
+    on_collision: str = "skip"
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 

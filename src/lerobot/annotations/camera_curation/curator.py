@@ -245,15 +245,22 @@ def build_name_mapping(
     verdicts: list[CameraVerdict],
     existing_features: dict[str, dict],
     cfg: CameraCurationConfig,
-) -> dict[str, str]:
-    """Compute ``{old_key: observation.images.<label>}`` for labeled cameras.
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Compute the rename mapping for labeled cameras.
+
+    Returns ``(mapping, skipped)`` where ``mapping`` is ``{old_key:
+    observation.images.<label>}`` for cameras that will be renamed and ``skipped``
+    is ``{old_key: reason}`` for cameras dropped because of an unresolved label
+    conflict.
 
     Cameras without a valid label (or already at their canonical name) are
-    skipped. When several cameras share a label (e.g. two ``wrist`` views), we
-    first try to disambiguate each from a distinguishing vocabulary word found in
-    its *original* key (``..._left`` + ``wrist`` → ``left_wrist``); only labels
-    still colliding after that fall through to ``cfg.on_collision``. The resolved
-    target is written back onto each verdict's ``proposed_new_key``.
+    omitted from both. Collisions are first reduced by disambiguating from the
+    original key names (``..._left`` + ``wrist`` → ``left_wrist``); whatever still
+    collides is handled per ``cfg.on_collision``: ``"skip"`` (default) renames only
+    the unambiguous cameras and lists the colliding ones in ``skipped``;
+    ``"suffix"`` renames everything with numeric suffixes; ``"error"`` raises.
+    The chosen target is written back onto each renamed verdict's
+    ``proposed_new_key``.
     """
     label_by_cam = {v.camera_key: v.view_label for v in verdicts if v.view_label is not None}
     if cfg.allow_combos:
@@ -266,13 +273,44 @@ def build_name_mapping(
             desired[cam] = target
 
     if not desired:
-        return {}
+        return {}, {}
 
-    resolved = _resolve_rename_collisions(desired, existing_features, cfg.on_collision)
+    if cfg.on_collision == "skip":
+        resolved, skipped = _skip_colliding(desired, existing_features)
+    else:
+        # "error" raises; "suffix" disambiguates every entry.
+        resolved = _resolve_rename_collisions(desired, existing_features, cfg.on_collision)
+        skipped = {}
+
     by_key = {v.camera_key: v for v in verdicts}
     for old, new in resolved.items():
         by_key[old].proposed_new_key = new
-    return resolved
+    return resolved, skipped
+
+
+def _skip_colliding(
+    desired: dict[str, str], existing_features: dict[str, dict]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Keep only cameras whose target is unambiguous; drop the rest.
+
+    A target is *contested* when more than one camera wants it, or when it equals
+    an existing feature not being renamed. Every camera pointing at a contested
+    target is skipped (we can't decide which one earns the name); all others are
+    renamed. Returns ``(kept, skipped)`` — ``skipped`` maps old_key → reason.
+    """
+    sources = set(desired)
+    untouched = set(existing_features) - sources
+    targets = list(desired.values())
+    counts = Counter(targets)
+    contested = {t for t in targets if counts[t] > 1} | (set(targets) & untouched)
+
+    kept = {old: new for old, new in desired.items() if new not in contested}
+    skipped = {
+        old: f"label '{new}' conflicts with another camera or an existing feature"
+        for old, new in desired.items()
+        if new in contested
+    }
+    return kept, skipped
 
 
 def _extract_vocab_tokens(camera_key: str, vocabulary: tuple[str, ...]) -> list[str]:
