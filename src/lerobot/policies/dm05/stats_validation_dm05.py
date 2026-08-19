@@ -47,6 +47,7 @@ def dm05_feature_stats_complete(
     key: str,
     feature_type: str,
 ) -> bool:
+    """Check whether one DM05 feature has the stats required by its norm mode."""
     required = _REQUIRED_STATS.get(config.normalization_mapping.get(feature_type), ())
     features = config.input_features if key == OBS_STATE else config.output_features
     if key not in features:

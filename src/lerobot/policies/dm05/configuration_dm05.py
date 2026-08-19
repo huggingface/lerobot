@@ -106,6 +106,7 @@ class DM05Config(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     def __post_init__(self):
+        """Validate constructor defaults and normalize derived values."""
         super().__post_init__()
         if self.chunk_size <= 0:
             raise ValueError(f"chunk_size must be positive, got {self.chunk_size}")
@@ -155,12 +156,14 @@ class DM05Config(PreTrainedConfig):
             raise ValueError(f"diffusion_steps must be positive, got {self.diffusion_steps}")
 
     def _validate_core_action_dim(self, core_action_dim: int | None) -> None:
+        """Require the LeRobot adapter action dimension to match the core model."""
         if core_action_dim is not None and self.max_action_dim != int(core_action_dim):
             raise ValueError(
                 f"max_action_dim {self.max_action_dim} must match DM05 core action_dim {core_action_dim}."
             )
 
     def validate_features(self) -> None:
+        """Populate default DM05 features and enforce the adapter contract."""
         if self.input_features is None:
             self.input_features = {}
         if self.output_features is None:
@@ -214,6 +217,7 @@ class DM05Config(PreTrainedConfig):
         self.action_feature_names = flatten_feature_names(features.get(ACTION, {}).get("names"))
 
     def get_optimizer_preset(self) -> AdamWConfig:
+        """Build the standard DM05 AdamW optimizer configuration."""
         return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -223,6 +227,7 @@ class DM05Config(PreTrainedConfig):
         )
 
     def get_scheduler_preset(self):
+        """Build the standard DM05 cosine-decay scheduler configuration."""
         return CosineDecayWithWarmupSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
@@ -232,12 +237,15 @@ class DM05Config(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> None:
+        """DM05 does not use observation delta features."""
         return None
 
     @property
     def action_delta_indices(self) -> list[int]:
+        """Treat all action dimensions as delta candidates for the adapter."""
         return list(range(self.chunk_size))
 
     @property
     def reward_delta_indices(self) -> None:
+        """DM05 does not use reward delta features."""
         return None
