@@ -33,6 +33,12 @@ from .utils import (
 
 
 class DM05LerobotBatchConverter:
+    """Convert raw LeRobot batches into DM05 model inputs.
+
+    The converter keeps the tokenization contract used by the DM05 policy while
+    preserving device placement for numeric tensors when possible.
+    """
+
     def __init__(self, config: Any, tokenization_cls: type, processor: Any):
         self.config = config
         self._tokenizer = tokenization_cls(
@@ -43,6 +49,7 @@ class DM05LerobotBatchConverter:
         )
 
     def convert_lerobot_batch(self, batch: dict[str, Any], include_actions: bool) -> dict[str, Any]:
+        """Tokenize one LeRobot batch and attach DM05 state/action tensors."""
         if OBS_STATE not in batch:
             raise ValueError(f"DM05 raw LeRobot batch requires `{OBS_STATE}` or pre-tokenized `input_ids`.")
         state = batch[OBS_STATE]

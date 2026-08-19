@@ -58,6 +58,7 @@ class DM05TaskProcessor(ComplementaryDataProcessorStep):
     default_task: str = "Execute the robot action."
 
     def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize missing or blank task prompts in complementary data."""
         if (task := complementary_data.get("task")) is None:
             return {**complementary_data, "task": self.default_task}
 
@@ -71,11 +72,13 @@ class DM05TaskProcessor(ComplementaryDataProcessorStep):
         return complementary_data
 
     def get_config(self) -> dict[str, Any]:
+        """Return the serializable processor-step configuration."""
         return {"default_task": self.default_task}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Leave policy feature metadata unchanged."""
         return features
 
 
@@ -87,6 +90,7 @@ class DM05ActionReferenceProbeProcessorStep(ProcessorStep):
     action_dim: int
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Attach temporary action probes before normalization."""
         observation = transition.get(TransitionKey.OBSERVATION)
         state = observation.get(OBS_STATE) if isinstance(observation, dict) else None
         if state is None:
@@ -126,11 +130,13 @@ class DM05ActionReferenceProbeProcessorStep(ProcessorStep):
         return result
 
     def get_config(self) -> dict[str, Any]:
+        """Return the action dimension used for serialized probes."""
         return {"action_dim": self.action_dim}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Leave policy feature metadata unchanged."""
         return features
 
 
@@ -140,6 +146,7 @@ class DM05ActionReferenceExtractProcessorStep(ProcessorStep):
     """Extract the normalized reference offset and remove the temporary probes."""
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert temporary probes into the relative-action reference offset."""
         complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
         kind = complementary.pop(_ACTION_PROBE_KIND, None)
         if kind is None:
@@ -164,6 +171,7 @@ class DM05ActionReferenceExtractProcessorStep(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Leave policy feature metadata unchanged."""
         return features
 
 
@@ -175,6 +183,7 @@ class DM05ImagesToPILProcessorStep(ProcessorStep):
     image_keys: list[str] | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Convert configured visual observations to batched PIL images."""
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION)
         if not isinstance(observation, dict):
@@ -199,11 +208,13 @@ class DM05ImagesToPILProcessorStep(ProcessorStep):
         return transition
 
     def get_config(self) -> dict[str, Any]:
+        """Return the optional list of image keys to convert."""
         return {"image_keys": self.image_keys}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Leave policy feature metadata unchanged."""
         return features
 
 

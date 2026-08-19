@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""DM05 policy wrapper, checkpoint I/O, and inference helpers."""
+
 from __future__ import annotations
 
 import builtins
@@ -54,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_compiled_suffix(config: Any, model: Any) -> bool:
+    """Enable the compiled DM05 suffix path when the runtime supports it."""
     if not config.compile_model:
         return False
     if not hasattr(model, "setup_compiled_suffix_layers"):
@@ -75,6 +78,7 @@ def prepare_compiled_suffix_inputs(
     dtype: torch.dtype,
     initial_noise: torch.Tensor | None = None,
 ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+    """Build the call inputs needed by compiled DM05 suffix inference."""
     input_ids = model_inputs["input_ids"]
     pad_length = config.compile_suffix_pad_length
     if pad_length is not None:
@@ -128,6 +132,7 @@ def prepare_compiled_suffix_inputs(
 
 
 def _has_dm05_core_config_payload(config: DM05Config) -> bool:
+    """Return whether a DM05 config carries the embedded core HF payload."""
     core_config = getattr(config, "core_config", None)
     return (
         isinstance(core_config, dict)
@@ -138,6 +143,7 @@ def _has_dm05_core_config_payload(config: DM05Config) -> bool:
 
 
 def _apply_core_overrides(core_config: Any, config: DM05Config, dtype: torch.dtype) -> Any:
+    """Apply the LeRobot adapter runtime overrides to the core config."""
     core_config.bf16 = dtype is torch.bfloat16
     core_config.chunk_size = config.chunk_size
     core_config.vlm_gradient_checkpointing = bool(config.vlm_gradient_checkpointing)
@@ -265,6 +271,7 @@ class DM05Policy(PreTrainedPolicy):
         self.reset()
 
     def _save_pretrained(self, save_directory: Path) -> None:
+        """Save the policy weights, processor, and serialized DM05 config."""
         from lerobot.distributed.checkpoint import full_model_state_dict
         from lerobot.distributed.utils import is_main_process
 
@@ -329,6 +336,7 @@ class DM05Policy(PreTrainedPolicy):
         strict: bool = True,
         **kwargs,
     ) -> T:
+        """Load DM05 from a LeRobot checkpoint or a one-time converted source."""
         model_id = str(pretrained_name_or_path)
         saved_config = None
         processor_load_kwargs = {
@@ -438,10 +446,12 @@ class DM05Policy(PreTrainedPolicy):
         return policy
 
     def reset(self):
+        """Reset the rollout action queue and relative-action state."""
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
         self._relative_generation_offset: Tensor | None = None
 
     def to(self, *args, **kwargs):
+        """Move the policy and keep the config device in sync."""
         policy = super().to(*args, **kwargs)
         parameter = next(policy.parameters(), None)
         if parameter is not None:
@@ -449,15 +459,18 @@ class DM05Policy(PreTrainedPolicy):
         return policy
 
     def get_optim_params(self):
+        """Return the trainable DM05 parameters."""
         return self.parameters()
 
     def _uses_quantile_clipping(self, feature_type: str) -> bool:
+        """Return whether a feature should be clipped before normalization."""
         return self.config.norm_clip and self.config.normalization_mapping.get(feature_type) in {
             NormalizationMode.QUANTILES,
             NormalizationMode.QUANTILE10,
         }
 
     def _prepare_policy_batch(self, batch: dict[str, Any], *, include_actions: bool) -> dict[str, Any]:
+        """Apply DM05-specific clipping before the batch reaches the converter."""
         batch = dict(batch)
         if self._uses_quantile_clipping("STATE") and OBS_STATE in batch:
             batch[OBS_STATE] = torch.as_tensor(batch[OBS_STATE]).clamp(-1.0, 1.0)
@@ -466,6 +479,7 @@ class DM05Policy(PreTrainedPolicy):
         return batch
 
     def _prepare_model_inputs(self, batch: dict[str, Any], include_actions: bool) -> dict[str, Any]:
+        """Convert one processed batch into the tensors consumed by DM05."""
         batch = self._prepare_policy_batch(batch, include_actions=include_actions)
         model_inputs = self._batch_converter.convert_lerobot_batch(batch, include_actions=include_actions)
         model_inputs = {
@@ -503,6 +517,7 @@ class DM05Policy(PreTrainedPolicy):
         batch_size: int,
         dtype: torch.dtype,
     ) -> Tensor | None:
+        """Normalize the optional diffusion noise tensor for DM05 inference."""
         if noise is None:
             return None
         noise = noise.to(device=self.config.device, dtype=dtype)
@@ -528,6 +543,7 @@ class DM05Policy(PreTrainedPolicy):
         return noise
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
+        """Run the supervised DM05 training forward pass."""
         model_inputs = self._prepare_model_inputs(batch, include_actions=True)
         outputs = self.model(**model_inputs)
         loss = outputs.loss
@@ -535,6 +551,7 @@ class DM05Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """Predict a full action chunk for one processed observation batch."""
         self.eval()
         model_inputs = self._prepare_model_inputs(batch, include_actions=False)
         diffusion_steps = kwargs.get("diffusion_steps", self.config.diffusion_steps)
@@ -571,6 +588,7 @@ class DM05Policy(PreTrainedPolicy):
         return actions[:, :, :action_dim]
 
     def _action_reference_offset(self, batch: dict[str, Tensor]) -> Tensor:
+        """Extract the cached relative-action offset from the processor output."""
         offset = batch.get(ACTION_REFERENCE_OFFSET)
         if offset is None:
             raise ValueError(
@@ -581,6 +599,7 @@ class DM05Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """Return the next queued action slice for online DM05 inference."""
         self.eval()
         current_offset = self._action_reference_offset(batch) if self.config.use_relative_actions else None
         if len(self._queues[ACTION]) == 0:
