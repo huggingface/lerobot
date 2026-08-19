@@ -65,7 +65,10 @@ class DM05LerobotBatchConverter:
                 )
         action_is_pad = batch.get("action_is_pad")
         if action_is_pad is not None:
-            action_is_pad = torch.as_tensor(action_is_pad, dtype=torch.bool)
+            action_is_pad_kwargs = {"dtype": torch.bool}
+            if action_batch is not None:
+                action_is_pad_kwargs["device"] = action_batch.device
+            action_is_pad = torch.as_tensor(action_is_pad, **action_is_pad_kwargs)
             if action_is_pad.ndim == 1:
                 if action_is_pad.shape[0] == batch_size:
                     action_is_pad = action_is_pad.unsqueeze(-1)
@@ -78,15 +81,19 @@ class DM05LerobotBatchConverter:
         tasks = normalize_task_batch(batch.get("task"), batch_size, "Execute the robot action.")
         meta = build_meta(image_keys)
         action_dim, state_dim = int(self.config.max_action_dim), int(self.config.max_state_dim)
+        state_for_text_batch = None
+        if self.config.add_state:
+            state_for_text_batch = (
+                state.detach().to(dtype=torch.float32).cpu().numpy().astype("float32", copy=False)
+            )
         samples = []
         states, actions, action_dim_masks, timestep_masks = [], [], [], []
         for idx in range(batch_size):
             model_state = state[idx].to(torch.float32)
-            state_np = model_state.detach().cpu().numpy().astype("float32")
             sample = {
                 "prompt": tasks[idx],
                 "images": [tensor_to_pil(batch[key][idx]) for key in image_keys],
-                "state": state_np,
+                "state": None if state_for_text_batch is None else state_for_text_batch[idx],
                 "meta_data": meta,
             }
             if include_actions:
@@ -95,18 +102,22 @@ class DM05LerobotBatchConverter:
                 model_action = action_batch[idx].to(torch.float32)
                 if model_action.ndim == 1:
                     model_action = model_action.unsqueeze(0)
-                actions.append(pad_action_chunk(model_action, self.config.chunk_size, action_dim).cpu())
-                action_dim_mask = torch.zeros(action_dim, dtype=torch.bool)
+                actions.append(pad_action_chunk(model_action, self.config.chunk_size, action_dim))
+                action_dim_mask = torch.zeros(action_dim, device=model_action.device, dtype=torch.bool)
                 action_dim_mask[: min(int(model_action.shape[-1]), action_dim)] = True
                 action_dim_masks.append(action_dim_mask)
-                timestep_mask = torch.zeros(self.config.chunk_size, dtype=torch.bool)
+                timestep_mask = torch.zeros(
+                    self.config.chunk_size,
+                    device=model_action.device,
+                    dtype=torch.bool,
+                )
                 timestep_mask[min(model_action.shape[0], self.config.chunk_size) :] = True
                 if action_is_pad is not None:
-                    source_mask = action_is_pad[idx, : self.config.chunk_size]
+                    source_mask = action_is_pad[idx, : self.config.chunk_size].to(device=timestep_mask.device)
                     timestep_mask[: source_mask.numel()] = source_mask
                     timestep_mask[source_mask.numel() :] = True
                 timestep_masks.append(timestep_mask)
-            states.append(pad_vector(model_state, state_dim).cpu())
+            states.append(pad_vector(model_state, state_dim))
             samples.append(sample)
 
         tokenized = self._tokenizer.tokenize_robot_batch(samples)
@@ -115,5 +126,9 @@ class DM05LerobotBatchConverter:
             tokenized["actions"] = torch.stack(actions)
             tokenized["action_dim_mask"] = torch.stack(action_dim_masks)
             tokenized["action_is_pad"] = torch.stack(timestep_masks)
-            tokenized["has_actions"] = torch.ones(batch_size, dtype=torch.bool)
+            tokenized["has_actions"] = torch.ones(
+                batch_size,
+                device=tokenized["actions"].device,
+                dtype=torch.bool,
+            )
         return tokenized
