@@ -1,0 +1,136 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benchmark image for LIBERO-Safety integration tests.
+# Extends the nightly GPU image (which has lerobot[all]) with the LIBERO-Safety
+# fork source + its task-suite assets.
+#
+# Build:  docker build -f docker/Dockerfile.benchmark.libero_safety -t lerobot-benchmark-libero-safety .
+# Run:    docker run --gpus all --rm lerobot-benchmark-libero-safety lerobot-eval ...
+
+FROM huggingface/lerobot-gpu:latest
+ENV MUJOCO_GL=egl
+
+# LIBERO_SAFETY_SHA pins the upstream fork to a fixed commit so benchmark builds stay
+# reproducible; override with --build-arg to pick up newer upstream changes.
+# LIBERO_SAFETY_ROOT is the actual `libero.libero` package dir inside the clone (the repo
+# root has a top-level `libero/` that is just a namespace wrapper around `libero/libero/`,
+# which is where bddl_files/init_files/benchmark/envs and get_default_path_dict() expect
+# assets/config to live) — verified by inspecting the clone's directory layout directly.
+ARG LIBERO_SAFETY_SHA=19ec8df23eedfbb9265bafd3e56495fcebfcfcd0
+ARG LIBERO_SAFETY_ROOT=/home/user_lerobot/libero-safety/libero/libero
+
+# System deps for the safety-suite build-time extras (wand / ImageMagick / fontconfig /
+# expat) — matches the "System dependencies" section of the upstream README exactly, plus
+# `unzip` for assets.zip. Verified: LIBERO-Safety's `env_wrapper.py` imports `wand.api` at
+# MODULE LEVEL (used by its image-corruption augmentation helpers), so libmagickwand-dev is
+# required just to `import libero.libero.envs` — confirmed by reproducing the exact
+# `ImportError: MagickWand shared library not found` locally without it.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         unzip libexpat1 libfontconfig1-dev libmagickwand-dev libpython3-stdlib \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER user_lerobot
+
+# robosuite==1.4.1 is mandatory (the fork bundles its own third_party/robosuite-1.4,
+# same requirement as LIBERO-plus). The rest is LIBERO-Safety's full requirements.txt +
+# extra_requirements.txt, reproduced verbatim (not guessed) after actually import-testing
+# this fork in isolation: `future`/`cloudpickle`/`matplotlib`/`wand`/`thop`/`usd-core`/
+# `imageio[ffmpeg]`/`transformers`/`wandb` are all real, load-bearing imports at package-
+# import time (`libero.libero.benchmark` -> `envs/bddl_utils.py` -> `bddl.parsing` needs
+# `future`; `envs/env_wrapper.py` needs `matplotlib.cm` and `wand.api`), not optional extras.
+# Installed explicitly (rather than via a pyproject extra) because the fork installs as a
+# namespace package named `libero`, which we clone and PYTHONPATH-override below.
+RUN uv pip install --no-cache \
+        "robosuite==1.4.1" \
+        "hydra-core==1.2.0" \
+        "wandb==0.13.1" \
+        "easydict==1.9" \
+        "transformers==4.21.1" \
+        "opencv-python==4.6.0.66" \
+        "robomimic==0.2.0" \
+        "einops==0.4.1" \
+        "thop==0.1.1-2209072238" \
+        "bddl==1.0.1" \
+        "future==0.18.2" \
+        "matplotlib==3.5.3" \
+        "cloudpickle==2.1.0" \
+        "gym==0.25.2" \
+        "usd-core>=25.5" \
+        "imageio[ffmpeg]" \
+        "Wand" \
+        "scikit-image"
+
+# Clone LIBERO-Safety and make it importable as `libero`. The nightly base has
+# hf-libero (stock 6-suite LIBERO) preinstalled via lerobot[libero]; uninstall it so
+# Python resolves `import libero` to the LIBERO-Safety module instead.
+# Pinned to a fixed upstream SHA so benchmark builds stay reproducible.
+#
+# NOTE: `pip install -e .` on this repo silently installs an EMPTY package — verified by
+# reproducing it locally: its top-level `libero/` directory has no `__init__.py`, so
+# `setuptools.find_packages()` (classic, non-namespace-aware discovery) finds zero packages
+# and the generated editable-install finder has an empty MAPPING, even though the install
+# reports "Successfully installed". `import libero` then raises ModuleNotFoundError. We
+# still run it (harmless — some pyproject.toml/build metadata is registered) but the thing
+# that actually makes `import libero` work is the PYTHONPATH override below: Python 3's
+# implicit namespace packages don't require that missing `__init__.py`, so a plain
+# PYTHONPATH entry resolves `libero.libero.*` correctly where the editable install cannot.
+RUN git clone https://github.com/LIBERO-SAFETY/LIBERO-Safety.git /home/user_lerobot/libero-safety \
+    && git -C /home/user_lerobot/libero-safety checkout ${LIBERO_SAFETY_SHA} \
+    && cd /home/user_lerobot/libero-safety \
+    && uv pip install --no-cache --no-deps -e "./third_party/robosuite-1.4" \
+    && (uv pip install --no-cache --no-deps -e "." || true) \
+    && (uv pip uninstall hf-libero 2>/dev/null || true)
+ENV PYTHONPATH="/home/user_lerobot/libero-safety:${PYTHONPATH}"
+
+# Fail the build here, not at `lerobot-eval` runtime, if the hf-libero uninstall above silently
+# didn't take (e.g. its `|| true` swallowed a real failure) or PYTHONPATH ordering is wrong —
+# either way `import libero` would resolve to stock hf-libero instead of the fork, which only
+# registers the 6 standard suites and none of the 5 LIBERO-Safety ones checked here.
+RUN python -c "\
+from libero.libero import benchmark; \
+bench = benchmark.get_benchmark_dict(); \
+safety_suites = {'affordance', 'human_safety', 'obstacle_avoidance', 'obstacle_avoidance_human', 'reasoning_safety'}; \
+missing = safety_suites - bench.keys(); \
+assert not missing, f'LIBERO-Safety suites not registered: {missing} (registered: {sorted(bench.keys())}). ' \
+    'The `libero` import is resolving to stock hf-libero instead of the LIBERO-Safety fork.'"
+
+# Object/scene assets referenced by the safety-suite BDDL files (e.g. the human-hand
+# object used by human_safety) ship separately from the repo's bundled bddl_files/
+# and init_files/ (both of which ARE in git). Extract into the clone's assets dir.
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='LIBERO-Safety/libero_safety_assets', repo_type='dataset', \
+                filename='assets.zip', local_dir='/tmp/libero-safety-dl')" \
+    && unzip -q /tmp/libero-safety-dl/assets.zip -d /tmp/libero-safety-dl/extract \
+    && ASSETS_DIR=$(find /tmp/libero-safety-dl/extract -maxdepth 3 -type d -name assets | head -1) \
+    && rm -rf ${LIBERO_SAFETY_ROOT}/assets \
+    && mv "${ASSETS_DIR}" ${LIBERO_SAFETY_ROOT}/assets \
+    && rm -rf /tmp/libero-safety-dl
+
+# Point ~/.libero/config.yaml at the clone so LIBERO-Safety's imports are
+# non-interactive (it calls input() when the config is missing). Keys and defaults verified
+# directly against `libero/libero/__init__.py:get_default_path_dict()` upstream:
+# `benchmark_root` is the `libero/libero/` package directory itself (NOT a `benchmark/`
+# subdirectory — there is no such subdirectory; get_libero_path("benchmark_root") isn't
+# actually read by any code path we exercise, but we set it correctly for completeness).
+RUN mkdir -p /home/user_lerobot/.libero \
+    && printf "assets: ${LIBERO_SAFETY_ROOT}/assets\nbddl_files: ${LIBERO_SAFETY_ROOT}/bddl_files\ndatasets: ${LIBERO_SAFETY_ROOT}/../datasets\ninit_states: ${LIBERO_SAFETY_ROOT}/init_files\nbenchmark_root: ${LIBERO_SAFETY_ROOT}\n" \
+       > /home/user_lerobot/.libero/config.yaml
+
+# Overlay the PR's source code on top of the nightly image.
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]

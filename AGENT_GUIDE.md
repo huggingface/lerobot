@@ -382,6 +382,7 @@ Benchmark envs have native dependencies that are painful to install locally. The
 | ----------- | -------------------------------------------------------------------------------------- |
 | LIBERO      | [`docker/Dockerfile.benchmark.libero`](./docker/Dockerfile.benchmark.libero)           |
 | LIBERO+     | [`docker/Dockerfile.benchmark.libero_plus`](./docker/Dockerfile.benchmark.libero_plus) |
+| LIBERO-Safety | [`docker/Dockerfile.benchmark.libero_safety`](./docker/Dockerfile.benchmark.libero_safety) |
 | MetaWorld   | [`docker/Dockerfile.benchmark.metaworld`](./docker/Dockerfile.benchmark.metaworld)     |
 | RoboCasa    | [`docker/Dockerfile.benchmark.robocasa`](./docker/Dockerfile.benchmark.robocasa)       |
 | RoboCerebra | [`docker/Dockerfile.benchmark.robocerebra`](./docker/Dockerfile.benchmark.robocerebra) |

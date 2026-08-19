@@ -1,0 +1,7 @@
+# Interaction bottleneck plus weak local translation response regularization.
+policy:
+  type: cig_vla
+  detach_bottleneck_for_main_action: true
+  detach_bottleneck_for_causal_branch: true
+  enable_causal_intervention: true
+  causal_loss_weight: 0.01

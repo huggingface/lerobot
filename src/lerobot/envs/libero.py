@@ -34,10 +34,28 @@ from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
+SAFETY_SUITES = {
+    "affordance",
+    "human_safety",
+    "obstacle_avoidance",
+    "obstacle_avoidance_human",
+    "reasoning_safety",
+}
 
-def _get_suite(name: str) -> benchmark.Benchmark:
+
+def _get_suite(name: str, *, is_libero_safety: bool = False) -> benchmark.Benchmark:
     """Instantiate a LIBERO suite by name with clear validation."""
     bench = benchmark.get_benchmark_dict()
+
+    if is_libero_safety and not SAFETY_SUITES.issubset(bench.keys()):
+        raise RuntimeError(
+            "LIBERO-Safety was requested, but standard LIBERO was imported.\n"
+            f"Benchmark module: {benchmark.__file__}\n"
+            f"Available suites: {sorted(bench.keys())}\n"
+            "Ensure the LIBERO-Safety fork is installed and takes precedence "
+            "over standard LIBERO."
+        )
+
     if name not in bench:
         raise ValueError(f"Unknown LIBERO suite '{name}'. Available: {', '.join(sorted(bench.keys()))}")
     suite = bench[name]()
@@ -57,6 +75,23 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
     return ids
 
 
+def _require_libero_file(path: Path, *, kind: str, config_key: str) -> Path:
+    """Validate that a required LIBERO/LIBERO-Safety file exists, or raise a clear,
+    actionable error instead of letting a deep `FileNotFoundError`/`torch.load` failure
+    inside robosuite/mujoco point to a confusing internal path with no setup guidance."""
+    if path.exists():
+        return path
+    config_path = Path(os.environ.get("LIBERO_CONFIG_PATH", os.path.expanduser("~/.libero"))) / "config.yaml"
+    raise FileNotFoundError(
+        f"LIBERO {kind} file not found: {path}\n"
+        f"  Configured LIBERO root for '{config_key}': {get_libero_path(config_key)}\n"
+        f"  Config file to check: {config_path}\n"
+        "  For LIBERO-Safety this usually means bddl_files/init_files/assets haven't been set up "
+        "yet — see docker/Dockerfile.benchmark.libero_safety or docs/source/libero_safety.mdx for "
+        "the clone + `~/.libero/config.yaml` + assets.zip setup steps."
+    )
+
+
 # LIBERO-plus perturbation variants encode the perturbation in the filename
 # but on disk only the base `.pruned_init` exists — strip the suffix to match
 # LIBERO-plus's own suite.get_task_init_states() (we reimplement it here so we
@@ -64,10 +99,19 @@ def _select_task_ids(total_tasks: int, task_ids: Iterable[int] | None) -> list[i
 _LIBERO_PERTURBATION_SUFFIX_RE = re.compile(r"_(?:language|view|light)_[^.]*|_(?:table|tb)_\d+")
 
 
-def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) -> np.ndarray:
+def get_task_init_states(
+    task_suite: Any, i: int, is_libero_plus: bool = False, is_libero_safety: bool = False
+) -> np.ndarray:
     task = task_suite.tasks[i]
     filename = Path(task.init_states_file)
     root = Path(get_libero_path("init_states"))
+
+    if is_libero_safety:
+        # LIBERO-Safety nests init states one level deeper than stock LIBERO:
+        # init_files/<suite>/L{level}/<task>.pruned_init (task.level is 0/1/2).
+        init_states_path = root / task.problem_folder / f"L{task.level}" / filename.name
+        _require_libero_file(init_states_path, kind="init-state", config_key="init_states")
+        return torch.load(init_states_path, weights_only=False)  # nosec B614
 
     if not is_libero_plus:
         init_states_path = root / task.problem_folder / filename.name
@@ -101,6 +145,16 @@ TASK_SUITE_MAX_STEPS: dict[str, int] = {
     "libero_goal": 300,  # longest training demo has 270 steps
     "libero_10": 520,  # longest training demo has 505 steps
     "libero_90": 400,  # longest training demo has 373 steps
+    # No entries for the 5 LIBERO-Safety suites (affordance/human_safety/obstacle_avoidance/
+    # obstacle_avoidance_human/reasoning_safety): they fall through to `default_steps = 500`
+    # below. Checked the real LIBERO-Safety/libero_safety training dataset's per-task episode
+    # lengths (L0 only — that's all it contains) for the 3 suites it covers: affordance maxes
+    # out at 133 steps, human_safety at 196, obstacle_avoidance at 600 (already over the 500
+    # default). L1/L2 — the actual hazard-present eval conditions — have no demonstration data
+    # to derive headroom from, so adding suite entries here would mean guessing at exactly the
+    # kind of unverified number this codebase asks not to fabricate. If L1/L2 rollouts get
+    # truncated (`truncated=True` before the task naturally ends), override with
+    # `--env.episode_length=<n>`.
 }
 
 
@@ -128,6 +182,7 @@ class LiberoEnv(gym.Env):
         control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
+        is_libero_safety: bool = False,
         hard_reset: bool = True,
     ):
         super().__init__()
@@ -137,6 +192,7 @@ class LiberoEnv(gym.Env):
             raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
+        self.is_libero_safety = is_libero_safety
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -166,7 +222,12 @@ class LiberoEnv(gym.Env):
         self.episode_length = episode_length
         # Load once and keep
         self._init_states = (
-            get_task_init_states(task_suite, self.task_id, is_libero_plus=self.is_libero_plus)
+            get_task_init_states(
+                task_suite,
+                self.task_id,
+                is_libero_plus=self.is_libero_plus,
+                is_libero_safety=self.is_libero_safety,
+            )
             if self.init_states
             else None
         )
@@ -178,9 +239,18 @@ class LiberoEnv(gym.Env):
         task = task_suite.get_task(task_id)
         self.task = task.name
         self.task_description = task.language
-        self._task_bddl_file = os.path.join(
-            get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
-        )
+        if self.is_libero_safety:
+            # LIBERO-Safety nests BDDL files one level deeper than stock LIBERO:
+            # bddl_files/<suite>/L{level}/<task>.bddl (task.level is 0/1/2).
+            bddl_path = (
+                Path(get_libero_path("bddl_files")) / task.problem_folder / f"L{task.level}" / task.bddl_file
+            )
+            _require_libero_file(bddl_path, kind="BDDL", config_key="bddl_files")
+            self._task_bddl_file = str(bddl_path)
+        else:
+            self._task_bddl_file = os.path.join(
+                get_libero_path("bddl_files"), task.problem_folder, task.bddl_file
+            )
         self._env: OffScreenRenderEnv | None = (
             None  # deferred — created on first reset() inside the worker subprocess
         )
@@ -415,6 +485,7 @@ def _make_env_fns(
     control_mode: str,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
+    is_libero_safety: bool = False,
 ) -> list[Callable[[], LiberoEnv]]:
     """Build n_envs factory callables for a single (suite, task_id)."""
 
@@ -432,6 +503,7 @@ def _make_env_fns(
             control_mode=control_mode,
             camera_name_mapping=camera_name_mapping,
             is_libero_plus=is_libero_plus,
+            is_libero_safety=is_libero_safety,
             **local_kwargs,
         )
 
@@ -455,6 +527,7 @@ def create_libero_envs(
     episode_length: int | None = None,
     camera_name_mapping: dict[str, str] | None = None,
     is_libero_plus: bool = False,
+    is_libero_safety: bool = False,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized LIBERO environments with a consistent return shape.
@@ -490,7 +563,7 @@ def create_libero_envs(
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
-        suite = _get_suite(suite_name)
+        suite = _get_suite(suite_name, is_libero_safety=is_libero_safety)
         total = len(suite.tasks)
         selected = _select_task_ids(total, task_ids_filter)
         if not selected:
@@ -515,6 +588,7 @@ def create_libero_envs(
                 control_mode=control_mode,
                 camera_name_mapping=camera_name_mapping,
                 is_libero_plus=is_libero_plus,
+                is_libero_safety=is_libero_safety,
             )
             if is_async:
                 lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)

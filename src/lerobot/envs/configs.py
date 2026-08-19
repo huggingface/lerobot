@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, ClassVar
 
 import draccus
 import gymnasium as gym
@@ -333,6 +333,7 @@ class LiberoEnv(EnvConfig):
     observation_height: int = 360
     observation_width: int = 360
     is_libero_plus: bool = False
+    is_libero_safety: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -442,6 +443,7 @@ class LiberoEnv(EnvConfig):
             episode_length=self.episode_length,
             camera_name_mapping=self.camera_name_mapping,
             is_libero_plus=self.is_libero_plus,
+            is_libero_safety=self.is_libero_safety,
         )
 
     def get_env_processors(self):
@@ -748,6 +750,126 @@ class LiberoPlusEnv(LiberoEnv):
 
     task: str = "libero_spatial"
     is_libero_plus: bool = True
+
+
+@EnvConfig.register_subclass("libero_safety")
+@dataclass
+class LiberoSafetyEnv(LiberoEnv):
+    """Config for LIBERO-Safety closed-loop evaluation.
+
+    LIBERO-Safety adds 5 safety-focused task suites on top of LIBERO, each with
+    5 tasks x 3 difficulty levels (L0-L2) — verified directly against the upstream
+    ``vla_safety_task_map.py`` and a live ``benchmark.get_benchmark_dict()`` call:
+
+    - ``affordance`` — affordance-aware grasping
+    - ``human_safety`` — human-robot interaction (a moving human hand is part of the scene)
+    - ``obstacle_avoidance`` — tabletop spatial avoidance
+    - ``obstacle_avoidance_human`` — free-space hand/object avoidance (eval-only, no training data)
+    - ``reasoning_safety`` — semantic safety reasoning (eval-only, no training data)
+
+    Task indices are laid out per suite as level 0 = ids 0-4, level 1 = ids 5-9,
+    level 2 = ids 10-14 (``Benchmark.tasks`` is ordered by level; each suite has exactly
+    15 tasks). The public ``LIBERO-Safety/libero_safety`` training dataset only covers the
+    L0 (hazard-free) condition of ``affordance``/``human_safety``/``obstacle_avoidance``.
+
+    Use ``--env.task`` to pick one or more suites (comma-separated, matching the existing
+    LIBERO/LIBERO-plus convention) and the LIBERO-Safety-specific ``--env.level`` to restrict
+    to a difficulty level — it validates against {0, 1, 2} and computes the matching
+    ``task_ids`` automatically (raises instead of silently falling back on an invalid suite
+    or level). Omit ``level`` to evaluate all three levels. Example:
+
+        lerobot-eval --env.type=libero_safety --env.task=affordance --env.level=1 \
+            --policy.path=<checkpoint>
+
+    The gym interface is identical to LIBERO (LIBERO-Safety's ``OffScreenRenderEnv`` has the
+    same constructor/step/check_success contract, verified by reading
+    ``libero/libero/envs/env_wrapper.py`` and ``bddl_base_domain.py`` upstream) so this class
+    reuses ``LiberoEnv`` entirely; only the registered name, default task suites, BDDL/init-state
+    path layout (``is_libero_safety=True`` inserts the extra ``L{level}`` directory segment,
+    verified against ``Benchmark._get_task_file_path``), and default task differ. Per-step
+    safety-constraint violations (e.g. gripper force against the human hand, computed by
+    ``BDDLBaseDomain._check_constraint`` in ``bddl_base_domain.py``) are exposed via
+    ``info["cost"]`` (a dict of ``{constraint_name: magnitude}``) from the upstream env and
+    aggregated per-episode/overall by ``lerobot_eval.py`` into ``safety_cost``,
+    ``had_violation``, ``violation_steps``, and ``constraint_violations``.
+
+    Install: see docker/Dockerfile.benchmark.libero_safety — LIBERO-Safety ships as a
+    namespace package (also named `libero`) from a git fork and must be cloned + PYTHONPATH'd
+    rather than installed as a pyproject extra, exactly like LIBERO-plus. Note: the upstream
+    repo's own `pip install -e .` silently installs an empty package (its top-level `libero/`
+    directory has no `__init__.py`, so `setuptools.find_packages()` finds nothing) — verified
+    directly; PYTHONPATH-prepending the repo root works instead because Python 3's implicit
+    namespace packages don't need that `__init__.py`, which is exactly why the Dockerfile
+    doesn't rely on the editable install to make `import libero` work.
+
+    The fork's own `~/.libero/config.yaml` and object/scene assets (e.g. the human-hand model
+    used by `human_safety`, shipped separately from the fork's git repo) are provisioned
+    automatically the first time `create_envs()` runs — see `envs/libero_safety_assets.py` —
+    so `--env.type=libero_safety` works with no manual config/asset setup beyond having the
+    fork itself installed. Assets are downloaded once from ``assets_repo_id`` (default
+    ``LIBERO-Safety/libero_safety_assets``) and cached under
+    ``$HF_LEROBOT_HOME/<assets_repo_id>/assets``; later runs are a filesystem check, not a
+    network call. Override the repo with ``--env.assets_repo_id=...`` if you're using a
+    fork/mirror with a different asset layout.
+
+    See Also:
+        https://github.com/LIBERO-SAFETY/LIBERO-Safety
+    """
+
+    task: str = "affordance,human_safety,obstacle_avoidance"
+    level: int | list[int] | None = None
+    is_libero_safety: bool = True
+    assets_repo_id: str = "LIBERO-Safety/libero_safety_assets"
+
+    VALID_SUITES: ClassVar[tuple[str, ...]] = (
+        "affordance",
+        "human_safety",
+        "obstacle_avoidance",
+        "obstacle_avoidance_human",
+        "reasoning_safety",
+    )
+    VALID_LEVELS: ClassVar[tuple[int, ...]] = (0, 1, 2)
+    TASKS_PER_LEVEL: ClassVar[int] = 5
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .libero_safety_assets import ensure_libero_safety_assets, ensure_libero_safety_config
+
+        # Must run before LiberoEnv.create_envs()'s `from .libero import create_libero_envs`,
+        # which is the first thing to import `libero.libero` — importing it before a
+        # ~/.libero/config.yaml exists blocks on an interactive input() prompt upstream.
+        ensure_libero_safety_config()
+        ensure_libero_safety_assets(self.assets_repo_id)
+        return super().create_envs(n_envs, use_async_envs=use_async_envs)
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        suite_names = [s.strip() for s in str(self.task).split(",") if s.strip()]
+        invalid_suites = [s for s in suite_names if s not in self.VALID_SUITES]
+        if invalid_suites:
+            raise ValueError(
+                f"Invalid LIBERO-Safety suite(s): {invalid_suites}. "
+                f"Expected one of: {list(self.VALID_SUITES)}."
+            )
+
+        if self.level is None:
+            return
+
+        levels = [self.level] if isinstance(self.level, int) else list(self.level)
+        invalid_levels = [lvl for lvl in levels if lvl not in self.VALID_LEVELS]
+        if invalid_levels:
+            raise ValueError(
+                f"Invalid LIBERO-Safety level: {invalid_levels[0]}. Expected one of: {list(self.VALID_LEVELS)}."
+            )
+        if self.task_ids is not None:
+            raise ValueError(
+                "Specify either --env.level or --env.task_ids, not both — level computes "
+                "task_ids automatically from the suite's level layout (0-4 / 5-9 / 10-14)."
+            )
+        computed_ids: set[int] = set()
+        for lvl in levels:
+            computed_ids.update(range(lvl * self.TASKS_PER_LEVEL, (lvl + 1) * self.TASKS_PER_LEVEL))
+        self.task_ids = sorted(computed_ids)
 
 
 @EnvConfig.register_subclass("robotwin")

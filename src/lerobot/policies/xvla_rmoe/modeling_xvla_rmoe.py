@@ -71,11 +71,10 @@ from .moe_soft_transformer import (
 )
 
 if TYPE_CHECKING or _transformers_available:
-    from ..xvla.configuration_florence2 import Florence2Config
-    from ..xvla.modeling_florence2 import Florence2ForConditionalGeneration
+    from transformers import Florence2Config, Florence2Model
 else:
     Florence2Config = None
-    Florence2ForConditionalGeneration = None
+    Florence2Model = None
 
 
 @dataclass
@@ -147,15 +146,15 @@ class XVLARMoEModel(nn.Module):
         self.dim_action = self.action_space.dim_action
         self.dim_proprio = proprio_dim
 
-        self.vlm = Florence2ForConditionalGeneration(florence_config)
-        if hasattr(self.vlm, "language_model"):
-            lm = self.vlm.language_model
-            if hasattr(lm, "model") and hasattr(lm.model, "decoder"):
-                del lm.model.decoder
-            if hasattr(lm, "lm_head"):
-                del lm.lm_head
+        self.vlm = Florence2Model(florence_config)
+        # `xvla_rmoe` only uses the encoder-side path of Florence-2; drop the text decoder
+        # entirely to save memory. Identical to `XVLAModel.__init__` -- keeping `self.vlm` a
+        # bare `Florence2Model` (not `Florence2ForConditionalGeneration`) keeps every
+        # parameter name identical to plain XVLA, which `use_moe=False` compatibility mode
+        # relies on for 1:1 checkpoint loading.
+        del self.vlm.language_model.decoder
 
-        projection_dim = getattr(self.vlm.config, "projection_dim", None)
+        projection_dim = getattr(florence_config.vision_config, "projection_dim", None)
         if projection_dim is None:
             raise ValueError("Florence2 config must provide `projection_dim` for multimodal fusion.")
 
@@ -214,11 +213,11 @@ class XVLARMoEModel(nn.Module):
 
         if self.config.freeze_language_encoder and hasattr(self.vlm, "language_model"):
             lm = self.vlm.language_model
-            if hasattr(lm, "model") and hasattr(lm.model, "encoder"):
-                for param in lm.model.encoder.parameters():
+            if hasattr(lm, "encoder"):
+                for param in lm.encoder.parameters():
                     param.requires_grad = False
-            if hasattr(lm, "model") and hasattr(lm.model, "shared"):
-                for param in lm.model.shared.parameters():
+            if hasattr(lm, "shared"):
+                for param in lm.shared.parameters():
                     param.requires_grad = False
 
         if not self.config.train_policy_transformer:
@@ -247,19 +246,19 @@ class XVLARMoEModel(nn.Module):
             raise ValueError("At least one image view must be valid per batch.")
 
         valid_images = flat_images[flat_mask]
-        valid_feats = self.vlm._encode_image(valid_images)
+        valid_feats = self.vlm.get_image_features(valid_images).pooler_output
         tokens_per_view, hidden_dim = valid_feats.shape[1:]
 
         image_features = valid_feats.new_zeros((batch_size * num_views, tokens_per_view, hidden_dim))
         image_features[flat_mask] = valid_feats
         image_features = image_features.view(batch_size, num_views, tokens_per_view, hidden_dim)
         inputs_embeds = self.vlm.get_input_embeddings()(input_ids)
-        merged_embeds, attention_mask = self.vlm._merge_input_ids_with_image_features(
-            image_features[:, 0],
-            inputs_embeds,
-        )
 
-        enc_out = self.vlm.language_model.model.encoder(
+        # XVLA prepends the primary view's image tokens to the text embeddings and attends to everything.
+        merged_embeds = torch.cat([image_features[:, 0], inputs_embeds], dim=1)
+        attention_mask = torch.ones(merged_embeds.shape[:2], dtype=torch.long, device=merged_embeds.device)
+
+        enc_out = self.vlm.language_model.encoder(
             attention_mask=attention_mask,
             inputs_embeds=merged_embeds,
         )[0]

@@ -176,7 +176,7 @@ def main() -> int:
 
     descriptions: dict[str, str] = {}
     try:
-        if args.env == ("libero", "libero_plus"):
+        if args.env in ("libero", "libero_plus", "libero_safety"):
             descriptions = _libero_descriptions(args.task)
         elif args.env == "metaworld":
             descriptions = _metaworld_descriptions(args.task)

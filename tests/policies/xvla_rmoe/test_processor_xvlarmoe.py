@@ -23,7 +23,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RenameObservationsProcessorStep,
 )
-from lerobot.types import TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.utils.constants import IMAGENET_STATS, OBS_STATE
 
 

@@ -32,7 +32,7 @@ from lerobot.processor import (
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     IMAGENET_STATS,
     OBS_IMAGES,

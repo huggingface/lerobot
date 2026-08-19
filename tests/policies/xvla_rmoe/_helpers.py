@@ -142,7 +142,7 @@ def construct_until_finite(build_fn, max_attempts: int = 8):
         policy = build_fn()
         with torch.no_grad():
             target_dtype = policy.model._get_target_dtype()
-            probe_out = policy.model.vlm._encode_image(probe_image.to(dtype=target_dtype))
+            probe_out = policy.model.vlm.get_image_features(probe_image.to(dtype=target_dtype)).pooler_output
             if not torch.isfinite(probe_out).all():
                 continue
             # The vision tower alone being finite doesn't guarantee the full pipeline is: probe

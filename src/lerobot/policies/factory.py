@@ -51,10 +51,16 @@ from .cig_vla.configuration_cig_vla import CIGVLAConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
 from .evo1.configuration_evo1 import Evo1Config
+from .fastwam.configuration_fastwam import FastWAMConfig
+from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
+from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from .pi0.configuration_pi0 import PI0Config
+from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig
-from .smolvla_rmoe.configuration_smolvla_rmoe import SmolVLARMoEConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
 from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
@@ -62,6 +68,9 @@ from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
 from .xvla.configuration_xvla import XVLAConfig
 from .xvla_rmoe.configuration_xvla_rmoe import XVLARMoEConfig
+
+if TYPE_CHECKING or _peft_available:
+    from peft import PeftConfig, PeftModel
 
 
 def _reconnect_relative_absolute_steps(
@@ -141,10 +150,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
-    elif name == "smolvla_rmoe":
-        from .smolvla_rmoe.modeling_smolvla_rmoe import SmolVLARMoEPolicy
-
-        return SmolVLARMoEPolicy
     elif name == "cig_vla":
         from .cig_vla.modeling_cig_vla import CIGVLAPolicy
 
@@ -232,8 +237,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
-    elif policy_type == "smolvla_rmoe":
-        return SmolVLARMoEConfig(**kwargs)
     elif policy_type == "cig_vla":
         return CIGVLAConfig(**kwargs)
     elif policy_type == "groot":
@@ -457,20 +460,11 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
         )
 
-    elif isinstance(policy_cfg, SmolVLARMoEConfig):
-        from .smolvla_rmoe.processor_smolvla_rmoe import make_smolvla_pre_post_processors
-
-        processors = make_smolvla_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
     elif isinstance(policy_cfg, CIGVLAConfig):
         from .cig_vla.processor_cig_vla import make_cig_vla_pre_post_processors
 
         processors = make_cig_vla_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
         )
 
     elif isinstance(policy_cfg, GrootConfig):
@@ -531,6 +525,41 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_meta=kwargs.get("dataset_meta"),
         )
+
+    elif isinstance(policy_cfg, VLAJEPAConfig):
+        from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
+
+        processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingBotVAConfig):
+        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
+
+        processors = make_lingbot_va_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FastWAMConfig):
+        from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
+
+        processors = make_fastwam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    else:
+        try:
+            processors = _make_processors_from_policy_config(
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+            )
+        except Exception as e:
+            raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
+
+    return processors
 
 
 def make_policy(

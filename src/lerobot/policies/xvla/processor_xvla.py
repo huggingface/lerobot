@@ -23,6 +23,8 @@ import torch
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
     ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
@@ -71,35 +73,10 @@ def make_xvla_pre_post_processors(
     ]
     if config.action_mode.lower() == "ee6d":
         input_steps.append(XVLALiberoActionToEE6DProcessorStep())
-    input_steps.extend(
-        [
-            DeviceProcessorStep(device=config.device),
-            NormalizerProcessorStep(
-                features=features, norm_map=config.normalization_mapping, stats=dataset_stats
-            ),
-        ]
-    )
-    output_steps = [
-        UnnormalizerProcessorStep(
-            features=config.output_features,
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
-        DeviceProcessorStep(device="cpu"),
-    ]
+    input_steps.extend([steps.to_device, steps.normalize])
+    output_steps = [steps.unnormalize, steps.to_cpu]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
 
 
 def reconcile_xvla_processors(config, preprocessor, postprocessor):
