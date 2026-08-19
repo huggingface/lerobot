@@ -40,7 +40,7 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
-from .stats_dm05 import (
+from .stats_validation_dm05 import (
     dm05_prepare_stats_command,
     dm05_stats_complete,
     validate_dm05_relative_action_stats,
