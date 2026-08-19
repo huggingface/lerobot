@@ -89,6 +89,12 @@ class CameraCurationConfig:
     view_vocabulary: tuple[str, ...] = DEFAULT_VIEW_VOCABULARY
     allow_combos: bool = True
 
+    # When two cameras of a dataset get the same view label, run a second joint
+    # VLM pass over just those cameras (all shown together) asking for DISTINCT
+    # labels, before falling back to on_collision. Labels-only, so it can't leak
+    # a quality verdict across cameras.
+    relabel_on_conflict: bool = True
+
     # "error" raises on colliding target labels; "suffix" disambiguates (top -> top_2).
     on_collision: str = "error"
     # Remove cameras judged unusable (default: only flag them, still rename).

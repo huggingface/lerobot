@@ -139,6 +139,41 @@ def test_curate_cameras_canonicalizes_combo_order():
     assert verdicts["observation.images.b"].view_label == "right_side"
 
 
+def test_curate_cameras_relabels_on_conflict():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)  # relabel_on_conflict defaults True
+    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
+    # Per-camera pass gives both "front" (collision); the joint relabel pass then
+    # differentiates them. Quality verdicts stay from the per-camera pass.
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "blur_reason": None, "view_label": "front"},  # cam a (per-camera)
+            {"usable": False, "blur_reason": "human operator visible", "view_label": "front"},  # cam b
+            {"cameras": [{"view_label": "front"}, {"view_label": "left_side"}]},  # joint relabel
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].view_label == "front"
+    assert verdicts["observation.images.b"].view_label == "left_side"  # relabeled, no collision
+    # quality is untouched by the relabel pass
+    assert verdicts["observation.images.b"].usable is False
+    assert verdicts["observation.images.b"].blur_reason == "human operator visible"
+
+
+def test_curate_cameras_no_relabel_when_disabled():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, relabel_on_conflict=False)
+    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
+    # Only the per-camera responses are consumed; no joint relabel call is made.
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "blur_reason": None, "view_label": "front"},
+            {"usable": True, "blur_reason": None, "view_label": "front"},
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].view_label == "front"
+    assert verdicts["observation.images.b"].view_label == "front"  # left colliding
+
+
 def test_build_name_mapping_and_collision():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     existing = {"observation.images.cam_0": {}, "observation.images.cam_1": {}, "observation.images.top": {}}

@@ -41,6 +41,7 @@ from .config import CameraCurationConfig
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_curation.txt"
+_RELABEL_PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_relabel.txt"
 
 # The canonical prefix every curated camera key gets.
 OBS_IMAGE_PREFIX = "observation.images."
@@ -63,6 +64,10 @@ def _load_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
+def _load_relabel_prompt() -> str:
+    return _RELABEL_PROMPT_PATH.read_text(encoding="utf-8")
+
+
 def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: bool) -> bool:
     """True if ``label`` is a single vocab word, or (when allowed) an underscore
     combo of at most two distinct vocab words."""
@@ -76,17 +81,19 @@ def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: b
     return all(tok in vocabulary for tok in tokens) and len(set(tokens)) == len(tokens)
 
 
-def _build_messages(frames: list[Any], cfg: CameraCurationConfig) -> list[dict[str, Any]]:
+def _combo_rule(cfg: CameraCurationConfig) -> str:
     if cfg.allow_combos:
-        combo_rule = (
+        return (
             "You may combine at most two of these words with an underscore when "
             "one word is not precise enough (e.g. \"left_wrist\"). "
         )
-    else:
-        combo_rule = "Use exactly one of these words (no combinations). "
+    return "Use exactly one of these words (no combinations). "
+
+
+def _build_messages(frames: list[Any], cfg: CameraCurationConfig) -> list[dict[str, Any]]:
     prompt = _load_prompt().format(
         vocabulary=", ".join(cfg.view_vocabulary),
-        combo_rule=combo_rule,
+        combo_rule=_combo_rule(cfg),
     )
     content = [*to_image_blocks(frames), {"type": "text", "text": prompt}]
     return [{"role": "user", "content": content}]
@@ -155,8 +162,83 @@ def curate_cameras(
         results = vlm.generate_json(messages_batch)
         for key, result in zip(callable_keys, results, strict=True):
             verdicts[key] = _parse_verdict(key, result, cfg)
+        if cfg.relabel_on_conflict:
+            _relabel_conflicts(verdicts, frames_by_camera, callable_keys, cfg, vlm)
 
     return [verdicts[k] for k in ordered_keys]
+
+
+def _relabel_conflicts(
+    verdicts: dict[str, CameraVerdict],
+    frames_by_camera: dict[str, list[Any]],
+    callable_keys: list[str],
+    cfg: CameraCurationConfig,
+    vlm: Any,
+) -> None:
+    """For each label shared by 2+ cameras, run a joint labels-only pass over just
+    those cameras and overwrite their ``view_label`` with the distinct results.
+
+    Quality (``usable``/``blur_reason``) is untouched — it stays as judged
+    per-camera, so this can never leak a quality verdict across cameras.
+    """
+    groups: dict[str, list[str]] = {}
+    for key in callable_keys:
+        label = verdicts[key].view_label
+        if label is not None:
+            groups.setdefault(label, []).append(key)
+
+    for label, keys in groups.items():
+        if len(keys) < 2:
+            continue
+        logger.info(
+            "joint relabel: %d cameras share label %r; asking the VLM to differentiate them",
+            len(keys),
+            label,
+        )
+        for key, new_label in _joint_relabel(frames_by_camera, keys, label, cfg, vlm).items():
+            if new_label:
+                verdicts[key].view_label = new_label
+
+
+def _joint_relabel(
+    frames_by_camera: dict[str, list[Any]],
+    camera_keys: list[str],
+    current_label: str,
+    cfg: CameraCurationConfig,
+    vlm: Any,
+) -> dict[str, str]:
+    """Show the colliding cameras together and ask for one DISTINCT label each.
+
+    Returns ``{camera_key: view_label}`` for the entries that came back valid
+    (canonicalized); cameras missing/invalid in the response are left out.
+    """
+    prompt = _load_relabel_prompt().format(
+        n=len(camera_keys),
+        current_label=current_label,
+        vocabulary=", ".join(cfg.view_vocabulary),
+        combo_rule=_combo_rule(cfg),
+    )
+    content: list[dict[str, Any]] = []
+    for i, key in enumerate(camera_keys, 1):
+        content.append({"type": "text", "text": f'Camera {i} ("{key}"):'})
+        content.extend(to_image_blocks(frames_by_camera[key]))
+    content.append({"type": "text", "text": prompt})
+
+    results = vlm.generate_json([[{"role": "user", "content": content}]])
+    result = results[0] if results else None
+    items = result.get("cameras") if isinstance(result, dict) else None
+    if not isinstance(items, list):
+        logger.warning("joint relabel: response missing a 'cameras' list; keeping original labels")
+        return {}
+
+    out: dict[str, str] = {}
+    for i, key in enumerate(camera_keys):
+        item = items[i] if i < len(items) else None
+        raw = item.get("view_label") if isinstance(item, dict) else None
+        label = str(raw).strip().lower().replace(" ", "_") if raw else ""
+        if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
+            out[key] = _order_combo(label.split("_"), cfg.view_vocabulary)
+    return out
 
 
 def build_name_mapping(

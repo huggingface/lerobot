@@ -1,0 +1,28 @@
+The {n} camera views above come from the SAME robot-manipulation episode and
+were each initially labeled "{current_label}". But the cameras of one setup
+almost always point at the robot from DIFFERENT places. Look at them together and
+give each a DISTINCT label for where it sits relative to the robot, using ONLY
+this closed vocabulary:
+
+  {vocabulary}
+
+   - front  : the camera faces the robot head-on — a frontal view of the robot.
+   - rear   : the camera is behind the robot, looking at its back.
+   - side   : the camera views the robot from the side (qualify: "left_side" /
+              "right_side").
+   - top    : the camera looks down on the workspace from above (overhead).
+   - bottom : the camera looks up at the workspace from below.
+   - wrist  : the camera is mounted on the robot's arm/gripper and moves with it
+              (qualify: "left_wrist" / "right_wrist").
+
+{combo_rule}Put the direction first in a combo ("left_side", "right_wrist"). Only
+give two cameras the same label if they truly share the exact same viewpoint. Do
+not invent words outside the vocabulary.
+
+Output strictly valid JSON, one entry per camera IN THE SAME ORDER as above:
+
+  {{
+    "cameras": [
+      {{"view_label": "<one label from the vocabulary>"}}
+    ]
+  }}
