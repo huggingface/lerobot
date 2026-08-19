@@ -45,6 +45,12 @@ Usage::
 
 The loop/launch knobs mirror ``teleoperate.py`` (tagged ``[xr]`` / ``[leader]`` below).
 
+With the XR controller, releasing the squeeze ends the episode (and saves it) once you have
+engaged the clutch at least once, then the arm slews back to its reset pose during the reset
+window — so an episode is one uninterrupted squeeze, with no mid-episode re-clutching.
+``--reset_to_origin=false`` disables the slew (startup and between episodes alike). The leader
+arm has no clutch, so its episodes still end on ``--dataset.episode_time_s`` or a key.
+
 Keyboard shortcuts: Right/n = end episode early and save, Left/r = discard + re-record,
 Esc/q = stop after the current episode. All frames are recorded (including hold frames).
 """
@@ -77,6 +83,7 @@ from lerobot.utils.utils import init_logging
 from .common import (
     ALIGN_DURATION_S,
     RESET_DURATION_S,
+    DeclutchLatch,
     Device,
     HoldLatch,
     build_device,
@@ -103,8 +110,9 @@ class RecordConfig:
     # inherits the runtime env). None (default) -> assume the plugin already runs externally.
     launch_plugin: str | None = None
 
-    # [xr] Slew all joints to the reset pose before the first episode (--reset_to_origin=false to
-    # keep the arm where it is). After the slew the clutch seeds its home from the measured pose.
+    # [xr] Slew all joints to the reset pose before the first episode AND in every reset window
+    # (--reset_to_origin=false to keep the arm where it is). After the slew the clutch seeds its
+    # home from the measured pose.
     reset_to_origin: bool = True
     # [xr] Duration [s] of the reset-to-origin slew (passed through to setup_xr).
     reset_duration: float = RESET_DURATION_S
@@ -134,12 +142,16 @@ def _record_loop(
 
     When ``dataset`` is None the loop still controls the robot (so the operator
     can reposition the arm during the reset window) but does not record frames.
+
+    A recorded episode also ends when the operator declutches (see :class:`DeclutchLatch`);
+    the reset phase runs to ``control_time_s`` regardless.
     """
     control_interval = 1.0 / fps
     timestamp = 0.0
     start_t = time.perf_counter()
     record_frames = dataset is not None
     hold = HoldLatch(motor_names)
+    declutch = DeclutchLatch()
 
     while timestamp < control_time_s:
         loop_start = time.perf_counter()
@@ -156,6 +168,13 @@ def _record_loop(
         # Device idle (XR clutch disengaged, or leader stream stale) -> hold the pose
         # latched on the active->idle edge.
         action = hold.resolve(device.compute(obs), obs)
+
+        # Releasing the clutch is the end-of-episode signal. Checked before the frame is sent
+        # and recorded, so the episode ends on the last engaged frame rather than trailing a
+        # hold frame. The episode is kept (same path as the "end early" key), not discarded.
+        if record_frames and declutch.update(device.engaged()):
+            logging.info("Declutched — ending episode")
+            break
 
         robot.send_action(action)
 
@@ -253,12 +272,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                 )
 
-                # Reset window: give the operator time to reposition the scene.
-                # Skipped for the last episode (or if stop_recording was set).
+                # Reset window: slew the arm back to its reset pose and re-home the clutch (a
+                # device without one no-ops), then give the operator time to reposition the
+                # scene. Skipped for the last episode (or if stop_recording was set).
                 if not events["stop_recording"] and (
                     recorded_episodes < cfg.dataset.num_episodes - 1 or events["rerecord_episode"]
                 ):
                     logging.info("Reset the environment")
+                    device.reset()
                     _record_loop(
                         **loop_kwargs,
                         dataset=None,

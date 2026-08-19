@@ -18,8 +18,10 @@
 
 Consumed by ``teleoperate.py`` and ``record.py``, which both build a per-device
 :class:`Device` bundle and run the same loop: read -> (maybe command) -> hold-when-idle ->
-sleep. A :class:`Device` bundles three closures: ``compute(obs) -> RobotAction | None``
-(``None`` = hold at the measured pose while idle), ``startup``, and ``cleanup``. The devices:
+sleep. A :class:`Device` bundles ``compute(obs) -> RobotAction | None`` (``None`` = hold at
+the measured pose while idle), ``startup``, ``cleanup``, plus ``engaged`` and ``reset``,
+which both entry points use to send the arm home on declutch — ``record.py`` also ends the
+recorded episode there. The devices:
 
 * ``xr_controller`` — an :class:`XRController` whose in-pipeline clutch retargeter emits an
   absolute base-frame EE target for LeRobot's Cartesian IK pipeline.
@@ -93,11 +95,16 @@ class LoopConfig(Protocol):
 
 # Per-device bundle consumed by the shared loop. ``compute`` returns None to mean
 # "idle -> hold at the measured pose"; ``startup`` warms up; ``cleanup`` reaps/disconnects.
+# ``engaged`` reports the clutch state of the frame ``compute`` last processed, and ``reset``
+# returns the arm to its reset pose. The defaults describe a device with no clutch and no reset
+# pose (the leader arm): always engaged, so the declutch edge the loops watch for never fires.
 @dataclass(frozen=True)
 class Device:
     compute: Callable[[RobotObservation | None], RobotAction | None]
     startup: Callable[[], None]
     cleanup: Callable[[], None]
+    engaged: Callable[[], bool] = lambda: True
+    reset: Callable[[], None] = lambda: None
 
 
 def hold_action(obs: RobotObservation, motor_names: list[str]) -> dict[str, float]:
@@ -126,6 +133,26 @@ class HoldLatch:
         if self._held is None:
             self._held = hold_action(obs, self._motor_names)
         return self._held
+
+
+class DeclutchLatch:
+    """Detect the declutch that ends a segment: the first engaged -> disengaged transition.
+
+    Arms on the first engaged frame, so a segment that starts disengaged (the operator has not
+    squeezed yet) is not ended on frame 0. One instance per segment — a recorded episode, or one
+    teleoperate squeeze; once it has fired it keeps reporting True. Devices with no clutch report
+    ``engaged`` forever, so it never fires.
+    """
+
+    def __init__(self):
+        self._armed = False
+
+    def update(self, engaged: bool) -> bool:
+        """Feed this frame's clutch state; True once the operator has engaged and let go."""
+        if engaged:
+            self._armed = True
+            return False
+        return self._armed
 
 
 def slew(
@@ -183,8 +210,9 @@ def _ensure_so101_urdf() -> str:
     return str(urdf_path)
 
 
-# Default duration [s] for the startup reset-to-origin slew.
-RESET_DURATION_S = 5.0
+# Default duration [s] for the reset-to-origin slew (startup and every declutch): long enough to
+# follow in VR, short enough not to stall the operator between segments.
+RESET_DURATION_S = 2.0
 
 # Optional cached file written by override_reset_pose.py. When present it takes priority over RESET_ORIGIN_DEG.
 RESET_POSE_FILE = str(HF_LEROBOT_HOME / "reset_poses" / "{robot_name}" / "{robot_id}.json")
@@ -333,45 +361,70 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         to_output=transition_to_robot_action,
     )
 
-    # The clutch lives inside the device's retargeting pipeline. The loop tracks the previous
-    # engagement so it can spot the engage edge; it does NOT re-derive engagement itself, so the
-    # squeeze threshold is compared in exactly one place (the retargeter).
-    prev_engaged = False
+    # Reset pose resolved once: the same target serves the startup slew and every
+    # between-episode reset in record.py.
+    reset_pose_file = Path(RESET_POSE_FILE.format(robot_name=robot.name, robot_id=robot.id))
+    reset_target = _load_reset_target(reset_pose_file, motor_names)
+
+    # The clutch lives inside the device's retargeting pipeline. The loop tracks the engagement
+    # so it can spot the engage edge — and, in record.py, the declutch that ends an episode; it
+    # does NOT re-derive engagement itself, so the squeeze threshold is compared in exactly one
+    # place (the retargeter). Holds this frame's value once compute() has run, the previous
+    # frame's while it runs.
+    clutch_engaged = False
 
     def _measured_base_T_ee(obs: RobotObservation) -> np.ndarray:  # noqa: N802
         """FK the measured joints to the arm's current base_T_ee."""
         q_measured = np.array([float(obs[f"{name}.pos"]) for name in motor_names], dtype=float)
         return kinematics_solver.forward_kinematics(q_measured)
 
+    def reset() -> None:
+        """Slew the arm to its reset pose and re-home the clutch there.
+
+        Runs at startup, on every declutch in ``teleoperate.py``, and in every reset window
+        between recorded episodes. The device holds STOPPED across the slew (stepped once so the
+        state lands first) — the readiness interlock, not a formality: a squeeze mid-slew would
+        otherwise latch the clutch against a home the arm has not reached yet. The clutch is then
+        seeded from the post-slew MEASURED pose and the interlock released, so the next engage is
+        jump-free.
+        """
+        nonlocal clutch_engaged
+        teleop_device.stop()
+        teleop_device.get_action()  # step once so STOPPED takes effect before the arm moves
+        # Re-arm the engage edge: the rate limiter still references the pre-slew command, so the
+        # pipeline must be reset on the next engaged frame even if the squeeze was never released.
+        clutch_engaged = False
+
+        if cfg.reset_to_origin:
+            print(f"Resetting to origin over {cfg.reset_duration:.1f} s…")
+            slew(robot, motor_names, lambda: reset_target, cfg.reset_duration)
+            print("Reset complete.")
+
+        teleop_device.set_home_base_T_ee(_measured_base_T_ee(robot.get_observation()))
+        # Releases the readiness interlock; raises if the home was not seeded first.
+        teleop_device.start()
+
+    def engaged() -> bool:
+        """Whether the clutch was engaged on the frame compute() last processed."""
+        return clutch_engaged
+
     def startup() -> None:
         # Connect and wait for the operator to don the headset BEFORE moving the arm, so the
-        # reset slew happens while they are watching in VR. The session holds STOPPED throughout
-        # connect, the wait and the slew, so a squeeze during any of it cannot latch the clutch
-        # against a home the arm has not reached yet.
+        # reset slew happens while they are watching in VR.
         teleop_device.connect()
         if not teleop_device.is_connected:
             raise ValueError("Teleop is not connected!")
         _wait_for_xr_controller(teleop_device)
 
         if cfg.reset_to_origin:
-            reset_pose_file = Path(RESET_POSE_FILE.format(robot_name=robot.name, robot_id=robot.id))
-            target = _load_reset_target(reset_pose_file, motor_names)
             source = str(reset_pose_file) if reset_pose_file.exists() else "hardcoded defaults"
             print(f"Reset target source: {source}")
-            print(f"Resetting to origin over {cfg.reset_duration:.1f} s…")
-            slew(robot, motor_names, lambda: target, cfg.reset_duration)
-            print("Reset complete.")
-
-        # Seed the clutch home from the arm's measured pose (FK of the current joints) so the
-        # first engage is jump-free, whether or not a reset slew ran, THEN release the interlock.
-        teleop_device.set_home_base_T_ee(_measured_base_T_ee(robot.get_observation()))
-        # Releases the readiness interlock; raises if the home was not seeded first.
-        teleop_device.start()
+        reset()
 
         print("Starting teleop loop. Squeeze and move the controller to teleoperate the robot...")
 
     def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
-        nonlocal prev_engaged
+        nonlocal clutch_engaged
         # Supply the arm's measured EE pose EVERY frame, from the observation the loop already
         # holds (never re-read the robot here — that would widen the skew and add a bus
         # transaction). The clutch consumes it only on the engage frame, but the loop cannot know
@@ -394,9 +447,9 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         # references the stale pre-disengage command and would clamp the first frames against it.
         # The edge is taken from the retargeter's own engagement, not re-derived from squeeze —
         # the latch can be deferred by a dropped or untrusted frame that the loop cannot observe.
-        if engaged and not prev_engaged:
+        if engaged and not clutch_engaged:
             xr_to_robot_joints_processor.reset()
-        prev_engaged = engaged
+        clutch_engaged = engaged
 
         # SAFETY GATE: command the robot ONLY on a frame that is both engaged AND tracked;
         # otherwise return None so the loop holds the measured joints (releasing the clutch
@@ -420,7 +473,13 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         }
         return xr_to_robot_joints_processor((ee_action, robot_obs))
 
-    return Device(compute=compute, startup=startup, cleanup=teleop_device.disconnect)
+    return Device(
+        compute=compute,
+        startup=startup,
+        cleanup=teleop_device.disconnect,
+        engaged=engaged,
+        reset=reset,
+    )
 
 
 # ============================================================================

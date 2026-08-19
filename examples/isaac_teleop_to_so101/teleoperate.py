@@ -31,8 +31,15 @@
 
 ``--teleop.type`` resolves against the Isaac device registry (see :class:`IsaacTeleopConfig`),
 distinct from the serial ``so101_leader``. The pipelines, clutch/IK/align internals, and
-reset-pose behavior live in ``common.py``. Requires the ``isaacteleop`` package and an OpenXR
-runtime (install instructions in this folder's ``README.md``).
+reset-pose behavior live in ``common.py``.
+
+On the XR path the clutch bounds a teleoperation segment: releasing the squeeze (having engaged
+it at least once) slews the arm back to its reset pose and re-homes the clutch there, so the
+next squeeze starts from a known pose. ``--reset_to_origin=false`` disables the slew (startup
+and every declutch alike). The leader arm has no clutch and is unaffected.
+
+Requires the ``isaacteleop`` package and an OpenXR runtime (install instructions in this
+folder's ``README.md``).
 """
 
 import time
@@ -47,6 +54,7 @@ from .common import (
     ALIGN_DURATION_S,
     FPS,
     RESET_DURATION_S,
+    DeclutchLatch,
     HoldLatch,
     build_device,
 )
@@ -73,8 +81,9 @@ class TeleoperateConfig:
     # The leader's serial port is --teleop.port (forwarded to the plugin; empty -> synthetic).
     launch_plugin: str | None = None
 
-    # [xr] Slew all joints to a default reset pose before the loop (--reset_to_origin=false to
-    # keep the arm where it is). After the slew the clutch seeds its home from the measured pose.
+    # [xr] Slew all joints to a default reset pose before the loop AND on every declutch
+    # (--reset_to_origin=false to keep the arm where it is). After the slew the clutch seeds its
+    # home from the measured pose.
     reset_to_origin: bool = True
     # [xr] Duration [s] of the reset-to-origin slew.
     reset_duration: float = RESET_DURATION_S
@@ -90,12 +99,24 @@ class TeleoperateConfig:
 def teleoperate(cfg: TeleoperateConfig):
     robot, device, motor_names = build_device(cfg)
     hold = HoldLatch(motor_names)
+    declutch = DeclutchLatch()
     try:
         while True:
             t0 = time.perf_counter()
             obs = robot.get_observation()
             # Idle (compute() -> None) holds the pose latched on the active->idle edge.
             action = hold.resolve(device.compute(obs), obs)
+
+            # Releasing the clutch ends the segment: reset() slews the arm to its reset pose and
+            # re-homes the clutch there. Both latches are stale across the slew — the held pose
+            # predates it and the declutch has fired — so replace them. A device without a
+            # clutch reports engaged forever and never gets here.
+            if declutch.update(device.engaged()):
+                device.reset()
+                hold = HoldLatch(motor_names)
+                declutch = DeclutchLatch()
+                continue
+
             robot.send_action(action)
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
     except KeyboardInterrupt:

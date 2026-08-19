@@ -75,8 +75,9 @@ python -m examples.isaac_teleop_to_so101.teleoperate \
 On startup the script launches the CloudXR runtime (~30 s), prints the workstation IP to enter in
 the headset's CloudXR web client, waits for the controllers to stream, slews the arm to a reset
 pose (`--reset_to_origin=false` to skip), and then: **hold the squeeze/grip** to engage, move the
-controller to drive the arm, pull the trigger to close the gripper. Releasing the squeeze freezes
-the arm. The SO-101 URDF is fetched automatically from the `lerobot/robot-urdfs` Hugging Face
+controller to drive the arm, pull the trigger to close the gripper. Releasing the squeeze slews the
+arm back to the reset pose and re-homes the clutch there, so the next squeeze starts from a known
+pose. The SO-101 URDF is fetched automatically from the `lerobot/robot-urdfs` Hugging Face
 bucket into the LeRobot cache on first run.
 
 To customize the reset pose: back-drive the arm to the pose you want, then
@@ -115,6 +116,12 @@ python -m examples.isaac_teleop_to_so101.record \
     --dataset.single_task="Pick up the cube" \
     --dataset.num_episodes=3 --dataset.episode_time_s=20 --dataset.reset_time_s=5
 ```
+
+With the XR controller the clutch is the episode boundary: releasing the squeeze (after engaging it
+at least once) ends and saves the episode, then the arm slews back to its reset pose during the
+reset window and the clutch is re-homed there. One episode is one uninterrupted squeeze.
+`--reset_to_origin=false` disables the slew (startup, declutch and between episodes alike); the
+leader arm has no clutch, so its episodes still end on `--dataset.episode_time_s` or a key.
 
 Keyboard shortcuts (terminal-first, so they work over SSH): **Right/n** end episode early,
 **Left/r** re-record, **Esc/q** stop after the current episode.

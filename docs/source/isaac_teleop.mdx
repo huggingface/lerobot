@@ -216,9 +216,11 @@ default.
 
 ## Controls
 
-- **Squeeze / grip** — the **clutch** (deadman). Hold it past `clutch_threshold` to engage
-  teleoperation; release to pause. Each engage re‑captures the origin, so you can reposition
-  your hand while paused and re‑engage without the arm jumping (index/clutch style).
+- **Squeeze / grip** — the **clutch** (deadman) and the segment boundary. Hold it past
+  `clutch_threshold` to engage teleoperation; release and the arm slews back to its reset pose,
+  re‑homing the clutch there. Reposition your hand during the slew — each engage re‑captures the
+  origin from the arm's measured pose, so it never jumps. `--reset_to_origin=false` keeps the arm
+  where it is on release.
 - **Trigger** — the **gripper**, controlled **analog**. The jaw tracks the trigger
   proportionally — a half‑pressed trigger leaves the jaw half‑closed — via a closedness in
   `[0, 1]` (0 = open, 1 = closed) that maps to an absolute gripper joint target.
@@ -282,7 +284,8 @@ The CLI is `lerobot-teleoperate`-style (draccus): `--robot.*` configures the SO-
 above. The startup safety contract: by default it slews all joints to a default reset pose over
 `--reset_duration` seconds (`--reset_to_origin=false` keeps the arm where it is), then seeds the
 clutch home from the arm's measured pose so the first engage is jump-free; the follower is
-commanded only while the clutch is engaged.
+commanded only while the clutch is engaged. The same slew runs again every time you release the
+squeeze, so each engage starts from the reset pose.
 
 **Customizing the reset pose.** The reset pose ships as a built-in default (a comfortable mid-range
 pose) and works out of the box — you do **not** need to record anything. To tailor it to your setup,
@@ -334,12 +337,20 @@ The URDF fetch uses `huggingface_hub` (already a LeRobot dependency) against the
 
 Then, in your headset: squeeze and hold the grip to engage, move the controller to drive the
 arm, twist/tilt it to orient the wrist, and press the trigger to close the gripper
-(proportionally — release to open).
+(proportionally — release to open). Releasing the grip sends the arm back to its reset pose.
 
 To record a dataset (not just teleoperate), use `record.py` in the same folder. It dispatches on
 `--teleop.type` (`xr_controller` | `so101_leader`) exactly like `teleoperate.py`, so either device
 can drive the follower, and it saves the commanded joints to a LeRobot dataset (`lerobot-record`-style
 `--dataset.*` flags). See its module docstring for the full CLI and the keyboard recording shortcuts.
+
+**The clutch is the episode boundary.** On the XR path an episode ends the moment you release the
+squeeze (having engaged it at least once), the episode is saved, and the arm slews back to its reset
+pose during the reset window — re-homing the clutch there behind the same readiness interlock
+startup uses. One episode is one uninterrupted squeeze. `teleoperate.py` runs the same
+slew on release without the recording half, so on both scripts every squeeze starts from the reset
+pose. `--reset_to_origin=false` disables the slew (startup, declutch and between episodes alike),
+and the leader arm, having no clutch, still ends episodes on `--dataset.episode_time_s` or a key.
 
 ## Important pipeline steps and options
 
@@ -383,8 +394,8 @@ The clutch already produces an absolute base‑frame pose, so the processor side
 
 The example also gates safety at the loop level: after the startup reset slew (on by default —
 pass `--reset_to_origin=false` to keep the arm where it is), it commands the robot **only while
-the clutch is engaged**, and re‑sends the measured joints while disengaged, so releasing the
-clutch freezes the arm in place.
+the clutch is engaged**, and re‑sends the measured joints while disengaged, so an idle frame never
+drifts the arm. Releasing the clutch then slews it back to the reset pose.
 
 See the [Processors for Robots and Teleoperators](./processors_robots_teleop) guide for more on
 adapting the pipeline to other robots.
