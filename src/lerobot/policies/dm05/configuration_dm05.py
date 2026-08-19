@@ -242,7 +242,7 @@ class DM05Config(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        """Treat all action dimensions as delta candidates for the adapter."""
+        """Return the action timestep offsets used for chunked training."""
         return list(range(self.chunk_size))
 
     @property
