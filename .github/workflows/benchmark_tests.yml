@@ -68,6 +68,10 @@ jobs:
     name: Libero — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
 
@@ -226,6 +230,10 @@ jobs:
     name: MetaWorld — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
 
@@ -326,6 +334,10 @@ jobs:
     name: RoboTwin 2.0 — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
       ROBOTWIN_POLICY: lerobot/smolvla_robotwin
@@ -435,6 +447,10 @@ jobs:
     name: RoboCasa365 — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
 
@@ -536,6 +552,10 @@ jobs:
     name: RoboCerebra — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
 
@@ -642,6 +662,10 @@ jobs:
     name: RoboMME — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
       ROBOMME_POLICY: lerobot/smolvla_robomme
@@ -747,6 +771,10 @@ jobs:
     name: LIBERO-plus — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
       LIBERO_PLUS_SUITE: libero_spatial
@@ -968,6 +996,10 @@ jobs:
     name: VLABench — build image + 1-episode eval
     runs-on:
       group: aws-g6-4xlarge-plus
+    if: |
+      github.repository == 'huggingface/lerobot' && (
+        github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+      )
     env:
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
 
