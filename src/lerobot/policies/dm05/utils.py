@@ -68,6 +68,7 @@ def import_dm05_core():
 
 
 def resolve_torch_dtype(dtype: str) -> torch.dtype:
+    """Resolve a DM05 dtype string to a torch dtype."""
     if dtype in {"bfloat16", "float32"}:
         return getattr(torch, dtype)
     raise ValueError(f"Unsupported dtype: {dtype}")
@@ -104,6 +105,7 @@ def build_action_prefix_mask(
     horizon: int,
     device: torch.device,
 ) -> torch.Tensor | None:
+    """Build a mask for timesteps that are fixed by action prefill."""
     if action_prefill_len is None:
         return None
 
@@ -116,15 +118,18 @@ def validate_action_prefill_pair(
     prefill_actions: torch.Tensor | None,
     action_prefill_len: torch.Tensor | None,
 ) -> None:
+    """Require action prefill values and lengths to be provided together."""
     if (prefill_actions is None) != (action_prefill_len is None):
         raise ValueError("prefill_actions and action_prefill_len must be provided together.")
 
 
 def pad_vector(x: Tensor, dim: int) -> Tensor:
+    """Trim or right-pad a vector to the configured DM05 dimension."""
     return x[..., :dim] if x.shape[-1] >= dim else torch_nn_functional.pad(x, (0, dim - x.shape[-1]))
 
 
 def pad_action_chunk(action: Tensor, chunk_size: int, action_dim: int) -> Tensor:
+    """Trim or pad an action chunk to DM05's fixed tensor shape."""
     if action.dim() == 1:
         action = action.unsqueeze(0)
     if action.shape[0] > chunk_size:
@@ -136,6 +141,7 @@ def pad_action_chunk(action: Tensor, chunk_size: int, action_dim: int) -> Tensor
 
 
 def tensor_to_pil(image: Tensor | Image.Image) -> Image.Image:
+    """Convert a visual observation to RGB PIL format for the HF processor."""
     if isinstance(image, Image.Image):
         return image.convert("RGB")
     if not torch.is_tensor(image):
@@ -152,6 +158,7 @@ def tensor_to_pil(image: Tensor | Image.Image) -> Image.Image:
 
 
 def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[str]:
+    """Broadcast or validate task prompts for a batched DM05 input."""
     if task is None:
         return [default_task] * batch_size
     if isinstance(task, str):
@@ -162,6 +169,7 @@ def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[
 
 
 def get_image_keys(batch: dict[str, Any], configured_keys: Sequence[str] | None = None) -> list[str]:
+    """Resolve the ordered image observation keys used by DM05."""
     if configured_keys:
         return [key for key in configured_keys if key in batch]
     keys = [key for key in batch if key.startswith(f"{OBS_IMAGES}.")]
@@ -169,4 +177,5 @@ def get_image_keys(batch: dict[str, Any], configured_keys: Sequence[str] | None 
 
 
 def build_meta(image_keys: Sequence[str]) -> dict[str, Any]:
+    """Build the minimal metadata consumed by the DM05 prompt renderer."""
     return {"dataset_meta": {"image_keys": list(image_keys)}}

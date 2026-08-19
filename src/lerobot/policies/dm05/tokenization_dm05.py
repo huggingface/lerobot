@@ -39,6 +39,7 @@ DEFAULT_CAMERA_LABELS = tuple(OPENDM_CAMERA_LABELS.values())
 
 
 def get_camera_labels(meta_data: dict | None, num_images: int) -> list[str]:
+    """Resolve human-readable camera labels for the DM05 chat prompt."""
     image_keys = None
     if isinstance(meta_data, dict):
         image_keys = meta_data.get("image_keys")
@@ -68,11 +69,13 @@ def action_to_bin_tokens(
     action: np.ndarray,
     n_bins: int = 256,
 ) -> list[int]:
+    """Quantize normalized values into DM05 discrete bin ids."""
     bins = np.floor(((np.clip(action, -1.0, 1.0) + 1.0) / 2.0) * (n_bins - 1)).astype(int)
     return np.clip(bins, 0, n_bins - 1).tolist()
 
 
 def format_embodiment_spec(meta_data: dict) -> str:
+    """Render optional robot and control-mode metadata for the prompt."""
     meta_data = meta_data if isinstance(meta_data, dict) else {}
     robot_type, control_mode = meta_data.get("robot_type"), meta_data.get("control_mode")
     dataset_meta = meta_data.get("dataset_meta", {})
@@ -90,6 +93,7 @@ def format_embodiment_spec(meta_data: dict) -> str:
 
 
 def format_speed_value(speed: Any) -> str | None:
+    """Normalize optional speed metadata into prompt text."""
     if speed is None:
         return None
 
@@ -118,6 +122,8 @@ def format_speed_value(speed: Any) -> str | None:
 
 
 class DM05Tokenization:
+    """Build Gemma3 chat-template inputs for DM05 robot batches."""
+
     def __init__(
         self,
         processor,
@@ -139,6 +145,7 @@ class DM05Tokenization:
         meta_data: dict,
         speed_text: str | None,
     ) -> list:
+        """Build the multimodal user message consumed by Gemma3Processor."""
         text = format_embodiment_spec(meta_data)
         text += f"Overall speed: {speed_text or '0.5'}\n"
         prompt = prompt.strip()
