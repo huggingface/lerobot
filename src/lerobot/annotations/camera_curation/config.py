@@ -96,8 +96,10 @@ class CameraCurationConfig:
     relabel_on_conflict: bool = True
 
     # What to do when cameras still collide on a label after the relabel pass:
-    #   "skip"   : rename only the unambiguous cameras; leave the colliding ones
-    #              as-is and record them (partial rename — the default).
+    #   "skip"   : rename the unambiguous cameras; for a contested label keep the
+    #              highest-confidence camera and skip the rest (partial rename —
+    #              the default). A label already taken by an existing feature is
+    #              always skipped.
     #   "suffix" : rename all, disambiguating with a numeric suffix (top, top_2).
     #   "error"  : skip the whole dataset's rename and report the conflict.
     on_collision: str = "skip"

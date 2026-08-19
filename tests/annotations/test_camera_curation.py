@@ -193,18 +193,33 @@ def test_build_name_mapping_and_collision():
     assert verdicts[0].proposed_new_key == "observation.images.left_wrist"
 
 
-def test_build_name_mapping_partial_skip_on_conflict():
-    # Default policy "skip": rename the unambiguous camera, skip only the colliding ones.
+def test_build_name_mapping_partial_skip_keeps_most_confident():
+    # Default policy "skip": rename the unambiguous camera; for a contested label,
+    # keep the most confident contender and skip the rest.
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     existing = {f"observation.images.cam_{i}": {} for i in range(3)}
     verdicts = [
-        CameraVerdict("observation.images.cam_0", usable=True, view_label="front"),  # collides
-        CameraVerdict("observation.images.cam_1", usable=True, view_label="front"),  # collides
-        CameraVerdict("observation.images.cam_2", usable=True, view_label="top"),  # unique -> renamed
+        CameraVerdict("observation.images.cam_0", usable=True, view_label="front", confidence=0.9),
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="front", confidence=0.5),
+        CameraVerdict("observation.images.cam_2", usable=True, view_label="top", confidence=0.8),
     ]
     mapping, skipped = build_name_mapping(verdicts, existing, cfg)
-    assert mapping == {"observation.images.cam_2": "observation.images.top"}
-    assert set(skipped) == {"observation.images.cam_0", "observation.images.cam_1"}
+    # cam_0 wins "front" (higher confidence), cam_2 is unique, cam_1 is skipped.
+    assert mapping == {
+        "observation.images.cam_0": "observation.images.front",
+        "observation.images.cam_2": "observation.images.top",
+    }
+    assert set(skipped) == {"observation.images.cam_1"}
+
+
+def test_build_name_mapping_skip_target_taken_by_existing_feature():
+    # A label already used by an untouched feature can't be freed by confidence.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    existing = {"observation.images.cam_0": {}, "observation.images.front": {}}
+    verdicts = [CameraVerdict("observation.images.cam_0", usable=True, view_label="front", confidence=1.0)]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {}
+    assert set(skipped) == {"observation.images.cam_0"}
 
 
 def test_build_name_mapping_error_mode_raises():

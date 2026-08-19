@@ -276,7 +276,8 @@ def build_name_mapping(
         return {}, {}
 
     if cfg.on_collision == "skip":
-        resolved, skipped = _skip_colliding(desired, existing_features)
+        confidence_by_cam = {v.camera_key: v.confidence for v in verdicts}
+        resolved, skipped = _skip_colliding(desired, existing_features, confidence_by_cam)
     else:
         # "error" raises; "suffix" disambiguates every entry.
         resolved = _resolve_rename_collisions(desired, existing_features, cfg.on_collision)
@@ -289,27 +290,51 @@ def build_name_mapping(
 
 
 def _skip_colliding(
-    desired: dict[str, str], existing_features: dict[str, dict]
+    desired: dict[str, str],
+    existing_features: dict[str, dict],
+    confidence_by_cam: dict[str, float | None],
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Keep only cameras whose target is unambiguous; drop the rest.
+    """Resolve label collisions, keeping the most confident contender.
 
-    A target is *contested* when more than one camera wants it, or when it equals
-    an existing feature not being renamed. Every camera pointing at a contested
-    target is skipped (we can't decide which one earns the name); all others are
-    renamed. Returns ``(kept, skipped)`` — ``skipped`` maps old_key → reason.
+    - Unique, unoccupied target → renamed.
+    - Target equal to an existing (untouched) feature → all contenders skipped
+      (the name is already taken; confidence can't free it).
+    - Several cameras wanting the same *new* target → the highest-confidence
+      camera is renamed and the rest are skipped (ties broken by camera key for
+      determinism; a missing confidence ranks lowest).
+
+    Returns ``(kept, skipped)`` — ``skipped`` maps old_key → reason.
     """
     sources = set(desired)
     untouched = set(existing_features) - sources
-    targets = list(desired.values())
-    counts = Counter(targets)
-    contested = {t for t in targets if counts[t] > 1} | (set(targets) & untouched)
 
-    kept = {old: new for old, new in desired.items() if new not in contested}
-    skipped = {
-        old: f"label '{new}' conflicts with another camera or an existing feature"
-        for old, new in desired.items()
-        if new in contested
-    }
+    by_target: dict[str, list[str]] = {}
+    for cam, target in desired.items():
+        by_target.setdefault(target, []).append(cam)
+
+    def _rank(cam: str) -> tuple[float, str]:
+        conf = confidence_by_cam.get(cam)
+        return (conf if conf is not None else -1.0, cam)
+
+    kept: dict[str, str] = {}
+    skipped: dict[str, str] = {}
+    for target, cams in by_target.items():
+        if target in untouched:
+            for cam in cams:
+                skipped[cam] = f"label '{target}' is already an existing feature"
+            continue
+        if len(cams) == 1:
+            kept[cams[0]] = target
+            continue
+        # Contested new label: the most confident camera wins, keeping its rename;
+        # the others are skipped rather than sinking the whole dataset.
+        winner = max(cams, key=_rank)
+        kept[winner] = target
+        for cam in cams:
+            if cam != winner:
+                skipped[cam] = (
+                    f"label '{target}' also chosen by a more confident camera ({winner})"
+                )
     return kept, skipped
 
 
