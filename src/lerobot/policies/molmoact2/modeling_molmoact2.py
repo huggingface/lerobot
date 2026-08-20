@@ -617,6 +617,21 @@ class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | os.PathLike[str],
+        *,
+        strict: bool = True,
+        **kwargs: Any,
+    ) -> MolmoAct2Policy:
+        """Load a LeRobot checkpoint without silently accepting topology changes."""
+        return super().from_pretrained(
+            pretrained_name_or_path,
+            strict=strict,
+            **kwargs,
+        )
+
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
 

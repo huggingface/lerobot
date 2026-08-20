@@ -79,6 +79,7 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
     infer_molmoact2_max_sequence_length,
     make_molmoact2_pre_post_processors,
 )
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -100,6 +101,29 @@ def test_molmoact2_policy_registration():
     assert cfg.get_scheduler_preset().num_decay_steps == 24_000
     assert cfg.action_delta_indices == list(range(cfg.chunk_size))
     assert get_policy_class("molmoact2") is MolmoAct2Policy
+
+
+@pytest.mark.parametrize(("strict", "expected"), [(None, True), (False, False)])
+def test_molmoact2_checkpoint_loading_is_strict_by_default(monkeypatch, strict, expected):
+    calls = []
+
+    def fake_from_pretrained(cls, pretrained_name_or_path, **kwargs):
+        calls.append((cls, pretrained_name_or_path, kwargs))
+        return "loaded"
+
+    monkeypatch.setattr(PreTrainedPolicy, "from_pretrained", classmethod(fake_from_pretrained))
+    kwargs = {} if strict is None else {"strict": strict}
+
+    loaded = MolmoAct2Policy.from_pretrained("/tmp/molmoact2-checkpoint", **kwargs)
+
+    assert loaded == "loaded"
+    assert calls == [
+        (
+            MolmoAct2Policy,
+            "/tmp/molmoact2-checkpoint",
+            {"strict": expected},
+        )
+    ]
 
 
 def test_molmoact2_scheduler_warmup_is_continuous_with_post_warmup_cosine():
