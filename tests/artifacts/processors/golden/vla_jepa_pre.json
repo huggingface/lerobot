@@ -20,6 +20,23 @@
     },
     {
       "config": {
+        "expand_channels": true,
+        "resize_to": null
+      },
+      "registry_name": "vla_jepa_image_prep"
+    },
+    {
+      "config": {
+        "action_names": null,
+        "enabled": false,
+        "exclude_joints": [
+          "gripper"
+        ]
+      },
+      "registry_name": "relative_actions_processor"
+    },
+    {
+      "config": {
         "eps": 1e-08,
         "features": {
           "action": {
@@ -58,7 +75,7 @@
         }
       },
       "registry_name": "normalizer_processor",
-      "state_file": "policy_preprocessor_step_3_normalizer_processor.safetensors"
+      "state_file": "policy_preprocessor_step_5_normalizer_processor.safetensors"
     }
   ]
 }

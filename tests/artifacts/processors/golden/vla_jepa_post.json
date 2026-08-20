@@ -6,10 +6,6 @@
       "registry_name": "vla_jepa_clip_actions"
     },
     {
-      "config": {},
-      "registry_name": "vla_jepa_pre_snap_gripper"
-    },
-    {
       "config": {
         "eps": 1e-08,
         "features": {
@@ -49,11 +45,13 @@
         }
       },
       "registry_name": "unnormalizer_processor",
-      "state_file": "policy_postprocessor_step_2_unnormalizer_processor.safetensors"
+      "state_file": "policy_postprocessor_step_1_unnormalizer_processor.safetensors"
     },
     {
-      "config": {},
-      "registry_name": "vla_jepa_binarize_gripper"
+      "config": {
+        "enabled": false
+      },
+      "registry_name": "absolute_actions_processor"
     },
     {
       "config": {
