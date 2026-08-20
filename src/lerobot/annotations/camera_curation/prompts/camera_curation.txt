@@ -9,9 +9,10 @@ Do two things and return them as one JSON object.
    - it has a genuine capture defect: blurry / out of focus, badly over- or
      under-exposed, static/frozen, corrupted, or otherwise not showing the scene
      clearly; OR
-   - a human is visible in the frame. These are teleoperated recordings and the
-     human operator must never appear — any visible person, human hand, arm, or
-     body part (as opposed to the robot) makes the view unusable.
+   - any human OR human limb is visible in the frame. These are teleoperated
+     recordings and the operator must never appear — a whole person, OR just a
+     human limb (a hand, fingers, or an arm), makes the view unusable, even when
+     only partially in frame. Only the robot manipulator is allowed.
    Otherwise it is usable.
 
    Do NOT mark a view unusable because the robot's own gripper, arm, or
