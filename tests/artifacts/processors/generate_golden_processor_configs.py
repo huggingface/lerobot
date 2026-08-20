@@ -16,11 +16,6 @@
 
 """Pin the serialized shape of every policy's pre/post-processor pipelines.
 
-These fixtures are the reference for the processor refactor that makes the policy config
-authoritative over a checkpoint's saved pipeline (see `tests/policies/test_processor_authority.py`).
-Rebuilding a pipeline from a config must produce the same structure the old deserializing loader
-produced, and that can only be verified against output captured *before* the refactor landed.
-
 Regenerate deliberately, never to make a failing test pass:
 
     uv run python tests/artifacts/processors/generate_golden_processor_configs.py
@@ -28,9 +23,6 @@ Regenerate deliberately, never to make a failing test pass:
 Check the working tree against the committed fixtures (what CI does):
 
     uv run python tests/artifacts/processors/generate_golden_processor_configs.py --check
-
-A policy that cannot be built offline is recorded in `manifest.json` with its reason instead of
-being silently dropped, so the coverage gap stays visible.
 """
 
 from __future__ import annotations
@@ -127,12 +119,7 @@ def _as_serialized(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _generate() -> dict[str, dict[str, Any]]:
-    """Build every known policy. A failure is fatal, including a missing optional dependency.
-
-    Skipping was tempting and wrong: `_write` records only what it built, so regenerating in an
-    environment missing an extra silently drops those policies from `covered` and the fixture set
-    shrinks without anyone noticing. Run this with `--extra all`.
-    """
+    """Build every known policy"""
     return {
         policy_type: _build_configs(policy_type)
         for policy_type in sorted(PreTrainedConfig.get_known_choices())
