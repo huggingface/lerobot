@@ -1,0 +1,78 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "action_horizon": 40,
+        "clip_outliers": true,
+        "embodiment_mapping": {
+          "libero_sim": 2,
+          "new_embodiment": 10,
+          "oxe_droid_relative_eef_relative_joint": 24,
+          "real_g1_relative_eef_relative_joints": 25,
+          "real_r1_pro_sharpa_relative_eef": 26,
+          "real_r1_pro_sharpa_relative_eef_human": 26,
+          "real_r1_pro_sharpa_relative_eef_maxinsights": 26,
+          "real_r1_pro_sharpa_relative_eef_mecka": 26,
+          "simpler_env_google": 0,
+          "simpler_env_widowx": 1,
+          "unitree_g1_full_body_with_waist_height_nav_cmd": 25,
+          "xdof_relative_eef_relative_joint": 27,
+          "xdof_relative_eef_relative_joint_subtask": 27
+        },
+        "embodiment_tag": "new_embodiment",
+        "formalize_language": true,
+        "language_key": "task",
+        "max_action_dim": 132,
+        "max_state_dim": 132,
+        "modality_config": null,
+        "normalize_min_max": true,
+        "raw_stats": null,
+        "state_dropout_prob": 0.0,
+        "state_horizon": 1,
+        "use_percentiles": false,
+        "valid_action_horizon": 40,
+        "video_horizon": null,
+        "video_modality_keys": null
+      },
+      "registry_name": "groot_n1_7_pack_inputs_v1",
+      "state_file": "policy_preprocessor_step_2_groot_n1_7_pack_inputs_v1.safetensors"
+    },
+    {
+      "config": {
+        "crop_fraction": null,
+        "device": "cpu",
+        "image_crop_size": [
+          230,
+          230
+        ],
+        "image_target_size": [
+          256,
+          256
+        ],
+        "letter_box_transform": false,
+        "model_name": "nvidia/Cosmos-Reason2-2B",
+        "shortest_image_edge": null,
+        "use_albumentations": false
+      },
+      "registry_name": "groot_n1_7_vlm_encode_v1"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
