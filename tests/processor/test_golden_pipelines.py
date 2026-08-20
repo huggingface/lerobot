@@ -71,6 +71,7 @@ from generate_golden_processor_configs import (  # noqa: E402
 pytestmark = pytest.mark.all_extras
 
 GOLDEN_DIR = ARTIFACTS_DIR / "golden"
+GENERATOR_PATH = "tests/artifacts/processors/generate_golden_processor_configs.py"
 COVERED = sorted(json.loads((GOLDEN_DIR / "manifest.json").read_text())["covered"])
 
 # `save_pretrained` names each config file after the pipeline, so these are the filenames
@@ -83,8 +84,13 @@ ROLE_FILENAMES = {
 
 def test_the_fixtures_cover_every_known_policy():
     """`covered` must list every policy, so no policy can quietly fall out of the fixture set."""
-    assert sorted(PreTrainedConfig.get_known_choices()) == COVERED, (
-        "the golden fixtures no longer cover every known policy; regenerate them with --extra all"
+    known = set(PreTrainedConfig.get_known_choices())
+    missing = sorted(known - set(COVERED))
+    stale = sorted(set(COVERED) - known)
+    assert not (missing or stale), (
+        f"golden fixtures are out of sync with the policy registry: "
+        f"no fixture for {missing or 'nothing'}, fixture for unknown {stale or 'nothing'}. "
+        f"Regenerate with `uv run python {GENERATOR_PATH}` using --extra all."
     )
 
 
