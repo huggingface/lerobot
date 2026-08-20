@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field
 from threading import Event
@@ -119,6 +120,31 @@ def _resolve_action_key_order(
     return policy_action_names
 
 
+def _align_state_feature_order(
+    observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
+) -> dict[str, type | tuple]:
+    """Order scalar state features to match the checkpoint's joint order."""
+    if not policy_action_names:
+        return observation_features_hw
+
+    scalar_names = [
+        name for name, feature in observation_features_hw.items() if not isinstance(feature, tuple)
+    ]
+    if set(scalar_names) != set(policy_action_names) or scalar_names == policy_action_names:
+        return observation_features_hw
+
+    reordered = {name: observation_features_hw[name] for name in policy_action_names}
+    reordered.update(
+        {name: feature for name, feature in observation_features_hw.items() if name not in reordered}
+    )
+    logger.warning(
+        "Robot state order %s differs from checkpoint joint order %s; reordering state",
+        scalar_names,
+        policy_action_names,
+    )
+    return reordered
+
+
 # ---------------------------------------------------------------------------
 # Sub-contexts
 # ---------------------------------------------------------------------------
@@ -130,6 +156,11 @@ class RuntimeContext:
 
     cfg: RolloutConfig
     shutdown_event: Event
+    # Where the control loop's ``CycleTimer`` sends its cadence summaries; None
+    # leaves them on ``logger.info``.  A strategy declaring ``supports_interactive``
+    # must forward it to the timer it builds in ``run()``, since a session mutes
+    # everything below ERROR.
+    cadence_report: Callable[[str], None] | None = None
 
 
 @dataclass
@@ -350,6 +381,11 @@ def build_rollout_context(
         for k, v in all_obs_features.items()
         if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
     }
+    policy_action_names = getattr(policy_config, "action_feature_names", None)
+    observation_features_hw = _align_state_feature_order(
+        observation_features_hw,
+        list(policy_action_names) if policy_action_names else None,
+    )
     # Keep both joint-position (.pos) and base-velocity (.vel) action features so
     # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
     # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
@@ -373,7 +409,6 @@ def build_rollout_context(
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
     raw_action_keys = list(action_features_hw.keys())
-    policy_action_names = getattr(policy_config, "action_feature_names", None)
     ordered_action_keys = _resolve_action_key_order(
         list(policy_action_names) if policy_action_names else None,
         raw_action_keys,

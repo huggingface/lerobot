@@ -175,9 +175,6 @@ class AddBatchDimensionComplementaryDataStep(ComplementaryDataProcessorStep):
             if isinstance(task_index_value, Tensor) and task_index_value.dim() == 0:
                 complementary_data["task_index"] = task_index_value.unsqueeze(0)
 
-        complementary_data.pop("language_persistent", None)
-        complementary_data.pop("language_events", None)
-
         if "messages" in complementary_data:
             messages = complementary_data["messages"]
             if isinstance(messages, list) and (not messages or isinstance(messages[0], dict)):
