@@ -25,6 +25,7 @@ variants so the broken ones are reproduced rather than merely absent.
 
 from __future__ import annotations
 
+from collections import deque
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
@@ -124,8 +126,13 @@ class _StubRelativePolicy:
     def reset(self):
         pass
 
-    def drop_queued_actions(self):
-        pass
+    # Borrow the real queue accounting rather than restate it: the sync engine keys the
+    # relative-action anchor hold off ``queued_action_count``, so a stub that answered it
+    # by hand could drift from ``PreTrainedPolicy`` and hide a wiring break. This policy
+    # keeps no queue attribute at all, so it reports 0 (fresh prediction every tick).
+    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
+    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
+    queued_action_count = PreTrainedPolicy.queued_action_count
 
     def supports_text_generation(self):
         return False
@@ -388,13 +395,13 @@ def test_sync_anchor_is_pinned_across_a_chunk():
     preprocessor, postprocessor = _make_pipelines()
 
     class _ChunkingPolicy(_StubRelativePolicy):
-        """Serves a 3-step chunk via ``self.predict_action_chunk``, as the probe expects."""
+        """Serves a 3-step chunk out of ``_action_queue``, the deque name the base class reads."""
 
         chunk_len = 3
 
         def __init__(self):
             super().__init__()
-            self._queue: list[torch.Tensor] = []
+            self._action_queue: deque[torch.Tensor] = deque()
             self.predictions = 0
 
         def predict_action_chunk(self, batch, **kwargs):
@@ -404,9 +411,9 @@ def test_sync_anchor_is_pinned_across_a_chunk():
             return row.unsqueeze(1).expand(1, self.chunk_len, self.action_dim)
 
         def select_action(self, batch, **kwargs):
-            if not self._queue:
-                self._queue = list(self.predict_action_chunk(batch).squeeze(0))
-            return self._queue.pop(0).unsqueeze(0)
+            if not self._action_queue:
+                self._action_queue.extend(self.predict_action_chunk(batch).squeeze(0))
+            return self._action_queue.popleft().unsqueeze(0)
 
     policy = _ChunkingPolicy()
     engine = SyncInferenceEngine(
@@ -430,7 +437,7 @@ def test_sync_anchor_is_pinned_across_a_chunk():
         later = engine.get_action(build_dataset_frame(dataset_features, moved, "observation"))
         torch.testing.assert_close(later, first)
 
-    assert policy.predictions == 1, "the chunk probe should have fired exactly once"
+    assert policy.predictions == 1, "the chunk should have been predicted exactly once"
 
     # Tick 4 drains the chunk, so a fresh one is predicted and re-anchors on the current
     # pose: every anchored joint shifts by +5, and the two unanchored grippers do not.
