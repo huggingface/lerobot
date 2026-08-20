@@ -1,0 +1,43 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              24
+            ],
+            "type": "ACTION"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MIN_MAX",
+          "STATE": "MIN_MAX",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "unnormalizer_processor",
+      "state_file": "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "action_dim": 6,
+        "binarize_gripper": false,
+        "gripper_above_threshold_value": -1.0,
+        "gripper_below_threshold_value": 1.0,
+        "gripper_index": 6,
+        "gripper_threshold": 0.5
+      },
+      "registry_name": "evo1_action_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": "float32"
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
