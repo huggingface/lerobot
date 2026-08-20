@@ -1579,20 +1579,59 @@ def test_molmoact2_explicit_norm_stats_path_and_mask(tmp_path):
     assert metadata["action_stats"]["names"] == ["x", "gripper"]
 
 
-def test_molmoact2_norm_stats_path_is_initialization_only(tmp_path):
+def test_molmoact2_norm_stats_path_is_initialization_only(tmp_path, monkeypatch):
     stats_path = tmp_path / "norm_stats.json"
-    stats_path.write_text("{}", encoding="utf-8")
+    stats_path.write_text(
+        json.dumps(
+            {
+                "metadata_by_tag": {
+                    "libero": {
+                        "action_horizon": 10,
+                        "n_action_steps": 8,
+                        "setup_type": "libero",
+                        "control_mode": "absolute",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     checkpoint_path = tmp_path / "checkpoint"
     checkpoint_path.mkdir()
-    config = MolmoAct2Config(norm_tag="libero", norm_stats_path=str(stats_path))
+    config = MolmoAct2Config(
+        device="cpu",
+        checkpoint_path="/tmp/base-hf-checkpoint",
+        norm_tag="libero",
+        norm_stats_path=str(stats_path),
+        train_mode_vlm="fft",
+        input_features={
+            "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+    )
 
+    molmoact2_modeling._apply_norm_tag_metadata(config)
     config._save_pretrained(checkpoint_path)
     stats_path.unlink()
     reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
+    reloaded.pretrained_path = checkpoint_path
+
+    def fail_norm_tag_lookup(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("LeRobot checkpoint construction must not reload norm-tag metadata")
+
+    monkeypatch.setattr(molmoact2_modeling, "_load_hf_norm_metadata_for_tag", fail_norm_tag_lookup)
+    monkeypatch.setattr(MolmoAct2Policy, "_load_hf_model", lambda self: None)
+    policy = MolmoAct2Policy(reloaded)
 
     assert isinstance(reloaded, MolmoAct2Config)
     assert reloaded.norm_stats_path is None
     assert config.norm_stats_path == str(stats_path)
+    assert policy.config.chunk_size == 10
+    assert policy.config.n_action_steps == 8
+    assert policy.config.setup_type == "libero"
+    assert policy.config.control_mode == "absolute"
 
 
 def test_molmoact2_norm_tag_overrides_training_dataset_stats(monkeypatch):

@@ -269,6 +269,11 @@ def _load_hf_norm_metadata_for_tag(
 
 def _apply_norm_tag_metadata(config: MolmoAct2Config) -> None:
     """Populate config fields from the checkpoint's norm-tag metadata."""
+    if config.pretrained_path is not None:
+        # LeRobot checkpoints persist the already-resolved embodiment metadata
+        # and their saved processors own normalization. Reopening one through
+        # policy.path must not consult the original HF/local norm stats source.
+        return
     if not str(config.norm_tag or "").strip():
         return
     metadata = _load_hf_norm_metadata_for_tag(
