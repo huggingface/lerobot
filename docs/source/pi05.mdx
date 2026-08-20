@@ -229,15 +229,17 @@ stops with an explicit error only if the delay stays out of range. The default
 
 The two forms are not interchangeable:
 
-|                                        | `--policy.path`                                | `--policy.pretrained_path`           |
-| -------------------------------------- | ---------------------------------------------- | ------------------------------------ |
-| Loads                                  | weights **and** the checkpoint's `config.json` | weights only                         |
-| Feature names                          | from the checkpoint                            | from your dataset                    |
-| Stored settings, e.g. `n_action_steps` | inherited                                      | reset to the defaults                |
-| `--policy.type`                        | must be omitted                                | required                             |
-| `--rename_map`                         | needed when your camera keys differ            | never — the keys come from your data |
+|                                        | `--policy.path`                                | `--policy.pretrained_path`                |
+| -------------------------------------- | ---------------------------------------------- | ----------------------------------------- |
+| Loads                                  | weights **and** the checkpoint's `config.json` | weights only                              |
+| Feature names                          | from the checkpoint                            | from your dataset, after `--rename_map`   |
+| Stored settings, e.g. `n_action_steps` | inherited                                      | reset to the defaults                     |
+| `--policy.type`                        | must be omitted                                | required                                  |
+| `--rename_map`                         | needed when your camera keys differ            | supported for canonicalizing dataset keys |
 
-Passing a `--rename_map` alongside `--policy.pretrained_path` renames the batch away from those names, and the first batch fails with `All image features are missing from the batch`.
+Use `--rename_map` with either loading form when raw dataset feature names differ from the policy
+feature names. For example, the RoboMME fine-tuning command maps its raw `image`, `wrist_image`,
+`state`, and `actions` columns while initializing weights with `--policy.pretrained_path`.
 
 ### Training Parameters Explained
 
@@ -247,6 +249,84 @@ Passing a `--rename_map` alongside `--policy.pretrained_path` renames the batch 
 | `train_expert_only`     | `false` | Do not freeze the VLM, train all parameters |
 
 **💡 Tip**: Setting `train_expert_only=true` freezes the VLM and trains only the action expert and projections, allowing finetuning with reduced memory usage.
+
+## Short-Horizon Observation Memory (MEM)
+
+Pi05 can optionally use short-horizon visual and proprioceptive context based on
+[MEM](https://arxiv.org/abs/2603.03596). Both paths are disabled by default, so
+existing checkpoints and training commands retain the single-frame Pi05 behavior.
+
+<Tip warning={true}>
+
+This implements MEM's short-horizon memory only — the video encoder of section
+III-C and the proprioceptive projection of section III-D. MEM's long-horizon
+_language_ memory (section III-B), in which a high-level policy predicts the next
+subtask and a compressed natural-language summary of what has happened so far, is
+not implemented. In the paper's ablations, video memory alone recovers only part
+of full MEM's task progress on long-horizon tasks.
+
+Introducing memory when finetuning from a checkpoint that was pretrained without
+it also corresponds to the paper's weaker `MEM-Posttrain-Only` ablation. MEM's
+headline results come from pretraining the video encoder on a diverse mixture of
+robot and non-robot video, which no public Pi05 checkpoint currently provides.
+
+</Tip>
+
+Enable it while finetuning with:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.use_visual_memory=true \
+    --policy.memory_frames=6 \
+    --policy.memory_stride=30 \
+    --policy.memory_temporal_attention_every=4 \
+    ...
+```
+
+`memory_frames` includes the current observation. `memory_stride` is measured in
+**dataset frames**, not seconds, so scale it with your dataset's `fps`: MEM
+pretrains on six observations one second apart, which is `memory_stride=30` for a
+30 fps dataset (the default) but `memory_stride=10` for a 10 fps dataset such as
+`lerobot/robomme`.
+
+Every fourth SigLIP layer replaces its attention with MEM's composed space-time
+attention: causal temporal attention between matching patch tokens, composed with
+the standard spatial attention and reusing the pretrained projections, so no
+learnable parameters are added to the vision tower. Past-frame tokens are dropped
+once the last such layer has run, keeping the downstream language/action prefix
+length unchanged.
+
+Unavailable history at the beginning of an episode is padded and masked. At
+inference, Pi05 maintains the same strided image history internally and clears
+it whenever the policy is reset.
+
+Historical proprioception is an independent option:
+
+```bash
+--policy.use_proprioceptive_memory=true
+```
+
+When enabled, one projected continuous state token is added for each retained
+frame, and the discretized state is removed from the text prompt so the state is
+represented exactly once (MEM section III-D). This changes the prompt format, so
+enable it from the start of training rather than partway through. Visual and
+proprioceptive memory use the same `memory_frames` and `memory_stride` settings,
+but either path can be enabled independently. Train or finetune with the selected
+memory options; enabling them only at inference does not give a single-frame
+checkpoint learned memory behavior.
+
+Under PEFT, `proprio_history_proj` is trained and saved in full via
+`modules_to_save`, since it has no pretrained weights to adapt.
+
+At inference, MEM keeps one batched history queue and assumes every batch row
+shares episode boundaries. `lerobot-eval` satisfies this by calling
+`policy.reset()` before each batched rollout and before resetting the vector
+environment. Independently autoresetting rows in an asynchronous vector batch
+is not supported; start a new rollout so the complete policy and action queues
+are reset together.
 
 ## Relative Actions
 
