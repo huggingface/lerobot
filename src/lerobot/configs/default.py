@@ -119,6 +119,8 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Number of videos to render per task when not recording the eval as a LeRobot dataset.
+    max_episodes_rendered: int = 10
     # `resume` reuses an existing `output_dir`: tasks already recorded in `results.jsonl` are skipped and
     # their metrics are loaded back, so an interrupted multi-task eval (e.g. a full LIBERO suite) can be
     # continued by pointing `--output_dir` at the same directory.
