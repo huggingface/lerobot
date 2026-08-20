@@ -128,7 +128,13 @@ Use `policy.path` when starting from a MolmoAct2 checkpoint that was saved by
 LeRobot, either from a local `pretrained_model` directory or from the Hub. This
 restores the saved LeRobot policy config, model weights, processor, and
 normalization statistics. You can still override training-time options such as
-`batch_size`, `steps`, `policy.train_mode_vlm`, or `policy.action_mode`.
+`batch_size`, `steps`, or `policy.action_mode`. Checkpoint loading is strict and
+preserves the saved FFT or LoRA topology, so do not override
+`policy.train_mode_vlm` when using `policy.path`. To start a new LoRA run,
+initialize from HF weights with `policy.checkpoint_path` instead, for example
+with `--policy.type=molmoact2`,
+`--policy.checkpoint_path=allenai/MolmoAct2`, and
+`--policy.train_mode_vlm=lora`.
 
 ```bash
 accelerate launch \
