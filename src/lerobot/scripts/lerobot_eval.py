@@ -50,8 +50,10 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 """
 
 import concurrent.futures as cf
+import datetime as dt
 import json
 import logging
+import os
 import threading
 import time
 from collections import defaultdict
@@ -786,6 +788,13 @@ def eval_main(cfg: EvalPipelineConfig):
     max_episodes_rendered = 0 if cfg.eval.recording else 10
     videos_dir = None if cfg.eval.recording else Path(cfg.output_dir) / "videos"
 
+    run_meta = {
+        "policy_path": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
+        "env_type": cfg.env.type,
+        "job_name": cfg.job_name,
+        "seed": cfg.seed,
+    }
+
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
@@ -804,6 +813,10 @@ def eval_main(cfg: EvalPipelineConfig):
             env_features=cfg.env.features if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
+            output_dir=Path(cfg.output_dir),
+            resume=cfg.eval.resume,
+            retry_failed=cfg.eval.retry_failed,
+            run_meta=run_meta,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -818,6 +831,10 @@ def eval_main(cfg: EvalPipelineConfig):
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
         json.dump(info, f, indent=2)
+
+    # Save the policy config used for this eval, for easier tracking of experiments.
+    with open(Path(cfg.output_dir) / "policy_config.json", "w") as f:
+        json.dump(asdict(policy.config), f, indent=2, default=str)
 
     logging.info("End of eval")
 
@@ -910,7 +927,7 @@ def run_one(
     This function is intentionally module-level to make it easy to test.
     """
     task_videos_dir = None
-    if videos_dir is not None:
+    if videos_dir is not None and max_episodes_rendered > 0:
         task_videos_dir = videos_dir / f"{task_group}_{task_id}"
         task_videos_dir.mkdir(parents=True, exist_ok=True)
 
@@ -945,6 +962,105 @@ def run_one(
     return task_group, task_id, metrics
 
 
+RESULTS_FILENAME = "results.jsonl"
+MANIFEST_FILENAME = "eval_manifest.json"
+
+
+def _make_result_record(
+    task_group: str,
+    task_id: int,
+    metrics: dict | None,
+    *,
+    status: str = "ok",
+    error: str | None = None,
+    wall_s: float | None = None,
+) -> dict:
+    """Build one durable per-task record for `results.jsonl`."""
+    successes = (metrics or {}).get("successes") or []
+    pc_success = float(np.mean(successes) * 100) if successes else float("nan")
+    return {
+        "task_group": task_group,
+        "task_id": task_id,
+        "status": status,
+        "metrics": metrics,
+        "pc_success": pc_success,
+        "n_episodes": len(successes),
+        "wall_s": wall_s,
+        "error": error,
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _append_result_line(results_path: Path, record: dict) -> None:
+    """Append one record as a JSON line, flushing to disk so a later crash keeps it."""
+    with open(results_path, "a") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _load_result_records(results_path: Path) -> dict[tuple[str, int], dict]:
+    """Read `results.jsonl`, returning the latest record per (task_group, task_id).
+
+    Later lines win, so a task that errored and was retried resolves to its final outcome. Malformed
+    lines (e.g. a torn final line after a hard crash) are skipped.
+    """
+    latest: dict[tuple[str, int], dict] = {}
+    if not results_path.is_file():
+        return latest
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed line in %s", results_path)
+                continue
+            latest[(r["task_group"], r["task_id"])] = r
+    return latest
+
+
+def _write_manifest(
+    manifest_path: Path,
+    tasks: list,
+    n_episodes: int,
+    start_seed: int | None,
+    run_meta: dict | None,
+    resume: bool,
+) -> None:
+    """Write (or, on resume, sanity-check) the manifest describing the full task set of this run."""
+    manifest = {
+        "created_ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "n_tasks": len(tasks),
+        "n_episodes": n_episodes,
+        "start_seed": start_seed,
+        **(run_meta or {}),
+        "tasks": [{"task_group": tg, "task_id": tid} for tg, tid, _ in tasks],
+    }
+    if resume and manifest_path.is_file():
+        try:
+            old = json.loads(manifest_path.read_text())
+            mismatches = [
+                f"{k}: {old.get(k)} -> {manifest.get(k)}"
+                for k in ("n_tasks", "n_episodes", "start_seed")
+                if old.get(k) != manifest.get(k)
+            ]
+            if mismatches:
+                logger.warning(
+                    "Resuming into %s but the run config differs from the original manifest: %s. "
+                    "Completed tasks will still be skipped by (task_group, task_id).",
+                    manifest_path.parent,
+                    "; ".join(mismatches),
+                )
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Could not read existing manifest %s for resume check.", manifest_path)
+        return  # keep the original manifest so the recorded total stays meaningful
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
@@ -963,6 +1079,10 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    output_dir: Path | None = None,
+    resume: bool = False,
+    retry_failed: bool = True,
+    run_meta: dict | None = None,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -970,11 +1090,33 @@ def eval_policy_all(
     accumulates per-group and overall statistics, and returns the same aggregate metrics
     schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
     plus per-task infos.
+
+    If `output_dir` is given, each finished task is appended to `output_dir/results.jsonl` as it
+    completes (crash-safe), and a manifest of all tasks is written. A failing task is recorded and
+    skipped instead of aborting the whole run. With `resume=True`, tasks already recorded in that file
+    are skipped and their metrics loaded back, so an interrupted run can be continued by pointing
+    `--output_dir` at the same directory. `retry_failed` controls whether previously-errored tasks are
+    re-run on resume.
     """
     start_t = time.time()
 
     # Flatten envs into list of (task_group, task_id, env)
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
+
+    # Set up crash-safe persistence.
+    results_path: Path | None = None
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        results_path = output_dir / RESULTS_FILENAME
+        if not resume and results_path.is_file():
+            logger.warning(
+                "%s already exists and resume is off: this run's records will be appended to the "
+                "previous ones. Pass --eval.resume=true to continue that run instead, or point "
+                "--output_dir at a fresh directory.",
+                results_path,
+            )
+        _write_manifest(output_dir / MANIFEST_FILENAME, tasks, n_episodes, start_seed, run_meta, resume)
 
     # accumulators: track metrics at both per-group level and across all groups
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
@@ -1005,6 +1147,52 @@ def eval_policy_all(
                 group_acc[group][key].extend(paths)
                 overall[key].extend(paths)
 
+    # Resume: replay already-recorded tasks into the accumulators and skip re-running them.
+    skip_keys: set[tuple[str, int]] = set()
+    if resume and results_path is not None:
+        for key, record in _load_result_records(results_path).items():
+            status = record.get("status", "ok")
+            keep = status == "ok" or (status == "error" and not retry_failed)
+            if not keep:
+                continue  # errored task we intend to retry -> don't seed, let it run again
+            skip_keys.add(key)
+            metrics = record.get("metrics") or {}
+            _accumulate_to(key[0], metrics)
+            per_task_infos.append({"task_group": key[0], "task_id": key[1], "metrics": metrics})
+
+    # Split tasks into the ones to run now and the ones to skip (closing their envs).
+    run_tasks = []
+    for tg, tid, env in tasks:
+        if (tg, tid) in skip_keys:
+            try:
+                env.close()
+            except Exception:  # noqa: BLE001 - skipped env may be a lazy stub; closing must never abort
+                logger.debug("Ignoring close() failure for skipped task %s/%s", tg, tid, exc_info=True)
+        else:
+            run_tasks.append((tg, tid, env))
+    if skip_keys:
+        logger.info(
+            "Resume: skipping %d already-completed task(s); %d remaining.", len(skip_keys), len(run_tasks)
+        )
+
+    def _consume(
+        task_group: str, task_id: int, metrics: dict | None, wall_s: float, error: str | None
+    ) -> None:
+        """Accumulate one finished task and append its durable record.
+
+        Must be called from the loop's own thread: the accumulators above are not thread-safe.
+        """
+        if error is None:
+            _accumulate_to(task_group, metrics)
+            per_task_infos.append({"task_group": task_group, "task_id": task_id, "metrics": metrics})
+            record = _make_result_record(task_group, task_id, metrics, wall_s=wall_s)
+        else:
+            record = _make_result_record(
+                task_group, task_id, None, status="error", error=error, wall_s=wall_s
+            )
+        if results_path is not None:
+            _append_result_line(results_path, record)
+
     # Choose runner (sequential vs threaded)
     task_runner = partial(
         run_one,
@@ -1024,6 +1212,20 @@ def eval_policy_all(
         recording_private=recording_private,
     )
 
+    def _run_task(task_group: str, task_id: int, env) -> tuple[dict | None, float, str | None]:
+        """Run one task in the calling thread, turning a failure into a recordable outcome.
+
+        Timing happens here rather than around the future so that, with `max_parallel_tasks > 1`,
+        time spent waiting in the executor queue is not attributed to the task.
+        """
+        t0 = time.time()
+        try:
+            _, _, metrics = task_runner(task_group, task_id, env)
+        except Exception as e:  # noqa: BLE001 - one bad task must not discard the whole run
+            logger.exception("Task %s/%s failed", task_group, task_id)
+            return None, time.time() - t0, repr(e)
+        return metrics, time.time() - t0, None
+
     # Set the shared policy's mode before launching any workers. Restoring it
     # inside individual tasks would let one task enable training mode while
     # another task is still evaluating.
@@ -1032,38 +1234,36 @@ def eval_policy_all(
     try:
         if max_parallel_tasks <= 1:
             prefetch_thread: threading.Thread | None = None
-            for i, (task_group, task_id, env) in enumerate(tasks):
+            for i, (task_group, task_id, env) in enumerate(run_tasks):
                 if prefetch_thread is not None:
                     prefetch_thread.join()
                     prefetch_thread = None
 
                 try:
-                    tg, tid, metrics = task_runner(task_group, task_id, env)
-                    _accumulate_to(tg, metrics)
-                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    metrics, wall_s, error = _run_task(task_group, task_id, env)
                 finally:
                     env.close()
                     # Prefetch next task's workers *after* closing current env to prevent
                     # GPU memory overlap between consecutive tasks.
-                    if i + 1 < len(tasks):
-                        next_env = tasks[i + 1][2]
+                    if i + 1 < len(run_tasks):
+                        next_env = run_tasks[i + 1][2]
                         if hasattr(next_env, "_ensure"):
                             prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
                             prefetch_thread.start()
+                _consume(task_group, task_id, metrics, wall_s, error)
         else:
             with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
                 fut2meta = {}
-                for task_group, task_id, env in tasks:
-                    fut = executor.submit(task_runner, task_group, task_id, env)
+                for task_group, task_id, env in run_tasks:
+                    fut = executor.submit(_run_task, task_group, task_id, env)
                     fut2meta[fut] = (task_group, task_id, env)
                 for fut in cf.as_completed(fut2meta):
-                    tg, tid, env = fut2meta[fut]
+                    task_group, task_id, env = fut2meta[fut]
                     try:
-                        tg, tid, metrics = fut.result()
-                        _accumulate_to(tg, metrics)
-                        per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                        metrics, wall_s, error = fut.result()
                     finally:
                         env.close()
+                    _consume(task_group, task_id, metrics, wall_s, error)
     finally:
         policy.train(was_training)
 

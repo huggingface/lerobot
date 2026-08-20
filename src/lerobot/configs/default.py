@@ -119,10 +119,21 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # `resume` reuses an existing `output_dir`: tasks already recorded in `results.jsonl` are skipped and
+    # their metrics are loaded back, so an interrupted multi-task eval (e.g. a full LIBERO suite) can be
+    # continued by pointing `--output_dir` at the same directory.
+    resume: bool = False
+    # When resuming, whether to re-run tasks that previously ended in an error (True) or leave them as
+    # failures (False).
+    retry_failed: bool = True
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.resume and self.recording:
+            # A re-run task would call `LeRobotDataset.create` on a `recordings/` directory that the
+            # interrupted run already made, which raises FileExistsError.
+            raise ValueError("eval.resume is not supported together with eval.recording=true.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
