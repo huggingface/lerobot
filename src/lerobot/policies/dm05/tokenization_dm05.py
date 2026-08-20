@@ -20,7 +20,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
 
 # Legacy OpenDM dataset camera keys used by DM05 prompt rendering.
 OPENDM_CAMERA_LABELS = {
@@ -65,13 +64,10 @@ def get_camera_labels(meta_data: dict | None, num_images: int) -> list[str]:
     return labels
 
 
-def action_to_bin_tokens(
-    action: np.ndarray,
-    n_bins: int = 256,
-) -> list[int]:
+def action_to_bin_tokens(action: torch.Tensor, n_bins: int = 256) -> torch.Tensor:
     """Quantize normalized values into DM05 discrete bin ids."""
-    bins = np.floor(((np.clip(action, -1.0, 1.0) + 1.0) / 2.0) * (n_bins - 1)).astype(int)
-    return np.clip(bins, 0, n_bins - 1).tolist()
+    action = torch.as_tensor(action)
+    return ((((action.clamp(-1.0, 1.0) + 1.0) / 2.0) * (n_bins - 1)).floor()).to(torch.long)
 
 
 def format_embodiment_spec(meta_data: dict) -> str:
@@ -127,12 +123,10 @@ class DM05Tokenization:
     def __init__(
         self,
         processor,
-        n_bins: int = 256,
         max_length: int | None = None,
         add_state: bool = True,
     ):
         self.processor = processor
-        self.n_bins = n_bins
         self.max_length = max_length
         self.add_state = bool(add_state)
 
@@ -140,8 +134,8 @@ class DM05Tokenization:
         self,
         *,
         prompt: str,
-        images: list[Image.Image],
-        state: np.ndarray,
+        images: list[Any],
+        state_bins: list[int] | None,
         meta_data: dict,
         speed_text: str | None,
     ) -> list:
@@ -159,21 +153,18 @@ class DM05Tokenization:
             user_content.extend(({"type": "text", "text": label}, {"type": "image", "image": image}))
 
         if self.add_state:
-            state_for_text = np.asarray(state, dtype=np.float32)
-            if state_for_text.ndim == 0:
-                state_for_text = state_for_text[None]
-            if state_for_text.ndim != 1:
-                raise ValueError(f"state for text must be a 1D vector, got shape={state_for_text.shape}")
+            if state_bins is None:
+                raise ValueError("DM05 state bins are required when add_state=True.")
             if (valid_dim_mask := meta_data.get("valid_dim_mask") if meta_data else None) is not None:
-                mask = np.asarray(valid_dim_mask, dtype=bool).reshape(-1)
-                usable = min(state_for_text.shape[0], mask.shape[0])
-                state_for_text = state_for_text[:usable][mask[:usable]]
-            state_text = " ".join(str(b) for b in action_to_bin_tokens(state_for_text, n_bins=self.n_bins))
+                state_bins = [
+                    value for value, valid in zip(state_bins, valid_dim_mask, strict=False) if valid
+                ]
+            state_text = " ".join(str(value) for value in state_bins)
             user_content.append({"type": "text", "text": "States: " + state_text})
         return user_content
 
     def tokenize_robot_batch(self, samples: list[dict]) -> dict[str, torch.Tensor]:
-        """Render flow-matching inputs as one processor batch on CPU.
+        """Render flow-matching inputs as one processor batch.
 
         DM05's LeRobot training objective has no autoregressive token loss.  Use the
         same generation prompt as inference instead of appending discrete action text
@@ -186,7 +177,7 @@ class DM05Tokenization:
             user_content = self._build_user_content(
                 prompt=sample["prompt"],
                 images=sample["images"],
-                state=sample["state"],
+                state_bins=sample.get("state_bins"),
                 meta_data=meta_data,
                 speed_text=format_speed_value(meta_data.get("speed")),
             )
@@ -198,7 +189,7 @@ class DM05Tokenization:
             return_dict=True,
             return_tensors="pt",
             add_generation_prompt=True,
-            processor_kwargs={"padding": True, "padding_side": "right"},
+            processor_kwargs={"padding": True, "padding_side": "right", "do_rescale": False},
         )
         if self.max_length is not None and inputs["input_ids"].shape[1] > self.max_length:
             lengths = inputs["attention_mask"].sum(dim=1)

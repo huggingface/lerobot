@@ -119,8 +119,6 @@ def dm05_prepare_stats_command(config: DM05Config, dataset_meta: Any | None = No
             f"--drop-n-last-frames={config.drop_n_last_frames}",
         ]
     )
-    if config.use_relative_actions:
-        command.append("--use-relative-actions")
-        command.append("--relative-exclude-joints")
-        command.extend(config.relative_exclude_joints)
+    command.append("--relative-exclude-joints")
+    command.extend(config.relative_exclude_joints)
     return shlex.join(command)
