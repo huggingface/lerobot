@@ -647,24 +647,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             self._apply_lora_adapters()
         self._apply_compile()
         self.init_rtc_processor()
-        self._route_pretrained_processors_through_molmoact2_factory()
-
-    def _route_pretrained_processors_through_molmoact2_factory(self) -> None:
-        """Keep LeRobot processor loading policy-local for MolmoAct2 checkpoints.
-
-        The generic pretrained-processor path applies overrides under the standard
-        ``normalizer_processor`` and ``unnormalizer_processor`` registry names.
-        MolmoAct2 deliberately saves mask-aware normalization steps under distinct
-        registry names, so those generic overrides cannot be applied to a saved
-        MolmoAct2 pipeline. Preserve the processor source privately and clear the
-        public pretrained path after model loading; the MolmoAct2 processor factory
-        then reloads the saved pipelines with their policy-specific override keys.
-        """
-        processor_pretrained_path = getattr(self.config, "pretrained_path", None)
-        if processor_pretrained_path is None:
-            return
-        self.config._molmoact2_processor_pretrained_path = processor_pretrained_path
-        self.config.pretrained_path = None
 
     def _load_hf_model(self) -> None:
         require_package("transformers", extra="molmoact2")

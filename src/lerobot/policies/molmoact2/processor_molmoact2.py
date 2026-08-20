@@ -47,7 +47,9 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
+    batch_to_transition,
     policy_action_to_transition,
+    transition_to_batch,
     transition_to_policy_action,
 )
 from lerobot.utils.constants import (
@@ -1156,6 +1158,71 @@ class MolmoAct2ClampActionProcessorStep(ProcessorStep):
         return features
 
 
+def _translate_pretrained_processor_overrides(
+    overrides: dict[str, dict[str, Any]] | None,
+    *,
+    standard_name: str,
+    molmoact2_name: str,
+) -> dict[str, dict[str, Any]]:
+    """Translate LeRobot's standard normalization override to the masked step."""
+    translated = {name: dict(values) for name, values in (overrides or {}).items()}
+    standard_override = translated.pop(standard_name, None)
+    if standard_override is not None:
+        translated[molmoact2_name] = {
+            **standard_override,
+            **translated.get(molmoact2_name, {}),
+        }
+    return translated
+
+
+def make_molmoact2_pre_post_processors_from_pretrained(
+    config: MolmoAct2Config,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    preprocessor_overrides: dict[str, dict[str, Any]] | None = None,
+    postprocessor_overrides: dict[str, dict[str, Any]] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load saved MolmoAct2 pipelines with LeRobot's runtime overrides.
+
+    LeRobot entry points use the standard normalizer registry names when
+    overriding the device, rename map, feature schema, and fine-tuning dataset
+    statistics. MolmoAct2 uses mask-aware normalization steps, so translate only
+    those two names and preserve every other generic override unchanged.
+    """
+    del config
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=preprocessor_config_filename,
+        overrides=_translate_pretrained_processor_overrides(
+            preprocessor_overrides,
+            standard_name="normalizer_processor",
+            molmoact2_name="molmoact2_masked_normalizer",
+        ),
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+        revision=revision,
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=postprocessor_config_filename,
+        overrides=_translate_pretrained_processor_overrides(
+            postprocessor_overrides,
+            standard_name="unnormalizer_processor",
+            molmoact2_name="molmoact2_masked_unnormalizer",
+        ),
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+        revision=revision,
+    )
+    return preprocessor, postprocessor
+
+
 def make_molmoact2_pre_post_processors(
     config: MolmoAct2Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -1164,35 +1231,6 @@ def make_molmoact2_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    processor_pretrained_path = getattr(config, "_molmoact2_processor_pretrained_path", None)
-    if processor_pretrained_path is not None:
-        preprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=processor_pretrained_path,
-            config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
-            overrides={
-                "device_processor": {"device": config.device},
-                "molmoact2_masked_normalizer": {
-                    "features": {**config.input_features, **config.output_features},
-                    "norm_map": config.normalization_mapping,
-                },
-            },
-            revision=config.pretrained_revision,
-        )
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_model_name_or_path=processor_pretrained_path,
-            config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
-            overrides={
-                "molmoact2_masked_unnormalizer": {
-                    "features": config.output_features,
-                    "norm_map": config.normalization_mapping,
-                },
-            },
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-            revision=config.pretrained_revision,
-        )
-        return preprocessor, postprocessor
-
     env_action_dim = None
     if config.output_features and ACTION in config.output_features:
         env_action_dim = int(config.output_features[ACTION].shape[0])

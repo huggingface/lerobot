@@ -36,7 +36,7 @@ pytest.importorskip("scipy")
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.optim import load_optimizer_state, save_optimizer_state
-from lerobot.policies import get_policy_class, make_policy_config
+from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.molmoact2 import (
     modeling_molmoact2 as molmoact2_modeling,
     processor_molmoact2 as molmoact2_processor,
@@ -190,18 +190,7 @@ def test_molmoact2_scheduler_checkpoint_resume_matches_uninterrupted_updates():
         assert torch.equal(full_state[name], resumed_state[name])
 
 
-def test_lerobot_checkpoint_routes_processors_through_molmoact2_factory():
-    policy = object.__new__(MolmoAct2Policy)
-    torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(pretrained_path="/tmp/molmoact2-checkpoint")
-
-    policy._route_pretrained_processors_through_molmoact2_factory()
-
-    assert policy.config.pretrained_path is None
-    assert policy.config._molmoact2_processor_pretrained_path == "/tmp/molmoact2-checkpoint"
-
-
-def test_pretrained_molmoact2_processors_use_masked_override_keys(monkeypatch):
+def test_pretrained_molmoact2_processors_translate_standard_overrides(monkeypatch):
     calls = []
     preprocessor = object()
     postprocessor = object()
@@ -218,19 +207,41 @@ def test_pretrained_molmoact2_processors_use_masked_override_keys(monkeypatch):
         "from_pretrained",
         classmethod(fake_from_pretrained),
     )
-    config = MolmoAct2Config(device="cuda")
-    config._molmoact2_processor_pretrained_path = "/tmp/molmoact2-checkpoint"
-
-    loaded_preprocessor, loaded_postprocessor = make_molmoact2_pre_post_processors(config)
+    config = MolmoAct2Config(device="cuda", pretrained_path="/tmp/molmoact2-checkpoint")
+    dataset_stats = {ACTION: {"q01": [-1.0], "q99": [1.0]}}
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=str(config.pretrained_path),
+        preprocessor_overrides={
+            "device_processor": {"device": "cuda"},
+            "rename_observations_processor": {"rename_map": {"camera": "observation.images.top"}},
+            "normalizer_processor": {
+                "features": {"observation.state": "state-feature"},
+                "norm_map": {"STATE": NormalizationMode.QUANTILES},
+                "stats": dataset_stats,
+            },
+        },
+        postprocessor_overrides={
+            "unnormalizer_processor": {
+                "features": {"action": "action-feature"},
+                "norm_map": {"ACTION": NormalizationMode.QUANTILES},
+                "stats": dataset_stats,
+            }
+        },
+    )
 
     assert loaded_preprocessor is preprocessor
     assert loaded_postprocessor is postprocessor
     assert calls[0]["pretrained_model_name_or_path"] == "/tmp/molmoact2-checkpoint"
     assert set(calls[0]["overrides"]) == {
         "device_processor",
+        "rename_observations_processor",
         "molmoact2_masked_normalizer",
     }
     assert set(calls[1]["overrides"]) == {"molmoact2_masked_unnormalizer"}
+    assert calls[0]["overrides"]["molmoact2_masked_normalizer"]["stats"] is dataset_stats
+    assert calls[1]["overrides"]["molmoact2_masked_unnormalizer"]["stats"] is dataset_stats
+    assert config.pretrained_path == "/tmp/molmoact2-checkpoint"
 
 
 def test_molmoact2_optimizer_preset_uses_component_clipping():
