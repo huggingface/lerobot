@@ -24,7 +24,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from PIL import Image
 from safetensors.torch import load_file
 
 pytest.importorskip("transformers")
@@ -32,8 +31,11 @@ pytest.importorskip("transformers")
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
-from lerobot.policies.dm05.constants import ACTION_REFERENCE_OFFSET
-from lerobot.policies.dm05.conversion_dm05 import DM05LerobotBatchConverter
+from lerobot.policies.dm05.constants import ACTION_REFERENCE_OFFSET, STATE_BINS
+from lerobot.policies.dm05.conversion_dm05 import (
+    DM05ProcessorArtifactsStep,
+    DM05StateBinsProcessorStep,
+)
 from lerobot.policies.dm05.modeling_dm05 import DM05Policy, prepare_compiled_suffix_inputs
 from lerobot.policies.dm05.modeling_dm05_core import (
     DM05CoreModelConfig,
@@ -62,17 +64,6 @@ from lerobot.utils.constants import (
 )
 
 
-class _FakeTokenizer:
-    def tokenize_robot_batch(self, samples):
-        batch_size = len(samples)
-        return {
-            "input_ids": torch.ones(batch_size, 1, dtype=torch.long),
-            "attention_mask": torch.ones(batch_size, 1, dtype=torch.long),
-            "token_type_ids": torch.zeros(batch_size, 1, dtype=torch.long),
-            "pixel_values": torch.zeros(batch_size, 3, 2, 2),
-        }
-
-
 class _FakeProcessor:
     pass
 
@@ -94,19 +85,6 @@ def _dm05_config(**kwargs) -> DM05Config:
         ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,)),
     }
     return config
-
-
-def _convert(
-    config: DM05Config,
-    batch: dict,
-    include_actions: bool = True,
-) -> dict:
-    converter = DM05LerobotBatchConverter(
-        config=config,
-        tokenization_cls=lambda **_: _FakeTokenizer(),
-        processor=_FakeProcessor(),
-    )
-    return converter.convert_lerobot_batch(batch, include_actions=include_actions)
 
 
 def _tiny_core_config() -> DM05CoreModelConfig:
@@ -247,6 +225,8 @@ def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
     for invalid_steps in (0, -1):
         with pytest.raises(ValueError, match="diffusion_steps must be positive"):
             DM05Config(diffusion_steps=invalid_steps)
+    with pytest.raises(ValueError, match="exactly 256 state bins"):
+        DM05Config(n_bins=128)
 
     relative_config = _dm05_config(use_relative_actions=True)
     relative_config.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
@@ -267,7 +247,7 @@ def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
     assert not {"norm_stats_sample_size", "norm_stats_sample_seed"} & saved_config.keys()
 
 
-def test_dm05_explicit_stats_preparation_uses_training_chunks(tmp_path):
+def test_dm05_relative_stats_preparation_uses_training_chunks(tmp_path):
     states = np.asarray([[10 * i, 100 + i, 1000 + i] for i in range(6)], dtype=np.float32)
     actions = np.asarray([[10 * i + 1, 200 + i, 2000 + i] for i in range(6)], dtype=np.float32)
 
@@ -301,31 +281,26 @@ def test_dm05_explicit_stats_preparation_uses_training_chunks(tmp_path):
 
     dataset = NumericDataset()
     meta = dataset.meta
-    config = _dm05_config()
+    processor_path = tmp_path / "processor"
+    _save_tiny_real_processor(processor_path)
+    config = _dm05_config(processor_name_or_path=str(processor_path))
     config.set_dataset_feature_metadata(meta.features)
     assert config.action_feature_names == ["joint", "gripper", "tool"]
 
     meta.repo_id = "local/numeric"
     meta.root = tmp_path
     config._runtime_dataset_meta = meta
-    with pytest.raises(ValueError, match=r"prepare_stats_dm05.*--root=.*--chunk-size=2"):
+    with pytest.raises(ValueError, match="standard LeRobot dataset statistics"):
         make_dm05_pre_post_processors(config, None)
 
-    meta.stats = compute_dm05_stats(config, dataset, sample_size=6)
-    absolute_action_stats = meta.stats[ACTION]
-    flat_indices = np.asarray([0, 1, 1, 2, 3, 4, 4, 5])
-    np.testing.assert_array_equal(meta.stats[OBS_STATE]["count"], [4])
-    np.testing.assert_array_equal(meta.stats[ACTION]["count"], [8])
-    np.testing.assert_allclose(
-        meta.stats[ACTION]["q01"],
-        np.quantile(actions[flat_indices], 0.01, axis=0),
-        rtol=0,
-        atol=1e-5,
-    )
+    with pytest.raises(ValueError, match="standard LeRobot dataset stats"):
+        compute_dm05_stats(config, dataset, sample_size=6)
 
-    meta.stats = None
+    flat_indices = np.asarray([0, 1, 1, 2, 3, 4, 4, 5])
     config.use_relative_actions = True
     meta.stats = compute_dm05_stats(config, dataset, sample_size=6)
+    np.testing.assert_array_equal(meta.stats[OBS_STATE]["count"], [4])
+    np.testing.assert_array_equal(meta.stats[ACTION]["count"], [8])
     owner_frames = np.asarray([0, 0, 1, 1, 3, 3, 4, 4])
     expected_relative = actions[flat_indices].copy()
     expected_relative[:, [0, 2]] -= states[owner_frames][:, [0, 2]]
@@ -346,12 +321,11 @@ def test_dm05_explicit_stats_preparation_uses_training_chunks(tmp_path):
     }
     with pytest.raises(ValueError, match="non-degenerate.*invalid indices: \\[0\\]"):
         make_dm05_pre_post_processors(config, invalid_relative_stats)
-    meta.stats = {ACTION: absolute_action_stats}
+    meta.stats = {ACTION: {"q01": [0.0] * 3, "q99": [1.0] * 3}}
     with pytest.raises(ValueError, match="--force"):
         compute_dm05_stats(config, dataset, sample_size=6)
 
     meta.stats = None
-    config.use_relative_actions = False
     stats_path, changed = prepare_dm05_stats(config, dataset)
     assert changed is True
     assert stats_path == tmp_path / "meta/stats.json"
@@ -373,10 +347,9 @@ def test_dm05_explicit_stats_preparation_uses_training_chunks(tmp_path):
 def test_dm05_tokenization_builds_opendm_style_user_content_without_random_branches():
     tokenization = DM05Tokenization(
         processor=_FakeProcessor(),
-        n_bins=256,
         add_state=False,
     )
-    images = [Image.new("RGB", (1, 1)), Image.new("RGB", (1, 1))]
+    images = [torch.zeros(3, 1, 1), torch.ones(3, 1, 1)]
     meta = {
         "robot_type": "franka",
         "control_mode": "relative",
@@ -386,7 +359,7 @@ def test_dm05_tokenization_builds_opendm_style_user_content_without_random_branc
     user_content = tokenization._build_user_content(
         prompt="Pick up the mug",
         images=images,
-        state=np.array([-1.0, 1.0], dtype=np.float32),
+        state_bins=None,
         meta_data=meta,
         speed_text="0.5",
     )
@@ -399,11 +372,11 @@ def test_dm05_tokenization_builds_opendm_style_user_content_without_random_branc
     assert user_content[3]["type"] == "image"
     assert all("State:" not in item.get("text", "") for item in user_content)
 
-    state_tokenization = DM05Tokenization(processor=_FakeProcessor(), n_bins=256, add_state=True)
+    state_tokenization = DM05Tokenization(processor=_FakeProcessor(), add_state=True)
     state_content = state_tokenization._build_user_content(
         prompt="Pick up the mug",
         images=[images[0]],
-        state=np.array([-1.0, 1.0], dtype=np.float32),
+        state_bins=[0, 255],
         meta_data={"dataset_meta": {"image_keys": ["images_1"]}},
         speed_text=None,
     )
@@ -413,7 +386,12 @@ def test_dm05_tokenization_builds_opendm_style_user_content_without_random_branc
 
 
 def test_dm05_processors_roundtrip(tmp_path):
-    config = _dm05_config(use_relative_actions=False)
+    processor_path = tmp_path / "source_processor"
+    _save_tiny_real_processor(processor_path)
+    config = _dm05_config(
+        use_relative_actions=False,
+        processor_name_or_path=str(processor_path),
+    )
     config.action_feature_names = ["joint_0", "joint_1", "gripper"]
     stats = {
         OBS_STATE: {"q01": [-10.0] * 3, "q99": [10.0] * 3},
@@ -431,17 +409,29 @@ def test_dm05_processors_roundtrip(tmp_path):
         "policy_postprocessor_step_1_unnormalizer_processor.safetensors",
     }
     assert not list(tmp_path.glob("*dm05*normalizer*.safetensors"))
+    assert (tmp_path / "dm05_processor" / "processor_config.json").exists()
+    assert [type(step).__name__ for step in loaded_preprocessor.steps[5:]] == [
+        "NormalizerProcessorStep",
+        "DM05ActionReferenceExtractProcessorStep",
+        "DM05StateBinsProcessorStep",
+        "DeviceProcessorStep",
+        "DM05ProcessorArtifactsStep",
+    ]
 
     default_processed = loaded_preprocessor(
         {
             OBS_STATE: torch.tensor([1.0, 2.0, 3.0]),
             ACTION: torch.tensor([[4.0, 5.0, 6.0]]),
-            "observation.images.front": torch.zeros(3, 2, 2),
+            "observation.images.front": torch.zeros(3, 16, 16),
         }
     )
 
     assert default_processed["task"] == "Execute the robot action."
     assert ACTION_REFERENCE_OFFSET in default_processed
+    assert default_processed["observation.images.front"].device.type == "cpu"
+    assert default_processed[STATE_BINS] == [[140, 153, 165]]
+    assert any(isinstance(step, DM05StateBinsProcessorStep) for step in loaded_preprocessor.steps)
+    assert any(isinstance(step, DM05ProcessorArtifactsStep) for step in loaded_preprocessor.steps)
     relative_step = next(
         step for step in loaded_preprocessor.steps if isinstance(step, RelativeActionsProcessorStep)
     )
@@ -490,11 +480,11 @@ def test_dm05_processors_roundtrip(tmp_path):
         {
             OBS_STATE: torch.zeros(3),
             ACTION: torch.zeros(1, 3),
-            "observation.images.camera": Image.new("RGB", (2, 2)),
+            "observation.images.camera": torch.zeros(3, 16, 16),
         }
     )
     assert "observation.images.front" in renamed
-    assert isinstance(renamed["observation.images.front"][0], Image.Image)
+    assert torch.is_tensor(renamed["observation.images.front"])
 
     def prepare_policy_batch(policy_config, processed):
         policy = object.__new__(DM05Policy)
@@ -505,18 +495,22 @@ def test_dm05_processors_roundtrip(tmp_path):
     outlier = {
         OBS_STATE: torch.zeros(3),
         ACTION: torch.tensor([[20.0, 0.0, 0.0]]),
-        "observation.images.front": torch.zeros(3, 2, 2),
+        "observation.images.front": torch.zeros(3, 16, 16),
     }
     clipped = prepare_policy_batch(config, loaded_preprocessor(outlier.copy()))
-    unclipped_config = _dm05_config(use_relative_actions=False, norm_clip=False)
+    unclipped_config = _dm05_config(
+        use_relative_actions=False,
+        norm_clip=False,
+        processor_name_or_path=str(processor_path),
+    )
     unclipped_preprocessor, _ = make_dm05_pre_post_processors(unclipped_config, stats)
     unclipped = prepare_policy_batch(unclipped_config, unclipped_preprocessor(outlier.copy()))
     assert clipped[ACTION][0, 0] == 1
     assert unclipped[ACTION][0, 0] > 1
 
-    # Absolute actions do not require state/action dimensions to match, and PIL
-    # observations bypass identity visual normalization.
+    # Absolute actions do not require state/action dimensions to match.
     asymmetric_config = _dm05_config()
+    asymmetric_config.processor_name_or_path = str(processor_path)
     asymmetric_config.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(2,))
     asymmetric_stats = {
         OBS_STATE: {"q01": [-1.0] * 2, "q99": [1.0] * 2},
@@ -527,15 +521,20 @@ def test_dm05_processors_roundtrip(tmp_path):
         {
             OBS_STATE: torch.zeros(2),
             ACTION: torch.zeros(3),
-            "observation.images.front": Image.new("RGB", (2, 2)),
+            "observation.images.front": torch.zeros(3, 16, 16),
         }
     )
     assert ACTION_REFERENCE_OFFSET not in asymmetric
-    assert isinstance(asymmetric["observation.images.front"][0], Image.Image)
+    assert asymmetric["observation.images.front"].shape[-2:] == (16, 16)
 
 
-def test_dm05_relative_actions_use_generation_state_for_training_and_inference():
-    config = _dm05_config(use_relative_actions=True)
+def test_dm05_relative_actions_use_generation_state_for_training_and_inference(tmp_path):
+    processor_path = tmp_path / "processor"
+    _save_tiny_real_processor(processor_path)
+    config = _dm05_config(
+        use_relative_actions=True,
+        processor_name_or_path=str(processor_path),
+    )
     config.action_feature_names = ["joint_0", "joint_1", "gripper"]
     stats = {
         OBS_STATE: {"q01": [-100.0] * 3, "q99": [100.0] * 3},
@@ -566,7 +565,8 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference()
     }
     policy.reset()
 
-    generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0])})
+    observation = {"observation.images.front": torch.zeros(3, 16, 16)}
+    generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0]), **observation})
     direct_chunk = policy.predict_action_chunk(generation_batch)
     torch.testing.assert_close(
         postprocessor(direct_chunk),
@@ -576,10 +576,10 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference()
     )
 
     policy.reset()
-    generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0])})
+    generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0]), **observation})
     first = policy.select_action(generation_batch)
     first = postprocessor(first)
-    current_batch = preprocessor({OBS_STATE: torch.tensor([100.0, 200.0, 300.0])})
+    current_batch = preprocessor({OBS_STATE: torch.tensor([100.0, 200.0, 300.0]), **observation})
     second = policy.select_action(current_batch)
     second = postprocessor(second)
 
@@ -642,7 +642,6 @@ def test_dm05_action_dim_mask_and_fixed_noise_cover_training_and_inference():
         prepare_compiled_suffix_inputs(
             SimpleNamespace(compile_suffix_pad_length=None),
             model,
-            None,
             {"input_ids": common["input_ids"], "prefill_actions": torch.zeros(1, 2, 4)},
             dtype=torch.float32,
         )
@@ -738,7 +737,7 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     config = _dm05_config(
         core_config=core_config.to_dict(),
         pretrained_name_or_path=".",
-        processor_name_or_path=".",
+        processor_name_or_path=str(processor_path),
         dtype="float32",
         use_relative_actions=True,
         vlm_gradient_checkpointing=False,
@@ -797,15 +796,15 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     saved_config = json.loads((checkpoint / "config.json").read_text())
     torch.testing.assert_close(saved_state_dict, expected_state_dict)
     assert saved_config["pretrained_name_or_path"] == "."
-    assert saved_config["processor_name_or_path"] == "."
+    assert saved_config["processor_name_or_path"] is None
     assert saved_config["core_config"]["model_type"] == "dexbotic_dm05"
     assert saved_config["core_config"]["_name_or_path"] == "."
     assert PreTrainedConfig.from_pretrained(checkpoint).type == "dm05"
 
     sample = {
         "prompt": "pick",
-        "images": [Image.new("RGB", (16, 16), color="white")],
-        "state": np.zeros(4, dtype=np.float32),
+        "images": [torch.ones(3, 16, 16)],
+        "state_bins": None,
         "meta_data": {},
     }
     before = DM05Tokenization(original_processor, add_state=False).tokenize_robot_batch([sample])
@@ -817,15 +816,28 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     snapshot = cache_dir / "models--org--tiny-dm05" / "snapshots" / ("a" * 40)
 
     class FakeHubApi:
+        def __init__(self, **_kwargs):
+            pass
+
         def create_repo(self, repo_id, **kwargs):
             assert repo_id == "org/tiny-dm05"
             return SimpleNamespace(repo_id=repo_id)
 
         def upload_folder(self, *, folder_path, allow_patterns, **kwargs):
             snapshot.mkdir(parents=True, exist_ok=True)
-            for source_file in Path(folder_path).iterdir():
-                if any(fnmatch.fnmatch(source_file.name, pattern) for pattern in allow_patterns):
-                    shutil.copy2(source_file, snapshot / source_file.name)
+            patterns = allow_patterns or ["**"]
+            for source_file in Path(folder_path).rglob("*"):
+                if not source_file.is_file():
+                    continue
+                relative_path = source_file.relative_to(folder_path)
+                if any(
+                    fnmatch.fnmatch(relative_path.as_posix(), pattern)
+                    or fnmatch.fnmatch(source_file.name, pattern)
+                    for pattern in patterns
+                ):
+                    destination = snapshot / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_file, destination)
             refs = snapshot.parents[1] / "refs"
             refs.mkdir(exist_ok=True)
             (refs / "main").write_text("a" * 40)
@@ -851,12 +863,11 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
 
     policy.config.repo_id = "org/tiny-dm05"
     monkeypatch.setattr("lerobot.common.train_utils.HfApi", FakeHubApi)
+    monkeypatch.setattr("lerobot.utils.hub.HfApi", FakeHubApi)
     monkeypatch.setattr("lerobot.common.train_utils.generate_model_card", lambda *args, **kwargs: FakeCard())
     monkeypatch.setattr(policy, "push_to_hub", fake_model_push_to_hub)
-    publish_trained_model(FakeTrainConfig(), policy, None, None, None)
-    assert (snapshot / "chat_template.jinja").exists()
-    assert "chat_template" in json.loads((snapshot / "tokenizer_config.json").read_text())
-    assert "chat_template" not in json.loads((snapshot / "processor_config.json").read_text())
+    publish_trained_model(FakeTrainConfig(), policy, preprocessor, postprocessor, None)
+    assert (snapshot / "dm05_processor" / "chat_template.jinja").exists()
     hub_reloaded = DM05Policy.from_pretrained(
         "org/tiny-dm05",
         cache_dir=cache_dir,
@@ -864,13 +875,24 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
         strict=True,
     )
     torch.testing.assert_close(hub_reloaded.state_dict(), policy.state_dict())
+    hub_preprocessor, _ = make_pre_post_processors(hub_reloaded.config, pretrained_path=snapshot)
+    assert any(isinstance(step, DM05ProcessorArtifactsStep) for step in hub_preprocessor.steps)
     hub_tokens = DM05Tokenization(hub_reloaded.processor, add_state=False).tokenize_robot_batch([sample])
     torch.testing.assert_close(hub_tokens, before)
 
     monkeypatch.chdir(checkpoint.parent)
     reloaded = DM05Policy.from_pretrained(checkpoint.name, strict=True)
-    assert not hasattr(reloaded, "_action_codec")
+    assert hasattr(reloaded, "processor")
     torch.testing.assert_close(reloaded.state_dict(), gathered_state_dict)
+
+    no_state_config = PreTrainedConfig.from_pretrained(checkpoint.name)
+    no_state_config.add_state = False
+    no_state_config.image_keys = ["observation.images.front"]
+    no_state_config.tokenizer_max_length = 64
+    no_state_policy = DM05Policy.from_pretrained(checkpoint.name, config=no_state_config, strict=True)
+    assert no_state_policy._batch_converter._tokenization.add_state is False
+    assert no_state_policy._batch_converter._tokenization.max_length == 64
+    assert no_state_policy._batch_converter.config.image_keys == ["observation.images.front"]
 
     resumed_preprocessor, _ = make_pre_post_processors(reloaded.config, pretrained_path=checkpoint.name)
     resumed_normalizer = next(
@@ -991,14 +1013,35 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
 
 def test_dm05_padding_mask_excludes_fabricated_targets_and_preserves_sample_weighting():
     batch = {
-        OBS_STATE: torch.tensor([[1.0, 2.0, 3.0]]),
+        "input_ids": torch.ones(1, 1, dtype=torch.long),
+        "attention_mask": torch.ones(1, 1, dtype=torch.long),
+        "token_type_ids": torch.zeros(1, 1, dtype=torch.long),
+        "pixel_values": torch.zeros(1, 3, 2, 2),
         ACTION: torch.tensor([[[4.0, 5.0, 6.0], [40.0, 50.0, 60.0]]]),
         "action_is_pad": torch.tensor([[False, True]]),
-        "observation.images.front": torch.zeros(1, 3, 2, 2),
     }
-    converted = _convert(_dm05_config(), batch)
+
+    class _ShapeOnlyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+            self.config = SimpleNamespace(action_dim=32)
+
+    policy = object.__new__(DM05Policy)
+    torch.nn.Module.__init__(policy)
+    policy.config = _dm05_config()
+    policy.model = _ShapeOnlyModel()
+    policy._batch_converter = SimpleNamespace(
+        convert_lerobot_batch=lambda values: {
+            key: values[key] for key in ("input_ids", "attention_mask", "token_type_ids", "pixel_values")
+        }
+    )
+    converted = policy._prepare_model_inputs(batch, include_actions=True)
 
     assert torch.equal(converted["action_is_pad"], torch.tensor([[False, True]]))
+    assert converted["actions"].shape == (1, 2, 32)
+    assert torch.equal(converted["action_dim_mask"][0, :3], torch.ones(3, dtype=torch.bool))
+    assert not converted["action_dim_mask"][0, 3:].any()
 
     prediction = torch.zeros(1, 2, 3)
     target = torch.tensor([[[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]])
