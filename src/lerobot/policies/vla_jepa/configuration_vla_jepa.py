@@ -200,14 +200,13 @@ class VLAJEPAConfig(PreTrainedConfig):
 
         `input_features` keeps the *pretrained* feature keys (rename_map needs them), so
         `validate_features` would otherwise read stale dims off a pretrained config. Called by
-        `make_policy` before the model and processor pipeline are built. Also adds
-        `observation.state` to `input_features` if missing, so it gets normalized.
+        `make_policy` before the model and processor pipeline are built. Also writes
+        `observation.state` into `input_features` so it gets normalized.
         """
         if OBS_STATE in dataset_features:
-            self.state_dim = dataset_features[OBS_STATE]["shape"][0]
-            if OBS_STATE not in self.input_features:
-                shape = tuple(dataset_features[OBS_STATE]["shape"])
-                self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
+            shape = tuple(dataset_features[OBS_STATE]["shape"])
+            self.state_dim = shape[0]
+            self.input_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=shape)
         if ACTION in dataset_features:
             self.action_dim = dataset_features[ACTION]["shape"][0]
             names = dataset_features[ACTION].get("names")
