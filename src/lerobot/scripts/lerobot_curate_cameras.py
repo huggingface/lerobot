@@ -77,13 +77,26 @@ def _write_and_echo_report(report: dict, cfg: CameraCurationConfig, default_name
     return out
 
 
-def _uniform_indices(n: int, k: int) -> list[int]:
+# Sample frames from the central portion of the episode, skipping the
+# unrepresentative start/end (setup, teardown, an operator reaching in to reset
+# the scene) so the quality + view judgments reflect the actual task.
+_SAMPLE_WINDOW = (0.25, 0.75)
+
+
+def _central_indices(n: int, k: int) -> list[int]:
+    """Return k indices spread across the central ``_SAMPLE_WINDOW`` of n items."""
     if n <= 0 or k <= 0:
         return []
-    if k >= n:
-        return list(range(n))
-    step = (n - 1) / (k - 1) if k > 1 else 0.0
-    return sorted({round(i * step) for i in range(k)})
+    lo, hi = _SAMPLE_WINDOW
+    a = int(n * lo)
+    b = max(a, min(n - 1, int(round(n * hi)) - 1))
+    if k == 1:
+        return [(a + b) // 2]
+    span = b - a
+    if k >= span + 1:
+        return list(range(a, b + 1))
+    step = span / (k - 1)
+    return sorted({a + round(i * step) for i in range(k)})
 
 
 def _to_uint8_frame(frame: Any) -> Any:
@@ -121,14 +134,17 @@ def _sample_frames(
         records = list(iter_episodes(root, only_episodes=(cfg.episode_index,)))
         record = records[0] if records else None
         if record is not None:
-            for key in video_cameras:
-                frames[key] = provider.video_for_episode(record, cfg.n_frames, camera_key=key)
+            ts_all = list(record.frame_timestamps)
+            timestamps = [ts_all[i] for i in _central_indices(len(ts_all), cfg.n_frames)]
+            if timestamps:
+                for key in video_cameras:
+                    frames[key] = provider.frames_at(record, timestamps, camera_key=key)
 
     image_cameras = [k for k in cameras if k in image_keys]
     if image_cameras:
         if dataset is not None:
             n = len(dataset)
-            for i in _uniform_indices(n, cfg.n_frames):
+            for i in _central_indices(n, cfg.n_frames):
                 item = dataset[i]
                 for key in image_cameras:
                     if key in item:

@@ -24,9 +24,9 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
+    _central_indices,
     _discover_subpaths,
     _to_uint8_frame,
-    _uniform_indices,
 )
 
 
@@ -35,14 +35,17 @@ from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
     [
         (0, 4, []),
         (5, 0, []),
-        (3, 5, [0, 1, 2]),  # k >= n -> all frames
-        (1, 4, [0]),
-        (10, 1, [0]),
-        (10, 4, [0, 3, 6, 9]),  # evenly spaced, endpoints included
+        (10, 1, [4]),  # single frame -> middle of the central window
+        (100, 1, [49]),  # middle of [25, 74]
+        (100, 4, [25, 41, 58, 74]),  # spread across the central 25%-75%
     ],
 )
-def test_uniform_indices(n, k, expected):
-    assert _uniform_indices(n, k) == expected
+def test_central_indices(n, k, expected):
+    idxs = _central_indices(n, k)
+    assert idxs == expected
+    # never the very first or very last frame (avoids setup/teardown)
+    if n >= 4 and idxs:
+        assert idxs[0] > 0 and idxs[-1] < n - 1
 
 
 def test_to_uint8_frame_scales_floats():
