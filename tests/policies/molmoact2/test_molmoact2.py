@@ -81,6 +81,11 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.processor import (
+    DeviceProcessorStep,
+    PolicyProcessorPipeline,
+    RenameObservationsProcessorStep,
+)
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 
@@ -214,58 +219,180 @@ def test_molmoact2_scheduler_checkpoint_resume_matches_uninterrupted_updates():
         assert torch.equal(full_state[name], resumed_state[name])
 
 
-def test_pretrained_molmoact2_processors_translate_standard_overrides(monkeypatch):
-    calls = []
-    preprocessor = object()
-    postprocessor = object()
-
-    def fake_from_pretrained(cls, **kwargs):
-        del cls
-        calls.append(kwargs)
-        if kwargs["config_filename"] == "policy_preprocessor.json":
-            return preprocessor
-        return postprocessor
-
-    monkeypatch.setattr(
-        molmoact2_processor.PolicyProcessorPipeline,
-        "from_pretrained",
-        classmethod(fake_from_pretrained),
+def _save_masked_processor_checkpoint(checkpoint_path):
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.QUANTILES,
+        FeatureType.ACTION: NormalizationMode.QUANTILES,
+    }
+    saved_stats = {
+        OBS_STATE: {
+            "q01": [-10.0, 0.0],
+            "q99": [0.0, 1.0],
+            "min": [-10.0, -0.9],
+            "max": [0.0, 0.9],
+            "mask": [True, False],
+        },
+        ACTION: {
+            "q01": [-10.0, 0.0],
+            "q99": [0.0, 1.0],
+            "min": [-10.0, -0.9],
+            "max": [0.0, 0.9],
+            "mask": [True, False],
+        },
+    }
+    normalization_masks = {OBS_STATE: [True, False], ACTION: [True, False]}
+    preprocessor = PolicyProcessorPipeline(
+        steps=[
+            RenameObservationsProcessorStep(rename_map={}),
+            MolmoAct2MaskedNormalizerProcessorStep(
+                features=features,
+                norm_map=norm_map,
+                stats=saved_stats,
+            ),
+            MolmoAct2ClampNormalizedProcessorStep(normalization_masks=normalization_masks),
+            DeviceProcessorStep(device="cpu"),
+        ],
+        name="policy_preprocessor",
     )
-    config = MolmoAct2Config(device="cuda", pretrained_path="/tmp/molmoact2-checkpoint")
-    dataset_stats = {ACTION: {"q01": [-1.0], "q99": [1.0]}}
-    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
+    postprocessor = PolicyProcessorPipeline(
+        steps=[
+            MolmoAct2MaskedUnnormalizerProcessorStep(
+                features={ACTION: features[ACTION]},
+                norm_map=norm_map,
+                stats=saved_stats,
+            ),
+            DeviceProcessorStep(device="cpu"),
+        ],
+        name="policy_postprocessor",
+    )
+    preprocessor.save_pretrained(checkpoint_path, config_filename="policy_preprocessor.json")
+    postprocessor.save_pretrained(checkpoint_path, config_filename="policy_postprocessor.json")
+    return features, norm_map, saved_stats
+
+
+def test_pretrained_molmoact2_processors_apply_masked_finetuning_stats(tmp_path):
+    features, norm_map, _ = _save_masked_processor_checkpoint(tmp_path)
+    config = MolmoAct2Config(
+        device="cpu",
+        pretrained_path=tmp_path,
+        input_features={OBS_STATE: features[OBS_STATE]},
+        output_features={ACTION: features[ACTION]},
+        dataset_feature_names={
+            OBS_STATE: ["joint", "gripper"],
+            ACTION: ["joint", "gripper"],
+        },
+    )
+    dataset_stats = {
+        OBS_STATE: {
+            "q01": [0.0, 0.0],
+            "q99": [10.0, 1.0],
+            "min": [0.0, -0.9],
+            "max": [10.0, 0.9],
+        },
+        ACTION: {
+            "q01": [0.0, 0.0],
+            "q99": [10.0, 1.0],
+            "min": [0.0, -0.9],
+            "max": [10.0, 0.9],
+        },
+    }
+
+    preprocessor, postprocessor = make_pre_post_processors(
         config,
-        pretrained_path=str(config.pretrained_path),
+        pretrained_path=str(tmp_path),
         preprocessor_overrides={
-            "device_processor": {"device": "cuda"},
-            "rename_observations_processor": {"rename_map": {"camera": "observation.images.top"}},
+            "device_processor": {"device": "cpu"},
+            "rename_observations_processor": {"rename_map": {"observation.raw_state": OBS_STATE}},
             "normalizer_processor": {
-                "features": {"observation.state": "state-feature"},
-                "norm_map": {"STATE": NormalizationMode.QUANTILES},
+                "features": features,
+                "norm_map": norm_map,
                 "stats": dataset_stats,
             },
         },
         postprocessor_overrides={
             "unnormalizer_processor": {
-                "features": {"action": "action-feature"},
-                "norm_map": {"ACTION": NormalizationMode.QUANTILES},
+                "features": {ACTION: features[ACTION]},
+                "norm_map": norm_map,
                 "stats": dataset_stats,
             }
         },
     )
+    normalizer = next(
+        step for step in preprocessor.steps if isinstance(step, MolmoAct2MaskedNormalizerProcessorStep)
+    )
+    clamp = next(
+        step for step in preprocessor.steps if isinstance(step, MolmoAct2ClampNormalizedProcessorStep)
+    )
+    unnormalizer = next(
+        step for step in postprocessor.steps if isinstance(step, MolmoAct2MaskedUnnormalizerProcessorStep)
+    )
 
-    assert loaded_preprocessor is preprocessor
-    assert loaded_postprocessor is postprocessor
-    assert calls[0]["pretrained_model_name_or_path"] == "/tmp/molmoact2-checkpoint"
-    assert set(calls[0]["overrides"]) == {
-        "device_processor",
-        "rename_observations_processor",
-        "molmoact2_masked_normalizer",
-    }
-    assert set(calls[1]["overrides"]) == {"molmoact2_masked_unnormalizer"}
-    assert calls[0]["overrides"]["molmoact2_masked_normalizer"]["stats"] is dataset_stats
-    assert calls[1]["overrides"]["molmoact2_masked_unnormalizer"]["stats"] is dataset_stats
-    assert config.pretrained_path == "/tmp/molmoact2-checkpoint"
+    assert normalizer._tensor_stats[OBS_STATE]["mask"].tolist() == [True, False]
+    assert normalizer._tensor_stats[ACTION]["mask"].tolist() == [True, False]
+    assert unnormalizer._tensor_stats[ACTION]["mask"].tolist() == [True, False]
+    assert clamp.normalization_masks == {OBS_STATE: [True, False], ACTION: [True, False]}
+    processed = preprocessor(
+        {
+            "observation.raw_state": torch.tensor([[5.0, 0.5]]),
+            ACTION: torch.tensor([[5.0, 0.5]]),
+        }
+    )
+    assert torch.equal(processed[OBS_STATE], torch.tensor([[0.0, 0.5]]))
+    assert torch.equal(processed[ACTION], torch.tensor([[0.0, 0.5]]))
+    assert torch.equal(postprocessor(processed[ACTION]), torch.tensor([[5.0, 0.5]]))
+
+
+def test_pretrained_molmoact2_processor_resume_keeps_saved_masks(tmp_path):
+    features, norm_map, saved_stats = _save_masked_processor_checkpoint(tmp_path)
+    config = MolmoAct2Config(
+        device="cpu",
+        pretrained_path=tmp_path,
+        input_features={OBS_STATE: features[OBS_STATE]},
+        output_features={ACTION: features[ACTION]},
+    )
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=str(tmp_path),
+        preprocessor_overrides={
+            "device_processor": {"device": "cpu"},
+            "rename_observations_processor": {"rename_map": {"observation.raw_state": OBS_STATE}},
+            "normalizer_processor": {"features": features, "norm_map": norm_map},
+        },
+        postprocessor_overrides={
+            "unnormalizer_processor": {
+                "features": {ACTION: features[ACTION]},
+                "norm_map": norm_map,
+            }
+        },
+    )
+    normalizer = next(
+        step for step in preprocessor.steps if isinstance(step, MolmoAct2MaskedNormalizerProcessorStep)
+    )
+    clamp = next(
+        step for step in preprocessor.steps if isinstance(step, MolmoAct2ClampNormalizedProcessorStep)
+    )
+    unnormalizer = next(
+        step for step in postprocessor.steps if isinstance(step, MolmoAct2MaskedUnnormalizerProcessorStep)
+    )
+
+    assert normalizer._tensor_stats[ACTION]["q01"].tolist() == saved_stats[ACTION]["q01"]
+    assert normalizer._tensor_stats[ACTION]["mask"].tolist() == [True, False]
+    assert unnormalizer._tensor_stats[ACTION]["mask"].tolist() == [True, False]
+    assert clamp.normalization_masks == {OBS_STATE: [True, False], ACTION: [True, False]}
+    processed = preprocessor(
+        {
+            "observation.raw_state": torch.tensor([[-5.0, 0.25]]),
+            ACTION: torch.tensor([[-5.0, 0.25]]),
+        }
+    )
+    assert torch.equal(processed[OBS_STATE], torch.tensor([[0.0, 0.25]]))
+    assert torch.equal(processed[ACTION], torch.tensor([[0.0, 0.25]]))
+    assert torch.equal(postprocessor(processed[ACTION]), torch.tensor([[-5.0, 0.25]]))
 
 
 def test_molmoact2_optimizer_preset_uses_component_clipping():

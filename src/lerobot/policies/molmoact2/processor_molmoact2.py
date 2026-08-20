@@ -729,6 +729,9 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
 
+    def get_config(self) -> dict[str, Any]:
+        return {"normalization_masks": deepcopy(self.normalization_masks)}
+
 
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
@@ -1175,6 +1178,49 @@ def _translate_pretrained_processor_overrides(
     return translated
 
 
+def _prepare_pretrained_processor_overrides(
+    config: MolmoAct2Config,
+    preprocessor_overrides: dict[str, dict[str, Any]] | None,
+    postprocessor_overrides: dict[str, dict[str, Any]] | None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Translate generic overrides and make fine-tuning stats mask-aware."""
+    translated_preprocessor_overrides = _translate_pretrained_processor_overrides(
+        preprocessor_overrides,
+        standard_name="normalizer_processor",
+        molmoact2_name="molmoact2_masked_normalizer",
+    )
+    translated_postprocessor_overrides = _translate_pretrained_processor_overrides(
+        postprocessor_overrides,
+        standard_name="unnormalizer_processor",
+        molmoact2_name="molmoact2_masked_unnormalizer",
+    )
+
+    preprocessor_stats = translated_preprocessor_overrides.get("molmoact2_masked_normalizer", {}).get("stats")
+    postprocessor_stats = translated_postprocessor_overrides.get("molmoact2_masked_unnormalizer", {}).get(
+        "stats"
+    )
+    incoming_stats = preprocessor_stats or postprocessor_stats
+    if incoming_stats:
+        masked_stats = _add_gripper_masks_to_stats(
+            incoming_stats,
+            getattr(config, "_runtime_dataset_meta", None),
+            normalize_gripper=config.normalize_gripper,
+            dataset_feature_names=config.dataset_feature_names,
+        )
+        normalization_masks = _normalization_masks_from_stats(masked_stats)
+        translated_preprocessor_overrides.setdefault("molmoact2_masked_normalizer", {})["stats"] = (
+            masked_stats
+        )
+        translated_postprocessor_overrides.setdefault("molmoact2_masked_unnormalizer", {})["stats"] = (
+            masked_stats
+        )
+        translated_preprocessor_overrides.setdefault("molmoact2_clamp_normalized", {})[
+            "normalization_masks"
+        ] = normalization_masks
+
+    return translated_preprocessor_overrides, translated_postprocessor_overrides
+
+
 def make_molmoact2_pre_post_processors_from_pretrained(
     config: MolmoAct2Config,
     pretrained_path: str,
@@ -1192,18 +1238,22 @@ def make_molmoact2_pre_post_processors_from_pretrained(
 
     LeRobot entry points use the standard normalizer registry names when
     overriding the device, rename map, feature schema, and fine-tuning dataset
-    statistics. MolmoAct2 uses mask-aware normalization steps, so translate only
-    those two names and preserve every other generic override unchanged.
+    statistics. MolmoAct2 uses mask-aware normalization steps, so translate the
+    two names and add gripper masks before replacing saved fine-tuning stats.
+    When no stats are supplied (checkpoint resume), the serialized processor
+    stats and clamp masks remain authoritative.
     """
-    del config
+    prepared_preprocessor_overrides, prepared_postprocessor_overrides = (
+        _prepare_pretrained_processor_overrides(
+            config,
+            preprocessor_overrides,
+            postprocessor_overrides,
+        )
+    )
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=preprocessor_config_filename,
-        overrides=_translate_pretrained_processor_overrides(
-            preprocessor_overrides,
-            standard_name="normalizer_processor",
-            molmoact2_name="molmoact2_masked_normalizer",
-        ),
+        overrides=prepared_preprocessor_overrides,
         to_transition=batch_to_transition,
         to_output=transition_to_batch,
         revision=revision,
@@ -1211,11 +1261,7 @@ def make_molmoact2_pre_post_processors_from_pretrained(
     postprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=postprocessor_config_filename,
-        overrides=_translate_pretrained_processor_overrides(
-            postprocessor_overrides,
-            standard_name="unnormalizer_processor",
-            molmoact2_name="molmoact2_masked_unnormalizer",
-        ),
+        overrides=prepared_postprocessor_overrides,
         to_transition=policy_action_to_transition,
         to_output=transition_to_policy_action,
         revision=revision,
