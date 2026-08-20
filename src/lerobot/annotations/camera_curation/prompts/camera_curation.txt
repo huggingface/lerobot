@@ -9,10 +9,14 @@ Do two things and return them as one JSON object.
    - it has a genuine capture defect: blurry / out of focus, badly over- or
      under-exposed, static/frozen, corrupted, or otherwise not showing the scene
      clearly; OR
-   - any human OR human limb is visible in the frame. These are teleoperated
-     recordings and the operator must never appear — a whole person, OR just a
-     human limb (a hand, fingers, or an arm), makes the view unusable, even when
-     only partially in frame. Only the robot manipulator is allowed.
+   - a human is clearly part of the scene. These are teleoperated recordings and
+     the operator should not be in the working area. Mark UNUSABLE when a person,
+     or a human hand/arm, is PROMINENTLY or PERSISTENTLY in view — e.g. an
+     operator reaching into the workspace through much of the episode. But a
+     SMALL, PARTIAL intrusion at the edge of the frame — a hand briefly poking in
+     from the side while the robot works — is tolerable and stays usable. Only
+     the robot manipulator should occupy the workspace; do not mistake the
+     robot's own gripper/arm for a human limb.
    Otherwise it is usable.
 
    Do NOT mark a view unusable because the robot's own gripper, arm, or
