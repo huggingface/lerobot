@@ -15,7 +15,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -464,6 +465,11 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Save a portable config without the initialization-only stats path."""
+        config_for_save = replace(self, norm_stats_path=None)
+        PreTrainedConfig._save_pretrained(config_for_save, save_directory)
 
     @property
     def observation_delta_indices(self) -> None:

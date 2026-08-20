@@ -33,7 +33,7 @@ import torch.nn.functional as F  # noqa: N812
 pytest.importorskip("transformers")
 pytest.importorskip("scipy")
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.lerobot_types import TransitionKey
 from lerobot.optim import load_optimizer_state, save_optimizer_state
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
@@ -1426,6 +1426,22 @@ def test_molmoact2_explicit_norm_stats_path_and_mask(tmp_path):
     assert tagged_stats[ACTION]["mask"] == [True, False]
     assert tagged_stats[OBS_STATE]["mask"] == [True, False]
     assert metadata["action_stats"]["names"] == ["x", "gripper"]
+
+
+def test_molmoact2_norm_stats_path_is_initialization_only(tmp_path):
+    stats_path = tmp_path / "norm_stats.json"
+    stats_path.write_text("{}", encoding="utf-8")
+    checkpoint_path = tmp_path / "checkpoint"
+    checkpoint_path.mkdir()
+    config = MolmoAct2Config(norm_tag="libero", norm_stats_path=str(stats_path))
+
+    config._save_pretrained(checkpoint_path)
+    stats_path.unlink()
+    reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
+
+    assert isinstance(reloaded, MolmoAct2Config)
+    assert reloaded.norm_stats_path is None
+    assert config.norm_stats_path == str(stats_path)
 
 
 def test_molmoact2_norm_tag_overrides_training_dataset_stats(monkeypatch):
