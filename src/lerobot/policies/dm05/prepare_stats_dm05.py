@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prepare missing DM05 state/action statistics in a LeRobot dataset."""
+"""Prepare state-relative action statistics for DM05."""
 
 from __future__ import annotations
 
@@ -70,23 +70,18 @@ def compute_dm05_stats(
     sample_size: int = DEFAULT_SAMPLE_SIZE,
     seed: int = DEFAULT_SAMPLE_SEED,
 ) -> dict[str, dict[str, np.ndarray]]:
-    """Compute missing state/action stats from deterministic valid action chunks."""
+    """Compute relative-action stats from deterministic valid action chunks."""
     config.validate_features()
+    if not config.use_relative_actions:
+        raise ValueError("Use the standard LeRobot dataset stats for absolute-action DM05 training.")
     if sample_size <= 0:
         raise ValueError(f"sample_size must be positive, got {sample_size}.")
     existing = dict(dataset.meta.stats or {})
-    if (
-        config.use_relative_actions
-        and not force
-        and dm05_feature_stats_complete(config, existing, ACTION, "ACTION")
-    ):
+    if not force and dm05_feature_stats_complete(config, existing, ACTION, "ACTION"):
         raise ValueError(
             "Existing action stats do not record whether actions are absolute or relative. "
-            "Re-run with --force to generate stats for --use-relative-actions."
+            "Re-run with --force to generate relative-action stats."
         )
-    if not force and dm05_stats_complete(config, existing):
-        return existing
-
     numeric = dataset.select_columns([OBS_STATE, ACTION, "episode_index"])
     total_frames = len(numeric)
     episode_indices = np.asarray(numeric["episode_index"], dtype=np.int64).reshape(-1)
@@ -116,32 +111,27 @@ def compute_dm05_stats(
     owners = np.broadcast_to(np.arange(sample_count)[:, None], action_indices.shape)[valid_actions]
     action_values = np.asarray(numeric.select(flat_action_indices.tolist())[ACTION], dtype=np.float32)
 
-    if config.use_relative_actions:
-        action_dim = action_values.shape[-1]
-        if state_values.shape[-1] != action_dim:
-            raise ValueError(
-                "DM05 relative-action stats require equal state/action dimensions, got "
-                f"{state_values.shape[-1]} and {action_dim}."
-            )
-        mask = np.asarray(
-            relative_action_mask(
-                action_dim,
-                config.action_feature_names,
-                config.relative_exclude_joints,
-            ),
-            dtype=np.float32,
+    action_dim = action_values.shape[-1]
+    if state_values.shape[-1] != action_dim:
+        raise ValueError(
+            "DM05 relative-action stats require equal state/action dimensions, got "
+            f"{state_values.shape[-1]} and {action_dim}."
         )
-        action_values -= state_values[owners, :action_dim] * mask
+    mask = np.asarray(
+        relative_action_mask(
+            action_dim,
+            config.action_feature_names,
+            config.relative_exclude_joints,
+        ),
+        dtype=np.float32,
+    )
+    action_values -= state_values[owners, :action_dim] * mask
 
     for key, feature_type, values in (
         (OBS_STATE, "STATE", state_values),
         (ACTION, "ACTION", action_values),
     ):
-        if (
-            force
-            or (key == ACTION and config.use_relative_actions)
-            or not dm05_feature_stats_complete(config, existing, key, feature_type)
-        ):
+        if force or key == ACTION or not dm05_feature_stats_complete(config, existing, key, feature_type):
             existing[key] = _summarize(values)
 
     validate_dm05_relative_action_stats(config, existing)
@@ -178,15 +168,15 @@ def prepare_dm05_stats(
     *,
     force: bool = False,
 ) -> tuple[Path, bool]:
-    """Compute and write ``meta/stats.json`` in the dataset's existing root."""
+    """Compute and write relative-action stats into the dataset's ``meta/stats.json``."""
+    if not config.use_relative_actions:
+        raise ValueError("Use the standard LeRobot dataset stats for absolute-action DM05 training.")
     was_complete = dm05_stats_complete(config, dataset.meta.stats)
     if was_complete and not force:
-        if config.use_relative_actions:
-            raise ValueError(
-                "Existing stats do not record whether actions are absolute or relative. "
-                "Re-run with --force to generate stats for --use-relative-actions."
-            )
-        return dataset.root / STATS_PATH, False
+        raise ValueError(
+            "Existing stats do not record whether actions are absolute or relative. "
+            "Re-run with --force to generate relative-action stats."
+        )
     stats = compute_dm05_stats(config, dataset, force=force)
     path = _write_stats_atomic(stats, dataset.root)
     dataset.meta.stats = stats
@@ -219,7 +209,7 @@ def _training_episodes(dataset: LeRobotDataset, eval_split: float) -> list[int] 
 def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments for DM05 stats preparation."""
     parser = argparse.ArgumentParser(
-        description="Generate missing DM05 state/action stats in a LeRobot dataset's meta/stats.json."
+        description="Generate DM05 relative-action stats in a LeRobot dataset's meta/stats.json."
     )
     parser.add_argument("--repo-id", required=True)
     parser.add_argument("--root", type=Path)
@@ -228,7 +218,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-split", type=float, default=0.0)
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--drop-n-last-frames", type=int, default=1)
-    parser.add_argument("--use-relative-actions", action="store_true")
     parser.add_argument("--relative-exclude-joints", nargs="*", default=["gripper"])
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
@@ -256,7 +245,7 @@ def main() -> None:
     config = DM05Config(
         chunk_size=args.chunk_size,
         drop_n_last_frames=args.drop_n_last_frames,
-        use_relative_actions=args.use_relative_actions,
+        use_relative_actions=True,
         relative_exclude_joints=args.relative_exclude_joints,
     )
     config.set_dataset_feature_metadata(dataset.meta.features)

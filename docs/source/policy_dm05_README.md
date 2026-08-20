@@ -40,9 +40,8 @@ This LIBERO recipe matches OpenDM: `policy.add_state=false` and stored actions a
 checkpoint default `policy.add_state=true` unless another recipe specifies otherwise. Relative targets require
 matching state/action dimensions and matching relative-action statistics; environment control mode is separate.
 
-DM05 expects complete state/action statistics in `meta/stats.json`. Review the
-[normalization guide](./dm05.mdx#normalization-statistics) before training a non-standard dataset or using relative
-actions.
+Absolute-action training uses standard LeRobot dataset statistics. Relative actions require separately prepared
+relative-action statistics; see the [normalization guide](./dm05.mdx#normalization-statistics).
 
 ## Evaluation
 
@@ -57,7 +56,7 @@ MUJOCO_GL=egl lerobot-eval \
   --policy.device=cuda
 ```
 
-Use the complete checkpoint directory; policy config, tokenizer, preprocessing state, and weights are all required.
+Use the complete checkpoint directory; policy weights, config, and processor state are all required.
 
 ## Resources
 

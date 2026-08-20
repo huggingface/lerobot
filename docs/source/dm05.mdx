@@ -72,22 +72,25 @@ matching state/action dimensions and matching relative-action statistics.
 
 ### Normalization statistics
 
-DM05 recommends complete state/action statistics in the dataset's `meta/stats.json`.
+Absolute-action training, the default, uses the standard LeRobot state/action statistics in
+`meta/stats.json` directly.
 
-For a non-standard dataset without those statistics, generate them before training:
+Relative-action training changes the arm targets to `action - state`, while excluded dimensions such as the
+gripper remain absolute. Prepare matching statistics in a separate dataset checkout before enabling
+`policy.use_relative_actions`:
 
 ```bash
 uv run python -m lerobot.policies.dm05.prepare_stats_dm05 \
   --repo-id=org/dataset \
   --root=/path/to/dataset \
   --chunk-size=10 \
-  --drop-n-last-frames=1
+  --drop-n-last-frames=1 \
+  --force
 ```
 
-The command writes `/path/to/dataset/meta/stats.json` in place. Match its chunk, episode selection, and action
-representation to training. For relative targets, add `--use-relative-actions` and the policy's
-`--relative-exclude-joints`; use `--force` when replacing existing absolute-action statistics. Do not share one
-dataset checkout between absolute and relative recipes.
+The command writes `/path/to/dataset/meta/stats.json` in place. Match its chunk, episode selection, and
+`--relative-exclude-joints` values to training. `--force` is required when replacing standard absolute-action
+statistics.
 
 Without complete target statistics, `--policy.path` reuses checkpoint statistics with a warning. This is valid only
 for the same state/action contract and distribution.
@@ -110,8 +113,8 @@ required episode count.
 
 ## Checkpoint layout
 
-Use the complete checkpoint directory, which contains the policy config, weights, tokenizer, and preprocessing
-state. `model.safetensors` alone is not sufficient for training or inference.
+Use the complete checkpoint directory, which contains policy weights, config, and processor state. A standalone
+`model.safetensors` is not sufficient for training or inference.
 
 ## License
 
