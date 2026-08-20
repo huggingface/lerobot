@@ -249,7 +249,7 @@ class MolmoAct2CosineWithWarmupSchedulerConfig(LRSchedulerConfig):
 
         # Official Trainer uses its configured max_duration as the cosine
         # endpoint. Keep that clock when LeRobot intentionally runs a shorter
-        # diagnostic gate (for example, 3K updates on the final 30K schedule).
+        # diagnostic gate (for example, 3K updates on the configured 24K schedule).
         # Clamping here would silently compress the gate to the decay floor.
         decay_steps = int(self.num_decay_steps)
         warmup_steps = min(int(self.num_warmup_steps), decay_steps)
@@ -381,7 +381,7 @@ class MolmoAct2Config(PreTrainedConfig):
     optimizer_grad_clip_norm: float = 1.0
 
     scheduler_warmup_steps: int = 200
-    scheduler_decay_steps: int = 30_000
+    scheduler_decay_steps: int = 24_000
     scheduler_decay_lr: float = 1e-6
 
     normalization_mapping: dict[str, NormalizationMode] = field(

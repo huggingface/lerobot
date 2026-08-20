@@ -97,7 +97,7 @@ def test_molmoact2_policy_registration():
     assert cfg.dtype == "bfloat16"
     assert cfg.llm_residual_dropout == 0.1
     assert not hasattr(cfg, "model_dtype")
-    assert cfg.get_scheduler_preset().num_decay_steps == 30_000
+    assert cfg.get_scheduler_preset().num_decay_steps == 24_000
     assert cfg.action_delta_indices == list(range(cfg.chunk_size))
     assert get_policy_class("molmoact2") is MolmoAct2Policy
 

@@ -271,7 +271,10 @@ You can override the full fine-tuning and action-expert learning rates with
 `policy.optimizer_lr`, `policy.optimizer_vit_lr`,
 `policy.optimizer_connector_lr`, and `policy.optimizer_action_expert_lr`.
 Scheduler settings can be changed with `policy.scheduler_warmup_steps`,
-`policy.scheduler_decay_steps`, and `policy.scheduler_decay_lr`.
+`policy.scheduler_decay_steps`, and `policy.scheduler_decay_lr`. The default
+24,000-step decay horizon matches the official
+[`train_lerobot.py`](https://github.com/allenai/molmoact2/blob/5aac8f8a1180d79757ce500f819a02217079811c/experiments/launch_scripts/train_lerobot.py#L867-L868)
+recipe.
 
 ### Dataset Quantile Statistics
 
