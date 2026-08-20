@@ -29,8 +29,9 @@ Do two things and return them as one JSON object.
 
    This kind of robot arm has no obvious "face", so anchor "front" to its WORKING
    direction: the front is the side the arm reaches out toward to manipulate
-   objects — where the workspace / the objects being handled are, and where a
-   human operator would sit. Then judge from what the camera actually shows:
+   objects — the side the workspace and the manipulated objects are on. (No human
+   is ever in these frames; do not use a person as a cue.) Then judge from what
+   the camera actually shows:
 
    - front  : you see the robot from its working side, roughly head-on. The
               gripper and the manipulated objects face you, and the arm mostly
