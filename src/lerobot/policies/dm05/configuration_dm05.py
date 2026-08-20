@@ -22,6 +22,7 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
+from .constants import DM05_STATE_BINS
 from .utils import flatten_feature_names
 
 _BASE_STATE_DIM = 14
@@ -152,6 +153,8 @@ class DM05Config(PreTrainedConfig):
             raise ValueError("ae_gradient_checkpointing_layers must be >= 1 or None")
         if self.tokenizer_max_length is not None and self.tokenizer_max_length <= 0:
             raise ValueError("tokenizer_max_length must be positive or None")
+        if self.n_bins != DM05_STATE_BINS:
+            raise ValueError(f"DM05 uses exactly {DM05_STATE_BINS} state bins, got {self.n_bins}")
         if self.diffusion_steps <= 0:
             raise ValueError(f"diffusion_steps must be positive, got {self.diffusion_steps}")
 

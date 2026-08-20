@@ -27,13 +27,15 @@ from pathlib import Path
 from typing import Any, Unpack
 
 import torch
-from huggingface_hub import save_torch_state_dict
+import torch.nn.functional as torch_nn_functional
+from huggingface_hub import save_torch_state_dict, snapshot_download
 from torch import Tensor
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
+from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
@@ -72,7 +74,6 @@ def setup_compiled_suffix(config: Any, model: Any) -> bool:
 def prepare_compiled_suffix_inputs(
     config: Any,
     model: Any,
-    processor: Any,
     model_inputs: dict[str, Any],
     *,
     dtype: torch.dtype,
@@ -94,8 +95,6 @@ def prepare_compiled_suffix_inputs(
     if pad_length is not None:
         language_model = model.model.vlm.model.language_model
         pad_token_id = getattr(language_model, "padding_idx", None)
-        if pad_token_id is None:
-            pad_token_id = getattr(processor.tokenizer, "pad_token_id", None)
         if pad_token_id is None:
             raise ValueError("Unable to resolve DM05 pad token id for compiled suffix padding.")
         pad_token_id = int(pad_token_id)
@@ -189,19 +188,42 @@ class DM05Policy(PreTrainedPolicy):
                 "DM05 requires a standard LeRobot checkpoint or a raw checkpoint for one-time conversion."
             )
 
-        core_config_cls, core_model_cls, tokenization_cls = import_dm05_core()
+        core_config_cls, core_model_cls = import_dm05_core()
 
         from transformers import AutoProcessor
 
-        processor_source = checkpoint_source if is_lerobot_checkpoint else config.processor_name_or_path
         processor_load_kwargs = dict(processor_load_kwargs or {})
         processor_load_kwargs.setdefault("revision", checkpoint_revision)
-        # DM05 uses the original Gemma tokenizer regex. Transformers cannot infer
-        # that from LeRobot's policy config and otherwise emits a Mistral warning.
         processor_load_kwargs.setdefault("fix_mistral_regex", False)
-        self.processor = AutoProcessor.from_pretrained(
-            processor_source or raw_source, **processor_load_kwargs
-        )
+        if is_lerobot_checkpoint:
+            local_processor = Path(str(checkpoint_source)) / "dm05_processor"
+            if local_processor.is_dir():
+                processor_source = str(local_processor)
+            elif Path(str(checkpoint_source)).is_dir():
+                # Raw/local conversion fixtures may already be a processor directory.
+                processor_source = str(checkpoint_source)
+            else:
+                snapshot_kwargs = {
+                    key: processor_load_kwargs.pop(key)
+                    for key in (
+                        "revision",
+                        "cache_dir",
+                        "force_download",
+                        "proxies",
+                        "token",
+                        "local_files_only",
+                    )
+                    if key in processor_load_kwargs
+                }
+                snapshot = snapshot_download(
+                    repo_id=str(checkpoint_source),
+                    allow_patterns="dm05_processor/**",
+                    **snapshot_kwargs,
+                )
+                processor_source = str(Path(snapshot) / "dm05_processor")
+        else:
+            processor_source = config.processor_name_or_path or raw_source
+        self.processor = AutoProcessor.from_pretrained(processor_source, **processor_load_kwargs)
 
         torch_dtype = resolve_torch_dtype(config.dtype)
         if str(config.device) == "cuda" and torch.cuda.is_available():
@@ -263,11 +285,7 @@ class DM05Policy(PreTrainedPolicy):
                     break
         self.model.to(config.device)
         self._compile_suffix_active = setup_compiled_suffix(self.config, self.model)
-        self._batch_converter = DM05LerobotBatchConverter(
-            config=config,
-            tokenization_cls=tokenization_cls,
-            processor=self.processor,
-        )
+        self._batch_converter = DM05LerobotBatchConverter(config, self.processor)
         self.reset()
 
     def _save_pretrained(self, save_directory: Path) -> None:
@@ -281,13 +299,7 @@ class DM05Policy(PreTrainedPolicy):
             return
 
         save_directory.mkdir(parents=True, exist_ok=True)
-        self.processor.save_pretrained(save_directory)
-        # Keep the processor-level chat_template.jinja emitted above for processor tokenization.
-        # Also mirror the template into tokenizer_config.json for tokenizer-only consumers.
-        tokenizer = getattr(self.processor, "tokenizer", None)
-        if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
-            tokenizer.chat_template = getattr(self.processor, "chat_template", None)
-            tokenizer.save_pretrained(save_directory, save_jinja_files=False)
+        policy_to_save.processor.save_pretrained(save_directory / "dm05_processor")
         model_to_save = policy_to_save.model
 
         save_config = copy.deepcopy(self.config)
@@ -310,7 +322,7 @@ class DM05Policy(PreTrainedPolicy):
             core_config["_name_or_path"] = "."
             save_config.core_config = core_config
         save_config.pretrained_name_or_path = "."
-        save_config.processor_name_or_path = "."
+        save_config.processor_name_or_path = None
         save_config.pretrained_path = None
         save_config._save_pretrained(save_directory)
 
@@ -392,11 +404,15 @@ class DM05Policy(PreTrainedPolicy):
                 saved_config.output_features[ACTION].shape[-1],
             )
             if target_dims != checkpoint_dims:
-                command = dm05_prepare_stats_command(config, dataset_meta)
-                raise ValueError(
+                message = (
                     "DM05 cannot reuse checkpoint statistics for different state/action dimensions "
-                    f"({checkpoint_dims} -> {target_dims}). Run `{command}` before training."
+                    f"({checkpoint_dims} -> {target_dims})."
                 )
+                if config.use_relative_actions:
+                    message += f" Run `{dm05_prepare_stats_command(config, dataset_meta)}` before training."
+                else:
+                    message += " Provide the target dataset's standard LeRobot meta/stats.json."
+                raise ValueError(message)
         if dataset_meta is not None and dataset_stats and not stats_complete:
             logger.warning(
                 "Ignoring incomplete DM05 dataset statistics and retaining the checkpoint processor stats. "
@@ -479,35 +495,85 @@ class DM05Policy(PreTrainedPolicy):
         return batch
 
     def _prepare_model_inputs(self, batch: dict[str, Any], include_actions: bool) -> dict[str, Any]:
-        """Convert one processed batch into the tensors consumed by DM05."""
+        """Tokenize a processed batch and shape inputs for the fixed-size DM05 core."""
         batch = self._prepare_policy_batch(batch, include_actions=include_actions)
-        model_inputs = self._batch_converter.convert_lerobot_batch(batch, include_actions=include_actions)
-        model_inputs = {
-            key: value.to(self.config.device) if isinstance(value, Tensor) else value
-            for key, value in model_inputs.items()
-        }
+        model_inputs = self._batch_converter.convert_lerobot_batch(batch)
+        model_inputs.update(
+            {
+                key: batch[key]
+                for key in ("position_ids", "prefill_actions", "action_prefill_len")
+                if key in batch
+            }
+        )
+
+        input_ids = model_inputs["input_ids"]
+        if not torch.is_tensor(input_ids) or input_ids.ndim != 2:
+            raise ValueError("DM05 expects input_ids with shape [B,L].")
+        batch_size, device = int(input_ids.shape[0]), input_ids.device
+        core_action_dim = int(self.model.config.action_dim)
+        action_feature = self.config.output_features.get(ACTION) if self.config.output_features else None
+        action_dim = (
+            int(action_feature.shape[-1])
+            if action_feature is not None and action_feature.shape
+            else int(self.config.max_action_dim)
+        )
+        action_dim_mask = torch.zeros(batch_size, core_action_dim, device=device, dtype=torch.bool)
+        action_dim_mask[:, :action_dim] = True
+        model_inputs["action_dim_mask"] = action_dim_mask
+
         dtype = next((p.dtype for p in self.model.parameters() if p.is_floating_point()), torch.float32)
-        for key in ("states", "actions", "action", "prefill_actions"):
-            value = model_inputs.get(key)
-            if torch.is_tensor(value) and value.is_floating_point():
-                model_inputs[key] = value.to(dtype=dtype)
+        prefill_actions = model_inputs.get("prefill_actions")
+        if torch.is_tensor(prefill_actions):
+            model_inputs["prefill_actions"] = prefill_actions.to(device=device, dtype=dtype)
         if not include_actions:
-            batch_size = int(model_inputs["input_ids"].shape[0])
-            core_action_dim = int(self.model.config.action_dim)
-            action_feature = self.config.output_features.get(ACTION) if self.config.output_features else None
-            action_dim = (
-                int(action_feature.shape[-1])
-                if action_feature is not None and action_feature.shape
-                else int(self.config.max_action_dim)
+            return model_inputs
+
+        if ACTION not in batch:
+            raise ValueError("DM05 training requires an action batch.")
+        actions = torch.as_tensor(batch[ACTION], device=device)
+        if actions.ndim == 1:
+            actions = actions.unsqueeze(0).unsqueeze(0)
+        elif actions.ndim == 2:
+            actions = actions.unsqueeze(1) if actions.shape[0] == batch_size else actions.unsqueeze(0)
+        if actions.ndim != 3 or actions.shape[0] != batch_size:
+            raise ValueError(f"DM05 expects actions [B,T,D] with B={batch_size}, got {tuple(actions.shape)}.")
+        if actions.shape[-1] != action_dim:
+            raise ValueError(
+                f"DM05 action dimension must match the configured feature ({action_dim}), "
+                f"got {actions.shape[-1]}."
             )
-            action_dim_mask = torch.zeros(
-                batch_size,
-                core_action_dim,
-                device=self.config.device,
-                dtype=torch.bool,
+        source_steps = min(int(actions.shape[1]), int(self.config.chunk_size))
+        actions = pad_vector(actions[:, :source_steps], core_action_dim).to(dtype=dtype)
+        if source_steps < self.config.chunk_size:
+            actions = torch_nn_functional.pad(
+                actions,
+                (0, 0, 0, self.config.chunk_size - source_steps),
             )
-            action_dim_mask[:, :action_dim] = True
-            model_inputs["action_dim_mask"] = action_dim_mask
+
+        source_pad = batch.get("action_is_pad")
+        if source_pad is None:
+            source_pad = torch.zeros(batch_size, source_steps, device=device, dtype=torch.bool)
+        else:
+            source_pad = torch.as_tensor(source_pad, device=device, dtype=torch.bool)
+            if source_pad.ndim == 1:
+                source_pad = source_pad.unsqueeze(0) if batch_size == 1 else source_pad.unsqueeze(-1)
+            if source_pad.ndim != 2 or source_pad.shape[0] != batch_size:
+                raise ValueError(
+                    f"DM05 expects action_is_pad [B,T] with B={batch_size}, got {tuple(source_pad.shape)}."
+                )
+        action_is_pad = torch.ones(
+            batch_size,
+            self.config.chunk_size,
+            device=device,
+            dtype=torch.bool,
+        )
+        copied_steps = min(source_steps, int(source_pad.shape[1]))
+        action_is_pad[:, :copied_steps] = source_pad[:, :copied_steps]
+        model_inputs.update(
+            actions=actions,
+            action_is_pad=action_is_pad,
+            has_actions=torch.ones(batch_size, device=device, dtype=torch.bool),
+        )
         return model_inputs
 
     def _prepare_initial_noise(
@@ -569,7 +635,6 @@ class DM05Policy(PreTrainedPolicy):
             call_inputs, inference_kwargs = prepare_compiled_suffix_inputs(
                 self.config,
                 self.model,
-                self.processor,
                 model_inputs,
                 dtype=model_dtype,
                 initial_noise=initial_noise,

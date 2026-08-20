@@ -36,16 +36,16 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
     make_policy_processor_pipelines,
 )
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
+from .conversion_dm05 import DM05ProcessorArtifactsStep, DM05StateBinsProcessorStep
 from .stats_validation_dm05 import (
     dm05_prepare_stats_command,
     dm05_stats_complete,
     validate_dm05_relative_action_stats,
 )
-from .utils import tensor_to_pil
 
 _ACTION_PROBE_KIND = "_dm05_action_probe_kind"
 
@@ -175,49 +175,6 @@ class DM05ActionReferenceExtractProcessorStep(ProcessorStep):
         return features
 
 
-@dataclass
-@ProcessorStepRegistry.register(name="dm05_images_to_pil_processor")
-class DM05ImagesToPILProcessorStep(ProcessorStep):
-    """Materialize CPU PIL images before the standard device step."""
-
-    image_keys: list[str] | None = None
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Convert configured visual observations to batched PIL images."""
-        transition = transition.copy()
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if not isinstance(observation, dict):
-            return transition
-
-        observation = observation.copy()
-        image_keys = self.image_keys or [key for key in observation if key.startswith(f"{OBS_IMAGES}.")]
-        for key in image_keys:
-            if key not in observation:
-                continue
-            images = observation[key]
-            if torch.is_tensor(images):
-                if images.ndim == 3:
-                    images = images.unsqueeze(0)
-                if images.ndim != 4:
-                    raise ValueError(f"Expected batched images at {key!r}, got shape={tuple(images.shape)}")
-                images = list(images)
-            elif not isinstance(images, (list, tuple)):
-                images = [images]
-            observation[key] = [tensor_to_pil(image) for image in images]
-        transition[TransitionKey.OBSERVATION] = observation
-        return transition
-
-    def get_config(self) -> dict[str, Any]:
-        """Return the optional list of image keys to convert."""
-        return {"image_keys": self.image_keys}
-
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        """Leave policy feature metadata unchanged."""
-        return features
-
-
 def make_dm05_pre_post_processors(
     config: DM05Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -225,23 +182,20 @@ def make_dm05_pre_post_processors(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Build the standard LeRobot transform order used by OpenDM.
-
-    Images and tokenization stay on CPU inside the policy. Only the final
-    collated tensors are transferred to the accelerator.
-    """
+    """Build the LeRobot processor pipeline for the OpenDM adapter."""
 
     config.validate_features()
     if not dm05_stats_complete(config, dataset_stats):
+        if not config.use_relative_actions:
+            raise ValueError("DM05 absolute-action training requires standard LeRobot dataset statistics.")
         command = dm05_prepare_stats_command(config, getattr(config, "_runtime_dataset_meta", None))
         raise ValueError(
-            "DM05 requires complete state/action statistics in the dataset's meta/stats.json. "
+            "DM05 relative-action training requires matching state-relative action statistics. "
             f"Run `{command}` before training."
         )
     validate_dm05_relative_action_stats(config, dataset_stats)
 
-    # OpenDM normalizes only numeric state/action fields. Keeping identity visual
-    # features out also lets inference accept PIL images without tensorizing them.
+    # OpenDM normalizes only numeric state/action fields.
     normalizer = NormalizerProcessorStep(
         features={
             OBS_STATE: config.input_features[OBS_STATE],
@@ -264,6 +218,9 @@ def make_dm05_pre_post_processors(
         action_names=config.action_feature_names,
     )
     action_dim = int(config.output_features[ACTION].shape[-1])
+    processor_source = config.processor_name_or_path or config.pretrained_name_or_path
+    if not processor_source:
+        raise ValueError("DM05 requires processor_name_or_path when creating a new processor pipeline.")
     return make_policy_processor_pipelines(
         input_steps=[
             RenameObservationsProcessorStep(rename_map={}),
@@ -273,8 +230,9 @@ def make_dm05_pre_post_processors(
             relative_actions,
             normalizer,
             DM05ActionReferenceExtractProcessorStep(),
-            DM05ImagesToPILProcessorStep(image_keys=config.image_keys),
+            DM05StateBinsProcessorStep(),
             DeviceProcessorStep(device=config.device),
+            DM05ProcessorArtifactsStep(processor_name_or_path=processor_source),
         ],
         output_steps=[
             DeviceProcessorStep(device="cpu", float_dtype="float32"),
