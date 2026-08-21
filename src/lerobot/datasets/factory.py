@@ -54,6 +54,10 @@ def resolve_delta_timestamps(
             }
             returns `None` if the resulting dict is empty.
     """
+    resolve_dataset_metadata = getattr(cfg, "resolve_dataset_metadata", None)
+    if callable(resolve_dataset_metadata):
+        resolve_dataset_metadata(ds_meta)
+
     # Only policies that opt into modality-specific history (currently Pi05 with MEM)
     # define these; everything else falls back to the shared observation indices.
     explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
