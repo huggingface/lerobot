@@ -73,6 +73,107 @@ class ActionSelectKwargs(TypedDict, total=False):
     execution_horizon: int | None
 
 
+def _prepare_trained_rtc_prefix(
+    x_t: Tensor,
+    prev_chunk_left_over: Tensor | None,
+    inference_delay: int,
+    training_max_delay: int,
+) -> tuple[Tensor | None, Tensor | None]:
+    """Pad and validate a hard prefix for training-time RTC inference."""
+    if prev_chunk_left_over is None or inference_delay <= 0:
+        return None, None
+    if training_max_delay <= 0:
+        raise ValueError(
+            "RTC mode='trained' requires a checkpoint trained with policy.rtc_training_max_delay > 0."
+        )
+    if inference_delay > training_max_delay:
+        raise ValueError(
+            f"Measured RTC inference delay ({inference_delay}) exceeds the checkpoint's "
+            f"rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_delay >= x_t.shape[1]:
+        raise ValueError(
+            f"RTC inference delay ({inference_delay}) must be smaller than chunk_size ({x_t.shape[1]})."
+        )
+
+    previous = prev_chunk_left_over.to(device=x_t.device, dtype=x_t.dtype)
+    if not torch.isfinite(previous).all():
+        raise ValueError("RTC prefix contains NaN or Inf values.")
+    if previous.ndim == 2:
+        previous = previous.unsqueeze(0)
+    if previous.ndim != 3:
+        raise ValueError(f"Expected RTC prefix shape (B, T, A), got {tuple(previous.shape)}")
+    if previous.shape[0] == 1 and x_t.shape[0] > 1:
+        previous = previous.expand(x_t.shape[0], -1, -1)
+    if previous.shape[0] != x_t.shape[0]:
+        raise ValueError(
+            f"RTC prefix batch size ({previous.shape[0]}) does not match policy batch ({x_t.shape[0]})."
+        )
+    if previous.shape[1] < inference_delay:
+        raise ValueError(f"RTC prefix has {previous.shape[1]} steps, but inference_delay={inference_delay}.")
+    if previous.shape[2] > x_t.shape[2]:
+        raise ValueError(
+            f"RTC prefix action dimension ({previous.shape[2]}) exceeds model dimension ({x_t.shape[2]})."
+        )
+
+    padded_prefix = torch.zeros_like(x_t)
+    padded_prefix[:, :inference_delay, : previous.shape[2]] = previous[:, :inference_delay]
+    prefix_mask = torch.arange(x_t.shape[1], device=x_t.device) < inference_delay
+    prefix_mask = prefix_mask[None, :, None].expand(x_t.shape[0], -1, x_t.shape[2])
+    return padded_prefix, prefix_mask
+
+
+def _sample_training_rtc_prefix_mask(
+    batch_size: int,
+    action_horizon: int,
+    max_delay: int,
+    device: torch.device,
+) -> Tensor | None:
+    """Sample a clean action-prefix length independently for each training example."""
+    if max_delay <= 0:
+        return None
+    delays = torch.randint(0, max_delay + 1, (batch_size,), device=device)
+    positions = torch.arange(action_horizon, device=device)
+    return positions.unsqueeze(0) < delays.unsqueeze(1)
+
+
+def _build_flow_matching_inputs(
+    actions: Tensor,
+    noise: Tensor,
+    time: Tensor,
+    prefix_mask: Tensor | None,
+) -> tuple[Tensor, Tensor]:
+    """Keep the sampled RTC prefix clean while noising the remaining action chunk."""
+    if prefix_mask is None:
+        model_time = time
+        expanded_time = time[:, None, None]
+    else:
+        model_time = time[:, None].expand_as(prefix_mask)
+        model_time = torch.where(prefix_mask, torch.zeros_like(model_time), model_time)
+        expanded_time = model_time.unsqueeze(-1)
+    x_t = expanded_time * noise + (1 - expanded_time) * actions
+    return x_t, model_time
+
+
+def _reduce_training_rtc_loss(
+    losses: Tensor,
+    prefix_mask: Tensor | None,
+    reduction: str,
+) -> Tensor:
+    """Average flow loss over predicted postfix actions, excluding the clean RTC prefix."""
+    if reduction not in {"mean", "none"}:
+        raise ValueError(f"Unsupported loss reduction: {reduction!r}")
+    if prefix_mask is None:
+        return losses.mean() if reduction == "mean" else losses.mean(dim=(1, 2))
+
+    postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+    if reduction == "none":
+        numerator = (losses * postfix_mask).sum(dim=(1, 2))
+        denominator = postfix_mask.sum(dim=(1, 2))
+        return numerator / denominator.clamp(min=1)
+    return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
+
+
 # Define the complete layer computation function for gradient checkpointing
 def compute_layer_complete(inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb):
     query_states = []
@@ -611,18 +712,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         actions,
         noise,
         time,
+        prefix_mask: Tensor | None = None,
         states=None,
         state_masks=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        x_t, model_time = _build_flow_matching_inputs(actions, noise, time, prefix_mask)
         u_t = noise - actions
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, model_time)
 
         if (
             self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -710,6 +811,24 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
+        rtc_mode = "guided"
+        trained_prefix = trained_prefix_mask = None
+        if self._rtc_enabled():
+            rtc_mode = self.rtc_processor.rtc_config.mode
+            if rtc_mode == "trained":
+                training_max_delay = int(getattr(self.config, "rtc_training_max_delay", 0))
+                if training_max_delay <= 0:
+                    raise ValueError(
+                        "RTC mode='trained' requires a checkpoint trained with "
+                        "policy.rtc_training_max_delay > 0."
+                    )
+                trained_prefix, trained_prefix_mask = _prepare_trained_rtc_prefix(
+                    noise,
+                    kwargs.get("prev_chunk_left_over"),
+                    int(kwargs.get("inference_delay") or 0),
+                    training_max_delay,
+                )
+
         return euler_integrate(
             lambda input_x_t, current_timestep: self.denoise_step(
                 prefix_pad_masks=prefix_pad_masks,
@@ -720,10 +839,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             noise,
             num_steps,
             rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled(),
+            rtc_enabled=self._rtc_enabled() and rtc_mode == "guided",
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
+            hard_prefix=trained_prefix,
+            hard_prefix_mask=trained_prefix_mask,
         )
 
     def denoise_step(
@@ -1033,7 +1154,10 @@ class PI05Policy(PreTrainedPolicy):
         # Create processor if config provided
         # If RTC is not enabled - we can still track the denoising data
         if self.config.rtc_config is not None:
-            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+            self.rtc_processor = RTCProcessor(
+                self.config.rtc_config,
+                trained_mode_supported=int(getattr(self.config, "rtc_training_max_delay", 0)) > 0,
+            )
 
             model_value = getattr(self, "model", None)
             if model_value is not None:
@@ -1239,6 +1363,12 @@ class PI05Policy(PreTrainedPolicy):
 
         noise = self.model.sample_noise(actions.shape, actions.device)
         time = self.model.sample_time(actions.shape[0], actions.device)
+        prefix_mask = _sample_training_rtc_prefix_mask(
+            actions.shape[0],
+            actions.shape[1],
+            self.config.rtc_training_max_delay,
+            actions.device,
+        )
 
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(
@@ -1249,6 +1379,7 @@ class PI05Policy(PreTrainedPolicy):
             actions,
             noise,
             time,
+            prefix_mask=prefix_mask,
             states=states,
             state_masks=state_masks,
         )
@@ -1257,20 +1388,21 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
-        loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
-        }
+        if prefix_mask is None:
+            loss_per_dim = losses.mean(dim=(0, 1))
+        else:
+            postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+            loss_per_dim = (losses * postfix_mask).sum(dim=(0, 1)) / postfix_mask.sum(dim=(0, 1)).clamp(min=1)
+        loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="none")
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
-        else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+
+        loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="mean")
+        loss_dict["loss"] = loss.item()
+        return loss, loss_dict
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
