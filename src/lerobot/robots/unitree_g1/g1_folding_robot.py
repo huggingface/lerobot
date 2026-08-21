@@ -46,7 +46,7 @@ from lerobot.robots.openarm_follower.openarm_kinematics import (
     POLICY_ORDER,
 )
 
-from .g1_openarm_retarget import G1OpenArmRetargeter
+from .g1_openarm_retarget import IK_ITERS, REVERSE_IK_ITERS, G1OpenArmRetargeter
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,8 @@ class G1FoldingRobot:
     def __init__(
         self,
         robot,
-        ik_iters: int = 25,
+        ik_iters: int = IK_ITERS,
+        reverse_ik_iters: int = REVERSE_IK_ITERS,
         use_waist: bool = False,
         max_step_deg: float = DEFAULT_MAX_STEP_DEG,
     ) -> None:
@@ -85,7 +86,9 @@ class G1FoldingRobot:
         # client, and the retargeter carries warm-start seeds and a MuJoCo data buffer that
         # would race.
         self._lock = threading.Lock()
-        self._retarget = G1OpenArmRetargeter(use_waist=use_waist, iters=ik_iters)
+        self._retarget = G1OpenArmRetargeter(
+            use_waist=use_waist, iters=ik_iters, reverse_iters=reverse_ik_iters
+        )
         self._policy_keys = policy_keys()
         self._g1_arm_keys = self._retarget.action_keys[:14]
         self._max_step = np.deg2rad(max_step_deg)

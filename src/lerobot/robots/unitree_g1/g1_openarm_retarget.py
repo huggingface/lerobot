@@ -116,6 +116,11 @@ OA_PLACEMENT_XYZ = (0.0, 0.0, -0.406)
 
 # Tuned in render_g1_openarm.py.
 IK_ITERS = 60
+# The reverse projection is a cheaper problem than the forward one -- 7 DoF per side rather
+# than the whole upper body, and warm-started from the previous frame's answer -- so it
+# converges in far fewer sweeps. It runs every tick alongside the forward solve, and on the
+# Jetson that difference is the budget.
+REVERSE_IK_ITERS = 25
 ROT_WEIGHT = 0.3
 POSTURE_GAIN = 0.25
 ELBOW_GAIN = 1.0
@@ -391,12 +396,14 @@ class G1OpenArmRetargeter:
         ee_offset: np.ndarray | None = None,
         use_waist: bool = False,
         iters: int = IK_ITERS,
+        reverse_iters: int = REVERSE_IK_ITERS,
         oa_xyz=OA_PLACEMENT_XYZ,
         long_arm: bool = True,
     ) -> None:
         import mujoco
 
         self._mj = mujoco
+        self.reverse_iters = reverse_iters
         self.model = build_scene(oa_xyz=list(oa_xyz), oa_rpy=[0.0, 0.0, 0.0], long_arm=long_arm)
         self.data = mujoco.MjData(self.model)
         self.data.qpos[:7] = [0, 0, 0, 1, 0, 0, 0]  # pelvis at the origin: the tuning frame
@@ -445,7 +452,10 @@ class G1OpenArmRetargeter:
         self._oa_seed = {"left": None, "right": None}
 
     def to_openarm(
-        self, g1_arm_rad: np.ndarray, grippers: dict[str, float] | None = None, iters: int = 25
+        self,
+        g1_arm_rad: np.ndarray,
+        grippers: dict[str, float] | None = None,
+        iters: int | None = None,
     ) -> np.ndarray:
         """Project the G1's real arm pose back into a 16-D OpenArm state (degrees).
 
@@ -460,6 +470,8 @@ class G1OpenArmRetargeter:
         """
         import mujoco
 
+        if iters is None:
+            iters = self.reverse_iters
         self.data.qpos[self._g1_arm_qadr] = np.asarray(g1_arm_rad, float)[: self._n_arm]
         mujoco.mj_kinematics(self.model, self.data)
 

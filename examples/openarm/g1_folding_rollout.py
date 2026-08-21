@@ -17,15 +17,27 @@
 """Roll out the OpenArm folding policy on a Unitree G1, policy in-process.
 
 The G1 counterpart of ``rollout_retarget.py``: same entry point and same CLI, with the robot
-wrapped in :class:`G1FoldingRobot` so the policy sees an OpenArm.
+wrapped in :class:`G1FoldingRobot` so the policy sees an OpenArm. Policy, IK and rollout loop
+all run here; on the laptop a full tick of both solves costs ~8 ms, against ~50 ms of budget
+at 20 Hz.
 
-This runs the policy in the same process as the robot, which means the controller runs
-wherever this script does. **In simulation that is fine and this is the convenient way to
-test the retargeting end to end.** On real hardware prefer ``g1_folding_async.py``, which
-keeps the balance loop on the robot and puts only the policy on the laptop's GPU.
+Running here does **not** put the balance loop here. What decides that is the robot config:
+with ``--robot.is_simulation=false`` and no ``--robot.onboard``, ``UnitreeG1`` is the thin
+client, and the controller runs on the robot under ``run_g1_server.py --onboard``. So on real
+hardware, start that first::
+
+    # robot -- SONIC holds the stand, cameras and hands served from here
+    python src/lerobot/robots/unitree_g1/run_g1_server.py --onboard \\
+        --controller SonicLowerBodyController --grippers \\
+        --cameras '<name>=<by-path device>@WxH,...'
+
+    # laptop -- this script
+    python examples/openarm/g1_folding_rollout.py --robot.type=unitree_g1 ...
+
+In simulation the controller does run in-process, because there is no robot to run it on.
 
 Environment knobs: ``G1_MAX_STEP_DEG`` (per-tick joint clamp), ``G1_RETARGET_ITERS``,
-``G1_RETARGET_WAIST``.
+``G1_RETARGET_REVERSE_ITERS``, ``G1_RETARGET_WAIST``.
 """
 
 from __future__ import annotations

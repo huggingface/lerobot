@@ -48,23 +48,31 @@ import logging
 import os
 
 from lerobot.robots.unitree_g1.g1_folding_robot import DEFAULT_MAX_STEP_DEG, G1FoldingRobot
+from lerobot.robots.unitree_g1.g1_openarm_retarget import IK_ITERS, REVERSE_IK_ITERS
 
 logger = logging.getLogger("g1_folding_async")
 
 
 def wrap_factory(orig):
     """Wrap a ``make_robot_from_config`` so whatever it builds comes back OpenArm-shaped."""
-    ik_iters = int(os.environ.get("G1_RETARGET_ITERS", "25"))
+    ik_iters = int(os.environ.get("G1_RETARGET_ITERS", str(IK_ITERS)))
+    reverse_iters = int(os.environ.get("G1_RETARGET_REVERSE_ITERS", str(REVERSE_IK_ITERS)))
     use_waist = os.environ.get("G1_RETARGET_WAIST", "0") != "0"
     max_step_deg = float(os.environ.get("G1_MAX_STEP_DEG", str(DEFAULT_MAX_STEP_DEG)))
 
     def factory(cfg):
         real = orig(cfg)
         logger.info(
-            f"Wrapping {type(real).__name__} with G1FoldingRobot "
-            f"(iters={ik_iters}, waist={use_waist}, max_step={max_step_deg} deg)"
+            f"Wrapping {type(real).__name__} with G1FoldingRobot (iters={ik_iters}/{reverse_iters}, "
+            f"waist={use_waist}, max_step={max_step_deg} deg)"
         )
-        return G1FoldingRobot(real, ik_iters=ik_iters, use_waist=use_waist, max_step_deg=max_step_deg)
+        return G1FoldingRobot(
+            real,
+            ik_iters=ik_iters,
+            reverse_ik_iters=reverse_iters,
+            use_waist=use_waist,
+            max_step_deg=max_step_deg,
+        )
 
     return factory
 
