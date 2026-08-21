@@ -132,6 +132,11 @@ REVERSE_IK_ITERS = 25
 ROT_WEIGHT = 0.3
 POSTURE_GAIN = 0.25
 ELBOW_GAIN = 1.0
+# Extra outward swing applied to the elbow direction copied off the OpenArm. The OpenArm's
+# shoulders are mounted wider than the G1's, so an upper-arm direction that clears the rig's
+# frame points the G1's elbow straight into its own torso. This rotates the copied direction
+# away from the midline before it becomes an elbow goal.
+ELBOW_OUT_DEG = 22.0
 WAIST_STIFFNESS = 8.0
 WAIST_RETURN = 0.2
 WAIST_PITCH_DEG = 12.0
@@ -251,6 +256,18 @@ def set_openarm(data, arms, fingers, state16: np.ndarray) -> None:
         opening = min(1.0, abs(float(state16[gripper_index])) / GRIP_FULL_DEG)
         for adr, lo, hi in fingers[side]:
             data.qpos[adr] = lo + opening * (hi - lo)  # v1 slide joint: lo closed .. hi open
+
+
+def splay_outward(direction: np.ndarray, side: str, degrees: float) -> np.ndarray:
+    """Swing a shoulder->elbow direction away from the body midline.
+
+    Rotates about the forward axis, so the elbow moves laterally in the coronal plane and the
+    upper arm keeps whatever forward/backward reach it had.
+    """
+    angle = np.deg2rad(degrees if side == "left" else -degrees)
+    cos, sin = np.cos(angle), np.sin(angle)
+    x, y, z = direction
+    return np.array([x, cos * y - sin * z, sin * y + cos * z])
 
 
 class ArmIK:
@@ -407,11 +424,13 @@ class G1OpenArmRetargeter:
         reverse_iters: int = REVERSE_IK_ITERS,
         oa_xyz=OA_PLACEMENT_XYZ,
         long_arm: bool = True,
+        elbow_out_deg: float = ELBOW_OUT_DEG,
     ) -> None:
         import mujoco
 
         self._mj = mujoco
         self.reverse_iters = reverse_iters
+        self.elbow_out_deg = elbow_out_deg
         self.model = build_scene(oa_xyz=list(oa_xyz), oa_rpy=[0.0, 0.0, 0.0], long_arm=long_arm)
         self.data = mujoco.MjData(self.model)
         self.data.qpos[:7] = [0, 0, 0, 1, 0, 0, 0]  # pelvis at the origin: the tuning frame
@@ -535,8 +554,8 @@ class G1OpenArmRetargeter:
             pose[:3, 3] = self.data.xpos[self._tcp[side]]
             targets.append(pose @ self.ee_offset)
         elbow_dirs = [
-            self.data.xpos[e] - self.data.xpos[s]
-            for e, s in zip(self._oa_elbows, self._oa_shoulders, strict=True)
+            splay_outward(self.data.xpos[e] - self.data.xpos[s], side, self.elbow_out_deg)
+            for side, e, s in zip(("left", "right"), self._oa_elbows, self._oa_shoulders, strict=True)
         ]
 
         if self._q_prev is None:
