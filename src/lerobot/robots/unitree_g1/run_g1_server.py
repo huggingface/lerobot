@@ -293,8 +293,14 @@ def serve_onboard_controller(
 
     # The hands are on CAN, not on lowcmd, so they keep their own listener here rather than
     # arriving through the action socket -- same split as in bridge mode.
+    gripper_sock = None
     if grippers:
-        threading.Thread(target=gripper_cmd_loop, args=(grippers, stop), daemon=True).start()
+        gripper_sock = zmq.Context.instance().socket(zmq.PULL)
+        # Without a timeout the recv blocks forever and the loop never looks at `stop`.
+        gripper_sock.setsockopt(zmq.RCVTIMEO, 200)
+        gripper_sock.bind(f"tcp://0.0.0.0:{GRIPPER_PORT}")
+        threading.Thread(target=gripper_cmd_loop, args=(gripper_sock, grippers, stop), daemon=True).start()
+        print(f"Grippers enabled: listening for closedness commands on port {GRIPPER_PORT}")
 
     cfg = UnitreeG1Config(is_simulation=False, onboard=True, controller=controller, cameras={})
     robot = UnitreeG1(cfg)
@@ -355,6 +361,9 @@ def serve_onboard_controller(
         if state_sock is not None:
             with contextlib.suppress(Exception):
                 state_sock.close(linger=0)
+        if gripper_sock is not None:
+            with contextlib.suppress(Exception):
+                gripper_sock.close(linger=0)
         if camera_server is not None:
             camera_server.stop()
         robot.disconnect()

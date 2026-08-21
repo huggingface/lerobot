@@ -242,6 +242,8 @@ class UnitreeG1(Robot):
         # on a CAN bus the bridge owns, not on the G1's 29 motors.
         self._gripper_sock = None
         self._gripper_last: dict[str, float] = {}
+        self._gripper_drops = 0
+        self._gripper_drop_logged = 0.0
         self._hand_cmd_pubs: dict[str, object] = {}
         self._hand_cmd_msgs: dict[str, tuple] = {}
 
@@ -827,8 +829,19 @@ class UnitreeG1(Robot):
         try:
             self._gripper_sock.send_string(json.dumps(cmd), flags=zmq.NOBLOCK)
         except zmq.ZMQError as exc:
-            # A stalled hand must never take the balance loop down with it.
-            logger.warning(f"[UnitreeG1] dropped gripper command {cmd}: {exc}")
+            # A stalled hand must never take the balance loop down with it. Throttled because
+            # the usual cause -- nothing listening on the robot's gripper port -- fails on
+            # every tick, and at policy rate that buries the rest of the log.
+            self._gripper_drops += 1
+            now = time.time()
+            if now - self._gripper_drop_logged > 5.0:
+                logger.warning(
+                    f"[UnitreeG1] dropped {self._gripper_drops} gripper command(s), latest "
+                    f"{cmd}: {exc}. Is run_g1_server.py running with --grippers on "
+                    f"{self.config.robot_ip}:{GRIPPER_PORT}?"
+                )
+                self._gripper_drop_logged = now
+                self._gripper_drops = 0
             return
         self._gripper_last.update(cmd)
 
