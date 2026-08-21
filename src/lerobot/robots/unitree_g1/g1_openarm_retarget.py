@@ -111,8 +111,11 @@ EE_OFFSET = np.array(
     ]
 )
 
-# Drops the OpenArm's shoulders onto the G1's, in the pelvis-at-origin frame.
-OA_PLACEMENT_XYZ = (0.0, 0.0, -0.406)
+# Where the OpenArm sits in the pelvis-at-origin frame. Shoulder-on-shoulder would be
+# -0.406, but the OpenArm is the longer arm, so matching the shoulders puts its workspace
+# lower than the G1's and the recorded wrist poses land under everything the G1 can reach
+# comfortably. Raised 8 cm to line up the reachable volumes instead of the mounting points.
+OA_PLACEMENT_XYZ = (0.0, 0.0, -0.326)
 
 # Tuned in render_g1_openarm.py.
 IK_ITERS = 60
