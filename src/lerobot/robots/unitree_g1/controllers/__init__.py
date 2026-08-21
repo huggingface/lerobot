@@ -19,10 +19,12 @@
 from .gr00t_locomotion import GrootLocomotionController
 from .holosoma_locomotion import HolosomaLocomotionController
 from .sonic_whole_body import SonicLowerBodyController, SonicWholeBodyController
+from .stiff_hold import StiffLowerBodyController
 
 __all__ = [
     "GrootLocomotionController",
     "HolosomaLocomotionController",
     "SonicLowerBodyController",
     "SonicWholeBodyController",
+    "StiffLowerBodyController",
 ]

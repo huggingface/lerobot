@@ -122,6 +122,7 @@ CONTROLLER_MODULES = {
     "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
     "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
     "SonicLowerBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+    "StiffLowerBodyController": "lerobot.robots.unitree_g1.controllers.stiff_hold",
 }
 
 
