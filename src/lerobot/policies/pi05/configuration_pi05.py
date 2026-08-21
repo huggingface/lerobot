@@ -75,6 +75,17 @@ class PI05Config(PreTrainedConfig):
     rtc_config: RTCConfig | None = None
     # Maximum clean action-prefix length sampled during training. Zero disables trained RTC.
     rtc_training_max_delay: int = 0
+    # Per-position noise schedule used once ``rtc_training_max_delay > 0``:
+    #   "prefix"    -- training-time RTC: clean front, one shared noise level behind it.
+    #   "staircase" -- piR2 (arXiv 2607.26055): clean front, linear ramp, pure-noise tail.
+    # The staircase is a diffusion-forcing generalization of "prefix"; it is what lets a
+    # single denoising step emit ``delay`` finished actions at inference.
+    rtc_training_schedule: str = "prefix"
+    # Fraction of staircase batches replaced by a standard shared-timestep flow batch, so the
+    # same weights can still denoise a full chunk from pure noise to warm-start the buffer.
+    staircase_warmup_prob: float = 0.2
+    # Symmetric per-position jitter added to the staircase to absorb per-call delay variation.
+    staircase_time_jitter: float = 0.0
 
     image_resolution: tuple[int, int] = (
         DEFAULT_IMAGE_SIZE,
@@ -131,6 +142,25 @@ class PI05Config(PreTrainedConfig):
                 "rtc_training_max_delay must satisfy "
                 f"0 <= delay < chunk_size ({self.chunk_size}), got {self.rtc_training_max_delay}"
             )
+        if self.rtc_training_schedule not in ("prefix", "staircase"):
+            raise ValueError(
+                f"rtc_training_schedule must be 'prefix' or 'staircase', got {self.rtc_training_schedule!r}"
+            )
+        if self.rtc_training_schedule == "staircase":
+            if self.rtc_training_max_delay <= 0:
+                raise ValueError("rtc_training_schedule='staircase' requires rtc_training_max_delay > 0.")
+            # The ramp spans chunk_size - 2 * delay positions, so the widest sampled delay must
+            # still leave a non-empty interior between the clean front and the pure-noise tail.
+            if self.chunk_size - 2 * self.rtc_training_max_delay < 1:
+                raise ValueError(
+                    "rtc_training_schedule='staircase' requires "
+                    f"chunk_size - 2 * rtc_training_max_delay >= 1, got "
+                    f"{self.chunk_size} - 2 * {self.rtc_training_max_delay}"
+                )
+        if not 0.0 <= self.staircase_warmup_prob <= 1.0:
+            raise ValueError(f"staircase_warmup_prob must be in [0, 1], got {self.staircase_warmup_prob}")
+        if not 0.0 <= self.staircase_time_jitter <= 1.0:
+            raise ValueError(f"staircase_time_jitter must be in [0, 1], got {self.staircase_time_jitter}")
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid paligemma_variant: {self.paligemma_variant}")
