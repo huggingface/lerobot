@@ -112,6 +112,7 @@ class ZMQCamera(Camera):
         self.port = config.port
         self.camera_name = config.camera_name
         self.color_mode = config.color_mode
+        self.jpeg_is_rgb = config.jpeg_is_rgb
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.timeout_ms = config.timeout_ms
         # Restated from the base class so their type is visible here: the resolution stays
@@ -252,10 +253,10 @@ class ZMQCamera(Camera):
         if frame is None:
             raise RuntimeError(f"{self} failed to decode image")
 
-        # JPEG decodes to BGR; convert so the frames match the configured color mode.
-        # Skipping this silently hands policies red and blue swapped against their
-        # training data, which is invisible in the tensor shapes.
-        if self.color_mode == ColorMode.RGB:
+        # Convert only if what the JPEG holds differs from what was asked for. Getting this
+        # wrong hands policies red and blue swapped against their training data, which is
+        # invisible in the tensor shapes and hard to see in any desaturated scene.
+        if (self.color_mode == ColorMode.RGB) != self.jpeg_is_rgb:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         if self.rotation is not None:

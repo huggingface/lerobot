@@ -32,6 +32,10 @@ class ZMQCameraConfig(CameraConfig):
             publisher's naming need not match the policy's.
         rotation: Applied on receipt, for a camera that is physically mounted rotated.
             `width` and `height` describe the frame after it, as they do for OpenCVCamera.
+        jpeg_is_rgb: Set when the publisher built its JPEGs by passing an RGB array to
+            `cv2.imencode`, which documents its input as BGR. The bytes then already carry
+            RGB and the usual post-decode swap would undo it. Nothing in the frame reveals
+            this -- both orders decode to a valid image -- so it has to be declared.
     """
 
     server_address: str
@@ -39,6 +43,7 @@ class ZMQCameraConfig(CameraConfig):
     camera_name: str = "zmq_camera"
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
+    jpeg_is_rgb: bool = False
     timeout_ms: int = 5000
     warmup_s: int = 1
 
