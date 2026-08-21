@@ -15,12 +15,12 @@
 # limitations under the License.
 
 """
-ZMQCamera - Captures frames from remote cameras via ZeroMQ using JSON protocol in the
-following format:
+ZMQCamera - Captures frames from remote cameras via ZeroMQ, in the following format:
     {
         "timestamps": {"camera_name": float},
         "images": {"camera_name": "<base64-jpeg>"}
     }
+serialised as either JSON or msgpack; the payload is the same either way.
 """
 
 import base64
@@ -49,6 +49,28 @@ from ..configs import ColorMode
 from .configuration_zmq import ZMQCameraConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_message(message: bytes) -> dict[str, Any]:
+    """Decode a frame message, accepting either serialisation.
+
+    JSON is what lerobot's own ImageServer publishes. msgpack is accepted so that
+    existing publishers can be used unmodified; both carry the identical payload,
+    so the choice is not worth a config flag the user has to get right.
+    """
+    try:
+        return json.loads(message)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        pass
+
+    try:
+        import msgpack
+    except ImportError as e:
+        raise RuntimeError(
+            "Frame message is not JSON and msgpack is not installed to decode it (pip install msgpack)."
+        ) from e
+
+    return msgpack.unpackb(message, raw=False)
 
 
 class ZMQCamera(Camera):
@@ -136,14 +158,21 @@ class ZMQCamera(Camera):
             self.socket.connect(f"tcp://{self.server_address}:{self.port}")
             self._connected = True
 
-            # Auto-detect resolution if not provided
+            # Read directly from hardware because the thread isn't running yet
+            temp_frame = self._read_from_hardware()
+            h, w = temp_frame.shape[:2]
             if self.width is None or self.height is None:
-                # Read directly from hardware because the thread isn't running yet
-                temp_frame = self._read_from_hardware()
-                h, w = temp_frame.shape[:2]
                 self.height = h
                 self.width = w
                 logger.info(f"{self} resolution detected: {w}x{h}")
+            elif (w, h) != (self.width, self.height):
+                # A robot config must state the resolution, and that statement is what
+                # observation_features advertises downstream. Letting it disagree with the
+                # frames would size buffers and datasets off a number nothing enforces.
+                raise RuntimeError(
+                    f"{self} publishes {w}x{h} but is configured as "
+                    f"{self.width}x{self.height}; fix the config to match the publisher."
+                )
 
             self._start_read_thread()
             logger.info(f"{self} connected.")
@@ -188,23 +217,28 @@ class ZMQCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         try:
-            message = self.socket.recv_string()
+            message = self.socket.recv()
         except zmq.Again as e:
             raise TimeoutError(f"{self} timeout after {self.timeout_ms}ms") from e
 
-        # Decode JSON message
-        data = json.loads(message)
+        data = _decode_message(message)
 
         if "images" not in data:
             raise RuntimeError(f"{self} invalid message: missing 'images' key")
 
         images = data["images"]
 
-        # Get image by camera name or first available
         if self.camera_name in images:
             img_b64 = images[self.camera_name]
-        elif images:
+        elif len(images) == 1:
+            # Single-camera publishers are free to name the stream whatever they like.
             img_b64 = next(iter(images.values()))
+        elif images:
+            # With several streams in one message, guessing would silently hand the policy
+            # someone else's viewpoint -- the shapes still check out, so it would look fine.
+            raise RuntimeError(
+                f"{self} camera {self.camera_name!r} not published; available: {sorted(images)}"
+            )
         else:
             raise RuntimeError(f"{self} no images in message")
 
