@@ -137,3 +137,19 @@ class G1_29_JointIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
+
+
+def make_ort_session_options(intra_op_num_threads: int = 1, inter_op_num_threads: int = 1):
+    """ONNX Runtime options that keep a controller from monopolising the CPU.
+
+    Onboard, the controller shares the Jetson with camera capture, JPEG encode and (on the
+    folding path) the retargeting IK. ORT sizes its thread pools to every core by default,
+    which starves all of them: the symptom is stale ZMQ camera frames and a limping gait
+    while the control loop still reports its nominal rate.
+    """
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = intra_op_num_threads
+    options.inter_op_num_threads = inter_op_num_threads
+    return options

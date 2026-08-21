@@ -42,8 +42,10 @@ from ..g1_utils import (
     ISAACLAB_TO_MUJOCO,
     MUJOCO_TO_ISAACLAB,
     NUM_MOTORS,
+    G1_29_JointArmIndex,
     G1_29_JointIndex,
     get_gravity_orientation,
+    make_ort_session_options,
 )
 from ..unitree_g1 import RobotController
 
@@ -91,7 +93,7 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
     decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    decoder = ort.InferenceSession(decoder_path)
+    decoder = ort.InferenceSession(decoder_path, sess_options=make_ort_session_options())
     logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
 
     # Extract deploy constants from ONNX metadata
@@ -117,6 +119,8 @@ class SonicWholeBodyController(RobotController):
     """
 
     control_dt = CONTROL_DT
+    # Whole-body: the arms are part of the decoder's output, so its gains apply to them too.
+    controlled_joints = tuple(m.value for m in G1_29_JointIndex)
 
     def __init__(self, policy_type: str = "default"):
         self.decoder, self.kp, self.kd, self.default_angles, self.action_scale, self.neutral_token = (
@@ -211,3 +215,67 @@ class SonicWholeBodyController(RobotController):
         self.last_action_mj = action_mj.copy()
         target = self.default_angles + action_mj[ISAACLAB_TO_MUJOCO] * self.action_scale
         return {f"{m.name}.q": float(target[m.value]) for m in G1_29_JointIndex}
+
+
+class SonicLowerBodyController(SonicWholeBodyController):
+    """SONIC holding the robot up, with the arms handed over to the caller.
+
+    Same decoder, same 50 Hz loop, but only legs and waist are published; motors 15-28 are
+    left for ``send_action`` to drive. That lets a manipulation policy own the arms while
+    balance stays where it belongs. No token is consumed, so the decoder runs on
+    ``neutral_token`` throughout, which decodes to a stand -- and that makes a stalled policy
+    stream safe by construction: the arms hold their last command and the robot keeps
+    standing, rather than continuing to execute a stale intent the way a walk token would.
+
+    The decoder still conditions on its own action history, so the arm commands it did not
+    produce are folded back into that history. Otherwise it would predict against ten frames
+    of arm actions it never took while feeling the resulting motion in its proprioception,
+    and the mismatch would show up as leg compensation for arm movement it cannot explain.
+    """
+
+    # Legs and waist: everything below the first arm joint.
+    controlled_joints = tuple(range(G1_29_JointArmIndex.kLeftShoulderPitch))
+    # Fold externally commanded arm targets into the decoder's action history.
+    arm_feedback = True
+
+    def __init__(self, policy_type: str = "default"):
+        super().__init__(policy_type)
+        owned = set(self.controlled_joints)
+        self._lower_body_keys = [f"{m.name}.q" for m in G1_29_JointIndex if m.value in owned]
+        self._arm_slots = [(f"{m.name}.q", m.value) for m in G1_29_JointArmIndex]
+        # Arm joint targets, not a 64-D token: this controller is not driven by a token VLA.
+        self.action_ft = dict.fromkeys((key for key, _ in self._arm_slots), float)
+        # No observation_ft, so the robot advertises its 29 joint positions rather than a
+        # token echo -- the retargeting layer needs the real arm angles to run FK.
+        self.observation_ft = None
+        self._inv_action_scale = np.where(self.action_scale != 0, 1.0 / self.action_scale, 0.0)
+        logger.info("SonicLowerBodyController initialized (legs+waist; arms free)")
+
+    def observation_state(self) -> dict[str, float]:
+        """No token echo: the robot falls back to publishing real joint positions."""
+        return {}
+
+    def run_step(self, action: dict, lowstate) -> dict:
+        if self.arm_feedback:
+            self._absorb_arm_command(action)
+        targets = super().run_step(action, lowstate)
+        return {key: targets[key] for key in self._lower_body_keys if key in targets}
+
+    def _absorb_arm_command(self, action: dict) -> None:
+        """Rewrite the arm entries of the decoder's last action to match what was commanded.
+
+        ``run_step`` stores its own output as ``last_action_mj`` (a residual in MuJoCo order,
+        scaled by ``action_scale`` and added onto ``default_angles``). Inverting that mapping
+        turns a commanded arm angle back into the residual the decoder would have had to emit
+        to produce it.
+        """
+        if not action:
+            return
+        commanded = [(motor, action[key]) for key, motor in self._arm_slots if key in action]
+        if not commanded:
+            return
+        # Fancy indexing copies, so this reorders into IsaacLab space without aliasing.
+        residual = self.last_action_mj[ISAACLAB_TO_MUJOCO]
+        for motor, value in commanded:
+            residual[motor] = (float(value) - self.default_angles[motor]) * self._inv_action_scale[motor]
+        self.last_action_mj = residual[MUJOCO_TO_ISAACLAB]
