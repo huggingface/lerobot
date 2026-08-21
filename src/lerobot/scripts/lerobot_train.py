@@ -611,11 +611,9 @@ def train(cfg: TrainPipelineConfig):
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
-        logging.info(
-            f"Effective batch size: {cfg.batch_size} x {parallel_dims.dp_world_size} dp workers "
-            f"x {cfg.accelerator.gradient_accumulation.steps} grad accum = {effective_batch_size} "
-            f"(topology: dp_replicate={parallel_dims.dp_replicate}, dp_shard={parallel_dims.dp_shard})"
-        )
+        num_processes = accelerator.num_processes
+        effective_bs = cfg.batch_size * num_processes
+        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -701,6 +699,8 @@ def train(cfg: TrainPipelineConfig):
         # max() because headroom is gated by the worst-case rank.
         train_metrics["gpu_mem_gb"] = AverageMeter("mem_gb", ":.2f", reduction="max")
 
+    # Keep global batch size for logging; MetricsTracker handles world size internally.
+    effective_batch_size = cfg.batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
         cfg.batch_size,
         dataset.num_frames,

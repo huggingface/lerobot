@@ -1,0 +1,5 @@
+# Trajectory-derived interaction bottleneck, no causal regularization.
+policy:
+  type: cig_vla
+  detach_bottleneck_for_main_action: true
+  enable_causal_intervention: false

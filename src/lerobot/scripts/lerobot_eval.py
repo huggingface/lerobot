@@ -164,6 +164,56 @@ def _build_raw_frame(
     return frame
 
 
+def _extract_batched_cost(info: dict, num_envs: int) -> list[dict[str, float] | None]:
+    """Extract the per-env safety-constraint `cost` dict from a VectorEnv step's info.
+
+    Only LIBERO-Safety-style envs populate `info["cost"]` (see
+    `lerobot.envs.libero.LiberoEnv.step`, which passes the upstream LIBERO-Safety
+    simulator's per-constraint violation dict straight through). Every other env
+    never sets it, so this always degrades to a list of `None` rather than raising —
+    callers must treat a `None` entry as "this env doesn't report safety cost", not
+    as "no violation".
+
+    Gymnasium's `VectorEnv._add_info` (gymnasium/vector/vector_env.py, verified against
+    the installed gymnasium==1.3.0) merges dict-valued info entries *recursively*: a
+    per-env `info["cost"] = {"checkgripperforce": 1}` becomes, at the vector level,
+    `info["cost"] = {"checkgripperforce": np.array([...per env...]), "_checkgripperforce":
+    np.array([...bool present per env...])}` — i.e. one array per constraint name ever seen
+    across the batch, each with a companion presence mask. On the step an env actually
+    terminates, the terminal-step info (including `cost`) is nested one level deeper under
+    `info["final_info"]`, following the same recursive structure.
+    """
+
+    def _from_nested(nested: dict, n: int) -> list[dict[str, float] | None]:
+        out: list[dict[str, float] | None] = [None] * n
+        for name, values in nested.items():
+            if name.startswith("_"):
+                continue
+            mask = nested.get(f"_{name}")
+            for env_idx in range(n):
+                if mask is not None and not mask[env_idx]:
+                    continue
+                if out[env_idx] is None:
+                    out[env_idx] = {}
+                out[env_idx][name] = float(values[env_idx])
+        return out
+
+    final_info = info.get("final_info")
+    if isinstance(final_info, dict) and isinstance(final_info.get("cost"), dict):
+        final_costs = _from_nested(final_info["cost"], num_envs)
+    else:
+        final_costs = [None] * num_envs
+
+    if isinstance(info.get("cost"), dict):
+        step_costs = _from_nested(info["cost"], num_envs)
+    else:
+        step_costs = [None] * num_envs
+
+    # Prefer the terminal-step cost (from final_info) where present; autoreset means the
+    # top-level `info["cost"]` on a just-finished env's slot describes the *reset* env instead.
+    return [f if f is not None else s for f, s in zip(final_costs, step_costs, strict=True)]
+
+
 def rollout(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -256,6 +306,7 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+    all_costs: list[list[dict[str, float] | None]] = [[] for _ in range(env.num_envs)]
 
     step = 0
     # Keep track of which environments are done.
@@ -338,6 +389,10 @@ def rollout(
             else:
                 successes = [False] * env.num_envs
 
+            step_costs = _extract_batched_cost(info, env.num_envs)
+            for env_idx in range(env.num_envs):
+                all_costs[env_idx].append(step_costs[env_idx])
+
             if recording_datasets is not None and raw_observation is not None:
                 prev_done = done.copy()
                 for env_idx in range(env.num_envs):
@@ -405,9 +460,13 @@ def rollout(
             stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
         ret[OBS_STR] = stacked_observations
 
+    # Only non-LIBERO-Safety-style envs will have every entry be None; skip the key entirely
+    # so unrelated envs' rollout() output is completely unaffected.
+    if any(cost is not None for env_costs in all_costs for cost in env_costs):
+        ret["cost"] = all_costs
+
     if hasattr(policy, "use_original_modules"):
         policy.use_original_modules()
-
     return ret
 
 
@@ -476,6 +535,10 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds = []
+    # Safety-cost metrics (LIBERO-Safety-style envs only; stay empty for every other env).
+    all_safety_costs: list[float] = []
+    all_violation_steps: list[int] = []
+    all_constraint_violations: list[dict[str, float]] = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -569,6 +632,28 @@ def eval_policy(
         else:
             all_seeds.extend([None] * env.num_envs)
 
+        batch_costs = rollout_data.get("cost")
+        if batch_costs is not None:
+            for env_idx in range(env.num_envs):
+                # `done_indices + 1` matches the mask convention above: include the step the
+                # episode actually ended on.
+                end = done_indices[env_idx].item() + 1
+                per_constraint: dict[str, float] = {}
+                violation_steps = 0
+                for step_cost in batch_costs[env_idx][: end + 1]:
+                    if not step_cost:
+                        continue
+                    step_had_violation = False
+                    for name, value in step_cost.items():
+                        per_constraint[name] = per_constraint.get(name, 0.0) + value
+                        if value != 0:
+                            step_had_violation = True
+                    if step_had_violation:
+                        violation_steps += 1
+                all_safety_costs.append(sum(per_constraint.values()))
+                all_violation_steps.append(violation_steps)
+                all_constraint_violations.append(per_constraint)
+
         # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
             this_episode_data = _compile_episode_data(
@@ -610,36 +695,6 @@ def eval_policy(
                 thread.start()
                 threads.append(thread)
                 n_episodes_rendered += 1
-
-        # Maybe save the policy's predicted (imagined) video for this batch's rollout.
-        if save_predicted_video and len(pred_latents) > 0:
-            predicted_latent = torch.cat(pred_latents, dim=2)
-            decoder = getattr(policy, "decode_predicted_latents", None) or getattr(
-                policy, "_decode_predicted_video", None
-            )
-            if decoder is None:
-                raise AttributeError(
-                    "Policy config requested predicted-video saving, but the policy does not expose "
-                    "`decode_predicted_latents` or `_decode_predicted_video`."
-                )
-            predicted_video = decoder(predicted_latent)
-            if hasattr(predicted_video, "detach"):
-                predicted_video = predicted_video.detach().to("cpu").numpy()
-            videos_dir.mkdir(parents=True, exist_ok=True)
-            predicted_video_path = videos_dir / f"pred_episode_{n_predicted_rendered}.mp4"
-            predicted_video_paths.append(str(predicted_video_path))
-            thread = threading.Thread(
-                target=write_video,
-                args=(
-                    str(predicted_video_path),
-                    predicted_video,
-                    env.unwrapped.metadata["render_fps"],
-                ),
-            )
-            thread.start()
-            threads.append(thread)
-            n_predicted_rendered += 1
-
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
@@ -649,6 +704,7 @@ def eval_policy(
         thread.join()
 
     # Compile eval info.
+    has_safety_costs = len(all_safety_costs) >= n_episodes
     info = {
         "per_episode": [
             {
@@ -657,6 +713,16 @@ def eval_policy(
                 "max_reward": max_reward,
                 "success": success,
                 "seed": seed,
+                **(
+                    {
+                        "safety_cost": all_safety_costs[i],
+                        "had_violation": all_violation_steps[i] > 0,
+                        "violation_steps": all_violation_steps[i],
+                        "constraint_violations": all_constraint_violations[i],
+                    }
+                    if has_safety_costs
+                    else {}
+                ),
             }
             for i, (sum_reward, max_reward, success, seed) in enumerate(
                 zip(
@@ -674,6 +740,17 @@ def eval_policy(
             "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
+            **(
+                {
+                    "avg_safety_cost": float(np.nanmean(all_safety_costs[:n_episodes])),
+                    "pc_had_violation": float(
+                        np.nanmean([v > 0 for v in all_violation_steps[:n_episodes]]) * 100
+                    ),
+                    "avg_violation_steps": float(np.nanmean(all_violation_steps[:n_episodes])),
+                }
+                if has_safety_costs
+                else {}
+            ),
         },
     }
 
@@ -823,15 +900,29 @@ def eval_main(cfg: EvalPipelineConfig):
 
 
 # ---- typed payload returned by one task eval ----
-class TaskMetrics(TypedDict):
+class TaskMetrics(TypedDict, total=False):
     sum_rewards: list[float]
     max_rewards: list[float]
     successes: list[bool]
     video_paths: list[str]
     predicted_video_paths: list[str]
+    # Present only for LIBERO-Safety-style envs (see `_extract_batched_cost`); absent for
+    # every other env rather than filled with zeros, so aggregation can tell "no safety
+    # signal reported" apart from "reported zero violations".
+    safety_costs: list[float]
+    violation_steps: list[int]
+    constraint_violations: list[dict[str, float]]
 
 
-ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "predicted_video_paths")
+ACC_KEYS = (
+    "sum_rewards",
+    "max_rewards",
+    "successes",
+    "video_paths",
+    "predicted_video_paths",
+    "safety_costs",
+    "violation_steps",
+)
 
 
 def eval_one(
@@ -875,13 +966,18 @@ def eval_one(
     )
 
     per_episode = task_result["per_episode"]
-    return TaskMetrics(
+    metrics = TaskMetrics(
         sum_rewards=[ep["sum_reward"] for ep in per_episode],
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
         predicted_video_paths=task_result.get("predicted_video_paths", []),
     )
+    if per_episode and "safety_cost" in per_episode[0]:
+        metrics["safety_costs"] = [ep["safety_cost"] for ep in per_episode]
+        metrics["violation_steps"] = [ep["violation_steps"] for ep in per_episode]
+        metrics["constraint_violations"] = [ep["constraint_violations"] for ep in per_episode]
+    return metrics
 
 
 def run_one(
@@ -980,6 +1076,9 @@ def eval_policy_all(
     group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
     overall: dict[str, list] = {k: [] for k in ACC_KEYS}
     per_task_infos: list[dict] = []
+    # Safety-constraint totals (LIBERO-Safety-style tasks only): constraint name -> summed cost.
+    group_constraint_totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    overall_constraint_totals: dict[str, float] = defaultdict(float)
 
     # small inline helper to accumulate one task's metrics into accumulators
     def _accumulate_to(group: str, metrics: dict):
@@ -999,11 +1098,17 @@ def eval_policy_all(
         _append("sum_rewards", metrics.get("sum_rewards"))
         _append("max_rewards", metrics.get("max_rewards"))
         _append("successes", metrics.get("successes"))
+        _append("safety_costs", metrics.get("safety_costs"))
+        _append("violation_steps", metrics.get("violation_steps"))
         for key in ("video_paths", "predicted_video_paths"):
             paths = metrics.get(key, [])
             if paths:
                 group_acc[group][key].extend(paths)
                 overall[key].extend(paths)
+        for episode_violations in metrics.get("constraint_violations") or []:
+            for name, value in episode_violations.items():
+                group_constraint_totals[group][name] += value
+                overall_constraint_totals[name] += value
 
     # Choose runner (sequential vs threaded)
     task_runner = partial(
@@ -1085,6 +1190,15 @@ def eval_policy_all(
             "video_paths": list(acc["video_paths"]),
             "predicted_video_paths": list(acc["predicted_video_paths"]),
         }
+        if acc["safety_costs"]:
+            groups_aggregated[group].update(
+                {
+                    "avg_safety_cost": _agg_from_list(acc["safety_costs"]),
+                    "pc_had_violation": _agg_from_list([v > 0 for v in acc["violation_steps"]]) * 100,
+                    "avg_violation_steps": _agg_from_list(acc["violation_steps"]),
+                    "constraint_violations": dict(group_constraint_totals[group]),
+                }
+            )
 
     # overall aggregates
     overall_agg = {
@@ -1097,6 +1211,15 @@ def eval_policy_all(
         "video_paths": list(overall["video_paths"]),
         "predicted_video_paths": list(overall["predicted_video_paths"]),
     }
+    if overall["safety_costs"]:
+        overall_agg.update(
+            {
+                "avg_safety_cost": _agg_from_list(overall["safety_costs"]),
+                "pc_had_violation": _agg_from_list([v > 0 for v in overall["violation_steps"]]) * 100,
+                "avg_violation_steps": _agg_from_list(overall["violation_steps"]),
+                "constraint_violations": dict(overall_constraint_totals),
+            }
+        )
 
     return {
         "per_task": per_task_infos,

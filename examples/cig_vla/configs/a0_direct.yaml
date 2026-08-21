@@ -1,0 +1,9 @@
+# Direct baseline: geometry supervision and causal regularization disabled.
+policy:
+  type: cig_vla
+  translation_goal_loss_weight: 0.0
+  approach_direction_loss_weight: 0.0
+  translation_magnitude_loss_weight: 0.0
+  gripper_transition_loss_weight: 0.0
+  detach_bottleneck_for_main_action: false
+  enable_causal_intervention: false

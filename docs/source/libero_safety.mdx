@@ -1,0 +1,149 @@
+# LIBERO-Safety
+
+LIBERO-Safety extends [LIBERO](./libero) with safety-focused task suites — affordance-aware grasping, human-robot interaction, and obstacle avoidance — evaluated at 3 difficulty levels (L0: hazard-free, L1/L2: hazards introduced). LeRobot supports both training standard policies on the public demonstration dataset and closed-loop rollout evaluation in the official simulator.
+
+- Dataset: [LIBERO-Safety/libero_safety](https://huggingface.co/datasets/LIBERO-Safety/libero_safety)
+- Simulator/benchmark: [LIBERO-SAFETY/LIBERO-Safety](https://github.com/LIBERO-SAFETY/LIBERO-Safety)
+
+<Tip warning={true}>
+The dataset is published in the legacy `v2.1` schema (LeRobot's current format is `v3.0`) and uses `actions` instead of the standard `action` feature key. LeRobot loads it through a small adapter (`lerobot.datasets.adapters.libero_safety_v21.LiberoSafetyV21Dataset`) that lazily downloads only the episodes you request and renames `actions` → `action`. This is triggered automatically whenever `--dataset.repo_id=LIBERO-Safety/libero_safety`; no extra flags are needed.
+</Tip>
+
+## Dataset
+
+| | |
+| --- | --- |
+| episodes / frames / tasks | 19,664 / 3,443,735 / 15 |
+| fps | 20 |
+| cameras | `observation.image`, `observation.wrist_image` (256×256×3) |
+| state / action dims | 8 / 7 |
+
+## Training
+
+Train any standard policy (ACT, Diffusion, SmolVLA, pi0, ...) directly on the dataset:
+
+```bash
+lerobot-train \
+  --policy.type=act \
+  --policy.push_to_hub=false \
+  --dataset.repo_id=LIBERO-Safety/libero_safety \
+  --output_dir=./outputs/libero_safety_act \
+  --steps=100000 \
+  --batch_size=64
+```
+
+Episodes are downloaded lazily and cached (`$HF_LEROBOT_HOME`), so you don't need to fetch the full ~3.4M-frame dataset up front. Restrict to a subset while iterating with `--dataset.episodes='[0,1,2]'`.
+
+### Offline evaluation (held-out episodes)
+
+Use LeRobot's built-in held-out validation loss: hold out a fraction of episodes per task and periodically evaluate on them during training:
+
+```bash
+lerobot-train \
+  --policy.type=act \
+  --policy.push_to_hub=false \
+  --dataset.repo_id=LIBERO-Safety/libero_safety \
+  --dataset.eval_split=0.1 \
+  --eval_steps=5000 \
+  --output_dir=./outputs/libero_safety_act \
+  --steps=100000 \
+  --batch_size=64
+```
+
+This holds out the last `ceil(n_episodes_per_task * eval_split)` episodes of each task for validation and logs `eval_loss` every `--eval_steps` steps.
+
+## Closed-loop evaluation
+
+Unlike the base `hf-libero` package (which only ships the stock `libero_spatial` / `libero_object` / `libero_goal` / `libero_90` / `libero_10` / `libero_100` suites), the [LIBERO-Safety fork](https://github.com/LIBERO-SAFETY/LIBERO-Safety) ships as a drop-in replacement of the `libero` package with 5 additional task suites:
+
+| Suite | CLI name | Tasks × levels | Description | Training data |
+| --- | --- | --- | --- | --- |
+| Affordance | `affordance` | 5 × 3 | Affordance-aware grasping | L0 only (dataset tasks 0-4) |
+| Human safety | `human_safety` | 5 × 3 | Human-robot interaction; a moving human hand is part of the scene | L0 only (dataset tasks 5-9) |
+| Obstacle avoidance | `obstacle_avoidance` | 5 × 3 | Tabletop spatial avoidance | L0 only (dataset tasks 10-14) |
+| Obstacle avoidance (human) | `obstacle_avoidance_human` | 5 × 3 | Free-space hand/object avoidance | none — eval-only |
+| Reasoning safety | `reasoning_safety` | 5 × 3 | Semantic safety reasoning | none — eval-only |
+
+Task indices within a suite are ordered by level: `0-4` = L0 (hazard-free, matches the training data above), `5-9` = L1, `10-14` = L2 (hazards present).
+
+### Installation
+
+LIBERO-Safety ships as a namespace package also named `libero`, so it must replace `hf-libero` rather than install alongside it — use the pre-baked Docker image instead of a pip extra:
+
+```bash
+docker build -f docker/Dockerfile.benchmark.libero_safety -t lerobot-benchmark-libero-safety .
+```
+
+The Docker build now fails fast (before spending time on assets) if `hf-libero` ends up installed instead of the fork, rather than shipping an image that only breaks once you actually run an eval.
+
+<Tip>
+LIBERO-Safety requires Linux and MuJoCo — set the rendering backend before evaluation:
+
+```bash
+export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+```
+
+</Tip>
+
+Beyond installing the fork itself, no manual setup is required: the first `--env.type=libero_safety` run writes a default `~/.libero/config.yaml` (if one doesn't already exist) and downloads the object/scene assets (e.g. the human-hand model used by `human_safety`) from `LIBERO-Safety/libero_safety_assets` on the Hub, caching them under `$HF_LEROBOT_HOME/<repo_id>/assets` and symlinking them into the path the installed package expects. Later runs detect the cached assets and skip the download entirely — no network call, just a filesystem check. Point at a different assets repo/mirror with `--env.assets_repo_id=...`.
+
+### Selecting a suite and safety level
+
+Pick the suite with `--env.task` (comma-separated for multiple, same convention as `libero`/`libero_plus`) and the difficulty level with `--env.level` — LIBERO-Safety-specific, validated against `{0, 1, 2}` and against the 5 known suite names, and it raises immediately on an invalid value instead of silently falling back:
+
+```
+$ lerobot-eval --env.type=libero_safety --env.task=affordance --env.level=4 ...
+ValueError: Invalid LIBERO-Safety level: 4. Expected one of: [0, 1, 2].
+```
+
+`--env.level` computes the matching `task_ids` for you (L0 → ids 0-4, L1 → 5-9, L2 → 10-14 within each suite); pass `--env.task_ids` directly instead if you need a custom subset (the two are mutually exclusive — passing both also raises). Omitting `--env.level` evaluates all three levels (15 tasks per suite).
+
+**L0** (hazard-free, matches the training dataset's distribution):
+
+```bash
+docker run --gpus all --rm lerobot-benchmark-libero-safety \
+  lerobot-eval \
+    --policy.path="your-policy-id" \
+    --env.type=libero_safety \
+    --env.task=affordance,human_safety,obstacle_avoidance \
+    --env.level=0 \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10
+```
+
+**L1** (hazards introduced) — same command with `--env.level=1`. **L2** (hardest) — `--env.level=2`. Single-suite example:
+
+```bash
+lerobot-eval --env.type=libero_safety --env.task=human_safety --env.level=2 \
+  --policy.path="your-policy-id" --eval.batch_size=1 --eval.n_episodes=10
+```
+
+To test out-of-distribution generalization to the two suites with **no training data**, set `--env.task=obstacle_avoidance_human,reasoning_safety` (still supports `--env.level`).
+
+### Smoke-testing without a LIBERO-Safety checkpoint
+
+Any policy trained on plain LIBERO (e.g. `lerobot/smolvla_libero`) can drive the env end-to-end to verify the plumbing (suite/level path resolution, rollout, video/metrics artifacts) — it won't produce meaningful success/safety numbers since it was never trained on these tasks, but it proves the environment itself works:
+
+```bash
+lerobot-eval --env.type=libero_safety --env.task=affordance --env.level=0 \
+  --policy.path=lerobot/smolvla_libero --eval.batch_size=1 --eval.n_episodes=1
+```
+
+### Success and safety metrics
+
+Both success and safety are reported — the eval loop aggregates `is_success` the same way as every other LIBERO benchmark, plus safety-specific fields derived from `info["cost"]`, the upstream simulator's per-step, per-constraint violation dict (e.g. `{"checkgripperforce": 3.0}` — the gripper-to-hazard contact force computed by MuJoCo, not a plain boolean). `eval_info.json` gets, per episode and aggregated per-suite/overall:
+
+- `safety_cost` / `avg_safety_cost` — summed constraint magnitude over the episode.
+- `had_violation` / `pc_had_violation` — whether any step had a nonzero cost.
+- `violation_steps` / `avg_violation_steps` — how many steps had a violation.
+- `constraint_violations` — per-constraint-name totals (e.g. `{"checkgripperforce": 4.0}`), preserved separately so different constraints aren't averaged together.
+
+These keys are only present for `libero_safety` (and any other env that sets `info["cost"]`) — every other benchmark's `eval_info.json` is completely unaffected.
+
+### Troubleshooting
+
+- **`ValueError: Invalid LIBERO-Safety level/suite(s): ...`** — the CLI validated your `--env.task`/`--env.level` against the real 5-suite × 3-level layout and rejected it; fix the value, there's no silent fallback.
+- **`RuntimeError: LIBERO-Safety was requested, but standard LIBERO was imported.`** — the currently-installed `libero` package only registers the 6 stock LIBERO suites, meaning `hf-libero` is installed instead of the LIBERO-Safety fork (they share the same `libero` import name). Install the fork per the steps above (or check why the Dockerfile's `hf-libero` uninstall / `PYTHONPATH` didn't take).
+- **`FileNotFoundError: LIBERO BDDL/init-state file not found: ...`** — `bddl_files`/`init_files` aren't set up at the path your `~/.libero/config.yaml` points to (unlike `assets`, these ship inside the fork's own git repo, not the separate Hub download). The error prints the exact path it looked for, the configured LIBERO root, and the config file location — check those against the Dockerfile's `LIBERO_SAFETY_ROOT` setup steps.
+- **`ImportError: MagickWand shared library not found`** — missing the `libmagickwand-dev` system package (LIBERO-Safety's `env_wrapper.py` imports `wand` at module level for its image-corruption augmentations); already installed in the Dockerfile, but needed if you're setting up outside Docker.
+- **`ModuleNotFoundError: No module named 'libero'` after `pip install -e .`** — this is a real bug in the upstream repo: its top-level `libero/` directory has no `__init__.py`, so `pip install -e .` silently installs an empty package. Don't rely on the editable install; `PYTHONPATH`-prepend the repo root instead (already how the Dockerfile does it), since Python 3's implicit namespace packages don't need that missing `__init__.py`.

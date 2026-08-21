@@ -117,6 +117,15 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
 
+    if cfg.dataset.repo_id == "LIBERO-Safety/libero_safety":
+        from lerobot.datasets.adapters.libero_safety_v21 import LiberoSafetyV21Dataset
+
+        return LiberoSafetyV21Dataset(
+            episodes=cfg.dataset.episodes,
+            chunk_size=cfg.trainable_config.chunk_size,
+            revision=cfg.dataset.revision or "main",
+        )
+
     if isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id,
@@ -195,6 +204,43 @@ def make_train_eval_datasets(
 
     if cfg.dataset.eval_split == 0.0:
         return full_dataset, None
+
+    if cfg.dataset.repo_id == "LIBERO-Safety/libero_safety":
+        from lerobot.datasets.adapters.libero_safety_v21 import LiberoSafetyV21Dataset
+
+        task_to_episodes: dict[str, list[int]] = {}
+        for row in full_dataset.episode_rows:
+            task_key = row["tasks"][0] if row["tasks"] else ""
+            task_to_episodes.setdefault(task_key, []).append(int(row["episode_index"]))
+
+        train_episodes, eval_episodes = [], []
+        for eps in task_to_episodes.values():
+            n_eval = math.ceil(len(eps) * cfg.dataset.eval_split)
+            train_episodes.extend(eps[: len(eps) - n_eval])
+            eval_episodes.extend(eps[len(eps) - n_eval :])
+
+        if not train_episodes:
+            raise ValueError(
+                f"eval_split={cfg.dataset.eval_split} leaves 0 training episodes from "
+                f"{len(full_dataset.episode_rows)} total."
+            )
+
+        logging.info(
+            f"Train/eval split: {len(train_episodes)} train, {len(eval_episodes)} eval "
+            f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
+        )
+
+        train_dataset = LiberoSafetyV21Dataset(
+            episodes=train_episodes,
+            chunk_size=cfg.trainable_config.chunk_size,
+            revision=cfg.dataset.revision or "main",
+        )
+        eval_dataset = LiberoSafetyV21Dataset(
+            episodes=eval_episodes,
+            chunk_size=cfg.trainable_config.chunk_size,
+            revision=cfg.dataset.revision or "main",
+        )
+        return train_dataset, eval_dataset
 
     base_episodes = (
         full_dataset.episodes if full_dataset.episodes is not None else list(range(full_dataset.num_episodes))

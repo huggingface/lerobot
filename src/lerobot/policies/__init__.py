@@ -15,6 +15,7 @@
 from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
 
 from .act.configuration_act import ACTConfig as ACTConfig
+from .cig_vla.configuration_cig_vla import CIGVLAConfig as CIGVLAConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
@@ -36,6 +37,7 @@ from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig as VLAJEPAConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
+from .xvla_rmoe.configuration_xvla_rmoe import XVLARMoEConfig as XVLARMoEConfig
 
 # NOTE: Policy modeling classes (e.g., GaussianActorPolicy) are intentionally NOT re-exported here.
 # They have heavy optional dependencies and are loaded lazily via get_policy_class().
@@ -44,6 +46,7 @@ from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 __all__ = [
     # Configuration classes
     "ACTConfig",
+    "CIGVLAConfig",
     "DiffusionConfig",
     "EO1Config",
     "FastWAMConfig",
@@ -62,6 +65,7 @@ __all__ = [
     "VQBeTConfig",
     "WallXConfig",
     "XVLAConfig",
+    "XVLARMoEConfig",
     # Base class
     "PreTrainedPolicy",
     # RTC utilities

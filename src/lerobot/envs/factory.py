@@ -46,6 +46,19 @@ def make_env_pre_post_processors(
     stays here because it depends on the *policy* config, not the env config.
     """
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+    from lerobot.policies.xvla_rmoe.configuration_xvla_rmoe import XVLARMoEConfig
+
+    if isinstance(policy_cfg, XVLARMoEConfig):
+        if getattr(env_cfg, "control_mode", None) != "absolute":
+            raise ValueError(
+                "XVLA-RMoE preserves the pretrained absolute EE6D action contract; "
+                "set --env.control_mode=absolute for training-time and standalone evaluation."
+            )
+        from lerobot.policies.xvla_rmoe.processor_xvlarmoe import (
+            make_xvlarmoe_libero_pre_post_processors,
+        )
+
+        return make_xvlarmoe_libero_pre_post_processors()
 
     if isinstance(policy_cfg, XVLAConfig):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors

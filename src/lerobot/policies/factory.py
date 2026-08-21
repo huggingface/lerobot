@@ -46,16 +46,31 @@ from lerobot.utils.constants import (
 from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .act.configuration_act import ACTConfig
+from .cig_vla.configuration_cig_vla import CIGVLAConfig
+from .diffusion.configuration_diffusion import DiffusionConfig
+from .eo1.configuration_eo1 import EO1Config
 from .evo1.configuration_evo1 import Evo1Config
+from .fastwam.configuration_fastwam import FastWAMConfig
+from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
+from .lingbot_va.configuration_lingbot_va import LingBotVAConfig
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
+from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
+from .pi0.configuration_pi0 import PI0Config
+from .pi05.configuration_pi05 import PI05Config
 from .pretrained import PreTrainedPolicy
+from .smolvla.configuration_smolvla import SmolVLAConfig
+from .tdmpc.configuration_tdmpc import TDMPCConfig
 from .utils import validate_visual_features_consistency
+from .vla_jepa.configuration_vla_jepa import VLAJEPAConfig
+from .vqbet.configuration_vqbet import VQBeTConfig
+from .wall_x.configuration_wall_x import WallXConfig
+from .xvla.configuration_xvla import XVLAConfig
+from .xvla_rmoe.configuration_xvla_rmoe import XVLARMoEConfig
 
 if TYPE_CHECKING or _peft_available:
     from peft import PeftConfig, PeftModel
-else:
-    PeftConfig = None
-    PeftModel = None
 
 
 def _reconnect_relative_absolute_steps(
@@ -93,10 +108,97 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         The policy class corresponding to the given name.
 
     Raises:
-        ValueError: If the policy name is not registered.
-        ImportError: If the policy's optional dependencies are not installed.
+        NotImplementedError: If the policy name is not recognized.
     """
-    return _get_policy_cls_from_policy_name(name=name)
+    if name == "tdmpc":
+        from .tdmpc.modeling_tdmpc import TDMPCPolicy
+
+        return TDMPCPolicy
+    elif name == "diffusion":
+        from .diffusion.modeling_diffusion import DiffusionPolicy
+
+        return DiffusionPolicy
+    elif name == "act":
+        from .act.modeling_act import ACTPolicy
+
+        return ACTPolicy
+    elif name == "multi_task_dit":
+        from .multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
+
+        return MultiTaskDiTPolicy
+    elif name == "vqbet":
+        from .vqbet.modeling_vqbet import VQBeTPolicy
+
+        return VQBeTPolicy
+    elif name == "pi0":
+        from .pi0.modeling_pi0 import PI0Policy
+
+        return PI0Policy
+    elif name == "pi0_fast":
+        from .pi0_fast.modeling_pi0_fast import PI0FastPolicy
+
+        return PI0FastPolicy
+    elif name == "pi05":
+        from .pi05.modeling_pi05 import PI05Policy
+
+        return PI05Policy
+    elif name == "gaussian_actor":
+        from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
+
+        return GaussianActorPolicy
+    elif name == "smolvla":
+        from .smolvla.modeling_smolvla import SmolVLAPolicy
+
+        return SmolVLAPolicy
+    elif name == "cig_vla":
+        from .cig_vla.modeling_cig_vla import CIGVLAPolicy
+
+        return CIGVLAPolicy
+    elif name == "groot":
+        from .groot.modeling_groot import GrootPolicy
+
+        return GrootPolicy
+    elif name == "xvla":
+        from .xvla.modeling_xvla import XVLAPolicy
+
+        return XVLAPolicy
+    elif name == "xvla_rmoe":
+        from .xvla_rmoe.modeling_xvla_rmoe import XVLARMoEPolicy
+
+        return XVLARMoEPolicy
+    elif name == "wall_x":
+        from .wall_x.modeling_wall_x import WallXPolicy
+
+        return WallXPolicy
+    elif name == "eo1":
+        from .eo1.modeling_eo1 import EO1Policy
+
+        return EO1Policy
+    elif name == "molmoact2":
+        from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+        return MolmoAct2Policy
+    elif name == "vla_jepa":
+        from .vla_jepa.modeling_vla_jepa import VLAJEPAPolicy
+
+        return VLAJEPAPolicy
+    elif name == "lingbot_va":
+        from .lingbot_va.modeling_lingbot_va import LingBotVAPolicy
+
+        return LingBotVAPolicy
+    elif name == "fastwam":
+        from .fastwam.modeling_fastwam import FastWAMPolicy
+
+        return FastWAMPolicy
+    elif name == "evo1":
+        from .evo1.modeling_evo1 import Evo1Policy
+
+        return Evo1Policy
+    else:
+        try:
+            return _get_policy_cls_from_policy_name(name=name)
+        except Exception as e:
+            raise ValueError(f"Policy type '{name}' is not available.") from e
 
 
 def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
@@ -117,11 +219,52 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
     Raises:
         ValueError: If the `policy_type` is not recognized.
     """
-    try:
-        config_cls = PreTrainedConfig.get_choice_class(policy_type)
-    except Exception as e:
-        raise ValueError(f"Policy type '{policy_type}' is not available.") from e
-    return config_cls(**kwargs)
+    if policy_type == "tdmpc":
+        return TDMPCConfig(**kwargs)
+    elif policy_type == "diffusion":
+        return DiffusionConfig(**kwargs)
+    elif policy_type == "act":
+        return ACTConfig(**kwargs)
+    elif policy_type == "multi_task_dit":
+        return MultiTaskDiTConfig(**kwargs)
+    elif policy_type == "vqbet":
+        return VQBeTConfig(**kwargs)
+    elif policy_type == "pi0":
+        return PI0Config(**kwargs)
+    elif policy_type == "pi05":
+        return PI05Config(**kwargs)
+    elif policy_type == "gaussian_actor":
+        return GaussianActorConfig(**kwargs)
+    elif policy_type == "smolvla":
+        return SmolVLAConfig(**kwargs)
+    elif policy_type == "cig_vla":
+        return CIGVLAConfig(**kwargs)
+    elif policy_type == "groot":
+        return GrootConfig(**kwargs)
+    elif policy_type == "xvla":
+        return XVLAConfig(**kwargs)
+    elif policy_type == "xvla_rmoe":
+        return XVLARMoEConfig(**kwargs)
+    elif policy_type == "wall_x":
+        return WallXConfig(**kwargs)
+    elif policy_type == "eo1":
+        return EO1Config(**kwargs)
+    elif policy_type == "molmoact2":
+        return MolmoAct2Config(**kwargs)
+    elif policy_type == "vla_jepa":
+        return VLAJEPAConfig(**kwargs)
+    elif policy_type == "lingbot_va":
+        return LingBotVAConfig(**kwargs)
+    elif policy_type == "fastwam":
+        return FastWAMConfig(**kwargs)
+    elif policy_type == "evo1":
+        return Evo1Config(**kwargs)
+    else:
+        try:
+            config_cls = PreTrainedConfig.get_choice_class(policy_type)
+            return config_cls(**kwargs)
+        except Exception as e:
+            raise ValueError(f"Policy type '{policy_type}' is not available.") from e
 
 
 class ProcessorConfigKwargs(TypedDict, total=False):
@@ -178,6 +321,10 @@ def make_pre_post_processors(
         ValueError: If no processor factory exists for the given policy configuration type.
     """
     if pretrained_path:
+        if isinstance(policy_cfg, XVLARMoEConfig):
+            # Register RMoE processor steps before deserializing a local RMoE checkpoint.
+            from .xvla_rmoe import processor_xvlarmoe as _processor_xvlarmoe  # noqa: F401
+
         if isinstance(policy_cfg, GrootConfig):
             from .groot.processor_groot import make_groot_pre_post_processors_from_pretrained
 
@@ -218,6 +365,16 @@ def make_pre_post_processors(
             revision=pretrained_revision,
         )
         _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+        if isinstance(policy_cfg, XVLARMoEConfig):
+            from .xvla_rmoe.processor_xvlarmoe import reconcile_xvlarmoe_processors
+
+            preprocessor, postprocessor = reconcile_xvlarmoe_processors(
+                policy_cfg, preprocessor, postprocessor
+            )
+        elif isinstance(policy_cfg, XVLAConfig):
+            from .xvla.processor_xvla import reconcile_xvla_processors
+
+            preprocessor, postprocessor = reconcile_xvla_processors(policy_cfg, preprocessor, postprocessor)
         if isinstance(policy_cfg, Evo1Config):
             from .evo1.processor_evo1 import reconcile_evo1_processors
 
@@ -228,13 +385,181 @@ def make_pre_post_processors(
             )
         return preprocessor, postprocessor
 
-    # Create new processors from the policy config, resolving the per-policy factory
-    # function by naming convention (lazy import keeps optional dependencies optional).
-    return _make_processors_from_policy_config(
-        config=policy_cfg,
-        dataset_stats=kwargs.get("dataset_stats"),
-        dataset_meta=kwargs.get("dataset_meta"),
-    )
+    # Create a new processor based on policy type
+    if isinstance(policy_cfg, TDMPCConfig):
+        from .tdmpc.processor_tdmpc import make_tdmpc_pre_post_processors
+
+        processors = make_tdmpc_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, DiffusionConfig):
+        from .diffusion.processor_diffusion import make_diffusion_pre_post_processors
+
+        processors = make_diffusion_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, ACTConfig):
+        from .act.processor_act import make_act_pre_post_processors
+
+        processors = make_act_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MultiTaskDiTConfig):
+        from .multi_task_dit.processor_multi_task_dit import (
+            make_multi_task_dit_pre_post_processors,
+        )
+
+        processors = make_multi_task_dit_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, VQBeTConfig):
+        from .vqbet.processor_vqbet import make_vqbet_pre_post_processors
+
+        processors = make_vqbet_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI0Config):
+        from .pi0.processor_pi0 import make_pi0_pre_post_processors
+
+        processors = make_pi0_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05Config):
+        from .pi05.processor_pi05 import make_pi05_pre_post_processors
+
+        processors = make_pi05_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, GaussianActorConfig):
+        from .gaussian_actor.processor_gaussian_actor import make_gaussian_actor_pre_post_processors
+
+        processors = make_gaussian_actor_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, SmolVLAConfig):
+        from .smolvla.processor_smolvla import make_smolvla_pre_post_processors
+
+        processors = make_smolvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, CIGVLAConfig):
+        from .cig_vla.processor_cig_vla import make_cig_vla_pre_post_processors
+
+        processors = make_cig_vla_pre_post_processors(
+            config=policy_cfg, dataset_stats=kwargs.get("dataset_stats")
+        )
+
+    elif isinstance(policy_cfg, GrootConfig):
+        from .groot.processor_groot import make_groot_pre_post_processors
+
+        processors = make_groot_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, XVLARMoEConfig):
+        from .xvla_rmoe.processor_xvlarmoe import make_xvlarmoe_pre_post_processors
+
+        processors = make_xvlarmoe_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, XVLAConfig):
+        from .xvla.processor_xvla import (
+            make_xvla_pre_post_processors,
+        )
+
+        processors = make_xvla_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, WallXConfig):
+        from .wall_x.processor_wall_x import make_wall_x_pre_post_processors
+
+        processors = make_wall_x_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, EO1Config):
+        from .eo1.processor_eo1 import make_eo1_pre_post_processors
+
+        processors = make_eo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+    elif isinstance(policy_cfg, Evo1Config):
+        from .evo1.processor_evo1 import make_evo1_pre_post_processors
+
+        processors = make_evo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MolmoAct2Config):
+        from .molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
+
+        processors = make_molmoact2_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            dataset_meta=kwargs.get("dataset_meta"),
+        )
+
+    elif isinstance(policy_cfg, VLAJEPAConfig):
+        from .vla_jepa.processor_vla_jepa import make_vla_jepa_pre_post_processors
+
+        processors = make_vla_jepa_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, LingBotVAConfig):
+        from .lingbot_va.processor_lingbot_va import make_lingbot_va_pre_post_processors
+
+        processors = make_lingbot_va_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, FastWAMConfig):
+        from .fastwam.processor_fastwam import make_fastwam_pre_post_processors
+
+        processors = make_fastwam_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    else:
+        try:
+            processors = _make_processors_from_policy_config(
+                config=policy_cfg,
+                dataset_stats=kwargs.get("dataset_stats"),
+            )
+        except Exception as e:
+            raise ValueError(f"Processor for policy type '{policy_cfg.type}' is not implemented.") from e
+
+    return processors
 
 
 def make_policy(

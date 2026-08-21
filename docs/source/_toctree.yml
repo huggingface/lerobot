@@ -113,6 +113,8 @@
     title: LIBERO
   - local: libero_plus
     title: LIBERO-plus
+  - local: libero_safety
+    title: LIBERO-Safety
   - local: metaworld
     title: Meta-World
   - local: robotwin
