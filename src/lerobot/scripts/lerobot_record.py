@@ -99,7 +99,10 @@ from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
-from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
+from lerobot.common.control_utils import (
+    sanity_check_dataset_robot_compatibility,
+    smooth_teleop_session_start,
+)
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -188,6 +191,9 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Soft-start handover before the first recorded frame (0 disables).
+    smooth_handover_duration_s: float = 2.0
+    smooth_handover_fps: int = 30
 
     def __post_init__(self):
         if self.teleop is None:
@@ -482,6 +488,19 @@ def record(
         if teleop is not None:
             teleop.connect()
         robot.connect()
+        if cfg.smooth_handover_duration_s > 0:
+            logging.info(
+                "Smooth handover at record start (%.2fs @ %d Hz)",
+                cfg.smooth_handover_duration_s,
+                cfg.smooth_handover_fps,
+            )
+            smooth_teleop_session_start(
+                robot,
+                teleop,
+                robot_action_processor=robot_action_processor,
+                duration_s=cfg.smooth_handover_duration_s,
+                fps=cfg.smooth_handover_fps,
+            )
 
         listener, events = init_keyboard_listener()
 
