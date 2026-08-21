@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 
-from ..configs import CameraConfig, ColorMode
+from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
 __all__ = ["ZMQCameraConfig", "ColorMode"]
 
@@ -24,15 +24,27 @@ __all__ = ["ZMQCameraConfig", "ColorMode"]
 @CameraConfig.register_subclass("zmq")
 @dataclass
 class ZMQCameraConfig(CameraConfig):
+    """Config for a camera whose frames arrive over ZMQ from a remote publisher.
+
+    Attributes:
+        camera_name: Which stream to take out of the publisher's message. This is the name
+            on the wire, independent of the key the robot files the camera under, so a
+            publisher's naming need not match the policy's.
+        rotation: Applied on receipt, for a camera that is physically mounted rotated.
+            `width` and `height` describe the frame after it, as they do for OpenCVCamera.
+    """
+
     server_address: str
     port: int = 5555
     camera_name: str = "zmq_camera"
     color_mode: ColorMode = ColorMode.RGB
+    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     timeout_ms: int = 5000
     warmup_s: int = 1
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
+        self.rotation = Cv2Rotation(self.rotation)
 
         if self.timeout_ms <= 0:
             raise ValueError(f"`timeout_ms` must be positive, but {self.timeout_ms} is provided.")

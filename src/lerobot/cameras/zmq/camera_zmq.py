@@ -46,6 +46,7 @@ from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
+from ..utils import get_cv2_rotation
 from .configuration_zmq import ZMQCameraConfig
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ class ZMQCamera(Camera):
         self.port = config.port
         self.camera_name = config.camera_name
         self.color_mode = config.color_mode
+        self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.timeout_ms = config.timeout_ms
         # Restated from the base class so their type is visible here: the resolution stays
         # None until connect() learns it from the first frame.
@@ -169,8 +171,9 @@ class ZMQCamera(Camera):
                 # A robot config must state the resolution, and that statement is what
                 # observation_features advertises downstream. Letting it disagree with the
                 # frames would size buffers and datasets off a number nothing enforces.
+                seen = f"{w}x{h}" + (" after rotation" if self.rotation is not None else "")
                 raise RuntimeError(
-                    f"{self} publishes {w}x{h} but is configured as "
+                    f"{self} delivers {seen} but is configured as "
                     f"{self.width}x{self.height}; fix the config to match the publisher."
                 )
 
@@ -254,6 +257,9 @@ class ZMQCamera(Camera):
         # training data, which is invisible in the tensor shapes.
         if self.color_mode == ColorMode.RGB:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        if self.rotation is not None:
+            frame = cv2.rotate(frame, self.rotation)
 
         return frame
 
