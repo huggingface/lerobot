@@ -69,5 +69,9 @@ class UnitreeG1Config(RobotConfig):
     gravity_compensation: bool = False
 
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
-    # SonicWholeBodyController. None disables it.
+    # SonicWholeBodyController / SonicLowerBodyController. None disables it.
     controller: str | None = None
+
+    # Add left/right gripper commands to the action space, forwarded to the bridge's CAN
+    # hands. Requires run_g1_server.py --grippers on the robot.
+    grippers: bool = False

@@ -30,6 +30,9 @@ _lowstate_sock: zmq.Socket | None = None
 
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
+# Side-channel for the CAN hands, which are not among the G1's 29 motors and so cannot ride
+# lowcmd. Served by run_g1_server.py --grippers.
+GRIPPER_PORT = 6002
 
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816

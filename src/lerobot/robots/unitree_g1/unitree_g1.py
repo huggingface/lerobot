@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import threading
 import time
@@ -25,6 +26,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
+import zmq
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -40,6 +42,7 @@ from .g1_utils import (
     G1_29_JointIndex,
     default_remote_input,
 )
+from .unitree_sdk2_socket import GRIPPER_PORT
 
 if TYPE_CHECKING or _unitree_sdk_available:
     from unitree_sdk2py.core.channel import (
@@ -78,6 +81,9 @@ class RobotController(Protocol):
 
     Controllers may also expose any of the following, which the robot picks up when present:
 
+    - ``controlled_joints``: the motor indices this controller drives, defaulting to all of
+      them. Its ``kp``/``kd`` override the config's only there, and whatever it leaves out
+      stays free for ``send_action`` to drive.
     - ``kp`` / ``kd``: ``(29,)`` PD gains published with the targets, overriding the config.
     - ``default_angles``: ``(29,)`` home pose that residual actions are applied onto.
     - ``action_ft`` / ``observation_ft``: feature dicts that take over the robot's default
@@ -105,6 +111,7 @@ def make_robot_controller(name: str | None) -> RobotController | None:
         "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
         "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
         "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+        "SonicLowerBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
     }
     module_path = controllers.get(name)
     if module_path is None:
@@ -192,6 +199,11 @@ class UnitreeG1(Robot):
         self.subscribe_thread = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
+
+        # Gripper commands ride their own ZMQ socket rather than lowcmd: the Damiao hands sit
+        # on a CAN bus the bridge owns, not on the G1's 29 motors.
+        self._gripper_sock = None
+        self._gripper_last: dict[str, float] = {}
 
         # Controller loaded dynamically
         self.controller: RobotController | None = make_robot_controller(config.controller)
@@ -285,23 +297,34 @@ class UnitreeG1(Robot):
         proprio_ft = self._motors_ft if controller_ft is None else dict(controller_ft)
         return {**proprio_ft, **self._cameras_ft}
 
+    @property
+    def _grippers_ft(self) -> dict[str, type]:
+        """Closedness per hand, 0 open .. 1 closed. Not motors, so not part of ``.q``."""
+        if not self.config.grippers:
+            return {}
+        return {"left_gripper.pos": float, "right_gripper.pos": float}
+
     @cached_property
     def action_features(self) -> dict[str, type]:
         # No controller configured at all: raw 29-DoF joint teleop.
         if self.controller is None:
-            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+            return {
+                **{f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex},
+                **self._grippers_ft,
+            }
 
-        # Whole-body controllers (SONIC): 64-D latent token.
+        # A controller that advertises its own action space takes over the joints, but the
+        # hands are the robot's, not the controller's, so they are appended either way.
         controller_ft = getattr(self.controller, "action_ft", None)
         if controller_ft is not None:
-            return dict(controller_ft)
+            return {**controller_ft, **self._grippers_ft}
 
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
         # TODO: have GR00T/Holosoma advertise their own action_features too, so every
         # controller declares its action space and this fallthrough can be dropped.
         arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
         remote_features = dict.fromkeys(REMOTE_AXES, float)
-        return {**arm_features, **remote_features}
+        return {**arm_features, **remote_features, **self._grippers_ft}
 
     def _controller_loop(self):
         """Background thread that runs controller at policy's control_dt."""
@@ -402,14 +425,24 @@ class UnitreeG1(Robot):
         logger.info("[UnitreeG1] Connected to robot.")
         self.msg.mode_machine = lowstate.mode_machine
 
-        # Prefer the active controller's gains (e.g. SONIC loads kp/kd from its ONNX);
-        # otherwise fall back to the config defaults.
+        if self.config.grippers:
+            # PUSH, so a bridge that is not listening yet queues rather than blocking, and
+            # the send in _send_gripper_cmd stays non-blocking.
+            self._gripper_sock = zmq.Context.instance().socket(zmq.PUSH)
+            self._gripper_sock.setsockopt(zmq.LINGER, 0)
+            self._gripper_sock.setsockopt(zmq.SNDHWM, 4)
+            self._gripper_sock.connect(f"tcp://{self.config.robot_ip}:{GRIPPER_PORT}")
+            logger.info(f"[UnitreeG1] gripper commands -> {self.config.robot_ip}:{GRIPPER_PORT}")
+
+        # Prefer the active controller's gains (e.g. SONIC loads kp/kd from its ONNX), but
+        # only on the joints it actually drives: a controller that leaves the arms to
+        # send_action should not also dictate how stiffly they track.
+        self.kp = np.array(self.config.kp, dtype=np.float32)
+        self.kd = np.array(self.config.kd, dtype=np.float32)
         if self.controller is not None and hasattr(self.controller, "kp"):
-            self.kp = np.array(self.controller.kp, dtype=np.float32)
-            self.kd = np.array(self.controller.kd, dtype=np.float32)
-        else:
-            self.kp = np.array(self.config.kp, dtype=np.float32)
-            self.kd = np.array(self.config.kd, dtype=np.float32)
+            owned = list(getattr(self.controller, "controlled_joints", range(NUM_MOTORS)))
+            self.kp[owned] = np.asarray(self.controller.kp, dtype=np.float32)[owned]
+            self.kd[owned] = np.asarray(self.controller.kd, dtype=np.float32)[owned]
 
         for joint in G1_29_JointIndex:
             self.msg.motor_cmd[joint].mode = 1
@@ -458,6 +491,10 @@ class UnitreeG1(Robot):
         # Put robot in passive mode
         if not self.config.is_simulation:
             self._send_zero_torque()
+
+        if self._gripper_sock is not None:
+            self._gripper_sock.close()
+            self._gripper_sock = None
 
         # Wait for subscribe thread to finish
         if self.subscribe_thread is not None:
@@ -549,7 +586,36 @@ class UnitreeG1(Robot):
 
         return obs
 
+    def _send_gripper_cmd(self, action: RobotAction) -> None:
+        """Forward gripper closedness to the bridge's CAN hands over ZMQ.
+
+        Sent only on change: the bridge writes CAN on every message it accepts, and a policy
+        streaming at 30 Hz would otherwise saturate the bus holding a constant grip.
+        """
+        if self._gripper_sock is None:
+            return
+        cmd = {}
+        for side, key in (("L", "left_gripper.pos"), ("R", "right_gripper.pos")):
+            value = action.get(key)
+            if value is None:
+                continue
+            value = min(1.0, max(0.0, float(value)))
+            if self._gripper_last.get(side) != value:
+                cmd[side] = value
+        if not cmd:
+            return
+        try:
+            self._gripper_sock.send_string(json.dumps(cmd), flags=zmq.NOBLOCK)
+        except zmq.ZMQError as exc:
+            # A stalled hand must never take the balance loop down with it.
+            logger.warning(f"[UnitreeG1] dropped gripper command {cmd}: {exc}")
+            return
+        self._gripper_last.update(cmd)
+
     def send_action(self, action: RobotAction) -> RobotAction:
+        if self.config.grippers:
+            self._send_gripper_cmd(action)
+
         action_to_publish = action
         if self.controller is not None:
             # Controller thread owns legs/waist. Here we only update joystick inputs

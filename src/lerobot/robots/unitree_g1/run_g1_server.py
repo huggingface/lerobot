@@ -54,9 +54,11 @@ kTopicLowState = "rt/lowstate"  # observation from robot
 
 LOWCMD_PORT = 6000
 LOWSTATE_PORT = 6001
-# Side-channel for gripper commands sent by the teleop laptop (exo R3/L3 clicks).
-# The exo joystick buttons are only known laptop-side, so the robot object forwards
-# them here as JSON {"L": 0/1, "R": 0/1}; see UnitreeG1._send_gripper_cmd.
+# Gripper commands arrive as JSON {"L": <closedness>, "R": <closedness>} where 0 is fully
+# open and 1 fully closed; see UnitreeG1._send_gripper_cmd. Teleop only ever knows the exo's
+# R3/L3 button state, so it sends the integers 0 and 1, while a policy sends the fraction in
+# between -- the same field, read the same way. This file runs as a script, so the port is
+# repeated here rather than imported; keep it in step with unitree_sdk2_socket.GRIPPER_PORT.
 GRIPPER_PORT = 6002
 NUM_MOTORS = 35
 
@@ -69,24 +71,34 @@ GRIPPER_MOTOR_TYPE = "dm4310"
 GRIPPER_OPEN_DEG, GRIPPER_CLOSE_DEG = LEFT_DEFAULT_JOINTS_LIMITS["gripper"]
 
 
+# Ignore command changes smaller than this so a policy streaming at 30 Hz does not flood the
+# CAN bus with sub-degree corrections the gripper cannot resolve anyway.
+GRIPPER_DEADBAND = 0.02
+
+
 @dataclass
 class Gripper:
-    """A single Damiao gripper that only writes to CAN when the open/close state changes."""
+    """A single Damiao gripper, positioned anywhere between fully open and fully closed.
+
+    The motor takes a continuous ``Goal_Position``, so partial grips cost nothing extra; the
+    binary open/close of the teleop path is just the two endpoints of the same command.
+    """
 
     name: str
     bus: "DamiaoMotorsBus"
     open_deg: float
     close_deg: float
-    _last_cmd: str | None = None  # "open" | "close"
+    _last_closedness: float | None = None
 
-    def apply(self, want_close: bool) -> None:
-        want = "close" if want_close else "open"
-        if want == self._last_cmd:
+    def apply(self, closedness: float) -> None:
+        """Drive the gripper to ``closedness``, 0 fully open .. 1 fully closed."""
+        closedness = min(1.0, max(0.0, float(closedness)))
+        if self._last_closedness is not None and abs(closedness - self._last_closedness) < GRIPPER_DEADBAND:
             return
-        target = self.close_deg if want_close else self.open_deg
+        target = self.open_deg + closedness * (self.close_deg - self.open_deg)
         self.bus.write("Goal_Position", "gripper", target)
-        self._last_cmd = want
-        print(f"[gripper] {self.name} -> {want.upper()} ({target:.1f} deg)")
+        self._last_closedness = closedness
+        print(f"[gripper] {self.name} -> {closedness:.2f} ({target:.1f} deg)")
 
 
 def build_gripper(
@@ -120,7 +132,7 @@ def build_gripper(
     bus.write("Kd", "gripper", kd)
     bus.write("Goal_Position", "gripper", open_deg)  # start open
     print(f"  {name}: connected, torque enabled, opened (kp={kp}, kd={kd}).")
-    return Gripper(name, bus, open_deg, close_deg, _last_cmd="open")
+    return Gripper(name, bus, open_deg, close_deg, _last_closedness=0.0)
 
 
 def parse_camera_specs(spec: str, fps: int, width: int, height: int) -> dict[str, OpenCVCameraConfig]:
@@ -222,10 +234,11 @@ def gripper_cmd_loop(
     grippers: dict[str, Gripper],
     shutdown_event: threading.Event,
 ) -> None:
-    """Receive gripper commands from the teleop laptop and apply them.
+    """Receive gripper commands and apply them.
 
-    Payload is JSON ``{"L": 0/1, "R": 0/1}`` where 1 = close, 0 = open. Only writes
-    CAN when a gripper's state actually changes (handled by Gripper.apply).
+    Payload is JSON ``{"L": <closedness>, "R": <closedness>}``, 0 fully open .. 1 fully
+    closed. Teleop's 0/1 integers are the endpoints of that range, so the older binary
+    senders keep working unchanged. Only writes CAN on a real change (see Gripper.apply).
     """
     while not shutdown_event.is_set():
         try:
@@ -238,11 +251,9 @@ def gripper_cmd_loop(
             cmd = json.loads(payload.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             continue
-        print(f"[gripper] recv {cmd}")
-        if "L" in grippers and "L" in cmd:
-            grippers["L"].apply(bool(cmd["L"]))
-        if "R" in grippers and "R" in cmd:
-            grippers["R"].apply(bool(cmd["R"]))
+        for side in ("L", "R"):
+            if side in grippers and side in cmd:
+                grippers[side].apply(cmd[side])
 
 
 def state_forward_loop(
