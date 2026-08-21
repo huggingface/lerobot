@@ -69,6 +69,10 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# How long a thin client waits at connect for the onboard server's first state message.
+# Generous because the server publishes only once its controller is up.
+CLIENT_STATE_TIMEOUT_S = 10.0
+
 
 @runtime_checkable
 class RobotController(Protocol):
@@ -489,11 +493,29 @@ class UnitreeG1(Robot):
         for cam in self._cameras.values():
             if not cam.is_connected:
                 cam.connect()
+
+        # Block until the first state actually lands. A SUB socket takes a moment to finish
+        # connecting and subscribing, and reads are non-blocking, so returning here the
+        # instant the socket exists hands the caller an empty observation -- whether that is
+        # survivable depends only on how long the caller happens to take next.
+        poller = zmq.Poller()
+        poller.register(self._client_state_sock, zmq.POLLIN)
+        deadline = time.time() + CLIENT_STATE_TIMEOUT_S
+        while not self._client_state_latest and time.time() < deadline:
+            if poller.poll(200):
+                self._recv_client_state()
+        if not self._client_state_latest:
+            raise DeviceNotConnectedError(
+                f"[client] no observation.state from {server_ip}:{STATE_PORT} after "
+                f"{CLIENT_STATE_TIMEOUT_S:.0f}s. Is run_g1_server.py --onboard running there?"
+            )
+
         logger.info(
-            "[client] connected to %s: actions ->:%d, state <-:%d, %d camera(s).",
+            "[client] connected to %s: actions ->:%d, state <-:%d (%d keys), %d camera(s).",
             server_ip,
             ACTION_PORT,
             STATE_PORT,
+            len(self._client_state_latest),
             len(self._cameras),
         )
 
