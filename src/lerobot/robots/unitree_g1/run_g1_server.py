@@ -539,6 +539,15 @@ def main() -> None:
         default=GRIPPER_CLOSE_DEG,
         help="Gripper CLOSE position (deg); raise it toward the open value for delicate objects",
     )
+    parser.add_argument(
+        "--cameras-only",
+        action="store_true",
+        help=(
+            "Serve camera frames and nothing else: no DDS, no controller, no motion-service "
+            "release. For perception-only runs (e.g. driving a simulated body from the real "
+            "cameras), where the robot should keep standing on its own."
+        ),
+    )
     # Onboard mode: run the controller on the robot instead of bridging raw lowcmd.
     parser.add_argument(
         "--onboard",
@@ -554,6 +563,23 @@ def main() -> None:
     args = parser.parse_args()
 
     cameras, publish_size = cameras_from_args(args)
+
+    # --- Cameras only: serve frames, leave the robot's own control completely alone. ---
+    if args.cameras_only:
+        if not cameras:
+            parser.error("--cameras-only needs --camera or --cameras")
+        camera_server, _ = start_camera_server(
+            cameras, fps=args.camera_fps, port=args.camera_port, publish_size=publish_size
+        )
+        print("Cameras only: DDS untouched, no controller. Ctrl-C to stop.")
+        try:
+            while True:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            camera_server.stop()
+        return
 
     # --- Onboard mode: controller runs on the robot; laptop ships high-level actions. ---
     if args.onboard:

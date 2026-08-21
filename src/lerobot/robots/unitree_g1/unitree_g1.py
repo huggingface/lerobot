@@ -105,6 +105,14 @@ class RobotController(Protocol):
         ...
 
 
+# Dex3 fingers at full clench, in the hand's motor order (thumb 0-2, middle 0-1, index 0-1).
+# Open is all zeros; a command is closedness scaled onto these. The hands mirror, so the two
+# sides differ only in sign. thumb_0 is abduction rather than curl and stays put.
+HAND_CURL_CLOSED = {
+    "left": (0.0, 1.0472, 1.74533, -1.5708, -1.74533, -1.5708, -1.74533),
+    "right": (0.0, -1.0472, -1.74533, 1.5708, 1.74533, 1.5708, 1.74533),
+}
+
 CONTROLLER_MODULES = {
     "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
     "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
@@ -234,6 +242,8 @@ class UnitreeG1(Robot):
         # on a CAN bus the bridge owns, not on the G1's 29 motors.
         self._gripper_sock = None
         self._gripper_last: dict[str, float] = {}
+        self._hand_cmd_pubs: dict[str, object] = {}
+        self._hand_cmd_msgs: dict[str, tuple] = {}
 
         # Controller loaded dynamically. GUARDRAIL: the controller must never be built or
         # run on the laptop client -- it always runs onboard (or in sim).
@@ -535,8 +545,11 @@ class UnitreeG1(Robot):
                 cam.disconnect()
 
     def _connect_grippers(self) -> None:
-        """Open the gripper side channel to the bridge, from either role."""
+        """Open the gripper side channel, from either role."""
         if not self.config.grippers:
+            return
+        if self.config.is_simulation:
+            self._connect_grippers_sim()
             return
         # PUSH, so a bridge that is not listening yet queues rather than blocking, and the
         # send in _send_gripper_cmd stays non-blocking.
@@ -545,6 +558,18 @@ class UnitreeG1(Robot):
         self._gripper_sock.setsockopt(zmq.SNDHWM, 4)
         self._gripper_sock.connect(f"tcp://{self.config.robot_ip}:{GRIPPER_PORT}")
         logger.info(f"[UnitreeG1] gripper commands -> {self.config.robot_ip}:{GRIPPER_PORT}")
+
+    def _connect_grippers_sim(self) -> None:
+        """Publish Dex3 hand commands into the MuJoCo bridge, which subscribes to these."""
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_ as HandCmd_default
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import HandCmd_
+
+        for side in ("left", "right"):
+            publisher = self._ChannelPublisher(f"rt/dex3/{side}/cmd", HandCmd_)
+            publisher.Init()
+            self._hand_cmd_pubs[side] = publisher
+            self._hand_cmd_msgs[side] = (HandCmd_default(), HAND_CURL_CLOSED[side])
+        logger.info("[UnitreeG1] gripper commands -> sim Dex3 hands (rt/dex3/{left,right}/cmd)")
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Thin-client role: no DDS, no controller. Open the high-level ZMQ links to
@@ -560,7 +585,13 @@ class UnitreeG1(Robot):
             from lerobot.envs import make_env
 
             self._ChannelFactoryInitialize(0, "lo")
-            self._env_wrapper = make_env("lerobot/unitree-g1-mujoco", trust_remote_code=True)
+            # publish_images=False: the sim would otherwise stand up an offscreen renderer and
+            # a ZMQ image server for its own cameras. This robot's cameras are configured
+            # separately (and may well point at the real hardware), so that renderer is never
+            # read -- it just costs a GL context, which is what fails on headless boxes.
+            self._env_wrapper = make_env(
+                "lerobot/unitree-g1-mujoco", trust_remote_code=True, publish_images=False
+            )
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
         elif self.config.onboard:
@@ -768,11 +799,19 @@ class UnitreeG1(Robot):
         return obs
 
     def _send_gripper_cmd(self, action: RobotAction) -> None:
-        """Forward gripper closedness to the bridge's CAN hands over ZMQ.
+        """Forward gripper closedness to the hands.
 
-        Sent only on change: the bridge writes CAN on every message it accepts, and a policy
-        streaming at 30 Hz would otherwise saturate the bus holding a constant grip.
+        Same 0..1 closedness either way, different transport: in sim the hands are 7-DoF Dex3
+        models the MuJoCo bridge drives over DDS, while on hardware they are two-finger CAN
+        grippers behind the ZMQ bridge.
+
+        On hardware this is sent only on change: the bridge writes CAN on every message it
+        accepts, and a policy streaming at 30 Hz would otherwise saturate the bus holding a
+        constant grip.
         """
+        if self.config.is_simulation:
+            self._send_gripper_cmd_sim(action)
+            return
         if self._gripper_sock is None:
             return
         cmd = {}
@@ -792,6 +831,19 @@ class UnitreeG1(Robot):
             logger.warning(f"[UnitreeG1] dropped gripper command {cmd}: {exc}")
             return
         self._gripper_last.update(cmd)
+
+    def _send_gripper_cmd_sim(self, action: RobotAction) -> None:
+        """Drive the sim's Dex3 hands from the same closedness the real grippers get."""
+        for side, key in (("left", "left_gripper.pos"), ("right", "right_gripper.pos")):
+            publisher = self._hand_cmd_pubs.get(side)
+            value = action.get(key)
+            if publisher is None or value is None:
+                continue
+            closedness = min(1.0, max(0.0, float(value)))
+            msg, curl = self._hand_cmd_msgs[side]
+            for i, target in enumerate(curl):
+                msg.motor_cmd[i].q = float(closedness * target)
+            publisher.Write(msg)
 
     def send_action(self, action: RobotAction) -> RobotAction:
         # The hands hang off the bridge's CAN bus, not off lowcmd, so their commands take the
