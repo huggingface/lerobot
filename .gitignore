@@ -22,6 +22,7 @@ venv.bak/
 .python-version
 __pypackages__/
 node_modules/
+user_lerobot/
 
 # Lock files
 poetry.lock
@@ -176,3 +177,4 @@ outputs/
 *.urdf
 *.xml
 *.part
+Miniforge3-Linux-x86_64.sh

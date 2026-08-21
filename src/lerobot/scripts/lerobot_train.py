@@ -404,38 +404,17 @@ def train(cfg: TrainPipelineConfig):
         return submit_to_hf(cfg)
 
     require_package("accelerate", extra="training")
-    from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, DistributedType
 
-    cfg.validate()
+    cfg.validate()  # all fail-fasts fire here, before any distributed init
 
-    # Create Accelerator if not provided
-    # It will automatically detect if running in distributed mode or single-process mode
-    # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
-    # We set find_unused_parameters=True to handle models with conditional computation
-    if accelerator is None:
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
-        # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
-        force_cpu = cfg.trainable_config.device == "cpu"
-        # Drive Accelerate's autocast from policy.dtype (bf16/fp16 activate it; float32 -> full precision).
-        has_policy_dtype = hasattr(cfg.trainable_config, "dtype")
-        policy_dtype = getattr(cfg.trainable_config, "dtype", None)
-        mixed_precision = {"bfloat16": "bf16", "float16": "fp16", "float32": "no"}.get(policy_dtype)
-        # Policies without a `dtype` field fall back to `use_amp`, which would otherwise be
-        # silently ignored here while lerobot-eval honors it. Follow torch.autocast's default
-        # for the configured device so training and evaluation use the same precision.
-        if not has_policy_dtype and getattr(cfg.trainable_config, "use_amp", False):
-            device_type = torch.device(cfg.trainable_config.device).type
-            autocast_dtype = torch.get_autocast_dtype(device_type)
-            mixed_precision = {torch.bfloat16: "bf16", torch.float16: "fp16"}[autocast_dtype]
-        accelerator = Accelerator(
-            step_scheduler_with_optimizer=False,
-            mixed_precision=mixed_precision,
-            kwargs_handlers=[ddp_kwargs],
-            cpu=force_cpu,
-        )
-
+    # --- engine & topology --------------------------------------------------------------------
+    # The factory is the ONLY accelerate configuration site: it guards against env-var
+    # interference, resolves the declared parallelism degrees against the launched world, and
+    # builds the Accelerator from the config mirrors.
+    accelerator = make_accelerator(cfg)
+    parallel_dims = ParallelDims.from_config(
+        cfg.parallelism, accelerator.num_processes, accelerator.device.type
+    )
     init_logging(accelerator=accelerator)
 
     if is_main_process():
