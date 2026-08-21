@@ -25,9 +25,10 @@ References:
 - https://brysonkjones.substack.com/p/dissecting-and-open-sourcing-multitask-diffusion-transformer-policy
 """
 
+import logging
 import math
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 import einops
 import torch
@@ -62,7 +63,17 @@ from lerobot.utils.constants import (
 )
 
 from ..pretrained import PreTrainedPolicy
+from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import populate_queues
+
+logger = logging.getLogger(__name__)
+
+
+class ActionSelectKwargs(TypedDict, total=False):
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
+
 
 # -- Policy --
 
@@ -104,6 +115,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         else:
             raise ValueError(f"Unsupported objective: {config.objective}")
 
+        self.init_rtc_processor()
         self.reset()
 
     def get_optim_params(self) -> list:
@@ -150,10 +162,49 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
+    def supports_rtc(self) -> bool:
+        """RTC guidance is implemented for the diffusion (DDPM/DDIM) objective
+        and for flow matching with euler integration. Returning False for
+        flow + rk4 makes the rollout engine reject the combination at startup
+        (supports_rtc_inference) instead of failing mid-episode on the first
+        guided chunk."""
+        if self.config.is_flow_matching and self.config.integration_method != "euler":
+            return False
+        return True
+
+    def init_rtc_processor(self) -> None:
+        """Initialize RTC processor if RTC is enabled in config (see pi0)."""
+        self.rtc_processor = None
+        rtc_config = getattr(self.config, "rtc_config", None)
+        if rtc_config is not None:
+            self.rtc_processor = RTCProcessor(rtc_config)
+
+    def _rtc_enabled(self) -> bool:
+        rtc_config = getattr(self.config, "rtc_config", None)
+        return rtc_config is not None and rtc_config.enabled
+
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations"""
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+        """Predict a chunk of actions given environment observations.
+
+        Without RTC (no ``rtc_config`` or ``enabled=False``) this is the
+        original queue-stacked behavior (the caller is select_action, which
+        populated the obs-history queues). With RTC enabled, ``batch`` is a
+        single preprocessed frame as handed over by the RTC inference engine
+        and sampling is guided toward the previous chunk's leftover actions
+        (Real-Time Chunking,
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf).
+        """
         self.eval()
+
+        if self._rtc_enabled():
+            return _predict_action_chunk_rtc(
+                self,
+                batch,
+                inference_delay=int(kwargs.get("inference_delay") or 0),
+                prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+                execution_horizon=kwargs.get("execution_horizon"),
+            )
 
         for k in batch:
             if k in self._queues:
@@ -173,6 +224,10 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations"""
+        assert not self._rtc_enabled(), (
+            "RTC is not supported for select_action, use it with predict_action_chunk"
+        )
+
         if ACTION in batch:
             batch = dict(batch)  # shallow copy to avoid modifying original
             batch.pop(ACTION)
@@ -196,6 +251,299 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         loss = self.objective.compute_loss(self.noise_predictor, batch, conditioning_vec)
 
         return loss, None
+
+
+# -- Real-Time Chunking (RTC) --
+#
+# Ports of the pi0/molmoact2 RTC integration to MultiTaskDiT:
+# - The flow-matching guidance is the math of
+#   lerobot/policies/rtc/modeling_rtc.py::RTCProcessor.denoise_step adapted to
+#   MultiTaskDiT's time convention (t: 0 = noise -> 1 = data) the way
+#   molmoact2 adapts it (invert time, negate velocities). In the reference the
+#   autograd VJP is the identity (v_t is computed before
+#   x_t.requires_grad_(True)), so the update reduces to
+#   ``v <- v + g * (prev - x0_pred) * weights`` in this convention.
+# - The diffusion (DDIM/DDPM) branch uses the standard diffusion analogue of
+#   RTC's inpainting formulation (RePaint-style soft-mask inpainting): before
+#   every model call the guided region of the latent is blended toward the
+#   forward-noised previous chunk, and after the final step the clean sample is
+#   blended once more, pinning the first ``inference_delay`` actions exactly.
+# - MultiTaskDiT samples a full ``horizon`` window and returns
+#   ``actions[:, start:start + n_action_steps]`` with start = n_obs_steps - 1,
+#   so the chunk-frame prefix/weights are shifted by ``start`` into the horizon
+#   frame.
+
+
+def _resolve_rtc_processor(policy) -> RTCProcessor:
+    """Return the policy's RTC processor, initializing it from ``rtc_config``
+    if the caller skipped the rollout-context wiring."""
+    if getattr(policy, "rtc_processor", None) is None:
+        policy.init_rtc_processor()
+    return policy.rtc_processor
+
+
+def _predict_action_chunk_rtc(
+    policy,
+    batch: dict[str, Tensor],
+    *,
+    inference_delay: int,
+    prev_chunk_left_over: Tensor | None,
+    execution_horizon: int | None,
+) -> Tensor:
+    policy.eval()
+
+    # The RTC engine hands over one preprocessed frame; replicate
+    # select_action's batch prep (camera stacking) and fake the temporal
+    # history by repeating the current frame n_obs_steps times. With training
+    # frames one tick apart (~33 ms at 30 Hz, near-identical), a duplicated
+    # current frame is far closer to the training distribution than frames one
+    # inference-interval apart.
+    batch = policy._prepare_batch(dict(batch))
+    n_obs_steps = policy.config.n_obs_steps
+    if OBS_STATE in batch and batch[OBS_STATE].ndim == 2:
+        b = batch[OBS_STATE].shape[0]
+        batch[OBS_STATE] = (
+            batch[OBS_STATE].unsqueeze(1).expand(b, n_obs_steps, *batch[OBS_STATE].shape[1:]).contiguous()
+        )
+    if OBS_IMAGES in batch and batch[OBS_IMAGES].ndim == 5:
+        b = batch[OBS_IMAGES].shape[0]
+        batch[OBS_IMAGES] = (
+            batch[OBS_IMAGES].unsqueeze(1).expand(b, n_obs_steps, *batch[OBS_IMAGES].shape[1:]).contiguous()
+        )
+
+    conditioning_vec = policy.observation_encoder.encode(batch)
+    batch_size = conditioning_vec.shape[0]
+    device = next(policy.noise_predictor.parameters()).device
+    dtype = next(policy.noise_predictor.parameters()).dtype
+
+    # Horizon-frame geometry, mirroring _generate_actions.
+    start = n_obs_steps - 1
+    chunk_len = policy.config.n_action_steps
+    horizon = policy.config.horizon
+    action_dim = policy.config.action_feature.shape[0]
+
+    prev_full, weights_full = _build_prefix_targets(
+        policy,
+        prev_chunk_left_over,
+        inference_delay=inference_delay,
+        execution_horizon=execution_horizon,
+        batch_size=batch_size,
+        start=start,
+        chunk_len=chunk_len,
+        horizon=horizon,
+        action_dim=action_dim,
+        device=device,
+        dtype=dtype,
+    )
+
+    if policy.config.is_diffusion:
+        sample = _ddim_conditional_sample_rtc(
+            policy.objective,
+            policy.noise_predictor,
+            batch_size,
+            conditioning_vec,
+            prev_full=prev_full,
+            weights_full=weights_full,
+        )
+    else:
+        sample = _flow_conditional_sample_rtc(
+            policy.objective,
+            policy.noise_predictor,
+            batch_size,
+            conditioning_vec,
+            prev_full=prev_full,
+            weights_full=weights_full,
+            max_guidance_weight=_resolve_rtc_processor(policy).rtc_config.max_guidance_weight,
+        )
+
+    return sample[:, start : start + chunk_len]
+
+
+def _build_prefix_targets(
+    policy,
+    prev_chunk_left_over: Tensor | None,
+    *,
+    inference_delay: int,
+    execution_horizon: int | None,
+    batch_size: int,
+    start: int,
+    chunk_len: int,
+    horizon: int,
+    action_dim: int,
+    device,
+    dtype,
+) -> tuple[Tensor | None, Tensor | None]:
+    """Embed the chunk-frame RTC prefix into the horizon frame.
+
+    Returns ``(prev_full, weights_full)`` where ``prev_full`` is
+    ``(B, horizon, action_dim)`` with the previous chunk's leftover placed at
+    offset ``start`` (zeros elsewhere) and ``weights_full`` is the soft prefix
+    mask ``(1, horizon, 1)``. Both are None when there is nothing to guide.
+
+    Length/shape handling mirrors RTCProcessor.denoise_step: execution_horizon
+    clamped to the prefix length, prefix zero-padded to the chunk, weights via
+    get_prefix_weights(inference_delay, execution_horizon, chunk_len).
+    """
+    if prev_chunk_left_over is None or prev_chunk_left_over.numel() == 0:
+        return None, None
+
+    prev = prev_chunk_left_over.to(device=device, dtype=dtype)
+    if prev.ndim == 2:
+        prev = prev.unsqueeze(0)
+    if prev.shape[0] == 1 and batch_size > 1:
+        prev = prev.expand(batch_size, *prev.shape[1:])
+
+    processor = _resolve_rtc_processor(policy)
+    if execution_horizon is None:
+        execution_horizon = processor.rtc_config.execution_horizon
+    # "If the previous action chunk is too short then it doesn't make sense to
+    # use a long execution horizon" -- RTCProcessor.denoise_step.
+    execution_horizon = min(int(execution_horizon), prev.shape[1])
+    inference_delay = max(0, min(int(inference_delay), chunk_len))
+
+    weights_chunk = processor.get_prefix_weights(inference_delay, execution_horizon, chunk_len).to(
+        device=device, dtype=dtype
+    )
+
+    prev_len = min(prev.shape[1], chunk_len)
+    prev_dim = min(prev.shape[2], action_dim)
+    prev_full = torch.zeros(batch_size, horizon, action_dim, device=device, dtype=dtype)
+    prev_full[:, start : start + prev_len, :prev_dim] = prev[:, :prev_len, :prev_dim]
+
+    weights_full = torch.zeros(horizon, device=device, dtype=dtype)
+    weights_full[start : start + chunk_len] = weights_chunk
+
+    return prev_full, weights_full.view(1, horizon, 1)
+
+
+def _ddim_conditional_sample_rtc(
+    objective,
+    model: nn.Module,
+    batch_size: int,
+    conditioning_vec: Tensor,
+    *,
+    prev_full: Tensor | None,
+    weights_full: Tensor | None,
+) -> Tensor:
+    """DiffusionObjective.conditional_sample with RePaint-style soft-mask
+    inpainting toward the previous chunk. With ``prev_full is None`` this is
+    step-for-step (and RNG-call-for-RNG-call) identical to the original
+    sampler."""
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+
+    sample = torch.randn(
+        size=(batch_size, objective.horizon, objective.action_dim),
+        dtype=dtype,
+        device=device,
+    )
+
+    scheduler = objective.noise_scheduler
+    scheduler.set_timesteps(objective.num_inference_steps)
+    for t in scheduler.timesteps:
+        if prev_full is not None:
+            # Inpainting projection: replace the guided region of the latent
+            # with the forward-noised previous chunk at this noise level,
+            # softly per the prefix weights. q_sample == scheduler.add_noise.
+            t_batch = torch.full((batch_size,), t, dtype=torch.long, device=device)
+            noised_prev = scheduler.add_noise(prev_full, torch.randn_like(prev_full), t_batch)
+            sample = weights_full * noised_prev + (1 - weights_full) * sample
+
+        model_output = model(
+            sample,
+            torch.full(sample.shape[:1], t, dtype=torch.long, device=device),
+            conditioning_vec=conditioning_vec,
+        )
+        sample = scheduler.step(model_output, t, sample).prev_sample
+
+    if prev_full is not None:
+        # Final clean-level projection: exactly pins positions where w == 1
+        # (the first inference_delay actions).
+        sample = weights_full * prev_full + (1 - weights_full) * sample
+
+    return sample
+
+
+def _rtc_guidance_weight(tau: float, max_guidance_weight: float) -> Tensor:
+    """Time-dependent guidance weight, ported verbatim from
+    RTCProcessor.denoise_step.
+
+    ``tau`` is denoising progress in [0, 1] (0 = pure noise, 1 = data), which
+    equals MultiTaskDiT's flow-matching time ``t`` directly (the reference code
+    computes ``tau = 1 - time`` from pi0's inverted time convention).
+    """
+    max_guidance_weight = torch.as_tensor(max_guidance_weight)
+    tau_tensor = torch.as_tensor(tau)
+    squared_one_minus_tau = (1 - tau_tensor) ** 2
+    inv_r2 = (squared_one_minus_tau + tau_tensor**2) / squared_one_minus_tau
+    c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
+    guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
+    return torch.minimum(guidance_weight, max_guidance_weight)
+
+
+def _flow_conditional_sample_rtc(
+    objective,
+    model: nn.Module,
+    batch_size: int,
+    conditioning_vec: Tensor,
+    *,
+    prev_full: Tensor | None,
+    weights_full: Tensor | None,
+    max_guidance_weight: float,
+) -> Tensor:
+    """FlowMatchingObjective euler sampling with pi0-style RTC prefix guidance.
+
+    Guidance math is RTCProcessor.denoise_step translated to MultiTaskDiT's
+    conventions (t: 0 = noise -> 1 = data, v = data - noise):
+
+        x0_pred = x_t + (1 - t) * v_t          # exact for sigma_min == 0
+        err     = (prev - x0_pred) * weights
+        v_t     <- v_t + g(t) * err
+
+    (In the reference, the autograd VJP is the identity, so ``correction`` is
+    just ``err``; the sign flips relative to pi0 because pi0's velocity points
+    from data to noise. See molmoact2 for the same translation.)
+    With ``prev_full is None`` this is identical to the original sampler.
+    """
+    if objective.config.integration_method != "euler" and prev_full is not None:
+        raise NotImplementedError(
+            "RTC guidance for MultiTaskDiT flow matching is only implemented for "
+            f"integration_method='euler', got '{objective.config.integration_method}'."
+        )
+    if prev_full is not None and objective.config.sigma_min != 0.0:
+        logger.warning(
+            "MultiTaskDiT RTC: x0 estimate assumes sigma_min=0 (got %s); guidance is approximate.",
+            objective.config.sigma_min,
+        )
+
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+
+    x = torch.randn((batch_size, objective.horizon, objective.action_dim), dtype=dtype, device=device)
+
+    num_steps = objective.config.num_integration_steps
+    time_grid = torch.linspace(0, 1, num_steps + 1, device=device)
+
+    if prev_full is None:
+        # Defer to the untouched original sampler (euler or rk4).
+        if objective.config.integration_method == "euler":
+            return objective._euler_integrate(model, x, time_grid, conditioning_vec)
+        return objective._rk4_integrate(model, x, time_grid, conditioning_vec)
+
+    for i in range(len(time_grid) - 1):
+        t_scalar = time_grid[i].item()
+        dt = (time_grid[i + 1] - time_grid[i]).item()
+        t_batch = torch.full((batch_size,), t_scalar, dtype=dtype, device=device)
+        velocity = model(x, t_batch, conditioning_vec=conditioning_vec)
+
+        x0_pred = x + (1 - t_scalar) * velocity
+        err = (prev_full - x0_pred) * weights_full
+        guidance_weight = _rtc_guidance_weight(t_scalar, max_guidance_weight).to(device=device, dtype=dtype)
+        velocity = velocity + guidance_weight * err
+
+        x = x + dt * velocity
+
+    return x
 
 
 # -- Observation Encoders --

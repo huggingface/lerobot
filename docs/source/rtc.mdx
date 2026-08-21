@@ -1,6 +1,6 @@
 # Real-Time Chunking (RTC)
 
-Real-Time Chunking (RTC) is an inference-time method that allows large, flow-matching based robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), and [SmolVLA](./smolvla), to produce smooth, continuous, and reactive motion despite having high inference latency.
+Real-Time Chunking (RTC) is an inference-time method that allows large, chunk-generating robotic policies, such as [Pi0](./pi0), [Pi0.5](./pi05), [SmolVLA](./smolvla), and [Multi-Task DiT](./multi_task_dit), to produce smooth, continuous, and reactive motion despite having high inference latency. RTC guidance is formulated for flow-matching policies; Multi-Task DiT additionally supports it with the diffusion (DDPM/DDIM) objective via RePaint-style inpainting.
 
 These policies generate chunks of future actions (e.g., 50 steps at a time) instead of single actions.
 Because the models are large, producing each chunk takes longer than the time it takes the robot to execute it.
@@ -30,6 +30,9 @@ pip install -e ".[pi]"
 
 # For SmolVLA
 pip install -e ".[smolvla]"
+
+# For Multi-Task DiT
+pip install -e ".[multi_task_dit]"
 ```
 
 ### Using RTC with Pi0
