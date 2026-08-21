@@ -229,6 +229,7 @@ class PeftConfig:
 @dataclass
 class JobConfig:
     # Where training runs. None (omitted) or "local" runs on this machine.
+    # "kubeflow" submits to a Kubernetes cluster via Kubeflow Trainer V2.
     # Any other value is an HF Jobs flavor and submits the run to HF Jobs.
     # List available flavors + pricing with `hf jobs hardware` command.
     target: str | None = None
@@ -244,6 +245,23 @@ class JobConfig:
     # Hub. A "lerobot" tag is always added; e.g. --job.tags '["lelab"]' adds more.
     tags: list[str] = field(default_factory=list)
 
+    # --- Kubeflow-specific (ignored unless target == "kubeflow") ---
+    # Kubernetes namespace for the TrainJob.
+    namespace: str = "default"
+    # Number of training nodes (1 = single-node, >1 = multi-node distributed).
+    nodes: int = 1
+    # GPUs requested per node (0 for CPU-only training).
+    gpus: int = 1
+    # GPU vendor, only relevant when gpus > 0 (set gpus=0 for CPU-only training).
+    # "auto" detects from PyTorch (CUDA → nvidia, ROCm/HIP → amd). Explicit
+    # values: "nvidia", "amd".
+    gpu_vendor: str = "auto"
+    # Kubeflow ClusterTrainingRuntime name. "auto" picks "torch-distributed" for
+    # NVIDIA/CPU and "torch-rocm-distributed" for AMD. Set explicitly to use a
+    runtime: str = "auto"
+    # Path to kubeconfig file. None uses the default (~/.kube/config or in-cluster).
+    kubeconfig: str | None = None
+
     # Two entry points to the same predicate: the staticmethod tests a raw target string
     # straight from argv (before any JobConfig exists, to decide dispatch early), while the
     # property is the ergonomic accessor for code that already holds a config instance.
@@ -256,3 +274,49 @@ class JobConfig:
     def is_remote(self) -> bool:
         """True when training should run on HF Jobs rather than this machine."""
         return self.is_remote_target(self.target)
+
+    @property
+    def resolved_gpu_vendor(self) -> str:
+        """Resolve ``"auto"`` to a concrete vendor using the PyTorch backend.
+
+        Short-circuits to ``"cpu"`` when ``gpus == 0`` without invoking detection or
+        touching ``gpu_vendor`` at all -- CPU-only jobs never need a GPU vendor, so
+        this is safe to call unconditionally from anywhere.
+        """
+        if self.gpus == 0:
+            return "cpu"
+        vendor = self.gpu_vendor
+        if vendor == "auto":
+            from lerobot.utils.device_utils import detect_gpu_vendor
+
+            vendor = detect_gpu_vendor()
+            if vendor == "cpu":
+                raise ValueError(
+                    f"--job.gpus={self.gpus} was requested but no local accelerator was "
+                    "detected to auto-select a GPU vendor. Set --job.gpu_vendor=nvidia or "
+                    "amd explicitly (auto-detection reflects this machine, not the "
+                    "remote cluster, for --job.target=kubeflow runs)."
+                )
+        if vendor not in ("nvidia", "amd"):
+            raise ValueError(f"Unknown gpu_vendor {vendor!r}. Must be 'auto', 'nvidia', or 'amd'.")
+        return vendor
+
+    @property
+    def resolved_runtime(self) -> str:
+        """Return the Kubeflow runtime, defaulting by GPU vendor if not set."""
+        if self.runtime != "auto":
+            return self.runtime
+        if self.resolved_gpu_vendor == "amd":
+            return "torch-rocm-distributed"
+        return "torch-distributed"
+
+    @property
+    def gpu_resource_key(self) -> str | None:
+        """Kubernetes extended resource name, or None for CPU-only (gpus == 0)."""
+        vendor = self.resolved_gpu_vendor
+        if vendor == "cpu":
+            return None
+        return {
+            "nvidia": "nvidia.com/gpu",
+            "amd": "amd.com/gpu",
+        }[vendor]

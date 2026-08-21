@@ -34,6 +34,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -400,6 +401,10 @@ def train(cfg: TrainPipelineConfig):
             recorded in the checkpoint's `train_config.json`; when `cfg.job.is_remote`, the run is
             dispatched to HF Jobs instead of executing locally.
     """
+    if cfg.job.target == "kubeflow":
+        from lerobot.jobs.kubeflow import submit_to_kubeflow
+
+        return submit_to_kubeflow(cfg)
     if cfg.job.is_remote:
         return submit_to_hf(cfg)
 
@@ -958,13 +963,82 @@ def _remote_target_in_argv() -> bool:
     return JobConfig.is_remote_target(target)
 
 
+def _kubeflow_config_path_unresolvable() -> str | None:
+    """Detect a --config_path draccus can't resolve for a Kubeflow submission.
+
+    `TrainPipelineConfig.from_pretrained` (invoked by draccus's `@parser.wrap()`
+    before `job.target` is even parsed) checks `Path(model_id).is_dir()`/`is_file()`
+    on this machine, else treats it as a Hub repo id and downloads from there --
+    which works fine over the network regardless of `job.target`. Only a path that's
+    neither a local dir/file nor a validly-shaped Hub repo id (e.g. a runtime-mounted
+    cluster volume, invisible from here) is genuinely unresolvable. Scoped to
+    `job.target == "kubeflow"` only -- HF Jobs resolves resume checkpoints via the
+    Hub and is unaffected either way.
+
+    Returns:
+        str | None: The unresolvable `config_path`, or None if nothing to report.
+    """
+    target = None
+    config_path = None
+    args = sys.argv[1:]
+    for i, tok in enumerate(args):
+        if tok == "--job.target" and i + 1 < len(args):
+            target = args[i + 1]
+        elif tok.startswith("--job.target="):
+            target = tok.split("=", 1)[1]
+        elif tok == "--config_path" and i + 1 < len(args):
+            config_path = args[i + 1]
+        elif tok.startswith("--config_path="):
+            config_path = tok.split("=", 1)[1]
+    if target != "kubeflow" or not config_path:
+        return None
+    if Path(config_path).exists():
+        return None
+    from huggingface_hub.utils import HFValidationError, validate_repo_id
+
+    try:
+        validate_repo_id(config_path)
+    except HFValidationError:
+        return config_path
+    return None
+
+
 def main():
     register_third_party_plugins()
     if _remote_target_in_argv():
         # The policy device is resolved on the remote pod, not here, so silence the
-        # client-side "Device '...' is not available" warning PreTrainedConfig emits
-        # while parsing the config (it fires before train() can dispatch remotely).
+        # client-side "Device '...' is not available" / "No accelerated backend
+        # detected" warnings emitted while parsing the config (they fire before
+        # train() can dispatch remotely).
         logging.getLogger("lerobot.configs.policies").setLevel(logging.ERROR)
+        logging.getLogger("lerobot.utils.device_utils").setLevel(logging.ERROR)
+    unresolvable_config_path = _kubeflow_config_path_unresolvable()
+    if unresolvable_config_path is not None:
+        print(
+            f"error: --config_path={unresolvable_config_path!r} is not reachable from this "
+            "machine, and --job.target=kubeflow cannot resolve cluster-only paths (e.g. a "
+            "runtime-mounted volume) from the submitter. Run the resume directly inside a pod "
+            "that mounts the same storage instead:\n\n"
+            "  kubectl apply -f - <<'EOF'\n"
+            "  apiVersion: v1\n"
+            "  kind: Pod\n"
+            "  metadata:\n"
+            "    name: resume-runner\n"
+            "  spec:\n"
+            "    restartPolicy: Never\n"
+            "    containers:\n"
+            "    - name: runner\n"
+            "      image: <same --job.image as your training run>\n"
+            '      command: ["sh", "-c", "lerobot-train --job.target=local --resume=true '
+            f'--config_path={unresolvable_config_path} --steps=<N>"]\n'
+            "      volumeMounts: [{name: storage, mountPath: <mount path>}]\n"
+            "    volumes:\n"
+            "    - name: storage\n"
+            "      persistentVolumeClaim: {claimName: <your-runtime's PVC>}\n"
+            "  EOF",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     train()
 
 
