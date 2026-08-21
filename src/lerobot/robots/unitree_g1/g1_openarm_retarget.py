@@ -114,13 +114,13 @@ EE_OFFSET = np.array(
 # Where the OpenArm sits in the pelvis-at-origin frame. Shoulder-on-shoulder would be
 # -0.406, but the OpenArm is the longer arm, so matching the shoulders puts its workspace
 # lower than the G1's and the recorded wrist poses land under everything the G1 can reach
-# comfortably. Raised 16 cm to line up the reachable volumes instead of the mounting points.
+# comfortably. Raised 11 cm to line up the reachable volumes instead of the mounting points.
 #
 # Swept against episode 1's reach error: anything from 8 to 16 cm clears the out-of-reach
 # threshold entirely, with the flattest error around 12. Past ~20 cm it collapses (a
 # quarter of the episode out of reach) as the targets climb out of the top of the G1's
-# workspace, so this sits nearer that edge than the numbers alone would pick.
-OA_PLACEMENT_XYZ = (0.0, 0.0, -0.246)
+# workspace.
+OA_PLACEMENT_XYZ = (0.0, 0.0, -0.296)
 
 # Tuned in render_g1_openarm.py.
 IK_ITERS = 60
