@@ -379,8 +379,9 @@ class AddIKSolutionStep(ComplementaryDataProcessorStep):
     solution under ``complementary_data["IK_solution"]`` so that downstream consumers (e.g.
     `EEReferenceAndDelta` with ``use_ik_solution=True``) can reuse it.
 
-    Attributes:
-        ik_step: The IK step whose solution state is recorded.
+    Args:
+        ik_step (`InverseKinematicsEEToJoints`):
+            The IK step whose solution state is recorded.
     """
 
     ik_step: InverseKinematicsEEToJoints
