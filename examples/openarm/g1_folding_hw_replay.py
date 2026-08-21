@@ -32,7 +32,7 @@ Topology is unchanged -- SONIC holds the stand onboard, so start the robot first
 Then here::
 
     python examples/openarm/g1_folding_hw_replay.py --robot-ip 172.18.130.111 \\
-        --episode 1 --speed 0.5
+        --episode 1
 
 The arms are ramped from wherever they are into the episode's first pose over
 ``--ramp-s``, and ramped back on the way out, including on Ctrl-C. Without that the first
@@ -51,7 +51,11 @@ import numpy as np
 from render_g1_retarget import load_episode
 
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
-from lerobot.robots.unitree_g1.g1_folding_robot import G1FoldingRobot, policy_keys
+from lerobot.robots.unitree_g1.g1_folding_robot import (
+    DEFAULT_MAX_STEP_DEG,
+    G1FoldingRobot,
+    policy_keys,
+)
 from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
 logger = logging.getLogger("g1_folding_hw_replay")
@@ -82,11 +86,16 @@ def main() -> None:
     ap.add_argument(
         "--speed",
         type=float,
-        default=0.5,
+        default=1.0,
         help="fraction of recorded speed; 1.0 replays at the 30 fps it was captured at",
     )
     ap.add_argument("--max-frames", type=int, default=0, help="0 replays the whole episode")
-    ap.add_argument("--max-step-deg", type=float, default=3.0, help="per-tick joint clamp")
+    ap.add_argument(
+        "--max-step-deg",
+        type=float,
+        default=DEFAULT_MAX_STEP_DEG,
+        help="per-tick limit on how far the commanded arm pose may move",
+    )
     ap.add_argument("--ramp-s", type=float, default=3.0, help="ease in/out of the episode")
     ap.add_argument("--no-grippers", action="store_true")
     ap.add_argument(
