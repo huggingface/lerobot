@@ -155,6 +155,11 @@ class PiR2InferenceEngine(InferenceEngine):
         """True if the background thread exited due to an unrecoverable error."""
         return self._error.is_set()
 
+    @property
+    def control_thread_owns_policy(self) -> bool:
+        """The VLM thread owns the policy; it services queries in ``_vlm_loop``."""
+        return False
+
     def start(self) -> None:
         """Launch the background denoising thread and the vision-language thread."""
         self._obs_holder = {"obs": None, "robot_type": self._robot.robot_type}
@@ -246,6 +251,10 @@ class PiR2InferenceEngine(InferenceEngine):
                 if obs is None:
                     time.sleep(_IDLE_SLEEP_S)
                     continue
+                # Served here because this is the thread that owns the policy.  Ahead of the
+                # refresh below on purpose: this loop never blocks on its own, so a query
+                # queued behind it would otherwise never be picked up.
+                self._service_query(obs)
                 prefix = self._policy.encode_prefix(self._prepare_batch(obs))
                 with self._prefix_lock:
                     self._prefix = prefix
