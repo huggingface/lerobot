@@ -467,8 +467,8 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        """Save a portable config without the initialization-only stats path."""
-        config_for_save = replace(self, norm_stats_path=None)
+        """Save a portable config without initialization-only norm metadata."""
+        config_for_save = replace(self, norm_tag=None, norm_stats_path=None)
         PreTrainedConfig._save_pretrained(config_for_save, save_directory)
 
     @property

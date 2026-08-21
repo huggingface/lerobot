@@ -1579,7 +1579,7 @@ def test_molmoact2_explicit_norm_stats_path_and_mask(tmp_path):
     assert metadata["action_stats"]["names"] == ["x", "gripper"]
 
 
-def test_molmoact2_norm_stats_path_is_initialization_only(tmp_path, monkeypatch):
+def test_molmoact2_norm_metadata_is_initialization_only(tmp_path, monkeypatch):
     stats_path = tmp_path / "norm_stats.json"
     stats_path.write_text(
         json.dumps(
@@ -1615,19 +1615,35 @@ def test_molmoact2_norm_stats_path_is_initialization_only(tmp_path, monkeypatch)
     config._save_pretrained(checkpoint_path)
     stats_path.unlink()
     reloaded = PreTrainedConfig.from_pretrained(checkpoint_path)
-    reloaded.pretrained_path = checkpoint_path
 
     def fail_norm_tag_lookup(*args, **kwargs):
         del args, kwargs
         pytest.fail("LeRobot checkpoint construction must not reload norm-tag metadata")
 
+    load_calls = []
+
+    def fake_load_as_safetensor(cls, model, model_file, map_location, strict):
+        load_calls.append((cls, model_file, map_location, strict))
+        return model
+
     monkeypatch.setattr(molmoact2_modeling, "_load_hf_norm_metadata_for_tag", fail_norm_tag_lookup)
     monkeypatch.setattr(MolmoAct2Policy, "_load_hf_model", lambda self: None)
-    policy = MolmoAct2Policy(reloaded)
+    monkeypatch.setattr(MolmoAct2Policy, "_load_as_safetensor", classmethod(fake_load_as_safetensor))
+    policy = MolmoAct2Policy.from_pretrained(checkpoint_path)
 
     assert isinstance(reloaded, MolmoAct2Config)
+    assert reloaded.norm_tag is None
     assert reloaded.norm_stats_path is None
+    assert config.norm_tag == "libero"
     assert config.norm_stats_path == str(stats_path)
+    assert load_calls == [
+        (
+            MolmoAct2Policy,
+            str(checkpoint_path / "model.safetensors"),
+            "cpu",
+            True,
+        )
+    ]
     assert policy.config.chunk_size == 10
     assert policy.config.n_action_steps == 8
     assert policy.config.setup_type == "libero"
