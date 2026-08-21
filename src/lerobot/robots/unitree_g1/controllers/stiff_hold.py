@@ -28,8 +28,10 @@ longer entangled with a balance policy shifting the torso underneath it -- the a
 frame, and the head and wrist cameras with it, stop moving for reasons the arms did not
 ask for.
 
-The hold pose is whatever the joints read on the first tick, so engaging it never yanks
-the robot anywhere; put the legs where you want them, then start this.
+The hold pose is a fixed nominal stance, not wherever the robot happened to be left, so
+every session starts from the same geometry and an arm result from one run means the same
+thing as an arm result from the next. Declaring it as ``default_angles`` is what makes
+``connect()`` ease into it through the normal reset sweep instead of snapping.
 """
 
 from __future__ import annotations
@@ -45,6 +47,19 @@ logger = logging.getLogger(__name__)
 
 CONTROL_DT = 0.02  # 50 Hz is ample for a setpoint that never changes.
 
+# The G1's nominal stance: legs in the usual slight crouch, waist square, arms a little
+# forward of the body so they neither rest on the thighs nor start the IK from a
+# singular straight-down pose. Same leg angles the Holosoma controller homes to, so a
+# harnessed run and a standing one start from the same shape.
+STAND_POSE = np.zeros(29, dtype=np.float32)
+STAND_POSE[[0, 6]] = -0.312  # hip pitch
+STAND_POSE[[3, 9]] = 0.669  # knee
+STAND_POSE[[4, 10]] = -0.363  # ankle pitch
+STAND_POSE[[15, 22]] = 0.2  # shoulder pitch
+STAND_POSE[16] = 0.2  # left shoulder roll
+STAND_POSE[23] = -0.2  # right shoulder roll
+STAND_POSE[[18, 25]] = 0.6  # elbow
+
 
 class StiffLowerBodyController(RobotController):
     """Pin legs and waist to their startup pose; leave motors 15-28 to ``send_action``."""
@@ -59,20 +74,22 @@ class StiffLowerBodyController(RobotController):
     # the robot advertises when this is None.
     observation_ft = None
 
-    def __init__(self) -> None:
-        self._hold: dict[str, float] | None = None
-        self._owned = [m for m in G1_29_JointIndex if m.value in set(self.controlled_joints)]
+    def __init__(self, stand_pose: np.ndarray | None = None) -> None:
+        # Read by the robot at connect() to home the whole body before the loop starts, and
+        # so covers the arms too even though only the lower body is held here.
+        self.default_angles = STAND_POSE if stand_pose is None else np.asarray(stand_pose, np.float32)
+        owned = set(self.controlled_joints)
+        self._hold = {
+            f"{m.name}.q": float(self.default_angles[m.value]) for m in G1_29_JointIndex if m.value in owned
+        }
+        self._announced = False
 
     def run_step(self, action: dict, lowstate) -> dict:
-        if self._hold is None:
-            if lowstate is None:
-                return {}
-            self._hold = {f"{m.name}.q": float(lowstate.motor_state[m.value].q) for m in self._owned}
-            held = np.rad2deg(list(self._hold.values()))
+        if not self._announced:
+            self._announced = True
             logger.info(
-                "[StiffLowerBody] holding %d joints at their startup pose "
-                "(max %.1f deg from zero). Harness required: this cannot balance.",
+                "[StiffLowerBody] holding %d lower-body joints at the nominal stance. "
+                "Harness required: this cannot balance.",
                 len(self._hold),
-                np.abs(held).max(),
             )
         return dict(self._hold)
