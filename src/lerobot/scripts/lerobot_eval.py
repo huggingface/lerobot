@@ -777,6 +777,7 @@ def eval_main(cfg: EvalPipelineConfig):
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
         preprocessor_overrides=preprocessor_overrides,
+        trust_remote_code=cfg.trust_remote_code,
     )
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
