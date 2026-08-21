@@ -49,14 +49,37 @@ from g1_folding_async import wrap_factory
 logger = logging.getLogger("g1_folding_rollout")
 
 
+def patch_rtc_realtime() -> None:
+    """Make RTC re-anchor a new chunk on the actions actually consumed, not an fps estimate.
+
+    ``ActionQueue`` discards ``ceil(latency * fps)`` actions from each incoming chunk. When
+    the loop runs slower than ``--fps`` -- which it does here, since a tick carries two IK
+    solves and a robot round trip -- that estimate overshoots what was really executed, and
+    the trajectory plays fast. ``last_index - index_before_inference`` is the true count.
+
+    Copied from ``rollout_retarget.py`` rather than imported: that module pulls in overlay
+    helpers that only exist on the OpenArm rig.
+    """
+    try:
+        from lerobot.policies.rtc.action_queue import ActionQueue
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not patch RTC action queue for real-time playback: %s", e)
+        return
+
+    def _resolve(self, real_delay, action_index_before_inference=None):
+        if action_index_before_inference is not None:
+            return max(0, self.last_index - action_index_before_inference)
+        return max(0, real_delay)
+
+    ActionQueue._check_and_resolve_delays = _resolve
+    logger.info("Patched RTC ActionQueue: re-anchor on real consumed index (no over-skip)")
+
+
 def main() -> None:
     import lerobot.rollout.context as context
 
     context.make_robot_from_config = wrap_factory(context.make_robot_from_config)
-
-    from rollout_retarget import _patch_rtc_realtime
-
-    _patch_rtc_realtime()
+    patch_rtc_realtime()
 
     from lerobot.scripts.lerobot_rollout import main as rollout_main
 
