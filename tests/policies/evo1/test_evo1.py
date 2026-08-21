@@ -36,29 +36,20 @@ from lerobot.policies.evo1.processor_evo1 import (
     Evo1PadStateProcessorStep,
     evo1_batch_to_transition,
     make_evo1_pre_post_processors,
-    reconcile_evo1_processors,
 )
-from lerobot.policies.factory import get_policy_class, make_policy_config
+from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
-    PolicyProcessorPipeline,
+    ProcessorBuildContext,
     UnnormalizerProcessorStep,
-)
-from lerobot.processor.converters import (
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
 )
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
     OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 
 STATE_DIM = 4
@@ -398,7 +389,9 @@ def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
     )
     stats = make_stats(action_dim=libero_action_dim)
 
-    preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=stats)
+    preprocessor, postprocessor = make_evo1_pre_post_processors(
+        config, ProcessorBuildContext(dataset_stats=stats)
+    )
 
     assert isinstance(preprocessor.steps[2], Evo1PadStateProcessorStep)
     assert isinstance(preprocessor.steps[3], Evo1PadActionProcessorStep)
@@ -446,7 +439,9 @@ def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
 
 def test_evo1_postprocessor_returns_float32_for_bf16_actions():
     config = make_config()
-    _preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=make_stats())
+    _preprocessor, postprocessor = make_evo1_pre_post_processors(
+        config, ProcessorBuildContext(dataset_stats=make_stats())
+    )
 
     processed = postprocessor(torch.zeros(2, MAX_ACTION_DIM, dtype=torch.bfloat16))
     assert processed.dtype == torch.float32
@@ -454,26 +449,18 @@ def test_evo1_postprocessor_returns_float32_for_bf16_actions():
 
 def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
     train_config = make_config()
-    preprocessor, postprocessor = make_evo1_pre_post_processors(train_config, dataset_stats=make_stats())
+    preprocessor, postprocessor = make_evo1_pre_post_processors(
+        train_config, ProcessorBuildContext(dataset_stats=make_stats())
+    )
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
 
-    loaded_pre = PolicyProcessorPipeline.from_pretrained(
-        tmp_path,
-        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
-    )
-    loaded_post = PolicyProcessorPipeline.from_pretrained(
-        tmp_path,
-        config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-    )
-
-    # Simulate eval-time CLI overrides applied on top of the loaded pipelines.
+    # Eval-time CLI overrides: these reach the pipeline because it is rebuilt from the config, with
+    # only the checkpoint's tensor state loaded into it.
     eval_config = make_config(binarize_gripper=True, postprocess_action_dim=ACTION_DIM)
-    loaded_pre, loaded_post = reconcile_evo1_processors(eval_config, loaded_pre, loaded_post)
+    loaded_pre, loaded_post = make_pre_post_processors(
+        eval_config, pretrained_path=str(tmp_path), context=ProcessorBuildContext()
+    )
 
     assert loaded_pre.to_transition is evo1_batch_to_transition
     assert sum(isinstance(step, Evo1ActionProcessorStep) for step in loaded_post.steps) == 1
@@ -496,42 +483,27 @@ def test_evo1_processor_save_load_round_trip_applies_config_overrides(tmp_path):
     assert "embodiment_id" in processed
 
 
-def test_reconcile_evo1_processors_repads_overridden_stats(tmp_path):
-    """Loading a checkpoint and injecting raw (unpadded) dataset stats must be re-padded.
+def test_evo1_finetune_from_checkpoint_pads_raw_dataset_stats(tmp_path):
+    """Raw (unpadded) dataset stats must be padded to EVO1's fixed widths. Regression test for #4006.
 
-    Regression test: lerobot-train passes the raw dataset stats as normalizer/unnormalizer
-    overrides when resuming from a checkpoint (e.g. stage2 from a stage1 checkpoint). Those stats
-    are at the dataset dims (e.g. LIBERO state=8/action=7), but EVO1 pads state/action to
-    max_state_dim/max_action_dim before normalization, so reconcile_evo1_processors must re-pad the
-    stats or normalization crashes with a shape mismatch.
+    Finetuning from a checkpoint supplies the new dataset's raw stats, which are at the dataset dims
+    (LIBERO state=8/action=7). EVO1 pads state/action to max_state_dim/max_action_dim before
+    normalization, so unpadded stats crash with a shape mismatch. The factory owns the padding, so it
+    applies on this path as much as on a from-scratch build.
     """
     config = make_config()
-    preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=make_stats())
+    preprocessor, postprocessor = make_evo1_pre_post_processors(
+        config, ProcessorBuildContext(dataset_stats=make_stats())
+    )
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
 
-    # Reload with the generic override path injecting raw, unpadded dataset stats.
-    raw_stats = make_stats()
-    loaded_pre = PolicyProcessorPipeline.from_pretrained(
-        tmp_path,
-        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
-        overrides={"normalizer_processor": {"stats": raw_stats}},
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
+    # The finetune case: the caller hands over raw, unpadded dataset stats.
+    loaded_pre, loaded_post = make_pre_post_processors(
+        config,
+        pretrained_path=str(tmp_path),
+        context=ProcessorBuildContext(dataset_stats=make_stats()),
     )
-    loaded_post = PolicyProcessorPipeline.from_pretrained(
-        tmp_path,
-        config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
-        overrides={"unnormalizer_processor": {"stats": raw_stats}},
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
-    )
-
-    # Sanity: the override really injected unpadded stats before reconciliation.
-    normalizer = next(step for step in loaded_pre.steps if isinstance(step, NormalizerProcessorStep))
-    assert normalizer._tensor_stats[OBS_STATE]["min"].shape == (STATE_DIM,)
-
-    loaded_pre, loaded_post = reconcile_evo1_processors(config, loaded_pre, loaded_post)
 
     normalizer = next(step for step in loaded_pre.steps if isinstance(step, NormalizerProcessorStep))
     unnormalizer = next(step for step in loaded_post.steps if isinstance(step, UnnormalizerProcessorStep))
@@ -553,7 +525,9 @@ def test_reconcile_evo1_processors_repads_overridden_stats(tmp_path):
 def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
     monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
     policy = modeling_evo1.Evo1Policy(make_config())
-    preprocessor, _postprocessor = make_evo1_pre_post_processors(policy.config, dataset_stats=make_stats())
+    preprocessor, _postprocessor = make_evo1_pre_post_processors(
+        policy.config, ProcessorBuildContext(dataset_stats=make_stats())
+    )
     training_batch = preprocessor(make_batch(include_action=True))
 
     assert training_batch[ACTION].shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)

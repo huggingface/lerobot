@@ -822,6 +822,121 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         return pipeline
 
+    @staticmethod
+    def _step_entry_key(step_entry: dict[str, Any]) -> str:
+        """Return the key a saved step entry is addressed by: registry name, else bare class name.
+
+        This is the same identity `_resolve_step_class` derives and `overrides` are matched against.
+        """
+        registry_name = step_entry.get("registry_name")
+        if registry_name:
+            return registry_name
+        return step_entry["class"].rsplit(".", 1)[1]
+
+    def load_pretrained_state(
+        self,
+        pretrained_model_name_or_path: str | Path,
+        config_filename: str,
+        *,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict[str, str] | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+    ) -> None:
+        """Restore a checkpoint's serialized step state into this already-built pipeline.
+
+        The counterpart to `from_pretrained`, for callers that own the pipeline's *structure*. Where
+        `from_pretrained` reconstructs the steps from the saved JSON — making the checkpoint
+        authoritative over the code — this keeps the steps built from the live config and takes only
+        the tensors from disk.
+
+        Steps are paired to saved entries greedily, in order, by step key, so a step inserted or
+        removed since the checkpoint was written no longer shifts the pairing of every later step.
+        That matters because state filenames embed the step *index*
+        (`_get_state_filename`), which `load_state_dict` cannot see past.
+
+        A built step with no saved counterpart is skipped: it is a step the current config adds, and
+        adding one is the normal case this method exists to support. A *stateful* saved entry with no
+        built counterpart raises instead — silently discarding checkpoint tensors is the one failure
+        mode here that would surface as bad numbers at inference rather than as an error.
+
+        Args:
+            pretrained_model_name_or_path: Hub repo id, local directory, or a config file path.
+            config_filename: The pipeline's JSON config filename. Required, as for `from_pretrained`,
+                so preprocessor and postprocessor configs are never confused.
+            force_download: Whether to force (re)downloading the files.
+            resume_download: Whether to resume a previously interrupted download.
+            proxies: A dictionary of proxy servers to use.
+            token: The token to use as HTTP bearer authorization for private Hub repositories.
+            cache_dir: The path to a specific cache folder to store downloaded files.
+            local_files_only: If True, avoid downloading files from the Hub.
+            revision: The specific model version to use.
+
+        Raises:
+            FileNotFoundError: If the config or a declared state file cannot be found.
+            ValueError: If the checkpoint carries state for a step this pipeline does not build.
+            ProcessorMigrationError: If the checkpoint predates the processor format.
+        """
+        model_id = str(pretrained_model_name_or_path)
+        model_path = Path(model_id)
+        is_local_source = model_path.is_dir() or model_path.is_file()
+        hub_download_kwargs = {
+            "force_download": force_download,
+            "resume_download": resume_download,
+            "proxies": proxies,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
+
+        cls = type(self)
+        # Routed through the same two helpers `from_pretrained` uses, so a pre-processor-era
+        # checkpoint still raises ProcessorMigrationError with its actionable command rather than a
+        # confusing KeyError from the pairing below.
+        loaded_config, base_path = cls._load_config(model_id, config_filename, hub_download_kwargs)
+        cls._validate_loaded_config(model_id, loaded_config, config_filename)
+
+        unmatched: list[dict[str, Any]] = list(loaded_config["steps"])
+        for step in self.steps:
+            step_key = getattr(type(step), "_registry_name", None) or type(step).__name__
+            entry = next(
+                (candidate for candidate in unmatched if cls._step_entry_key(candidate) == step_key),
+                None,
+            )
+            if entry is None:
+                continue
+            # Popping makes duplicate keys (a pipeline's two `device_processor` steps, say) pair by
+            # ordinal rather than both matching the first entry.
+            unmatched.remove(entry)
+            cls._load_step_state(
+                step,
+                entry,
+                model_id,
+                base_path,
+                config_filename,
+                hub_download_kwargs,
+                is_local_source,
+            )
+
+        orphaned = [cls._step_entry_key(entry) for entry in unmatched if entry.get("state_file")]
+        if orphaned:
+            raise ValueError(
+                f"Checkpoint '{model_id}' carries state for step(s) {orphaned} that this pipeline does "
+                f"not build, so their tensors would be silently discarded. Built steps: "
+                f"{[type(step).__name__ for step in self.steps]}. Either build a pipeline containing "
+                f"those steps, or deserialize the saved pipeline wholesale with "
+                f"{cls.__name__}.from_pretrained()."
+            )
+
+        # Deliberately left unset: the filenames just consumed describe the *checkpoint's* step
+        # indices, which need not match this pipeline's. Leaving it None makes `state_dict()` and
+        # `load_state_dict()` re-derive from the current steps, keeping a later save self-consistent.
+        self._serialized_state_filenames = None
+
     @classmethod
     def _load_config(
         cls,
@@ -1172,7 +1287,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if "registry_name" in step_entry:
             try:
                 step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
-                return step_class, step_entry["registry_name"]
+                return step_class, cls._step_entry_key(step_entry)
             except KeyError as e:
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
         else:
@@ -1183,7 +1298,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             try:
                 module = importlib.import_module(module_path)
                 step_class = getattr(module, class_name)
-                return step_class, class_name
+                return step_class, cls._step_entry_key(step_entry)
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Failed to load processor step '{full_class_path}'. "
@@ -1377,9 +1492,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if not remaining_override_keys:
             return
 
-        available_keys = [
-            step.get("registry_name") or step["class"].rsplit(".", 1)[1] for step in loaded_config["steps"]
-        ]
+        available_keys = [cls._step_entry_key(step) for step in loaded_config["steps"]]
 
         raise KeyError(
             f"Override keys {list(remaining_override_keys)} do not match any step in the saved configuration. "

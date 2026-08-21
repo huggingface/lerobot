@@ -74,6 +74,7 @@ from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.processor import ProcessorBuildContext
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
@@ -496,55 +497,34 @@ def train(cfg: TrainPipelineConfig):
     active_cfg = cfg.trainable_config
     processor_pretrained_path = active_cfg.pretrained_path
 
-    processor_kwargs = ProcessorConfigKwargs()
     processor_dataset_stats = rename_stats(dataset.meta.stats, cfg.rename_map)
-    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = processor_dataset_stats
-    if cfg.is_reward_model_training:
-        processor_kwargs["dataset_meta"] = dataset.meta
-    if not cfg.is_reward_model_training and processor_pretrained_path is not None:
-        preprocessor_overrides = {
-            "device_processor": {"device": device.type},
-            "normalizer_processor": {
-                "features": {**policy.config.input_features, **policy.config.output_features},
-                "norm_map": policy.config.normalization_mapping,
-            },
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        }
-        postprocessor_overrides = {
-            "unnormalizer_processor": {
-                "features": policy.config.output_features,
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-        # On resume, the checkpoint's saved processor stats are authoritative: they may have
-        # been adapted by the policy (e.g. EVO1 pads state/action stats to max_state_dim),
-        # and force-feeding raw dataset stats over them crashes normalization (#4006).
-        # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
-        if not cfg.resume:
-            preprocessor_overrides["normalizer_processor"]["stats"] = processor_dataset_stats
-            postprocessor_overrides["unnormalizer_processor"]["stats"] = processor_dataset_stats
-        if getattr(active_cfg, "use_relative_actions", False):
-            preprocessor_overrides["relative_actions_processor"] = {
-                "enabled": True,
-                "exclude_joints": getattr(active_cfg, "relative_exclude_joints", []),
-                "action_names": getattr(active_cfg, "action_feature_names", None),
-            }
-            postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
-        processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
-        processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
+    # Supplying stats is what makes the dataset authoritative over a checkpoint's saved stats. On
+    # resume the checkpoint's are authoritative instead: they may have been adapted by the policy
+    # (EVO1 pads state/action stats to max_state_dim), and overwriting them with raw dataset stats
+    # crashes normalization (#4006). Structure and shape always come from the policy config, so
+    # nothing here names a processor step.
+    supply_dataset_stats = not (processor_pretrained_path and cfg.resume)
 
     if cfg.is_reward_model_training:
+        reward_kwargs = ProcessorConfigKwargs(dataset_meta=dataset.meta)
+        if supply_dataset_stats:
+            reward_kwargs["dataset_stats"] = processor_dataset_stats
         preprocessor, postprocessor = make_reward_pre_post_processors(
             cfg.reward_model,
-            **processor_kwargs,
+            **reward_kwargs,
         )
     else:
+        cfg.policy.device = device.type
+        cfg.policy.rename_map = dict(cfg.rename_map)
         preprocessor, postprocessor = make_pre_post_processors(
             policy_cfg=cfg.policy,
             pretrained_path=processor_pretrained_path,
             pretrained_revision=getattr(cfg.policy, "pretrained_revision", None),
-            **processor_kwargs,
+            context=ProcessorBuildContext(
+                dataset_stats=processor_dataset_stats if supply_dataset_stats else None,
+                dataset_meta=dataset.meta,
+                training=True,
+            ),
         )
 
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the

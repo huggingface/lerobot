@@ -24,13 +24,11 @@ import torch
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
-    AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    RelativeActionsProcessorStep,
     TokenizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -120,26 +118,18 @@ def make_pi0_fast_pre_post_processors(
     Returns:
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
-    relative_step = RelativeActionsProcessorStep(
-        enabled=config.use_relative_actions,
-        exclude_joints=getattr(config, "relative_exclude_joints", []),
-        action_names=getattr(config, "action_feature_names", None),
-    )
-
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
-    # Pi0Fast order: relative → normalize → tokenize → model → unnormalize → absolute
-    # This matches pi0/pi0.5: RelativeActionsProcessorStep runs first on raw absolute actions,
-    # caching the raw state. NormalizerProcessorStep then normalizes the raw relative actions,
-    # so the normalizer (and action tokenizer) sees delta values — relative stats are required.
-    # NOTE: RelativeActionsProcessorStep only modifies the action in the transition; it reads
-    # state from the observation but does not change it. NormalizerProcessorStep still runs
-    # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
-    # continues to receive normalized state in [-1, 1] as expected.
+    # Pi0Fast order: [relative] → normalize → tokenize → model → unnormalize → [absolute].
+    # The bracketed steps are composed in by `RelativeActionsFeature` when
+    # `config.use_relative_actions` is set, anchored around the (un)normalizer. So the relative
+    # conversion sees raw absolute actions and the normalizer (and action tokenizer) sees delta
+    # values — relative stats are required. The relative step only rewrites the action, leaving
+    # the observation's state untouched, so the state tokenizer below still receives normalized
+    # state in [-1, 1] as expected.
     input_steps: list[ProcessorStep] = [
         steps.rename_observations,  # To mimic the same processor as pretrained one
         steps.add_batch_dim,
-        relative_step,
         steps.normalize,
         Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
@@ -159,7 +149,6 @@ def make_pi0_fast_pre_post_processors(
 
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         steps.to_cpu,
     ]
 

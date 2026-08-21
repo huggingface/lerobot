@@ -59,6 +59,21 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     input_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
+    # Maps dataset/environment feature keys onto the names this policy expects (e.g. "left" ->
+    # "camera1"). Lives here rather than only on the CLI config so that a processor pipeline rebuilt
+    # from this config renames the same keys the pipeline saved in a checkpoint did.
+    rename_map: dict[str, str] = field(default_factory=dict)
+
+    # Relative actions: express actions relative to the current state. Policy-independent — composed
+    # into any policy's pipeline by `RelativeActionsFeature`, so these live on the base config rather
+    # than being re-declared per policy. They belong to the config (not to a per-run context) because
+    # training this way changes what the model learned, so eval must match.
+    use_relative_actions: bool = False
+    # Joint names to keep absolute. Empty list = every dimension is made relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by `make_policy`.
+    action_feature_names: list[str] | None = None
+
     device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.

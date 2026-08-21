@@ -448,3 +448,157 @@ def test_simplified_three_way_loading():
         )
         assert loaded_config["name"] == "DirectoryTest"
         assert base_path == tmp_path
+
+
+# load_pretrained_state Tests
+#
+# `load_pretrained_state` is the counterpart to `from_pretrained` for callers that own the
+# pipeline's structure: the steps stay as built from the live policy config and only tensors come
+# from the checkpoint. These tests pin the pairing rule, which is what lets a pipeline gain or lose
+# a step relative to its checkpoint without the state landing on the wrong step.
+
+
+def _stateful_step_cls(registry_name: str):
+    """A step carrying one named tensor, so state landing on the wrong step is observable."""
+
+    @ProcessorStepRegistry.register(registry_name)
+    class CountingStep(ProcessorStep):
+        def __init__(self, value: float = 0.0):
+            self.value = float(value)
+
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+        def get_config(self) -> dict[str, float]:
+            return {"value": self.value}
+
+        def state_dict(self) -> dict[str, torch.Tensor]:
+            return {"value": torch.tensor([self.value])}
+
+        def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+            self.value = float(state["value"].item())
+
+    return CountingStep
+
+
+def _stateless_step_cls(registry_name: str):
+    @ProcessorStepRegistry.register(registry_name)
+    class MarkerStep(ProcessorStep):
+        def __call__(self, transition: EnvTransition) -> EnvTransition:
+            return transition
+
+        def transform_features(
+            self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+        ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+            return features
+
+    return MarkerStep
+
+
+def test_load_pretrained_state_round_trip():
+    """State saved by one pipeline lands on a structurally identical rebuild."""
+    step_cls = _stateful_step_cls("round_trip_stateful_step")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            saved = DataProcessorPipeline(steps=[step_cls(value=7.0)], name="proc")
+            saved.save_pretrained(tmp_dir, config_filename="processor.json")
+
+            rebuilt = DataProcessorPipeline(steps=[step_cls(value=0.0)], name="proc")
+            rebuilt.load_pretrained_state(tmp_dir, "processor.json")
+
+            assert rebuilt.steps[0].value == 7.0
+    finally:
+        ProcessorStepRegistry.unregister("round_trip_stateful_step")
+
+
+def test_load_pretrained_state_tolerates_inserted_step():
+    """A step added since the checkpoint must not shift state onto the wrong step.
+
+    State filenames embed the step index, so the stateful step sits at index 0 in the checkpoint and
+    index 1 in the rebuild. Pairing by step key rather than position is what makes this work.
+    """
+    step_cls = _stateful_step_cls("insertion_stateful_step")
+    marker_cls = _stateless_step_cls("insertion_marker_step")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            saved = DataProcessorPipeline(steps=[step_cls(value=3.0)], name="proc")
+            saved.save_pretrained(tmp_dir, config_filename="processor.json")
+
+            # The new stateless step is prepended, so every later index shifts by one.
+            rebuilt = DataProcessorPipeline(steps=[marker_cls(), step_cls(value=0.0)], name="proc")
+            rebuilt.load_pretrained_state(tmp_dir, "processor.json")
+
+            assert rebuilt.steps[1].value == 3.0
+    finally:
+        ProcessorStepRegistry.unregister("insertion_stateful_step")
+        ProcessorStepRegistry.unregister("insertion_marker_step")
+
+
+def test_load_pretrained_state_pairs_duplicate_keys_by_ordinal():
+    """Two steps sharing a registry name each get their own state, in order."""
+    step_cls = _stateful_step_cls("duplicate_stateful_step")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            saved = DataProcessorPipeline(steps=[step_cls(value=1.0), step_cls(value=2.0)], name="proc")
+            saved.save_pretrained(tmp_dir, config_filename="processor.json")
+
+            rebuilt = DataProcessorPipeline(steps=[step_cls(value=0.0), step_cls(value=0.0)], name="proc")
+            rebuilt.load_pretrained_state(tmp_dir, "processor.json")
+
+            assert [step.value for step in rebuilt.steps] == [1.0, 2.0]
+    finally:
+        ProcessorStepRegistry.unregister("duplicate_stateful_step")
+
+
+def test_load_pretrained_state_raises_on_orphaned_state():
+    """Checkpoint tensors that no built step claims must fail loudly, not vanish."""
+    step_cls = _stateful_step_cls("orphan_stateful_step")
+    marker_cls = _stateless_step_cls("orphan_marker_step")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            saved = DataProcessorPipeline(steps=[step_cls(value=5.0)], name="proc")
+            saved.save_pretrained(tmp_dir, config_filename="processor.json")
+
+            rebuilt = DataProcessorPipeline(steps=[marker_cls()], name="proc")
+            with pytest.raises(ValueError, match="orphan_stateful_step.*silently discarded"):
+                rebuilt.load_pretrained_state(tmp_dir, "processor.json")
+    finally:
+        ProcessorStepRegistry.unregister("orphan_stateful_step")
+        ProcessorStepRegistry.unregister("orphan_marker_step")
+
+
+def test_load_pretrained_state_ignores_dropped_stateless_step():
+    """A stateless step the config no longer builds is not an error: nothing is lost."""
+    marker_cls = _stateless_step_cls("dropped_marker_step")
+    step_cls = _stateful_step_cls("dropped_stateful_step")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            saved = DataProcessorPipeline(steps=[marker_cls(), step_cls(value=4.0)], name="proc")
+            saved.save_pretrained(tmp_dir, config_filename="processor.json")
+
+            rebuilt = DataProcessorPipeline(steps=[step_cls(value=0.0)], name="proc")
+            rebuilt.load_pretrained_state(tmp_dir, "processor.json")
+
+            assert rebuilt.steps[0].value == 4.0
+    finally:
+        ProcessorStepRegistry.unregister("dropped_marker_step")
+        ProcessorStepRegistry.unregister("dropped_stateful_step")
+
+
+def test_load_pretrained_state_suggests_migration_for_legacy_checkpoint():
+    """Pre-processor-era checkpoints keep their actionable migration error on this path too."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        # A legacy policy checkpoint: JSON present, but none of it is a processor config.
+        (tmp_path / "config.json").write_text(
+            json.dumps({"type": "act", "input_features": {}, "output_features": {}})
+        )
+
+        pipeline = DataProcessorPipeline(steps=[], name="proc")
+        with pytest.raises(ProcessorMigrationError, match="migrate_policy_normalization.py"):
+            pipeline.load_pretrained_state(tmp_path, "processor.json")

@@ -85,7 +85,7 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, ProcessorBuildContext
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
@@ -767,16 +767,17 @@ def eval_main(cfg: EvalPipelineConfig):
 
     policy.eval()
 
-    # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-    preprocessor_overrides = {
-        "device_processor": {"device": str(policy.config.device)},
-        "rename_observations_processor": {"rename_map": cfg.rename_map},
-    }
+    # The inference device is automatically set to match the detected hardware, overriding any
+    # previous device settings from training to ensure compatibility. The pipelines are rebuilt from
+    # this config, so setting it here is all that is needed. No dataset stats are supplied, which is
+    # what keeps the checkpoint's own normalization statistics authoritative.
+    cfg.policy.device = str(policy.config.device)
+    cfg.policy.rename_map = dict(cfg.rename_map)
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
-        preprocessor_overrides=preprocessor_overrides,
+        context=ProcessorBuildContext(),
     )
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)

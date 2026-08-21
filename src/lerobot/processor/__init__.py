@@ -24,6 +24,7 @@ from lerobot.lerobot_types import (
 )
 
 from .batch_processor import AddBatchDimensionProcessorStep
+from .context import ProcessorBuildContext, apply_checkpoint_rename_map
 from .converters import (
     batch_to_transition,
     create_transition,
@@ -50,6 +51,14 @@ from .factory import (
     make_default_robot_observation_processor,
     make_default_teleop_action_processor,
     make_policy_processor_pipelines,
+)
+from .features import (
+    DEFAULT_POLICY_FEATURES,
+    AnchoredStep,
+    ProcessorFeature,
+    RelativeActionsFeature,
+    apply_policy_features,
+    splice_anchored_steps,
 )
 from .gym_action_processor import (
     Numpy2TorchActionProcessorStep,
@@ -108,6 +117,14 @@ from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcesso
 
 __all__ = [
     "ActionProcessorStep",
+    "apply_checkpoint_rename_map",
+    "ProcessorBuildContext",
+    "AnchoredStep",
+    "ProcessorFeature",
+    "RelativeActionsFeature",
+    "DEFAULT_POLICY_FEATURES",
+    "apply_policy_features",
+    "splice_anchored_steps",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",

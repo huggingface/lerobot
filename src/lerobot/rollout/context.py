@@ -40,6 +40,7 @@ from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    ProcessorBuildContext,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -496,15 +497,16 @@ def build_rollout_context(
             cfg.rename_map,
         )
 
+    # The pipelines are rebuilt from this config, so the device and rename map are set on it rather
+    # than injected as step overrides.
+    policy_config.device = cfg.device
+    policy_config.rename_map = dict(cfg.rename_map)
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy_config,
         pretrained_path=cfg.policy.pretrained_path,
         pretrained_revision=policy_config.pretrained_revision,
-        dataset_stats=dataset_stats,
-        preprocessor_overrides={
-            "device_processor": {"device": cfg.device},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        },
+        context=ProcessorBuildContext(dataset_stats=dataset_stats),
     )
 
     # --- 7. Inference strategy (needs policy + pre/post + hardware) --
