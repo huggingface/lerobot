@@ -93,7 +93,12 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
     decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    decoder = ort.InferenceSession(decoder_path, sess_options=make_ort_session_options())
+    # Cap the thread pool: onboard, this decoder steps at 50 Hz in the same process as the
+    # ZMQ camera server (capture + JPEG encode). Default session options let ORT grab every
+    # core on the NX, which starves the camera thread (stale frames) and jitters the control
+    # loop (limping gait). It is a small MLP, so 1 thread is enough and lowest-latency.
+    session_options = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
+    decoder = ort.InferenceSession(decoder_path, sess_options=session_options)
     logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
 
     # Extract deploy constants from ONNX metadata
@@ -121,6 +126,12 @@ class SonicWholeBodyController(RobotController):
     control_dt = CONTROL_DT
     # Whole-body: the arms are part of the decoder's output, so its gains apply to them too.
     controlled_joints = tuple(m.value for m in G1_29_JointIndex)
+    # Class attributes, not instance ones, so the laptop client can read the schema by name
+    # without building a controller -- which would load the decoder and imply it runs there.
+    # 64-D latent-token action space; rollout maps the policy's 64-D output onto these keys.
+    action_ft = {f"{TOKEN_ACTION_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
+    # 64-D token proprio state, aggregated by rollout into observation.state (last token).
+    observation_ft = {f"{TOKEN_STATE_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
 
     def __init__(self, policy_type: str = "default"):
         self.decoder, self.kp, self.kd, self.default_angles, self.action_scale, self.neutral_token = (
@@ -128,11 +139,6 @@ class SonicWholeBodyController(RobotController):
         )
         self.decoder_input = self.decoder.get_inputs()[0].name
         self.default_angles_mj = self.default_angles[MUJOCO_TO_ISAACLAB]
-
-        # 64-D latent-token action space; rollout maps the policy's 64-D output onto these keys.
-        self.action_ft = {f"{TOKEN_ACTION_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
-        # 64-D token proprio state, aggregated by rollout into observation.state (last token).
-        self.observation_ft = {f"{TOKEN_STATE_PREFIX}.{i}.pos": float for i in range(TOKEN_DIM)}
 
         self.reset()
         logger.info("SonicWholeBodyController initialized")
@@ -164,8 +170,12 @@ class SonicWholeBodyController(RobotController):
 
         Returns:
             Absolute joint targets keyed ``<joint>.q`` for all 29 joints: ``default_angles``
-            plus the decoder's residual, scaled by ``action_scale``.
+            plus the decoder's residual, scaled by ``action_scale``. Empty until the first
+            lowstate arrives, which onboard is a real tick or two after the loop starts.
         """
+        if lowstate is None:
+            return {}
+
         # Token: reassemble the dense 64-D latent from motion_token.{i}.pos (all keys required);
         # else hold the last one (neutral until the first real token, which decodes to a stand).
         keys = [f"{TOKEN_ACTION_PREFIX}.{i}.pos" for i in range(TOKEN_DIM)]
@@ -237,17 +247,17 @@ class SonicLowerBodyController(SonicWholeBodyController):
     controlled_joints = tuple(range(G1_29_JointArmIndex.kLeftShoulderPitch))
     # Fold externally commanded arm targets into the decoder's action history.
     arm_feedback = True
+    # Arm joint targets, not a 64-D token: this controller is not driven by a token VLA.
+    action_ft = {f"{m.name}.q": float for m in G1_29_JointArmIndex}
+    # No observation_ft, so the robot advertises its 29 joint positions rather than a token
+    # echo -- the retargeting layer needs the real arm angles to run FK.
+    observation_ft = None
 
     def __init__(self, policy_type: str = "default"):
         super().__init__(policy_type)
         owned = set(self.controlled_joints)
         self._lower_body_keys = [f"{m.name}.q" for m in G1_29_JointIndex if m.value in owned]
         self._arm_slots = [(f"{m.name}.q", m.value) for m in G1_29_JointArmIndex]
-        # Arm joint targets, not a 64-D token: this controller is not driven by a token VLA.
-        self.action_ft = dict.fromkeys((key for key, _ in self._arm_slots), float)
-        # No observation_ft, so the robot advertises its 29 joint positions rather than a
-        # token echo -- the retargeting layer needs the real arm angles to run FK.
-        self.observation_ft = None
         self._inv_action_scale = np.where(self.action_scale != 0, 1.0 / self.action_scale, 0.0)
         logger.info("SonicLowerBodyController initialized (legs+waist; arms free)")
 

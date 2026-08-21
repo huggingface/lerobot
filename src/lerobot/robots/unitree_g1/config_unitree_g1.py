@@ -62,6 +62,15 @@ class UnitreeG1Config(RobotConfig):
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
+    # Run the locomotion / whole-body controller ONBOARD the robot (policy on the G1
+    # itself, against local DDS at full rate) instead of on the laptop over the ZMQ
+    # socket bridge. In this mode the robot object uses the real Unitree SDK channels,
+    # releases the built-in motion services, and expects high-level actions (arm targets
+    # + joystick axes, or 64-D SONIC tokens) fed via send_action -- e.g. by
+    # run_g1_server's serve_onboard_controller, which receives them from the laptop over
+    # ZMQ. Mutually exclusive with is_simulation.
+    onboard: bool = False
+
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
