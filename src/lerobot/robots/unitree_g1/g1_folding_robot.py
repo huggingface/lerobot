@@ -58,7 +58,15 @@ REACH_WARN_M = 0.05
 
 # The analogue of the OpenArm follower's `max_relative_target`: the G1 has no per-step joint
 # clamp of its own, and the arms track hard enough that a single bad solve is worth guarding.
+# This rate-limits the *commanded* trajectory, one tick to the next.
 DEFAULT_MAX_STEP_DEG = 8.0
+
+# How far the command may get ahead of where the arms actually are. This is the safety half
+# of the clamp, and it has to be much looser than the per-tick rate: a position controller
+# only pulls as hard as its error, so pinning the command near the measurement caps the
+# torque and the arm crawls instead of tracking. Small enough to bound what a jammed joint
+# can wind up, large enough to leave normal following error alone.
+DEFAULT_MAX_LEAD_DEG = 25.0
 
 
 def policy_keys() -> list[str]:
@@ -80,6 +88,7 @@ class G1FoldingRobot:
         reverse_ik_iters: int = REVERSE_IK_ITERS,
         use_waist: bool = False,
         max_step_deg: float = DEFAULT_MAX_STEP_DEG,
+        max_lead_deg: float = DEFAULT_MAX_LEAD_DEG,
     ) -> None:
         self._robot = robot
         # get_observation and send_action are called from different threads by the async
@@ -92,6 +101,10 @@ class G1FoldingRobot:
         self._policy_keys = policy_keys()
         self._g1_arm_keys = self._retarget.action_keys[:14]
         self._max_step = np.deg2rad(max_step_deg)
+        self._max_lead = np.deg2rad(max_lead_deg)
+        # The rate limit is measured from the last command, not from the measurement, so the
+        # trajectory keeps advancing at a bounded speed whatever the arms are doing.
+        self._q_cmd: np.ndarray | None = None
         # The bridge's hands are write-only, so the gripper state reported back is the last
         # command rather than a measurement.
         self._gripper_cmd = dict.fromkeys(SIDES, 0.0)
@@ -139,8 +152,14 @@ class G1FoldingRobot:
             logger.warning(f"wrist target out of reach by {err.max() * 1e3:.0f} mm")
 
         q_arm = np.asarray(q[:14], float)
+        # Rate limit against the previous command; fall back to the measurement on the first
+        # tick so the arms are not asked to jump from wherever they happen to be.
+        ref = self._q_cmd if self._q_cmd is not None else arm_now
+        if ref is not None:
+            q_arm = np.clip(q_arm, ref - self._max_step, ref + self._max_step)
         if arm_now is not None:
-            q_arm = np.clip(q_arm, arm_now - self._max_step, arm_now + self._max_step)
+            q_arm = np.clip(q_arm, arm_now - self._max_lead, arm_now + self._max_lead)
+        self._q_cmd = q_arm
 
         g1_action = dict(zip(self._g1_arm_keys, (float(v) for v in q_arm), strict=True))
         # Waist joints the IK owns pass through unclamped: they are slow, and the clamp is
@@ -160,4 +179,5 @@ class G1FoldingRobot:
 
     def reset(self, *args, **kwargs):
         self._retarget.reset()
+        self._q_cmd = None
         return self._robot.reset(*args, **kwargs)
