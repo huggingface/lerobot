@@ -31,6 +31,7 @@ import pytest
 
 from lerobot.envs.robotwin import (
     ACTION_DIM,
+    EEF_ACTION_DIM,
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_TASKS,
     RoboTwinEnv,
@@ -113,10 +114,37 @@ class TestRoboTwinEnv:
         assert pixels_space["left_camera"].shape == (h, w, 3)
         assert "right_camera" not in pixels_space
 
-    def test_action_space(self):
+    def test_joint_action_space_accepts_absolute_qpos_targets(self):
         env = RoboTwinEnv(task_name="beat_block_hammer")
+
+        assert env.action_mode == "joint"
         assert env.action_space.shape == (ACTION_DIM,)
         assert env.action_space.dtype == np.float32
+        np.testing.assert_array_equal(
+            env.action_space.low,
+            np.array(([-10.0] * 6 + [0.0]) * 2, dtype=np.float32),
+        )
+        np.testing.assert_array_equal(
+            env.action_space.high,
+            np.array(([10.0] * 6 + [1.0]) * 2, dtype=np.float32),
+        )
+
+        # Absolute qpos values outside [-1, 1] are valid inputs in RoboTwin's default mode.
+        absolute_qpos = np.array([2.0] * 6 + [0.5] + [-2.0] * 6 + [0.5], dtype=np.float32)
+        assert env.action_space.contains(absolute_qpos)
+
+    def test_ee_action_space_stays_bounded(self):
+        env = RoboTwinEnv(task_name="beat_block_hammer", action_mode="ee")
+
+        assert env.action_mode == "ee"
+        assert env.action_space.shape == (EEF_ACTION_DIM,)
+        assert env.action_space.dtype == np.float32
+        np.testing.assert_array_equal(env.action_space.low, np.full(EEF_ACTION_DIM, -1.0))
+        np.testing.assert_array_equal(env.action_space.high, np.full(EEF_ACTION_DIM, 1.0))
+
+    def test_unknown_action_mode_raises(self):
+        with pytest.raises(ValueError, match="action_mode must be 'joint' or 'ee'"):
+            RoboTwinEnv(task_name="beat_block_hammer", action_mode="normalized_joint")
 
     def test_reset_returns_correct_obs_keys(self):
         mock_task = _make_mock_task_env()
