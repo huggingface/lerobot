@@ -43,6 +43,7 @@ need the 0-100 convention should convert at their own boundary.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -60,8 +61,18 @@ from .utils import _LazyAsyncVectorEnv
 # observation.state/action column order (5 arm joints + gripper).
 MOTOR_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
-_MJCF_FILES = ["scene.xml", "so101_new_calib.xml", "joints_properties.xml"]
-_MJCF_RAW_BASE = "https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/main/Simulation/SO101"
+# Pin TheRobotStudio/SO-ARM100 to a commit, not ``main``. Two users on the same
+# ``lerobot`` commit must get the same physics; an unpinned ``main`` fetch plus a
+# never-invalidated cache marker would silently freeze whatever ``main`` happened
+# to contain on first run. Latest commit that touched ``Simulation/SO101`` as of
+# 2026-08-22: actuator-model update (#141). Bump ``_MJCF_COMMIT`` (and the
+# checksums) to pick up an upstream asset fix — the SHA is in the marker name so
+# a bump re-syncs automatically.
+_MJCF_COMMIT = "aec17bbc256d1a7342d53aaa4950595d4c30b40d"
+_MJCF_RAW_BASE = f"https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/{_MJCF_COMMIT}/Simulation/SO101"
+# ``joints_properties.xml`` is not ``<include>``d by ``scene.xml`` / ``so101_new_calib.xml``
+# (those values are already inlined on the ``sts3215`` default class). Do not fetch it.
+_MJCF_FILES = ["scene.xml", "so101_new_calib.xml"]
 _ASSET_NAMES = [
     "base_motor_holder_so101_v1.stl",
     "base_so101_v2.stl",
@@ -77,19 +88,47 @@ _ASSET_NAMES = [
     "wrist_roll_follower_so101_v1.stl",
     "wrist_roll_pitch_so101_v2.stl",
 ]
+# SHA-256 of each fetched file at ``_MJCF_COMMIT``. Catches a partial/corrupt download
+# that a bare marker file would accept. Always fetch the MJCF-side meshes — do not
+# copy STLs from ``HF_LEROBOT_HOME/robot-urdfs/so101/assets``; those URDF assets are
+# versioned independently upstream (``_v1`` / ``_v2`` names already mix).
+_FILE_SHA256 = {
+    "scene.xml": "3b79a253a742f55ff0b16682173609229560d97744be472a238ea2e0a6a31ef6",
+    "so101_new_calib.xml": "d75253eb568e8a7214db9c631ab7bed4217f608a26f7276ebe9a7636cac82580",
+    "assets/base_motor_holder_so101_v1.stl": "8cd2f241037ea377af1191fffe0dd9d9006beea6dcc48543660ed41647072424",
+    "assets/base_so101_v2.stl": "bb12b7026575e1f70ccc7240051f9d943553bf34e5128537de6cd86fae33924d",
+    "assets/motor_holder_so101_base_v1.stl": "31242ae6fb59d8b15c66617b88ad8e9bded62d57c35d11c0c43a70d2f4caa95b",
+    "assets/motor_holder_so101_wrist_v1.stl": "887f92e6013cb64ea3a1ab8675e92da1e0beacfd5e001f972523540545e08011",
+    "assets/moving_jaw_so101_v1.stl": "785a9dded2f474bc1d869e0d3dae398a3dcd9c0c345640040472210d2861fa9d",
+    "assets/rotation_pitch_so101_v1.stl": "9be900cc2a2bf718102841ef82ef8d2873842427648092c8ed2ca1e2ef4ffa34",
+    "assets/sts3215_03a_no_horn_v1.stl": "75ef3781b752e4065891aea855e34dc161a38a549549cd0970cedd07eae6f887",
+    "assets/sts3215_03a_v1.stl": "a37c871fb502483ab96c256baf457d36f2e97afc9205313d9c5ab275ef941cd0",
+    "assets/under_arm_so101_v1.stl": "d01d1f2de365651dcad9d6669e94ff87ff7652b5bb2d10752a66a456a86dbc71",
+    "assets/upper_arm_so101_v1.stl": "475056e03a17e71919b82fd88ab9a0b898ab50164f2a7943652a6b2941bb2d4f",
+    "assets/waveshare_mounting_plate_so101_v2.stl": "e197e24005a07d01bbc06a8c42311664eaeda415bf859f68fa247884d0f1a6e9",
+    "assets/wrist_roll_follower_so101_v1.stl": "4b17b410a12d64ec39554abc3e8054d8a97384b2dc4a8d95a5ecb2a93670f5f4",
+    "assets/wrist_roll_pitch_so101_v2.stl": "6c7ec5525b4d8b9e397a30ab4bb0037156a5d5f38a4adf2c7d943d6c56eda5ae",
+}
 
 
-def _download(url: str, dest: Path) -> None:
+def _download(url: str, dest: Path, expected_sha256: str) -> None:
     response = requests.get(url, timeout=30)
     response.raise_for_status()
+    digest = hashlib.sha256(response.content).hexdigest()
+    if digest != expected_sha256:
+        raise ValueError(
+            f"Checksum mismatch for {dest.name}: expected {expected_sha256}, got {digest}. "
+            "Partial or unexpected download — delete the cache dir and retry, or bump "
+            f"_MJCF_COMMIT if the pin moved. url={url}"
+        )
     dest.write_bytes(response.content)
 
 
 def _ensure_so101_mjcf() -> Path:
     """Fetch (once, cached under ``HF_LEROBOT_HOME``) TheRobotStudio's official SO-101 MJCF +
-    mesh assets. Returns the directory containing ``scene.xml``."""
+    mesh assets pinned at ``_MJCF_COMMIT``. Returns the directory containing ``scene.xml``."""
     dest_dir = HF_LEROBOT_HOME / "robot-mjcf" / "so101"
-    marker = dest_dir / ".sync_complete"
+    marker = dest_dir / f".sync_complete.{_MJCF_COMMIT}"
     if marker.exists():
         return dest_dir
 
@@ -97,17 +136,13 @@ def _ensure_so101_mjcf() -> Path:
     assets_dir.mkdir(parents=True, exist_ok=True)
 
     for fname in _MJCF_FILES:
-        _download(f"{_MJCF_RAW_BASE}/{fname}", dest_dir / fname)
+        _download(f"{_MJCF_RAW_BASE}/{fname}", dest_dir / fname, _FILE_SHA256[fname])
 
-    urdf_assets_dir = HF_LEROBOT_HOME / "robot-urdfs" / "so101" / "assets"
-    if urdf_assets_dir.exists():
-        import shutil
-
-        for name in _ASSET_NAMES:
-            shutil.copyfile(urdf_assets_dir / name, assets_dir / name)
-    else:
-        for name in _ASSET_NAMES:
-            _download(f"{_MJCF_RAW_BASE}/assets/{name}", assets_dir / name)
+    # Always the MJCF-side meshes at the same pin. Never substitute the separately
+    # versioned URDF cache under ``robot-urdfs/so101/assets``.
+    for name in _ASSET_NAMES:
+        rel = f"assets/{name}"
+        _download(f"{_MJCF_RAW_BASE}/{rel}", assets_dir / name, _FILE_SHA256[rel])
 
     marker.touch()
     return dest_dir

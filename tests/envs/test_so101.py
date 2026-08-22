@@ -125,6 +125,61 @@ def test_create_so101_envs_raises_on_invalid_n_envs():
         create_so101_envs(n_envs=0, env_cls=MagicMock())
 
 
+def test_mjcf_pin_is_a_commit_not_main():
+    from lerobot.envs import so101
+
+    assert so101._MJCF_COMMIT != "main"
+    assert len(so101._MJCF_COMMIT) == 40
+    assert so101._MJCF_COMMIT in so101._MJCF_RAW_BASE
+    assert "/main/" not in so101._MJCF_RAW_BASE
+    assert "joints_properties.xml" not in so101._MJCF_FILES
+    assert set(so101._FILE_SHA256) == {
+        *so101._MJCF_FILES,
+        *[f"assets/{name}" for name in so101._ASSET_NAMES],
+    }
+
+
+def test_ensure_so101_mjcf_ignores_urdf_cache_and_pins_marker(tmp_path, monkeypatch):
+    """A populated URDF mesh cache must not be copied — MJCF-side assets at the pin only."""
+    import hashlib
+
+    from lerobot.envs import so101
+
+    content = b"fake-mjcf-bytes"
+    digest = hashlib.sha256(content).hexdigest()
+    downloaded: list[str] = []
+
+    def fake_get(url, timeout=30):
+        downloaded.append(url)
+        response = MagicMock()
+        response.content = content
+        response.raise_for_status = MagicMock()
+        return response
+
+    monkeypatch.setattr(so101, "HF_LEROBOT_HOME", tmp_path)
+    monkeypatch.setattr(so101, "_FILE_SHA256", dict.fromkeys(so101._FILE_SHA256, digest))
+    monkeypatch.setattr(so101.requests, "get", fake_get)
+
+    urdf_assets = tmp_path / "robot-urdfs" / "so101" / "assets"
+    urdf_assets.mkdir(parents=True)
+    (urdf_assets / "base_so101_v2.stl").write_bytes(b"URDF-CACHE-MUST-NOT-BE-USED")
+
+    dest = so101._ensure_so101_mjcf()
+    marker = dest / f".sync_complete.{so101._MJCF_COMMIT}"
+    assert marker.exists()
+    assert dest == tmp_path / "robot-mjcf" / "so101"
+    assert (dest / "assets" / "base_so101_v2.stl").read_bytes() == content
+    assert all(so101._MJCF_COMMIT in url for url in downloaded)
+    assert all("joints_properties.xml" not in url for url in downloaded)
+    assert not any("robot-urdfs" in url for url in downloaded)
+    assert any(url.endswith("/assets/base_so101_v2.stl") for url in downloaded)
+
+    # Second call is a cache hit — no more downloads.
+    downloaded.clear()
+    assert so101._ensure_so101_mjcf() == dest
+    assert downloaded == []
+
+
 # ---------------------------------------------------------------------------
 # Real-sim tests (mujoco required)
 # ---------------------------------------------------------------------------

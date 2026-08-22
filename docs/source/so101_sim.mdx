@@ -10,7 +10,7 @@ This is **infrastructure, not a task**: there's no reward, no goal, no success c
 pip install -e ".[so101]"
 ```
 
-This installs `mujoco` (no other new dependencies). The MJCF + mesh assets (~16MB) are fetched once from GitHub on first use and cached under `HF_LEROBOT_HOME/robot-mjcf/so101`.
+This installs `mujoco` (no other new dependencies). The MJCF + mesh assets (~16MB) are fetched once from a **pinned** TheRobotStudio/SO-ARM100 commit (not `main`) on first use, checksum-verified, and cached under `HF_LEROBOT_HOME/robot-mjcf/so101`. Bumping the pin re-syncs automatically.
 
 ## Quick start
 
@@ -56,8 +56,12 @@ obs, reward, terminated, truncated, info = env.step(action)
 
 The MJCF's `gripper` joint is a hinge with its own native range (roughly -10° to 100°) — not LeRobot's separate linear 0=closed/100=open convention. This gap is upstream, in TheRobotStudio's own MJCF/URDF (their README already documents it as unresolved), not something introduced here. Rather than inventing an unvalidated remapping, `action_space`/`agent_pos` simply expose each joint's real MJCF range in degrees, gripper included — the same raw, per-joint-calibrated-degree convention SO-101's own dataset recordings already use. Convert at your own boundary if you need the 0-100 convention.
 
+## Dynamics are not SO-101 identified measurements
+
+The `sts3215` `damping` / `frictionloss` / `armature` defaults in the MJCF are **not** identified from an SO-101. They were adapted from the [Open Duck Mini](https://github.com/apirrone/Open_Duck_Mini) project (same STS3215 servo, different arm); `mujoco_menagerie/robotstudio_so101` carries the same values with the same lineage. Fine for a base sim to develop and test against — do not read sim behaviour as sim2real-predictive.
+
 ## Platform notes
 
-- Physics-only (no `dynamics`/contact/actuator-gain calibration against real hardware) — kinematics (forward kinematics via this same MJCF) has been cross-validated against real hardware to micron-level agreement elsewhere in this project's history, but the shipped actuator gains are TheRobotStudio's own defaults, not independently calibrated.
+- Physics-only (no `dynamics`/contact/actuator-gain calibration against real hardware) — kinematics (forward kinematics via this same MJCF) has been cross-validated against real hardware to micron-level agreement elsewhere in this project's history, but the shipped actuator gains are the uncalibrated Open Duck Mini lineage above, not independently measured on an SO-101.
 - Rendering (`pixels_agent_pos`) needs a working offscreen backend; set `MUJOCO_GL=egl` (or `osmesa`) if the default doesn't work in your environment.
 - No reward, task, or object/scene content — this is a base env meant to be wrapped or subclassed for anything task-specific (RL reward shaping, a Cartesian/IK action space, scripted pick-place, etc.).
