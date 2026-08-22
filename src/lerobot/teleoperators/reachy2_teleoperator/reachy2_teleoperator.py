@@ -148,6 +148,7 @@ class Reachy2Teleoperator(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
+        assert self.reachy is not None
         start = time.perf_counter()
 
         joint_action: dict[str, float] = {}
@@ -174,4 +175,5 @@ class Reachy2Teleoperator(Teleoperator):
 
     def disconnect(self) -> None:
         if self.is_connected:
+            assert self.reachy is not None
             self.reachy.disconnect()
