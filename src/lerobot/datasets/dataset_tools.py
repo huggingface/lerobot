@@ -82,12 +82,20 @@ from .video_utils import (
 )
 
 
-def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> dict:
+def _load_episode_with_stats(
+    src_dataset: LeRobotDataset,
+    episode_idx: int,
+    cache: dict[Path, pd.DataFrame] | None = None,
+) -> dict:
     """Load a single episode's metadata including stats from parquet file.
 
     Args:
         src_dataset: Source dataset
         episode_idx: Episode index to load
+        cache: Optional single-slot cache holding the last episodes metadata file read. Callers
+            looping over many episodes should create one dict and pass it to every call: episodes
+            are laid out in file order, so this turns one parquet read per episode into one per
+            metadata file. Only the most recent file is kept, so peak memory stays at one file.
 
     Returns:
         dict containing episode metadata and stats
@@ -97,7 +105,17 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
     file_idx = ep_meta["meta/episodes/file_index"]
 
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
-    df = pd.read_parquet(parquet_path)
+
+    if cache is None:
+        df = pd.read_parquet(parquet_path)
+    elif parquet_path in cache:
+        df = cache[parquet_path]
+    else:
+        df = pd.read_parquet(parquet_path)
+        # Drop the previous file before caching the new one: episodes are visited in file order,
+        # so an older entry is never read again and would only pin memory.
+        cache.clear()
+        cache[parquet_path] = df
 
     episode_row = df[df["episode_index"] == episode_idx].iloc[0]
 
@@ -870,11 +888,12 @@ def _copy_and_reindex_episodes_metadata(
 
     all_stats = []
     total_frames = 0
+    episodes_df_cache: dict[Path, pd.DataFrame] = {}
 
     for old_idx, new_idx in tqdm(
         sorted(episode_mapping.items(), key=lambda x: x[1]), desc="Processing episodes metadata"
     ):
-        src_episode_full = _load_episode_with_stats(src_dataset, old_idx)
+        src_episode_full = _load_episode_with_stats(src_dataset, old_idx, episodes_df_cache)
 
         src_episode = src_dataset.meta.episodes[old_idx]
 
