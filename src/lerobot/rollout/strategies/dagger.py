@@ -740,6 +740,17 @@ class DAggerStrategy(RolloutStrategy):
             logger.info("Resuming autonomous mode - resetting engine and interpolator")
             interpolator.reset()
             engine.reset()
+            # Feed a fresh observation before resuming: observations are only
+            # published to the engine during AUTONOMOUS ticks, so after a
+            # correction the engine still holds the pre-correction observation.
+            # The RTC background thread wakes on resume() and can start
+            # inference from that stale observation before the main loop's
+            # next notify, producing a chunk that snaps the arm back toward
+            # its pre-correction pose (#3747). Notify before resume closes
+            # the race entirely; for engines without background inference
+            # notify_observation is a no-op.
+            fresh_obs = robot.get_observation()
+            engine.notify_observation(ctx.processors.robot_observation_processor(fresh_obs))
             engine.resume()
 
             # release teleop before resuming the policy
