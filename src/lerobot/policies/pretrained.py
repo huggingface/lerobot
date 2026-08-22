@@ -206,9 +206,21 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        missing_keys, unexpected_keys = load_model_as_safetensor(
-            model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
-        )
+        try:
+            missing_keys, unexpected_keys = load_model_as_safetensor(
+                model, model_file, strict=strict, device=resolve_safetensors_device(map_location)
+            )
+        except RuntimeError as e:
+            if "size mismatch" in str(e):
+                raise RuntimeError(
+                    f"{e}\n\nThe checkpoint's weights have different shapes than this model expects, "
+                    "most likely because the model's action/state feature dimensions (derived from its "
+                    "config or the dataset it was built for) don't match the ones the checkpoint was "
+                    "trained with. Verify that the checkpoint and the dataset/config you're loading it "
+                    "with are compatible (e.g. same robot, same number of joints/cameras), or use a "
+                    "checkpoint fine-tuned for your dataset instead."
+                ) from e
+            raise
         log_model_loading_keys(missing_keys, unexpected_keys)
         return model
 
