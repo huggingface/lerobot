@@ -84,7 +84,7 @@ All eval snippets below mirror the CI command (see `.github/workflows/benchmark_
 
 By default, each task uses the rollout horizon registered by RoboCasa. Set `--env.episode_length=<steps>` to apply the same explicit horizon to every selected task.
 
-Eval prompts default to the CamelCase env id (`CloseFridge`) so they match the `task` column used to train [`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa) and the Hub datasets. To send the English sentence from RoboCasa episode metadata instead (`ep_meta["lang"]`, e.g. `Close the fridge doors.`), pass `--env.task_prompt=language`.
+Eval prompts default to the CamelCase env id (`CloseFridge`) so they match the `task` column used to train [`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa) and the Hub datasets. To send the English sentence from RoboCasa episode metadata instead (`ep_meta["lang"]`, e.g. `Close the fridge doors.`), pass `--env.task_prompt_source=language`.
 
 ### Single-task evaluation (recommended for quick iteration)
 

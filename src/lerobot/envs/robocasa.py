@@ -154,13 +154,15 @@ class RoboCasaEnv(gym.Env):
         episode_length: int | None = None,
         obj_registries: Sequence[str] = DEFAULT_OBJ_REGISTRIES,
         episode_index: int = 0,
-        task_prompt: str = "env_id",
+        task_prompt_source: str = "env_id",
     ):
         super().__init__()
-        if task_prompt not in _TASK_PROMPT_VALUES:
-            raise ValueError(f"Unsupported task_prompt: {task_prompt!r}. Use one of {_TASK_PROMPT_VALUES}.")
+        if task_prompt_source not in _TASK_PROMPT_VALUES:
+            raise ValueError(
+                f"Unsupported task_prompt_source: {task_prompt_source!r}. Use one of {_TASK_PROMPT_VALUES}."
+            )
         self.task = task
-        self.task_prompt = task_prompt
+        self.task_prompt_source = task_prompt_source
         self.obs_type = obs_type
         self.render_mode = render_mode
         self.observation_width = observation_width
@@ -266,7 +268,7 @@ class RoboCasaEnv(gym.Env):
 
     def _update_task_description(self, ep_meta: dict[str, Any] | None = None) -> None:
         """Set `task_description` from the env id or RoboCasa `ep_meta["lang"]`."""
-        if self.task_prompt == "language" and ep_meta is not None:
+        if self.task_prompt_source == "language" and ep_meta is not None:
             lang = ep_meta.get("lang")
             if isinstance(lang, str) and lang:
                 self.task_description = lang
@@ -342,7 +344,7 @@ def _make_env_fns(
     split: str | None,
     episode_length: int | None,
     obj_registries: Sequence[str],
-    task_prompt: str,
+    task_prompt_source: str,
 ) -> list[Callable[[], RoboCasaEnv]]:
     """Build n_envs factory callables for a single task.
 
@@ -365,7 +367,7 @@ def _make_env_fns(
             episode_length=episode_length,
             obj_registries=obj_registries,
             episode_index=episode_index,
-            task_prompt=task_prompt,
+            task_prompt_source=task_prompt_source,
         )
 
     return [partial(_make_env, i) for i in range(n_envs)]
@@ -406,7 +408,7 @@ def create_robocasa_envs(
     visualization_width = gym_kwargs.pop("visualization_width", 512)
     visualization_height = gym_kwargs.pop("visualization_height", 512)
     split = gym_kwargs.pop("split", None)
-    task_prompt = gym_kwargs.pop("task_prompt", "env_id")
+    task_prompt_source = gym_kwargs.pop("task_prompt_source", "env_id")
 
     camera_names = parse_camera_names(camera_name)
     task_names, group_split = _resolve_tasks(str(task))
@@ -441,7 +443,7 @@ def create_robocasa_envs(
             split=split,
             episode_length=episode_length,
             obj_registries=obj_registries,
-            task_prompt=task_prompt,
+            task_prompt_source=task_prompt_source,
         )
 
         if is_async:
