@@ -32,6 +32,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.pyav_utils import get_codec
 from lerobot.datasets.utils import INFO_PATH
 from lerobot.datasets.video_utils import (
+    check_video_files_compatibility,
     concatenate_video_files,
     encode_video_frames,
     get_video_info,
@@ -586,6 +587,12 @@ class TestConcatenateVideoFiles:
                 tmp_path / "out.mp4",
                 compatibility_check=True,
             )
+
+
+class TestCheckVideoFilesCompatibility:
+    def test_empty_or_single_list_does_not_raise(self):
+        check_video_files_compatibility([])
+        check_video_files_compatibility(["some/dummy/path.mp4"])
 
 
 class TestEncoderConfigPersistence:

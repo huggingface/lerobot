@@ -49,7 +49,7 @@ from .utils import (
     DEFAULT_VIDEO_PATH,
     update_chunk_file_indices,
 )
-from .video_utils import concatenate_video_files, get_video_duration_in_s
+from .video_utils import check_video_files_compatibility, concatenate_video_files, get_video_duration_in_s
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +492,18 @@ def aggregate_videos(
             }
         )
 
+        if concatenate_videos:
+            all_src_paths = [
+                src_meta.root
+                / DEFAULT_VIDEO_PATH.format(
+                    video_key=key,
+                    chunk_index=src_chunk_idx,
+                    file_index=src_file_idx,
+                )
+                for src_chunk_idx, src_file_idx in unique_chunk_file_pairs
+            ]
+            check_video_files_compatibility(all_src_paths)
+
         chunk_idx = video_idx["chunk"]
         file_idx = video_idx["file"]
         dst_file_durations = video_idx["dst_file_durations"]
@@ -548,11 +560,9 @@ def aggregate_videos(
                 current_dst_duration = dst_file_durations.get(dst_key, 0)
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_dst_duration
                 videos_idx[key]["src_to_dst"][(src_chunk_idx, src_file_idx)] = dst_key
-                # TODO(CarolinePascal): Move the check before the loop to avoid failing in the middle + add possibility to re-encode the video if the check fails
                 concatenate_video_files(
                     [dst_path, src_path],
                     dst_path,
-                    compatibility_check=True,
                 )
                 # Update duration of this destination file
                 dst_file_durations[dst_key] = current_dst_duration + src_duration
