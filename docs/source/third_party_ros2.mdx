@@ -1,0 +1,79 @@
+# LeRobot and ROS 2
+
+[ROS 2](https://www.ros.org/) is where many deployed robots, lab setups, and simulation stacks live, and the community has built several integrations connecting it to LeRobot. They come in two shapes: **plugins**, which expose a ROS 2 robot to standard LeRobot commands like `lerobot-record` and `lerobot-teleoperate`, and **standalone ROS 2 packages**, which run LeRobot recording and inference as nodes inside an existing ROS 2 workspace. This page also lists **dataset converters** between `rosbag2` and `LeRobotDataset`.
+
+> [!IMPORTANT]
+> These projects are developed and maintained by third parties. Please refer to each repository for installation instructions, hardware requirements, supported ROS 2 distros, and support.
+
+> [!TIP]
+> ⚠️ marks projects that are forks/extensions of LeRobot. They may require custom setup rather than working with an unmodified install. LeRobot moves quickly, so check each project's declared `lerobot` version range against your installed version before installing.
+
+## Robot Bridges
+
+Plugins follow LeRobot's auto-discovery convention (`lerobot_robot_*`, `lerobot_teleoperator_*`); standalone packages are built with colcon into a ROS 2 workspace and are driven with `ros2 run` and service calls instead of LeRobot commands.
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/ngres/leros2">leros2</a></td>
+      <td>Plugins (<code>lerobot_robot_ros2</code>, <code>lerobot_teleoperator_ros2</code>) with a composable, config-driven mapping between ROS 2 topics and LeRobot features: joint positions, end-effector poses, torques/wrenches, grippers, and compressed images. Also ships <code>leros2-convert</code> for bag-to-dataset conversion (see below). Installs from source.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/ycheng517/lerobot-ros">lerobot-ros (ycheng517)</a></td>
+      <td>Plugin wrapping any <a href="https://control.ros.org/">ros2_control</a> / <a href="https://moveit.ai/">MoveIt</a> arm, with joint position, joint trajectory, and MoveIt Servo end-effector velocity modes, plus gamepad and keyboard teleoperators. Targets lerobot 0.4.x and ROS 2 Jazzy.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/ROBOTIS-GIT/lerobot_robot_ros2_zenoh">lerobot_robot_ros2_zenoh</a></td>
+      <td>Plugin bridging ROS 2 robots to LeRobot over <a href="https://zenoh.io">Zenoh</a> pub/sub transport, so the LeRobot side needs no ROS 2 installation. Joint states in, joint trajectories out, ROS image topics as cameras. Alpha status, requires a Zenoh router and an SDK installed from source.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/sacovo/lerobot_ros">lerobot_ros (sacovo)</a></td>
+      <td>Standalone ROS 2 package running LeRobot inside a colcon workspace: a <code>dataset_recorder</code> node records LeRobotDatasets from arbitrary configured topics via service calls, and a <code>policy_controller</code> node runs any LeRobot policy with topics as observations and actions, with replay and SO-101 example nodes.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/astroyat/lerobot-ros">lerobot-ros (astroyat)</a> ⚠️</td>
+      <td>LeKiwi mobile base over <code>/cmd_vel</code> with LIDAR streaming, odometry, and SLAM Toolbox + Nav2 bringup. Requires a patched LeRobot fork.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Dataset Converters
+
+Offline conversion between `rosbag2` recordings and `LeRobotDataset`, usable without a live robot.
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>Project</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/arpitg1304/forge">forge</a></td>
+      <td>Multi-format toolkit (<code>pip install forge-robotics</code>) converting between RLDS, LeRobot v2/v3, HDF5, MCAP, Zarr, and ROS 1/ROS 2 bags through a shared intermediate representation, with episode quality scoring.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/openral-dataset/">openral-dataset</a></td>
+      <td>Recorder with pluggable sinks: a LeRobotDataset v3 sink writing through the <code>LeRobotDataset</code> API, and a rosbag2/MCAP sink.</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/ngres/leros2">leros2-convert</a></td>
+      <td>CLI shipped with leros2 (see above) converting a ROS 2 bag into a LeRobotDataset using the same topic-to-feature configuration as its plugins.</td>
+    </tr>
+  </tbody>
+</table>
+
+## Contributing
+
+Built a ROS 2 integration for LeRobot? Check out the [Bring Your Own Hardware](./integrate_hardware) guide for the plugin conventions, and share your project with the community! An open discussion on a unified ROS 2 integration strategy is running in [RFC #4368](https://github.com/huggingface/lerobot/issues/4368).
