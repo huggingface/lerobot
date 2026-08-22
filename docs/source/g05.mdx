@@ -1,0 +1,195 @@
+# G0.5
+
+G0.5 is a Qwen3.5-based vision-language-action model with flow-matching and autoregressive action heads. Its LeRobot registry name is `g05`.
+
+Paper and project page: TBD
+
+## Install
+
+```bash
+uv sync --extra g05 --extra training
+```
+
+## Convert an official checkpoint
+
+Use the converter to turn an official G0.5 Base, LIBERO, SO100, or SO101 checkpoint into a format supported by LeRobot.
+
+```bash
+uv run python -m lerobot.policies.g05.convert_g05_checkpoint \
+  --input-dir=/path/to/official \
+  --output-dir=/path/to/lerobot-g05
+```
+
+## Load
+
+```python
+from lerobot.policies.g05.configuration_g05 import G05Config
+from lerobot.policies.g05.modeling_g05 import G05Policy
+from lerobot.policies.factory import make_pre_post_processors
+
+path = "ZibinDong/g05-libero-fm"
+config = G05Config.from_pretrained(path)
+config.n_action_steps = 10  # Optional; set before constructing the policy or processors.
+policy = G05Policy.from_pretrained(path, config=config, strict=True)
+preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=path)
+```
+
+Keep the converted directory intact and load it as one artifact.
+
+Without an override, inference executes the full predicted action horizon. In Python, set `config.n_action_steps` immediately after loading the config and before constructing both the policy and processors. CLI users can set `--policy.n_action_steps` to any value from 1 through `config.chunk_size`.
+
+## LIBERO benchmark
+
+G0.5 provides separate autoregressive and flow-matching checkpoints:
+
+- [ZibinDong/g05-libero-ar](https://huggingface.co/ZibinDong/g05-libero-ar)
+- [ZibinDong/g05-libero-fm](https://huggingface.co/ZibinDong/g05-libero-fm)
+
+Both evaluations use FP32, eager attention, `NVIDIA_TF32_OVERRIDE=0`, `seed=0`, and the default LIBERO episode lengths. Each prediction executes 10 actions.
+
+Evaluation hardware: NVIDIA H20 (140 GB).
+
+### Autoregressive results
+
+The autoregressive checkpoint uses `discrete_action=true` and `continuous_action=false`.
+
+| Suite          | Success rate | Successes | Episodes |
+| -------------- | -----------: | --------: | -------: |
+| libero_spatial |        99.0% |       495 |      500 |
+| libero_object  |       100.0% |       500 |      500 |
+| libero_goal    |        97.8% |       489 |      500 |
+| libero_10      |        96.0% |       480 |      500 |
+| **Overall**    |   **98.20%** |  **1964** | **2000** |
+
+Run the command with `--env.task` set to `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`:
+
+```bash
+export NVIDIA_TF32_OVERRIDE=0
+export MUJOCO_GL=egl
+
+uv run lerobot-eval \
+    --policy.path=ZibinDong/g05-libero-ar \
+    --policy.n_action_steps=10 \
+    --policy.device=cuda \
+    --policy.dtype=float32 \
+    --policy.use_amp=false \
+    --policy.attn_implementation=eager \
+    --policy.vision_attn_implementation=eager \
+    --policy.discrete_action=true \
+    --policy.continuous_action=false \
+    --policy.predict_cot=false \
+    --env.type=libero \
+    --env.task=libero_spatial \
+    --env.camera_name_mapping='{"agentview_image":"image","robot0_eye_in_hand_image":"wrist_image"}' \
+    --env.observation_height=256 \
+    --env.observation_width=256 \
+    --eval.batch_size=50 \
+    --eval.n_episodes=50 \
+    --eval.use_async_envs=true \
+    --seed=0 \
+    --output_dir=outputs/eval/g05-libero-ar-libero_spatial
+```
+
+### Flow-matching results
+
+The flow-matching checkpoint uses `discrete_action=false` and `continuous_action=true`.
+
+| Suite          | Success rate | Successes | Episodes |
+| -------------- | -----------: | --------: | -------: |
+| libero_spatial |        98.2% |       491 |      500 |
+| libero_object  |       100.0% |       500 |      500 |
+| libero_goal    |        98.0% |       490 |      500 |
+| libero_10      |        97.8% |       489 |      500 |
+| **Overall**    |   **98.50%** |  **1970** | **2000** |
+
+Run the command with `--env.task` set to `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`:
+
+```bash
+export NVIDIA_TF32_OVERRIDE=0
+export MUJOCO_GL=egl
+
+uv run lerobot-eval \
+    --policy.path=ZibinDong/g05-libero-fm \
+    --policy.n_action_steps=10 \
+    --policy.device=cuda \
+    --policy.dtype=float32 \
+    --policy.use_amp=false \
+    --policy.attn_implementation=eager \
+    --policy.vision_attn_implementation=eager \
+    --policy.discrete_action=false \
+    --policy.continuous_action=true \
+    --policy.predict_cot=false \
+    --env.type=libero \
+    --env.task=libero_spatial \
+    --env.camera_name_mapping='{"agentview_image":"image","robot0_eye_in_hand_image":"wrist_image"}' \
+    --env.observation_height=256 \
+    --env.observation_width=256 \
+    --eval.batch_size=50 \
+    --eval.n_episodes=50 \
+    --eval.use_async_envs=true \
+    --seed=0 \
+    --output_dir=outputs/eval/g05-libero-fm-libero_spatial
+```
+
+## SO100/101 deployment
+
+The converted SO100 checkpoint with both autoregressive and flow-matching heads is available at:
+
+- [ZibinDong/g05-so100-arfm-step-72736](https://huggingface.co/ZibinDong/g05-so100-arfm-step-72736)
+
+The command below enables AR with CoT and has been verified to run zero-shot on SO100.
+
+### Camera slots
+
+`robot.cameras` maps physical cameras to the three image slots used during G0.5 pretraining:
+
+| Key               | Required | Camera placement                                                                                                                                                  |
+| ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exterior_rgb`    | Yes      | Use an external camera with a stable view of the robot and workspace. When CoT is enabled, predicted bounding boxes use this image as their coordinate reference. |
+| `left_wrist_rgb`  | No       | Any additional view. It may be wrist-mounted or another external camera.                                                                                          |
+| `right_wrist_rgb` | No       | Any additional view. It may be wrist-mounted or another external camera.                                                                                          |
+
+The `left_wrist_rgb` and `right_wrist_rgb` names identify pretrained G0.5 input slots; they do not require the cameras to be mounted on the robot's wrists. Either or both optional slots may be omitted. Keep the exact slot names when providing them.
+
+```bash
+rollout_args=(
+  --strategy.type=base # Use the standard rollout strategy.
+  --policy.path=ZibinDong/g05-so100-arfm-step-72736 # Use the converted SO100 AR/FM checkpoint.
+  --policy.predict_cot=true # Enable chain-of-thought generation.
+  --policy.discrete_action=true # Enable the AR action head.
+  --policy.continuous_action=false # Disable the FM action head.
+  --policy.ar_do_sample=false # Use greedy AR decoding.
+  --robot.type=so100_follower # Change to so101_follower for SO101.
+  --robot.id=your_so100_follower # Use your configured robot ID.
+  --robot.port=/dev/serial/by-id/your_so100_serial_port # Use your robot serial port.
+  --robot.use_degrees=true # Send joint targets in degrees.
+  --robot.max_relative_target=10 # Limit each commanded motor change to 10 units.
+  --robot.disable_torque_on_disconnect=false # Keep the arm holding position after disconnect.
+  --robot.cameras='{exterior_rgb: {type: opencv, index_or_path: /dev/your_exterior_camera, width: 640, height: 480, fps: 30, fourcc: MJPG, backend: 200}, right_wrist_rgb: {type: opencv, index_or_path: /dev/your_optional_camera, width: 640, height: 480, fps: 30, fourcc: MJPG, backend: 200}}' # Configure the required exterior view and an optional secondary view.
+  --task="your task instruction" # Describe the task for the robot.
+  --fps=30 # Run control at 30 Hz.
+  --duration=120 # Run for 120 seconds.
+  --return_to_initial_position=true # Return to the rollout's initial joint positions.
+  --device=cuda # Run inference on CUDA.
+  --use_torch_compile=true # Compile and reuse the inference graph.
+)
+uv run lerobot-rollout "${rollout_args[@]}"
+```
+
+Use only an action head provided by the checkpoint:
+
+| Mode    | Policy overrides                                                 |
+| ------- | ---------------------------------------------------------------- |
+| AR      | `--policy.discrete_action=true --policy.continuous_action=false` |
+| FM      | `--policy.discrete_action=false --policy.continuous_action=true` |
+| CoT on  | `--policy.predict_cot=true`                                      |
+| CoT off | `--policy.predict_cot=false`                                     |
+
+When CoT is enabled, the policy also prints its reasoning for each predicted chunk.
+
+Notes:
+
+- The verified setup uses 640x480 MJPG cameras.
+- **SO100/101 initial pose:** During deployment, the policy often remained still when the arm started in its rest/reset pose. This likely reflects a bias in the community training dataset. Starting with the arm slightly raised or otherwise offset from the reset pose substantially reduced this behavior and is recommended.
+- `return_to_initial_position=true` returns to the joint positions recorded when the command started, not to a G0.5 home pose.
+- `use_torch_compile=true` adds compilation time to the first action chunk; later chunks reuse the cache.
