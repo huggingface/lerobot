@@ -1,0 +1,301 @@
+# 策略部署（lerobot-rollout）
+
+`lerobot-rollout` 是用于在真实机器人上部署已训练策略的统一 CLI。它支持多种执行策略和推理后端，既可快速评估，也可持续录制和进行人在回路的数据采集。
+
+## 快速开始
+
+除机器人和策略所需的额外依赖外，无需安装其他依赖。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=lerobot/act_koch_real \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up cube" \
+    --duration=30
+```
+
+此命令会运行策略 30 秒，但不会录制数据。
+
+---
+
+## 执行策略
+
+使用 `--strategy.type=<name>` 选择策略。每种策略都定义了独立的控制循环，以及相应的数据录制和交互语义。
+
+### Base（`--strategy.type=base`）
+
+不录制数据的自主策略运行。适用于快速评估、演示，或只需要观察机器人运行状态的场景。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the box" \
+    --duration=60
+```
+
+| 参数             | 说明                                    |
+| ---------------- | --------------------------------------- |
+| `--duration`     | 运行时长，单位为秒（0 表示无限运行）    |
+| `--task`         | 传递给策略的任务描述                    |
+| `--display_data` | 将观测和动作流式传输到 Rerun 进行可视化 |
+
+### Sentry（`--strategy.type=sentry`）
+
+连续自主录制，并定期上传到 Hugging Face Hub。系统会根据摄像头分辨率和 FPS 自动计算 episode 边界，因此每个保存的 episode 都会生成完整视频文件，从而提高上传效率。
+
+策略状态（隐藏状态和 RTC 队列）会跨 episode 保留：机器人不会在 episode 之间重置。
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --strategy.upload_every_n_episodes=5 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
+    --dataset.single_task="Put lego brick into the box" \
+    --duration=3600
+```
+
+| 参数                                   | 说明                                               |
+| -------------------------------------- | -------------------------------------------------- |
+| `--strategy.upload_every_n_episodes`   | 每 N 个 episode 推送到 Hub（默认为 5）             |
+| `--strategy.target_video_file_size_mb` | episode 轮换时的目标视频文件大小（默认为自动设置） |
+| `--dataset.repo_id`                    | **必填。** 录制数据集所在的 Hub 仓库               |
+| `--dataset.push_to_hub`                | 是否在清理阶段推送到 Hub（默认为 true）            |
+
+### Highlight（`--strategy.type=highlight`）
+
+通过受内存限制的环形缓冲区按需录制的自主运行策略。机器人会持续运行，同时缓冲区保存最近 N 秒的遥测数据。按下保存键可刷出缓冲区内容并开始实时录制；再次按下该键即可保存 episode。
+
+```bash
+lerobot-rollout \
+    --strategy.type=highlight \
+    --strategy.ring_buffer_seconds=30 \
+    --strategy.save_key=s \
+    --strategy.push_key=h \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_highlight_data \
+    --dataset.single_task="Pick up the red cube"
+```
+
+**键盘控制：**
+
+| 按键          | 操作                                       |
+| ------------- | ------------------------------------------ |
+| `s`（可配置） | 开始录制（刷出缓冲区）/ 停止并保存 episode |
+| `h`（可配置） | 将数据集推送到 Hub                         |
+| `ESC`         | 停止会话                                   |
+
+| 参数                                   | 说明                                    |
+| -------------------------------------- | --------------------------------------- |
+| `--strategy.ring_buffer_seconds`       | 缓冲遥测数据的时长（默认为 30）         |
+| `--strategy.ring_buffer_max_memory_mb` | 环形缓冲区的内存上限（默认为 2048）     |
+| `--strategy.save_key`                  | 切换录制状态的按键（默认为 `s`）        |
+| `--strategy.push_key`                  | 将数据集推送到 Hub 的按键（默认为 `h`） |
+
+### DAgger（`--strategy.type=dagger`）
+
+人在回路的数据采集。在策略自主运行与通过遥操作器进行人工介入之间交替。介入帧会标记为 `intervention=True`。此策略需要遥操作器（`--teleop.type`）。
+
+详细操作流程请参阅[人在回路数据采集](./hil_data_collection)指南。
+
+**仅纠正模式**（默认）：只录制人工纠正窗口。每次纠正都会成为一个 episode。
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.num_episodes=20 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --robot.type=bi_openarm_follower \
+    --teleop.type=bi_openarm_mini \
+    --dataset.repo_id=${HF_USER}/rollout_hil_data \
+    --dataset.single_task="Fold the T-shirt"
+```
+
+**连续录制模式**（`--strategy.record_autonomous=true`）：自主帧和纠正帧都会录制，并按时间轮换 episode（与 Sentry 相同）。
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.record_autonomous=true \
+    --strategy.num_episodes=50 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --dataset.repo_id=${HF_USER}/rollout_dagger_data \
+    --dataset.single_task="Grasp the block"
+```
+
+**键盘控制**（默认输入设备）：
+
+| 按键    | 操作                             |
+| ------- | -------------------------------- |
+| `Space` | 暂停 / 恢复策略运行              |
+| `Tab`   | 开始 / 停止人工纠正              |
+| `Enter` | 将数据集推送到 Hub（仅纠正模式） |
+| `ESC`   | 停止会话                         |
+
+也支持通过 `--strategy.input_device=pedal` 使用脚踏开关输入。使用 `--strategy.pedal.*` 参数配置脚踏开关代码。
+
+| 参数                                 | 说明                                                                                                                    |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `--strategy.num_episodes`            | 要录制的纠正 episode 数量（默认为 10）                                                                                  |
+| `--strategy.record_autonomous`       | 是否同时录制自主帧（默认为 false）                                                                                      |
+| `--strategy.upload_every_n_episodes` | 每 N 个 episode 推送到 Hub（默认为 5）                                                                                  |
+| `--strategy.input_device`            | 输入设备：`keyboard` 或 `pedal`（默认为 keyboard）                                                                      |
+| `--strategy.smooth_handover`         | 在暂停或开始纠正时平滑交接控制权（默认为 `true`）。对于在接管时根据当前机器人位姿重新建立参考的离合式遥操作，可将其禁用 |
+| `--teleop.type`                      | **必填。** 遥操作器类型                                                                                                 |
+
+### Episodic（`--strategy.type=episodic`）
+
+以 episode 为单位的录制，其行为与 `lerobot-record` 保持一致。策略在每个 episode 中驱动机器人；在 episode 之间的重置阶段，可选的遥操作器可以驱动机器人。
+
+```bash
+lerobot-rollout \
+    --strategy.type=episodic \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --dataset.repo_id=${HF_USER}/my_eval_data \
+    --dataset.num_episodes=20 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.single_task="Pick up the red cube"
+```
+
+遥操作器不是必需的；如果省略，机器人会在重置阶段保持当前位置。
+
+**键盘控制：**
+
+| 按键            | 操作                        |
+| --------------- | --------------------------- |
+| `→`（右方向键） | 提前结束当前 episode        |
+| `←`（左方向键） | 丢弃当前 episode 并重新录制 |
+| `ESC`           | 停止录制会话                |
+
+| 参数                                            | 说明                                                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `--dataset.num_episodes`                        | 要录制的 episode 数量                                                                                                       |
+| `--dataset.episode_time_s`                      | 每个录制 episode 的时长，单位为秒                                                                                           |
+| `--dataset.reset_time_s`                        | episode 之间重置阶段的时长，单位为秒                                                                                        |
+| `--teleop.type`                                 | 可选。用于在重置期间驱动机器人的遥操作器                                                                                    |
+| `--strategy.reset_to_initial_position`          | 是否在 episode 之间将机器人重置到初始位置                                                                                   |
+| `--strategy.smooth_leader_to_follower_handover` | 是否启用 leader -> follower 平滑交接行为。                                                                                  |
+| `--strategy.smooth_handover`                    | 在重置开始时将控制权平滑交给遥操作器（默认为 `true`）。对于在接管时根据当前机器人位姿重新建立参考的离合式遥操作，可将其禁用 |
+
+---
+
+## 推理后端
+
+使用 `--inference.type=<name>` 选择后端。所有策略都支持这两种后端。
+
+### 同步（默认）
+
+每个控制周期调用一次策略。主循环会一直阻塞，直到计算出动作。
+
+支持所有策略，无需额外参数。
+
+### 实时分块（`--inference.type=rtc`）
+
+后台线程会异步生成动作块。策略并行计算下一个动作块时，主控制循环会轮询下一个已就绪的动作。
+
+对于 Pi0、Pi0.5、SmolVLA 等大型、运行速度较慢的 VLA 模型，即使推理延迟较高，也可以使用 RTC 生成平滑、连续的运动。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --policy.path=${HF_USER}/pi0_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube" \
+    --duration=60 \
+    --device=cuda
+```
+
+| 参数                                        | 说明                                             |
+| ------------------------------------------- | ------------------------------------------------ |
+| `--inference.rtc.execution_horizon`         | 与前一个动作块进行混合的步数（默认为因策略而异） |
+| `--inference.rtc.max_guidance_weight`       | 一致性约束强度（默认为因策略而异）               |
+| `--inference.rtc.prefix_attention_schedule` | 混合计划：`LINEAR`、`EXP`、`ONES`、`ZEROS`       |
+| `--inference.queue_threshold`               | 触发背压前的最大队列大小（默认为 30）            |
+
+详细参数调优方法请参阅[实时分块](./rtc)指南。
+
+---
+
+## 常用参数
+
+| 参数                              | 说明                                                            | 默认值 |
+| --------------------------------- | --------------------------------------------------------------- | ------ |
+| `--policy.path`                   | **必填。** HF Hub 模型 ID 或本地检查点路径                         | --     |
+| `--robot.type`                    | **必填。** 机器人类型（例如 `so100_follower`、`koch_follower`） | --     |
+| `--robot.port`                    | 机器人的串口                                                    | --     |
+| `--robot.cameras`                 | 摄像头配置（JSON 字典）                                         | --     |
+| `--fps`                           | 控制循环频率                                                    | 30     |
+| `--duration`                      | 运行时长，单位为秒（`0` 表示无限运行）                          | 0      |
+| `--device`                        | Torch 设备（`cpu`、`cuda`、`mps`）                              | auto   |
+| `--task`                          | 任务描述（未提供数据集时使用）                                  | --     |
+| `--display_data`                  | 将遥测数据流式传输到 Rerun 进行可视化                           | false  |
+| `--display_ip` / `--display_port` | 远程 Rerun 服务器地址                                           | --     |
+| `--interpolation_multiplier`      | 动作插值因子                                                    | 1      |
+| `--use_torch_compile`             | 启用 `torch.compile` 进行推理                                   | false  |
+| `--resume`                        | 恢复之前的录制会话                                              | false  |
+| `--play_sounds`                   | 为事件启用语音合成                                              | true   |
+
+---
+
+## 以编程方式调用
+
+对于自定义部署（例如使用运动学处理器），可以直接调用 rollout 模块 API：
+
+```python
+from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
+from lerobot.rollout.inference import SyncInferenceConfig
+from lerobot.rollout.strategies import BaseStrategy
+from lerobot.utils.process import ProcessSignalHandler
+
+cfg = RolloutConfig(
+    robot=my_robot_config,
+    policy=my_policy_config,
+    strategy=BaseStrategyConfig(),
+    inference=SyncInferenceConfig(),
+    fps=30,
+    duration=60,
+    task="my task",
+)
+
+signal_handler = ProcessSignalHandler(use_threads=True)
+ctx = build_rollout_context(
+    cfg,
+    signal_handler.shutdown_event,
+    robot_action_processor=my_custom_action_processor,       # 可选
+    robot_observation_processor=my_custom_obs_processor,     # 可选
+)
+
+strategy = BaseStrategy(cfg.strategy)
+try:
+    strategy.setup(ctx)
+    strategy.run(ctx)
+finally:
+    strategy.teardown(ctx)
+```
+
+有关包含运动学处理器的完整示例，请参阅 `examples/so100_to_so100_EE/rollout.py` 和 `examples/phone_to_so100/rollout.py`。

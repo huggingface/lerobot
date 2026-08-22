@@ -1,0 +1,64 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: 安装
+  - local: cheat-sheet
+    title: 备忘单
+  title: 开始使用
+- sections:
+  - local: peft_training
+    title: 使用 PEFT 进行训练（例如 LoRA）
+  title: "教程"
+- sections:
+  - local: hardware_guide
+    title: 计算硬件指南
+  - local: torch_accelerators
+    title: PyTorch 加速器
+  title: "算力与硬件"
+- sections:
+  - local: lerobot-dataset-v3
+    title: lerobot-dataset-v3
+  - local: porting_datasets_v3
+    title: 将大型数据集迁移到 LeRobot Dataset v3.0
+  - local: using_dataset_tools
+    title: 使用数据集工具
+  - local: language_and_recipes
+    title: 语言列与配方
+  - local: streaming_video_encoding
+    title: 流式视频编码指南
+  title: "数据集"
+- sections:
+  - local: act
+    title: act
+  - local: smolvla
+    title: SmolVLA
+  title: "策略"
+- sections:
+  - local: inference
+    title: 策略部署（lerobot-rollout）
+  - local: async
+    title: 异步推理
+  - local: rtc
+    title: 实时分块（RTC）
+  title: "推理"
+- sections:
+  - local: envhub
+    title: 从 Hub 加载环境
+  - local: envhub_leisaac
+    title: LeIsaac × LeRobot EnvHub
+  title: "仿真"
+- sections:
+  - local: adding_benchmarks
+    title: 添加新的基准测试
+  - local: metaworld
+    title: Meta-World
+  title: "基准测试"
+- sections:
+  - local: notebooks
+    title: Notebooks
+  - local: feetech
+    title: 升级飞特舵机固件
+  - local: damiao
+    title: 达妙
+  title: "其他资源"
