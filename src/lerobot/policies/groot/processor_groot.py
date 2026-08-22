@@ -56,6 +56,7 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     PolicyAction,
+    PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -2297,7 +2298,7 @@ def _apply_n1_7_action_decode_transform(
 
 @dataclass
 @ProcessorStepRegistry.register(name="groot_n1_7_action_decode_v1")
-class GrootN17ActionDecodeStep(ProcessorStep):
+class GrootN17ActionDecodeStep(PolicyActionProcessorStep):
     """Decode the full 132-D N1.7 model action back to environment actions.
 
     N1.7 predicts checkpoint-order action groups. This step unnormalizes each
@@ -2318,6 +2319,8 @@ class GrootN17ActionDecodeStep(ProcessorStep):
     and chunk index alongside each queued action through the postprocessor.
     """
 
+    skip_if_missing = True
+
     env_action_dim: int = 0
     raw_stats: dict[str, Any] | None = None
     modality_config: dict[str, Any] | None = None
@@ -2326,20 +2329,17 @@ class GrootN17ActionDecodeStep(ProcessorStep):
     action_decode_transform: str | None = None
     pack_step: GrootN17PackInputsStep | None = field(default=None, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
+    def action(self, action: PolicyAction) -> PolicyAction:
         if self.raw_stats is None or self.modality_config is None:
-            return transition
+            return action
 
         action_config = self.modality_config.get("action", {})
         if not isinstance(action_config, dict):
-            return transition
+            return action
         action_keys = action_config.get("modality_keys", [])
         action_configs = action_config.get("action_configs", [])
         if not isinstance(action_keys, list) or not isinstance(action_configs, list):
-            return transition
+            return action
 
         action_np = action.detach().cpu().float().numpy()
         if self.use_relative_action and action_np.ndim != 3:
@@ -2420,7 +2420,7 @@ class GrootN17ActionDecodeStep(ProcessorStep):
                     raise ValueError(f"Unsupported relative N1.7 action config for '{key}': {cfg}")
 
         if not decoded_groups:
-            return transition
+            return action
 
         decoded = np.concatenate(
             [decoded_groups[key] for key in action_keys if isinstance(key, str) and key in decoded_groups],
@@ -2436,11 +2436,7 @@ class GrootN17ActionDecodeStep(ProcessorStep):
         )
         if squeeze_horizon:
             decoded = decoded[:, 0]
-        new_transition = transition.copy()
-        new_transition[TransitionKey.ACTION] = torch.as_tensor(
-            decoded, dtype=action.dtype, device=action.device
-        )
-        return new_transition
+        return torch.as_tensor(decoded, dtype=action.dtype, device=action.device)
 
     def transform_features(self, features):
         return features
@@ -2461,7 +2457,9 @@ class GrootN17ActionDecodeStep(ProcessorStep):
 # silently load into it (v1 is stubbed below with the removal guidance).
 @dataclass
 @ProcessorStepRegistry.register(name="groot_action_unpack_unnormalize_v2")
-class GrootActionUnpackUnnormalizeStep(ProcessorStep):
+class GrootActionUnpackUnnormalizeStep(PolicyActionProcessorStep):
+    skip_if_missing = True
+
     env_action_dim: int = 0
     # Apply inverse of min-max normalization if it was used in preprocessor
     normalize_min_max: bool = True
@@ -2470,12 +2468,8 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
     libero_gripper_action: bool = False
     libero_gripper_binarize: bool = True
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        # Expect model outputs to be in TransitionKey.ACTION as (B, T, D_model)
-        action = transition.get(TransitionKey.ACTION)
-        if not isinstance(action, torch.Tensor):
-            return transition
-
+    def action(self, action: PolicyAction) -> PolicyAction:
+        # Model outputs arrive as (B, T, D_model).
         # Slice to env dimension while preserving an optional action horizon.
         # Sync rollout postprocesses selected actions as (B, D); RTC postprocesses
         # chunks as (B, T, D), matching Isaac-GR00T's decode_action contract.
@@ -2517,8 +2511,7 @@ class GrootActionUnpackUnnormalizeStep(ProcessorStep):
             action = action.clone()
             action[..., -1] = gripper
 
-        transition[TransitionKey.ACTION] = action
-        return transition
+        return action
 
     def transform_features(self, features):
         return features

@@ -23,13 +23,13 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
+    ObservationProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
-    ProcessorStep,
     ProcessorStepRegistry,
     policy_action_to_transition,
 )
@@ -107,7 +107,7 @@ def _expand_tasks(task: Any, *, batch_size: int, default: str | None) -> list[st
 
 @dataclass
 @ProcessorStepRegistry.register(name="topreward_encoder")
-class TOPRewardEncoderProcessorStep(ProcessorStep):
+class TOPRewardEncoderProcessorStep(ObservationProcessorStep):
     """Encode raw frames + task into Qwen-VL tensors for the TOPReward model.
 
     Loads a :class:`~transformers.AutoProcessor` matching ``vlm_name`` and
@@ -142,9 +142,8 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
         require_package("transformers", extra="topreward")
         self._processor = AutoProcessor.from_pretrained(self.vlm_name, trust_remote_code=True)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
-        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        complementary = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         if self.image_key not in observation:
             raise KeyError(f"TOPReward expected image key {self.image_key!r} in observation")
 
@@ -161,13 +160,9 @@ class TOPRewardEncoderProcessorStep(ProcessorStep):
 
         encoded = self._encode_batch(videos, tasks, batch_size)
 
-        new_observation = dict(observation)
         for key, value in encoded.items():
-            new_observation[f"{TOPREWARD_FEATURE_PREFIX}{key}"] = value
-
-        new_transition = transition.copy()
-        new_transition[TransitionKey.OBSERVATION] = new_observation
-        return new_transition
+            observation[f"{TOPREWARD_FEATURE_PREFIX}{key}"] = value
+        return observation
 
     def _encode_batch(self, videos: Tensor, tasks: list[str], batch_size) -> dict[str, Any]:
         """Tokenise a batch of (frames, task) pairs into Qwen-VL tensors.
