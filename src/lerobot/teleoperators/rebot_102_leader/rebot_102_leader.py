@@ -202,6 +202,13 @@ class RebotArm102Leader(Teleoperator):
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self.bus.close()
-        self.bus = None
+        # Drop the bus even if closing it fails: after a USB dropout `close()` raises, which
+        # would leave `self.bus` set, keep `is_connected` True, and make the destructor try to
+        # disconnect a second time during interpreter shutdown.
+        try:
+            self.bus.close()
+        except Exception:
+            logger.warning(f"{self} failed to close the serial port cleanly.", exc_info=True)
+        finally:
+            self.bus = None
         logger.info(f"{self} disconnected.")

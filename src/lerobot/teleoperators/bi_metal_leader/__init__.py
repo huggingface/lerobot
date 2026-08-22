@@ -14,17 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_rebot_102_leader import RebotArm102LeaderConfig, RebotArm102LeaderTeleopConfig
-from .config_rebot_102_leader_metal import (
-    RebotArm102LeaderMetalConfig,
-    RebotArm102LeaderMetalTeleopConfig,
-)
-from .rebot_102_leader import RebotArm102Leader
+from .bi_metal_leader import BiMetalLeader
+from .config_bi_metal_leader import BiMetalLeaderConfig
 
-__all__ = [
-    "RebotArm102Leader",
-    "RebotArm102LeaderConfig",
-    "RebotArm102LeaderMetalConfig",
-    "RebotArm102LeaderMetalTeleopConfig",
-    "RebotArm102LeaderTeleopConfig",
-]
+__all__ = ["BiMetalLeader", "BiMetalLeaderConfig"]

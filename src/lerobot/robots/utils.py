@@ -78,6 +78,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .bi_rebot_b601_follower import BiRebotB601Follower
 
         return BiRebotB601Follower(config)
+    elif config.type == "metal_follower":
+        from .metal_follower import MetalFollower
+
+        return MetalFollower(config)
+    elif config.type == "bi_metal_follower":
+        from .bi_metal_follower import BiMetalFollower
+
+        return BiMetalFollower(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
