@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from lerobot.robots.so_follower import (
+    MotorStallError,
     SO100Follower,
     SO100FollowerConfig,
 )
@@ -149,3 +150,98 @@ def test_configure_writes_position_pid_coefficients():
     bus_mock.write.assert_any_call("P_Coefficient", "shoulder_pan", 32)
     bus_mock.write.assert_any_call("I_Coefficient", "shoulder_pan", 1)
     bus_mock.write.assert_any_call("D_Coefficient", "shoulder_pan", 16)
+
+
+def test_stall_protection_disables_torque_after_persistent_current(monkeypatch, follower):
+    follower.config.stall_current_thresholds = {"shoulder_pan": 100}
+    follower.config.stall_position_tolerance = 5
+    follower.config.stall_timeout_s = 0.5
+    follower.connect()
+
+    positions = dict.fromkeys(follower.bus.motors, 0)
+    currents = dict.fromkeys(follower.bus.motors, 0)
+    currents["shoulder_pan"] = 120
+    follower.bus.sync_read.side_effect = lambda register, **_: (
+        positions if register == "Present_Position" else currents
+    )
+    times = iter([10.0, 10.6])
+    monkeypatch.setattr("lerobot.robots.so_follower.so_follower.time.perf_counter", lambda: next(times))
+
+    action = {f"{motor}.pos": (20 if motor == "shoulder_pan" else 0) for motor in follower.bus.motors}
+    follower.send_action(action)
+    follower.send_action(action)
+
+    with pytest.raises(MotorStallError, match="disabled torque.*shoulder_pan"):
+        follower.send_action(action)
+
+    follower.bus.disable_torque.assert_called_once_with(num_retry=follower.config.num_read_retries)
+    assert follower.bus.sync_write.call_count == 2
+
+    with pytest.raises(MotorStallError, match="latched"):
+        follower.send_action(action)
+
+
+def test_stall_protection_requires_current_and_position_error(monkeypatch, follower):
+    follower.config.stall_current_thresholds = {"shoulder_pan": 100}
+    follower.config.stall_position_tolerance = 5
+    follower.config.stall_timeout_s = 0.5
+    follower.connect()
+
+    positions = dict.fromkeys(follower.bus.motors, 0)
+    currents = dict.fromkeys(follower.bus.motors, 0)
+    currents["shoulder_pan"] = 120
+    follower.bus.sync_read.side_effect = lambda register, **_: (
+        positions if register == "Present_Position" else currents
+    )
+    times = iter([10.0, 11.0])
+    monkeypatch.setattr("lerobot.robots.so_follower.so_follower.time.perf_counter", lambda: next(times))
+
+    action = {f"{motor}.pos": 0 for motor in follower.bus.motors}
+    follower.send_action(action)
+    follower.send_action(action)
+    follower.send_action(action)
+
+    follower.bus.disable_torque.assert_not_called()
+    assert follower.bus.sync_write.call_count == 3
+
+
+def test_stall_protection_requires_a_continuous_high_current_window(monkeypatch, follower):
+    follower.config.stall_current_thresholds = {"shoulder_pan": 100}
+    follower.config.stall_position_tolerance = 5
+    follower.config.stall_timeout_s = 0.5
+    follower.connect()
+
+    positions = dict.fromkeys(follower.bus.motors, 0)
+    high_current = dict.fromkeys(follower.bus.motors, 0)
+    high_current["shoulder_pan"] = 120
+    low_current = dict.fromkeys(follower.bus.motors, 0)
+    current_samples = iter([high_current, low_current, high_current, high_current])
+    follower.bus.sync_read.side_effect = lambda register, **_: (
+        positions if register == "Present_Position" else next(current_samples)
+    )
+    times = iter([10.0, 10.2, 10.4, 11.0])
+    monkeypatch.setattr("lerobot.robots.so_follower.so_follower.time.perf_counter", lambda: next(times))
+
+    action = {f"{motor}.pos": (20 if motor == "shoulder_pan" else 0) for motor in follower.bus.motors}
+    follower.send_action(action)
+    follower.send_action(action)  # Start the first high-current window.
+    follower.send_action(action)  # Low current resets it.
+    follower.send_action(action)  # Start a new window.
+
+    with pytest.raises(MotorStallError):
+        follower.send_action(action)
+
+    follower.bus.disable_torque.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"stall_current_thresholds": {"shoulder_pan": 0}}, "must be positive"),
+        ({"stall_position_tolerance": 0}, "must be positive"),
+        ({"stall_timeout_s": 0}, "must be positive"),
+    ],
+)
+def test_stall_protection_config_validation(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        SO100FollowerConfig(port="/dev/null", **kwargs)
