@@ -246,6 +246,14 @@ def make_pre_post_processors(
                 preprocessor,
                 postprocessor,
             )
+        elif policy_cfg.type == "xvla":
+            from .xvla.processor_xvla import reconcile_xvla_processors
+
+            preprocessor, postprocessor = reconcile_xvla_processors(
+                policy_cfg,
+                preprocessor,
+                postprocessor,
+            )
         return preprocessor, postprocessor
 
     # Create new processors from the policy config, resolving the per-policy factory
