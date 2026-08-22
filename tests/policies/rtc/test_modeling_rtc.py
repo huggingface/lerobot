@@ -93,6 +93,19 @@ def test_rtc_processor_initialization_without_debug(rtc_config_debug_disabled):
     assert processor.tracker is None
 
 
+def test_rtc_processor_rejects_trained_mode_when_policy_does_not_support_it():
+    config = RTCConfig(mode="trained")
+
+    with pytest.raises(ValueError, match="requires a PI05-compatible checkpoint"):
+        RTCProcessor(config)
+
+    processor = RTCProcessor(config, trained_mode_supported=True)
+    assert processor.rtc_config.mode == "trained"
+
+    disabled = RTCProcessor(RTCConfig(enabled=False, mode="trained"))
+    assert disabled.rtc_config.enabled is False
+
+
 # ====================== Tracker Proxy Methods Tests ======================
 
 
