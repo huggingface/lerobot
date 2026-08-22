@@ -23,10 +23,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import datasets
+import httpx
 import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
+from huggingface_hub.errors import HfHubHTTPError, OfflineModeIsEnabled
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -400,6 +402,23 @@ def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[
     return repo_versions
 
 
+def _warn_and_keep_requested_version(
+    repo_id: str, target_version: packaging.version.Version, error: Exception
+) -> str:
+    """Return the requested version as ``v{version}``, for a Hub that cannot answer.
+
+    `snapshot_download` resolves it against the local cache and raises `LocalEntryNotFoundError`
+    if it is not there. No older compatible tag is chosen here: the cached refs are on disk, but
+    reading them is left to `snapshot_download`, so a cache holding only v3.0 fails a v3.1 request
+    that a reachable Hub would have answered with v3.0.
+    """
+    logger.warning(
+        f"Could not get the available versions of {repo_id} from the Hub "
+        f"({type(error).__name__}: {error}). Using revision v{target_version}."
+    )
+    return f"v{target_version}"
+
+
 def get_safe_version(
     repo_id: str,
     version: str | packaging.version.Version,
@@ -410,6 +429,12 @@ def get_safe_version(
 
     If the exact version is not found, it looks for the latest version with the
     same major version number that is less than or equal to the target minor version.
+
+    When the available versions cannot be got from the Hub, the requested version is returned
+    normalized as ``v{version}`` for the caller's `snapshot_download` to resolve against the local
+    cache, and the version selection below is skipped. Only the failures `snapshot_download`
+    itself absorbs to serve that cache are handled this way; anything it re-raises is re-raised
+    here too, where the cause is still named.
 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
@@ -423,11 +448,22 @@ def get_safe_version(
         RuntimeError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
+        httpx.TransportError: For a transport failure `snapshot_download` would re-raise anyway
+            (proxy error, protocol error, unsupported scheme, ...).
     """
     target_version = (
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
-    hub_versions = get_repo_versions(repo_id) if token is None else get_repo_versions(repo_id, token=token)
+    try:
+        hub_versions = (
+            get_repo_versions(repo_id) if token is None else get_repo_versions(repo_id, token=token)
+        )
+    # Measured against a warm cache: these are the failures `snapshot_download` itself absorbs to
+    # serve a revision from that cache, and it absorbs `HfHubHTTPError` at every status. Anything
+    # wider it re-raises, so swallowing it here would only move the failure one frame further from
+    # its cause.
+    except (httpx.ConnectError, httpx.TimeoutException, OfflineModeIsEnabled, HfHubHTTPError) as e:
+        return _warn_and_keep_requested_version(repo_id, target_version, e)
 
     if not hub_versions:
         raise RuntimeError(MISSING_VERSION_TAG_MESSAGE.format(repo_id=repo_id))
