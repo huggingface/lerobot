@@ -196,6 +196,9 @@ reachy2 = [
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
+# LIMX Dynamics Tron2 humanoid. tron2-env is source-only; see [tool.uv.sources] below
+# for the git source (bridge = Bridge WebSocket observation source, openpi = OpenPI policy integration).
+tron2 = ["tron2_env[bridge,openpi]"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
@@ -373,6 +376,7 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+tron2_env = { git = "https://github.com/limxdynamics/tron2_env.git" }
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt"]
