@@ -173,6 +173,7 @@ damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
 # Robots
+almond_axol = ["almond-axol[lerobot]>=0.1.24"]
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
@@ -336,6 +337,7 @@ all = [
     "lerobot[topreward]",
     "lerobot[peft]",
     # "lerobot[unitree_g1]", TODO: Unitree requires specific installation instructions for unitree_sdk2
+    # "lerobot[almond_axol]", NOTE: Excluded from the aggregate to keep it light — almond-axol brings the JAX inverse-kinematics stack
 ]
 
 [project.scripts]
