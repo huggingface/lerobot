@@ -33,6 +33,12 @@ A lightweight image based on `python:3.12-slim`. Includes all Python dependencie
 
 A CUDA-enabled image based on `nvidia/cuda`. This is the image for training — mostly used for internal interactions with the GPU cluster.
 
+### `Dockerfile.rocm` (AMD GPU)
+
+An image for AMD Instinct accelerators, based on a ROCm PyTorch image (`rocm/primus` by default, override with `--build-arg BASE_IMAGE=...`). The base image owns the PyTorch install: LeRobot pins `torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images ship, and `[tool.uv.sources]` resolves torch from the CUDA `cu128` index — installing normally would swap in CUDA wheels and leave the GPUs unusable. Those packages are therefore pinned with `uv pip install --override`, the same approach `Dockerfile.benchmark.robomme` uses for its own irreconcilable pins, and the rest of the dependency tree resolves from `pyproject.toml` as usual.
+
+The default base image is compiled for `gfx942`/`gfx950` (MI300X / MI308X / MI325X / MI350X). Other architectures need a base image built for them.
+
 ## Usage
 
 ### Running a pre-built image
@@ -57,6 +63,11 @@ docker run -it --rm lerobot-user
 # GPU
 docker build -f docker/Dockerfile.internal -t lerobot-internal .
 docker run -it --rm --gpus all --shm-size 16gb lerobot-internal
+
+# AMD GPU (ROCm)
+docker build -f docker/Dockerfile.rocm -t lerobot-rocm .
+# ROCm exposes GPUs through `/dev/kfd` and `/dev/dri` rather than `--gpus`, and the container needs the `video` and `render` groups.
+docker run -it --rm --ipc=host --shm-size 16gb --device=/dev/kfd --device=/dev/dri --group-add video --group-add render lerobot-rocm
 ```
 
 ### Multi-GPU training

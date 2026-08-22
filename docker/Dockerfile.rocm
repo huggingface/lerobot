@@ -1,0 +1,68 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# GPU image for AMD Instinct accelerators. Unlike Dockerfile.internal, the base image
+# already ships a ROCm build of PyTorch, and that build is authoritative: lerobot pins
+# torch<2.12 / torchvision<0.27 / numpy<2.3, all below what current ROCm images carry,
+# and [tool.uv.sources] resolves torch from the CUDA cu128 index. Installing normally
+# would swap in CUDA wheels and leave the GPUs unusable.
+#
+# The fix follows the same pattern as Dockerfile.benchmark.robomme: pin the conflicting
+# packages with `uv pip install --override` so the rest of the tree resolves normally
+# against whatever the base image provides.
+
+# Build:  docker build -f docker/Dockerfile.rocm -t lerobot-rocm .
+
+# Any ROCm PyTorch image works if it was compiled for your architecture; this default
+# targets gfx942/gfx950 (MI300X / MI308X / MI325X / MI350X).
+ARG BASE_IMAGE=rocm/primus:v26.4
+FROM ${BASE_IMAGE}
+
+# Generated from the base image rather than hardcoded, so bumping BASE_IMAGE does not
+# require editing this file.
+ARG ROCM_OVERRIDES=/etc/rocm-overrides.txt
+RUN pip install --no-cache-dir uv \
+    && for pkg in torch torchvision torchaudio numpy triton; do \
+        version=$(python -c "import importlib.metadata as m; print(m.version('$pkg'))" 2>/dev/null) \
+        && echo "$pkg==$version"; \
+    done > "${ROCM_OVERRIDES}" \
+    && cat "${ROCM_OVERRIDES}"
+
+# Exported only after the file exists, so that later `uv pip install` / `pip install`
+# calls inside the container are held to the same ROCm stack instead of replacing it.
+ENV UV_OVERRIDE=${ROCM_OVERRIDES} \
+    PIP_CONSTRAINT=${ROCM_OVERRIDES} \
+    ROCPROFILER_LOG_LEVEL=fatal
+
+WORKDIR /lerobot
+COPY . .
+
+# [pi] pulls transformers/scipy, [training] pulls the dataset, wandb and accelerate
+# extras. Everything except the overridden packages resolves from pyproject as usual,
+# so this image does not carry a second copy of the dependency list.
+RUN uv pip install --no-cache --python "$(which python)" -e ".[pi,training]"
+
+# Fail the build rather than ship an image whose ROCm Python stack was replaced. This
+# runs without a GPU, so device availability must still be checked after launch with
+# torch.cuda.is_available().
+RUN python -c "\
+import numpy, torch, torchvision;\
+from lerobot.policies.factory import get_policy_class;\
+print('torch', torch.__version__, '| hip', torch.version.hip);\
+print('torchvision', torchvision.__version__, '| numpy', numpy.__version__);\
+assert torch.version.hip, 'ROCm torch was replaced by a CUDA build';\
+assert '+rocm' in torchvision.__version__, 'torchvision was replaced by a CUDA build';\
+print('policy factory OK:', get_policy_class('pi05').__name__)"
+
+CMD ["/bin/bash"]
