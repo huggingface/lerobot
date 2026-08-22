@@ -108,6 +108,7 @@ def test_load_config_nonexistent_path_tries_hub():
 
 
 def test_load_config_legacy_hub_policy_suggests_revision_aware_migration(tmp_path, monkeypatch):
+    """Test that a missing Hub processor config identifies a legacy LeRobot policy."""
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -131,7 +132,27 @@ def test_load_config_legacy_hub_policy_suggests_revision_aware_migration(tmp_pat
             "lerobot/diffusion_pusht", "policy_preprocessor.json", {"revision": "legacy"}
         )
 
-    assert "--revision legacy" in exc_info.value.migration_command
+    error = exc_info.value
+    assert error.model_path == "lerobot/diffusion_pusht"
+    assert "python -m lerobot.processor.migrate_policy_normalization" in error.migration_command
+    assert "--revision legacy" in error.migration_command
+    assert "policy_preprocessor.json" in error.original_error
+
+
+def test_load_config_missing_hub_processor_does_not_misclassify_other_models(tmp_path, monkeypatch):
+    """Test that non-LeRobot Hub configs retain the original missing-file error."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"architectures": ["SomeModel"]}))
+
+    def fake_hf_hub_download(*, filename, **kwargs):  # noqa: ARG001
+        if filename == "config.json":
+            return str(config_path)
+        raise FileNotFoundError(filename)
+
+    monkeypatch.setattr("lerobot.processor.pipeline.hf_hub_download", fake_hf_hub_download)
+
+    with pytest.raises(FileNotFoundError, match="on the HuggingFace Hub"):
+        DataProcessorPipeline._load_config("someone/model", "policy_preprocessor.json", {})
 
 
 def test_hub_migration_detection_is_conservative(tmp_path, monkeypatch):

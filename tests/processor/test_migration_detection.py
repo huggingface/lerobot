@@ -19,6 +19,7 @@ Tests for processor migration detection functionality.
 """
 
 import json
+import shlex
 import tempfile
 from pathlib import Path
 
@@ -222,7 +223,7 @@ def test_from_pretrained_multiple_json_files_migration_error():
         # Check the error details
         error = exc_info.value
         assert str(tmp_path) in str(error.model_path)
-        assert "migrate_policy_normalization.py" in error.migration_command
+        assert "python -m lerobot.processor.migrate_policy_normalization" in error.migration_command
         assert "not a valid processor configuration" in error.original_error
 
 
@@ -244,7 +245,7 @@ def test_from_pretrained_no_processor_config_migration_error():
         # Check the error details
         error = exc_info.value
         assert str(tmp_path) in str(error.model_path)
-        assert "migrate_policy_normalization.py" in error.migration_command
+        assert "python -m lerobot.processor.migrate_policy_normalization" in error.migration_command
         assert "not a valid processor configuration" in error.original_error
 
 
@@ -324,7 +325,18 @@ def test_migration_suggestion_raises_error():
     error = exc_info.value
     assert "/test/path" in str(error.model_path)
     assert "Test error" in error.original_error
-    assert "migrate_policy_normalization.py" in error.migration_command
+    assert "python -m lerobot.processor.migrate_policy_normalization" in error.migration_command
+
+
+def test_migration_suggestion_quotes_paths_with_spaces():
+    """Migration command must remain copy-pasteable for local paths with spaces."""
+    model_path = "/models/old policy"
+    with pytest.raises(ProcessorMigrationError) as exc_info:
+        DataProcessorPipeline._suggest_processor_migration(model_path, "Test error")
+
+    command = exc_info.value.migration_command
+    assert "python -m lerobot.processor.migrate_policy_normalization" in command
+    assert f"--pretrained-path {shlex.quote(model_path)}" in command
 
 
 def test_migration_error_always_raised_for_invalid_configs():
