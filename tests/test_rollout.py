@@ -262,6 +262,36 @@ def test_rollout_config_rejects_a_multiplier_below_one(multiplier):
         RolloutConfig(robot=MockRobotConfig(), interpolation_multiplier=multiplier)
 
 
+def test_rollout_config_rejects_incomplete_rotation_dimension_triplets():
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    with pytest.raises(ValueError, match="interpolation_rotation_dims.*triplets"):
+        RolloutConfig(robot=MockRobotConfig(), interpolation_rotation_dims=[3, 4])
+
+
+def test_strategy_initializes_interpolator_with_rotation_dimensions():
+    from lerobot.rollout import BaseStrategyConfig
+    from lerobot.rollout.strategies import BaseStrategy
+
+    engine = MagicMock()
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(
+            cfg=SimpleNamespace(interpolation_multiplier=2, interpolation_rotation_dims=[3, 4, 5])
+        ),
+        policy=SimpleNamespace(inference=engine),
+    )
+    strategy = BaseStrategy(BaseStrategyConfig())
+
+    strategy._init_engine(ctx)
+
+    assert strategy._interpolator is not None
+    assert strategy._interpolator.multiplier == 2
+    assert strategy._interpolator.rotation_dims == [3, 4, 5]
+    engine.reset.assert_called_once_with()
+    engine.start.assert_called_once_with()
+
+
 def test_load_pretrained_policy_passes_revision(monkeypatch):
     import lerobot.rollout.context as rollout_context
 
@@ -732,6 +762,7 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
     cfg = SimpleNamespace(
         fps=fps,
         interpolation_multiplier=multiplier,
+        interpolation_rotation_dims=[],
         duration=0.0,
         dataset=SimpleNamespace(single_task="task"),
         task="task",
