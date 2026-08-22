@@ -395,6 +395,32 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
     return converted_features
 
 
+def coerce_list_fields_to_tuples(cleaned_config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Coerces JSON-list values back to tuples so they match their dataclass field types.
+
+    `config.json` round-trips tuple-typed fields (e.g. `crop_shape`, `down_dims`) as JSON
+    lists, since JSON has no tuple type. Passing a list where a dataclass declares a tuple
+    loads fine — Python doesn't check field types at construction — but `draccus.encode()`
+    fails later when saving the migrated config, since it encodes based on the declared type
+    rather than the runtime type. `input_features`/`output_features` are excluded since they
+    have already been converted to `PolicyFeature` objects by this point.
+
+    Args:
+        cleaned_config: The config dict about to be passed to `make_policy_config`.
+
+    Returns:
+        The same dict, with top-level list values (other than the excluded feature keys)
+        replaced by tuples.
+    """
+    return {
+        key: tuple(value)
+        if isinstance(value, list) and key not in ("input_features", "output_features")
+        else value
+        for key, value in cleaned_config.items()
+    }
+
+
 def display_migration_summary_with_warnings(problematic_missing_keys: list[str]) -> None:
     """
     Display final migration summary with warnings about problematic missing keys.
@@ -585,6 +611,8 @@ def main():
 
     # Add normalization mapping to config
     cleaned_config["normalization_mapping"] = norm_map
+
+    cleaned_config = coerce_list_fields_to_tuples(cleaned_config)
 
     # Create policy configuration using the factory
     print(f"Creating {policy_type} policy configuration...")
