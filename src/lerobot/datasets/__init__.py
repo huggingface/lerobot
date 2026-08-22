@@ -51,6 +51,7 @@ from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
 from .sampler import EpisodeAwareSampler, compute_sampler_state
+from .storage import StorageBackend
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card, resolve_episode_indices
 from .video_utils import VideoEncodingManager
@@ -72,6 +73,7 @@ __all__ = [
     "MultiLeRobotDataset",
     "PERSISTENT_STYLES",
     "STYLE_REGISTRY",
+    "StorageBackend",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
     "check_video_encoder_parameters_pyav",

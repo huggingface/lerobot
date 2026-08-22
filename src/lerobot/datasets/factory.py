@@ -28,6 +28,7 @@ from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFI
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
+from .storage import DEFAULT_STORAGE_FORMAT, load_dataset_metadata
 from .streaming_dataset import StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
@@ -118,7 +119,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     )
 
     if isinstance(cfg.dataset.repo_id, str):
-        ds_meta = LeRobotDatasetMetadata(
+        # Storage-aware loader: same as LeRobotDatasetMetadata(...), plus support
+        # for datasets whose root is an object-store URI (e.g. ``hf://``).
+        ds_meta = load_dataset_metadata(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
             revision=cfg.dataset.revision,
@@ -128,11 +131,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         episodes = resolve_episode_indices(
             cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
         )
+        if cfg.dataset.streaming and ds_meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise ValueError(
+                f"dataset.streaming=True is not supported for storage_format="
+                f"{ds_meta.storage_format!r}: StreamingLeRobotDataset only reads the default "
+                f"{DEFAULT_STORAGE_FORMAT!r} layout. Note that some formats (e.g. 'lance') "
+                "support remote map-style access without streaming mode."
+            )
         if not cfg.dataset.streaming:
-            if cfg.dataset.repo_type == "bucket":
-                raise ValueError(
-                    "repo_type='bucket' is streaming-only: set dataset.streaming=true to train from an HF Storage Bucket."
-                )
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -234,6 +240,7 @@ def make_train_eval_datasets(
         episodes=train_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=train_image_transforms,
+        depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
@@ -246,6 +253,7 @@ def make_train_eval_datasets(
         episodes=eval_episodes,
         delta_timestamps=delta_timestamps,
         image_transforms=None,
+        depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
