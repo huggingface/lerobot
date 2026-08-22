@@ -1,0 +1,182 @@
+# LIBERO
+
+LIBERO 是一個專為研究**終身機器人學習（lifelong robot learning）**而設計的基準測試（benchmark）——其核心理念是機器人需要隨著使用者的需求持續學習和適應，而非僅進行一次預訓練（pretrained）。它提供了一組標準化的操作任務（standardized manipulation tasks），聚焦於**知識遷移（knowledge transfer）**：即機器人將已學到的知識應用於新情境的能力。透過在 LIBERO 上進行評估（evaluating），不同演算法可以公平比較，研究人員也能在彼此的成果之上持續推進。
+
+- 論文：[Benchmarking Knowledge Transfer for Lifelong Robot Learning](https://arxiv.org/abs/2306.03310)
+- GitHub：[Lifelong-Robot-Learning/LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
+- 專案網站：[libero-project.github.io](https://libero-project.github.io)
+
+![LIBERO 基準測試概覽](https://libero-project.github.io/assets/img/libero/fig1.png)
+
+## 可用任務（available tasks）
+
+LIBERO 包含**五個任務套件（task suites）**，涵蓋 **130 個任務（tasks）**，範圍從簡單的物件操（simple object manipulations）作到複雜的多步驟情境（multi-step scenarios）：
+
+| 套件（suite）  | CLI 名稱（names） | 任務數（tasks） | 描述（description）                                                          |
+| -------------- | ----------------- | --------------- | ---------------------------------------------------------------------------- |
+| LIBERO-Spatial | `libero_spatial`  | 10              | 需要推理（reasoning）空間關係（spatial relations）的任務（tasks）            |
+| LIBERO-Object  | `libero_object`   | 10              | 以操作不同物件（manipulating different objects）為核心的任務（tasks）        |
+| LIBERO-Goal    | `libero_goal`     | 10              | 目標條件式任務（Goal-conditioned tasks），目標會隨之變化（changing targets） |
+| LIBERO-90      | `libero_90`       | 90              | 來自 LIBERO-100 集合的短水平任務（short-horizon tasks）                      |
+| LIBERO-Long    | `libero_10`       | 10              | 來自 LIBERO-100 集合的長水平任務（long-horizon tasks）                       |
+
+## 安裝（installation）
+
+依照 LeRobot 安裝指引（installation instructions）完成後：
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+LIBERO 需要 Linux 系統（`sys_platform == 'linux'`）。LeRobot 使用 MuJoCo 進行模擬（simulation）——請在訓練（training）或評估（evaluation）前設定渲染後端（rendering backend）：
+
+```bash
+export MUJOCO_GL=egl  # 用於無顯示器的伺服器（HPC、雲端）
+```
+
+</Tip>
+
+## 評估（evaluation）
+
+### 建議方式：預設評估（default evaluation）
+
+在四個標準套件（standard suites）上進行評估（evaluation，每個任務 task 10 個回合 episode）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
+```
+
+### 單一套件評估（single-suite evaluation）
+
+在一個 LIBERO 套件（suite）上進行評估（evaluation）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=2 \
+  --eval.n_episodes=3
+```
+
+- `--env.task` 選擇套件（suite，`libero_object`、`libero_spatial` 等）。
+- `--env.task_ids` 限制特定的任務索引（task indices，`[0]`、`[1,2,3]` 等）。省略則執行套件（tasks）中的所有任務（suite）。
+- `--eval.batch_size` 控制同時並行執行（run in parallel）的環境（environments）數量。
+- `--eval.n_episodes` 設定每個任務執行的回合數（how many episodes to run per task）。
+
+### 多套件評估（multi-suite evaluation）
+
+透過傳入以逗號分隔的清單（comma-separated list），一次在多個套件（suites）上對策略（policy）進行基準測試（benchmark）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object,libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=2
+```
+
+### 控制模式（control mode）
+
+LIBERO 支援兩種控制模式（control modes）——`relative`（預設）和 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）方式進行訓練（training），因此請確保模式（mode）與您的策略（policy）相符：
+
+```bash
+--env.control_mode=relative   # or "absolute"
+```
+
+### 策略的輸入與輸出（policy inputs and outputs）
+
+**觀測（observations）：**
+
+- `observation.state` — 8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角方向 axis-angle orientation、夾爪關節位置 gripper qpos）
+- `observation.images.image` — 主攝影機視角（main camera view, `agentview_image`），HWC uint8
+- `observation.images.image2` — 腕部攝影機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
+
+<Tip warning={true}>
+  LeRobot 強制要求視覺特徵（visual features）使用 `.images.*`
+  前綴（prefix）。請確保您的策略設定 （policy config）中 `input_features`
+  使用相同的命名鍵（naming keys）， 且資料集的元資料鍵 （dataset metadata
+  keys）也遵循此慣例（convention）。如果您的資料包含不同的鍵名（keys），
+  您必須重新命名觀測值（observations）以符合策略（policy）的預期，因為命名鍵（naming
+  keys） 已編碼在正規化統計層中（inside the normalization statistics layer）。
+</Tip>
+
+**動作（actions）：**
+
+- 在 `Box(-1, 1, shape=(7,))` 連續控制（continuous control）— 6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+
+### 建議的評估回合數（recommended evaluation episodes）
+
+為了可重現的基準測試（reproducible benchmarking），建議在所有四個標準套件（standard suites, Spatial、Object、Goal、Long）上**每個任務執行 10 個回合（10 episodes per task）**。這將產生共 400 個回合，與已發表結果所使用的協定（protocol）一致。
+
+## 訓練（training）
+
+### 資料集（dataset）
+
+我們提供了與 LeRobot 完全相容的預處理 LIBERO 資料集（preprocessed LIBERO dataset）：
+
+- [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)
+
+供參考，Physical Intelligence 發布的原始資料集（dataset）：
+
+- [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
+
+### 訓練指令範例（example training command）
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/libero-test \
+  --policy.load_vlm_weights=true \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --env_eval_freq=1000
+```
+
+## 重現已發表的結果（reproducing published results）
+
+我們在 LIBERO 基準測試（benchmark）上重現（reproduce）了 Pi0.5 的結果。我們取用 Physical Intelligence 的 LIBERO 基礎模型（base model, `pi05_libero`），並以 bfloat16 精度額外微調（fine-tune） 6k 步（steps），批次大小（batch size）為 256，使用 8 張 H100 GPU 和 [HuggingFace LIBERO 資料集](https://huggingface.co/datasets/HuggingFaceVLA/libero)進行訓練（training）。
+
+微調後的模型（finetuned model）：[lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
+
+### 評估指令（evaluation command）
+
+```bash
+lerobot-eval \
+  --output_dir=./eval_logs/ \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.path=pi05_libero_finetuned \
+  --policy.n_action_steps=10 \
+  --env.max_parallel_tasks=1
+```
+
+我們設定 `n_action_steps=10`，與原始 OpenPI 實作一致。
+
+### 結果（results）
+
+| 模型（model）       | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均     |
+| ------------------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **Pi0.5 (LeRobot)** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5** |
+
+這些結果與 Physical Intelligence 報告的[原始結果](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results)一致：
+
+| 模型（model）      | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均      |
+| ------------------ | -------------- | ------------- | ----------- | --------- | --------- |
+| **Pi0.5 (OpenPI)** | 98.8           | 98.2          | 98.0        | 92.4      | **96.85** |

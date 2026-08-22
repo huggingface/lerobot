@@ -1,0 +1,29 @@
+# 🤗 LeRobot Notebooks
+
+本儲存庫（repository）包含使用 LeRobot 的範例 notebook。這些 notebook 示範如何使用標準化的策略（standardized policies），在真實或模擬資料集（real or simulation datasets）上訓練策略（train policies）。
+
+---
+
+### 訓練 ACT（training ACT）
+
+[ACT](https://huggingface.co/papers/2304.13705)（Action Chunking Transformer）是一種為模仿學習（imitation learning），基於 transformer 的策略架構（transformer-based policy architecture），會處理機器人狀態（robot states）與攝影機輸入（camera inputs），以產生流暢且分塊的動作序列（smooth, chunked action sequences）。
+
+我們提供一個可直接執行的 Google Colab notebook，協助您使用 Hugging Face Hub 上的資料集（datasets）訓練（train） ACT 策略（policies），並可選擇記錄至 Weights & Biases。
+
+| Notebook                                                                                                | Colab                                                                                                                                                                             |
+| :------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Train ACT with LeRobot](https://github.com/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-act.ipynb) |
+
+100k 步（steps）的預期訓練時間（training time）：在 NVIDIA A100 GPU 上、批次大小（batch size）為 `64` 時約 1.5 小時。
+
+### 訓練 SmolVLA（training SmolVLA）
+
+[SmolVLA](https://huggingface.co/papers/2506.01844) 是一個小巧但高效的視覺語言動作模型（Vision-Language-Action model）。它體積精簡，僅有 450 M 參數（parameter），由 Hugging Face 開發。
+
+我們提供一個可直接執行的 Google Colab notebook，協助您使用 Hugging Face Hub 上的資料集（datasets）訓練（train） SmolVLA 策略（policy），並可選擇記錄至 Weights & Biases。
+
+| Notebook                                                                                                        | Colab                                                                                                                                                                                 |
+| :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Train SmolVLA with LeRobot](https://github.com/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) |
+
+20k 步（steps）的預期訓練時間（training time）：在 NVIDIA A100 GPU 上、批次大小（batch size）為 `64` 時約 5 小時。

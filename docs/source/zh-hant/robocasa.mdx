@@ -1,0 +1,188 @@
+# RoboCasa365
+
+[RoboCasa365](https://robocasa.ai) 是一個大規模模擬框架（large-scale simulation framework），用於訓練（training）以及對在日常廚房任務（everyday kitchen tasks）中的**通用型機器人（generalist robots）**進行基準測試（benchmarking）。它提供了 365 種多樣化的操作任務（manipulation tasks），涵蓋 2,500 個廚房環境（kitchen environments）、3,200+ 個物件資產（object assets）和 600+ 小時的人類示範資料（human demonstration data），搭配 PandaOmron 12 自由度移動操作臂（mobile manipulator，Franka 手臂搭載全向移動底盤）。
+
+- 論文：[RoboCasa: Large-Scale Simulation of Everyday Tasks for Generalist Robots](https://arxiv.org/abs/2406.02523)
+- GitHub：[robocasa/robocasa](https://github.com/robocasa/robocasa)
+- 專案網站：[robocasa.ai](https://robocasa.ai)
+- 預訓練策略（pretrained policy）：[`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa)
+- 單一任務資料集（single-task dataset, CloseFridge）：[`pepijn223/robocasa_CloseFridge`](https://huggingface.co/datasets/pepijn223/robocasa_CloseFridge)
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/robocasa-banner.webp"
+  alt="RoboCasa365 基準測試（benchmark）概覽"
+  width="85%"
+/>
+
+## 可用任務（available tasks）
+
+RoboCasa365 將其 365 個任務（tasks）組織為兩個系列（two families）和三個上游基準測試群組（upstream benchmark groups），LeRobot 將其作為一級 `--env.task` 捷徑（shortcuts）公開：
+
+| 系列（family）      | 任務數（tasks） | 描述（description）                                                                                                                    |
+| ------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 原子型（atomic）    | ~65             | 單一技能任務（single-skill tasks）：取放物件（pick-and-place）、門/抽屜操作（door/drawer manipulation）、家電控制（appliance control） |
+| 組合型（composite） | ~300            | 跨 60+ 個類別（categories）的多步驟任務（multi-step tasks）：烹飪（cooking）、清潔（cleaning）、整理（organizing）等                   |
+
+**原子型任務範例（atomic task examples）：** `CloseFridge`、`OpenDrawer`、`OpenCabinet`、`TurnOnMicrowave`、`TurnOffStove`、`NavigateKitchen`、`PickPlaceCounterToStove`。
+
+**組合型任務類別（composite task categories）：** 烘焙、煮沸、沖泡、切菜、收拾餐桌、解凍食物、裝載洗碗機、泡茶、微波加熱食物、洗碗等。
+
+`--env.task` 接受三種形式（forms）：
+
+- 單一任務名稱（a single task name, `CloseFridge`）
+- 逗號分隔的列表（comma-separated list, `CloseFridge,OpenBlenderLid,PickPlaceCoffee`）
+- 基準測試群組捷徑（benchmark-group shortcut） — `atomic_seen`、`composite_seen`、`composite_unseen`、`pretrain50`、`pretrain100`、`pretrain200`、`pretrain300` — 會自動展開為上游任務（task）列表並自動設定資料集（dataset） `split`（`target` 或 `pretrain`）。
+
+## 安裝（installation）
+
+RoboCasa 及其依賴套件 `robosuite` 未發佈在 PyPI 上，且 RoboCasa 自身的 `setup.py` 硬編碼（hardcodes）了 `lerobot==0.3.3`，這與本倉庫的（this repo’s） `lerobot` 衝突。因此 LeRobot **不**提供 `robocasa` 額外依賴（extra） — 請手動以可編輯模式克隆（editable clones）安裝這兩個套件（packages，對 `robocasa` 使用 `--no-deps` 以跳過其遮蔽 shadowed 的 `lerobot` 固定版本）：
+
+```bash
+# 在完成標準 LeRobot 安裝步驟之後。
+
+git clone https://github.com/robocasa/robocasa.git ~/robocasa
+git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite
+pip install -e ~/robocasa --no-deps
+pip install -e ~/robosuite
+
+# Robocasa 的執行時期依賴（即其 setup.py 原本會拉取的套件，減去
+# 錯誤的 lerobot 固定版本）。
+pip install numpy numba scipy mujoco pygame Pillow opencv-python \
+            pyyaml pynput tqdm termcolor imageio h5py lxml hidapi \
+            tianshou gymnasium
+
+python -m robocasa.scripts.setup_macros
+# 輕量資產（lightwheel 物件網格 + 材質）。開箱即用的預設環境
+# 已足夠使用。
+python -m robocasa.scripts.download_kitchen_assets \
+  --type tex tex_generative fixtures_lw objs_lw
+# 可選：完整的 objaverse/aigen 註冊資料（約 30GB），提供更豐富的物件
+# 多樣性。在評估時透過 --env.obj_registries 啟用（見下方說明）。
+# python -m robocasa.scripts.download_kitchen_assets --type objs_objaverse
+```
+
+<Tip>
+RoboCasa 需要 MuJoCo。在訓練（training）或評估（evaluation）前設定渲染後端（rendering backend）：
+
+```bash
+export MUJOCO_GL=egl  # 用於無顯示的伺服器（HPC、雲端）
+```
+
+</Tip>
+
+### 物件註冊資料（object registries）
+
+預設情況下，環境（env）僅從 `lightwheel` 註冊（registry）資料（即 `--type objs_lw` 所安裝的內容）中取樣物件（samples objects），這可以避免在 objaverse / aigen 資產包（packs）不在磁碟上時出現 `Probabilities contain NaN` 崩潰。如果您已下載完整資產集（full asset set），可在執行時啟用完整註冊資料（full registry）：
+
+```bash
+--env.obj_registries='[objaverse,lightwheel]'
+```
+
+## 評估（evaluation）
+
+以下所有評估程式碼片段（eval snippets）與 CI 指令一致（參見 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）將 RoboCasa 的原生攝影機鍵名（native camera keys, `robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`）對應到已發佈的（released） `smolvla_robocasa` 策略訓練（policy training）時使用的三攝影機（`camera1` / `camera2` / `camera3`）輸入佈局（input layout）。
+
+### 單一任務評估（single-task evaluation，建議用於快速迭代）
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### 多任務評估（multi-task evaluation）
+
+傳入逗號分隔的任務列表（comma-separated list of tasks）：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### 基準測試群組評估（benchmark group evaluation）
+
+執行整個上游群組（upstream group，例如所有 18 個 `atomic_seen` 任務 task，使用 `split=target`）：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocasa \
+  --env.type=robocasa \
+  --env.task=atomic_seen \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.robot0_agentview_left": "observation.images.camera1", "observation.images.robot0_eye_in_hand": "observation.images.camera2", "observation.images.robot0_agentview_right": "observation.images.camera3"}'
+```
+
+### 建議評估回合數（recommended evaluation episodes）
+
+**每個任務 20 個回合（20 episodes per task）**以確保可重現的基準測試（reproducible benchmarking）。這與已發表結果中使用的協議（protocol）一致。
+
+## 策略的輸入與輸出（policy inputs and outputs）
+
+**觀測**（observations，RoboCasa 原始攝影機名稱保持原樣）：
+
+- `observation.state` — 16 維本體感覺狀態（ 16-dim proprioceptive state，底盤位置 base position、底盤四元數 base quaternion、相對末端執行器位置 relative end-effector position、相對末端執行器四元數 relative end-effector quaternion、夾爪 gripper qpos）
+- `observation.images.robot0_agentview_left` — 左側代理視角（left agent view），256×256 HWC uint8
+- `observation.images.robot0_eye_in_hand` — 腕部攝影機視角（wrist camera view），256×256 HWC uint8
+- `observation.images.robot0_agentview_right` — 右側代理視角（right agent view），256×256 HWC uint8
+
+**動作（actions）：**
+
+- 在 `Box(-1, 1, shape=(12,))` 中的連續控制（continuous control）— 底盤運動（base motion, 4D）+ 控制模式（control mode, 1D）+ 末端執行器位置（end-effector position, 3D）+ 末端執行器旋轉（end-effector rotation, 3D）+ 夾爪（gripper, 1D）。
+
+## 訓練（training）
+
+### 單一任務範例（single-task example）
+
+Hub 上已有可直接使用的單一任務資料集（single-task dataset）：
+[`pepijn223/robocasa_CloseFridge`](https://huggingface.co/datasets/pepijn223/robocasa_CloseFridge)。
+
+在 `CloseFridge` 上微調 SmolVLA 基礎模型（Fine-tune a SmolVLA base）：
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/smolvla_robocasa_CloseFridge \
+  --policy.load_vlm_weights=true \
+  --policy.push_to_hub=true \
+  --dataset.repo_id=pepijn223/robocasa_CloseFridge \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --output_dir=./outputs/smolvla_robocasa_CloseFridge \
+  --steps=100000 \
+  --batch_size=4 \
+  --env_eval_freq=5000 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=5 \
+  --save_freq=10000
+```
+
+評估（evaluate）產出的檢查點（checkpoint）：
+
+```bash
+lerobot-eval \
+  --policy.path=${HF_USER}/smolvla_robocasa_CloseFridge \
+  --env.type=robocasa \
+  --env.task=CloseFridge \
+  --eval.batch_size=1 \
+  --eval.n_episodes=20
+```
+
+## 復現已發表結果（reproducing published results）
+
+已發佈的檢查點（released checkpoint） [`lerobot/smolvla_robocasa`](https://huggingface.co/lerobot/smolvla_robocasa) 使用[評估（evaluation）](#%E8%A9%95%E4%BC%B0evaluation)章節中的指令進行評估。CI 在每個涉及此基準測試（benchmark）的 PR 上執行 10 個原子型任務的冒煙評估（atomic-task smoke eval，每個任務一個回合 episode），選擇以固定裝置為主的任務（fixture-centric tasks），這些任務不需要 objaverse 資產包（asset pack）。

@@ -1,0 +1,188 @@
+# LIBERO-plus
+
+LIBERO-plus 是一個建構在 [LIBERO](./libero) 之上、針對視覺-語言-動作模型（Vision-Language-Action model，VLA model）的**穩健性基準測試（robustness benchmark）**。它透過對原始 LIBERO 任務（tasks）集套用**七個獨立的擾動維度（seven independent perturbation dimensions）**，有系統地對策略（policy）施加壓力測試（stress-tests），揭露標準基準測試（standard benchmarks）會遺漏的失敗模式（failure modes）。
+
+- 論文：[In-depth Robustness Analysis of Vision-Language-Action Models](https://arxiv.org/abs/2510.13626)
+- GitHub：[sylvestf/LIBERO-plus](https://github.com/sylvestf/LIBERO-plus)
+- 資料集（dataset）：[lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
+
+![An overview of the LIBERO-plus benchmark perturbation dimensions](https://github.com/sylvestf/LIBERO-plus/raw/main/static/images/libero-plus.jpg)
+
+## 擾動維度（perturbation dimensions）
+
+LIBERO-plus 透過沿以下各軸（axes）擾動（perturbing）每個原始 LIBERO 任務（tasks），建立了約 10,000 個任務變體（task variants）：
+
+| 維度（dimension）                      | 改變的內容（what changes）                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 物件佈局（objects layout）             | 目標位置（target position）、干擾物件（confounding objects）是否存在                      |
+| 攝影機視角（camera viewpoints）        | 攝影機位置（camera position）、朝向（orientation）、視野（field-of-view）                 |
+| 機器人初始狀態（robot initial states） | 機械手臂起始姿態（manipulator start pose）                                                |
+| 語言指令（language instructions）      | 由 LLM 改寫的任務描述（ LLM-rewritten task description，改述 paraphrase／同義詞 synonym） |
+| 光照條件（light conditions）           | 強度（intensity）、方向（direction）、顏色（color）、陰影（shadow）                       |
+| 背景材質（background textures）        | 場景表面（scene surface）與物件外觀（object appearance）                                  |
+| 感測器雜訊（sensor noise）             | 光度失真（photometric distortions）與影像劣化（image degradation）                        |
+
+## 可用的任務組（available task suites）
+
+LIBERO-plus 涵蓋與 LIBERO 相同的五個套件（suites）：
+
+| 套件（suite）  | CLI 名稱（name） | 任務數（tasks） | 最大步數（max steps） | 說明（description）                                                      |
+| -------------- | ---------------- | --------------- | --------------------- | ------------------------------------------------------------------------ |
+| LIBERO-Spatial | `libero_spatial` | 10              | 280                   | 需要推理（reasoning）空間關係（spatial relations）的任務（tasks）        |
+| LIBERO-Object  | `libero_object`  | 10              | 280                   | 聚焦於操作不同物件（manipulating different objects）的任務（tasks）      |
+| LIBERO-Goal    | `libero_goal`    | 10              | 300                   | 目標會變動（changing targets）的目標條件式任務（goal-conditioned tasks） |
+| LIBERO-90      | `libero_90`      | 90              | 400                   | 來自 LIBERO-100 集合的短水平任務（short-horizon tasks）                  |
+| LIBERO-Long    | `libero_10`      | 10              | 520                   | 來自 LIBERO-100 集合的長水平任務（long-horizon tasks）                   |
+
+<Tip warning={true}>
+  安裝 LIBERO-plus 會**取代**原生（vanilla）的 LIBERO，它會解除安裝
+  `hf-libero`， 讓 `import libero` 指向 LIBERO-plus 這個
+  fork。您無法同時安裝兩者。 若要切換回原生 LIBERO，請解除安裝該 fork， 並以
+  `pip install -e ".[libero]"` 重新安裝。
+</Tip>
+
+## 安裝（installation）
+
+### 系統相依套件（system dependencies，僅限 Linux）
+
+```bash
+sudo apt install libexpat1 libfontconfig1-dev libmagickwand-dev
+```
+
+### Python 套件（Python package）
+
+```bash
+pip install -e ".[libero]" "robosuite==1.4.1" bddl easydict mujoco wand scikit-image gym
+git clone https://github.com/sylvestf/LIBERO-plus.git
+cd LIBERO-plus && pip install --no-deps -e .
+pip uninstall -y hf-libero  # so `import libero` resolves to the fork
+```
+
+LIBERO-plus 是從其 GitHub fork 安裝，而非透過 pyproject 的 extra，因為該 fork 以 pip 無法處理的 namespace package 形式發布，所以必須 clone 下來並加入 `PYTHONPATH`。標準安裝方式請參閱 `docker/Dockerfile.benchmark.libero_plus`。由於需要 MuJoCo，因此僅支援 Linux。
+
+<Tip>
+執行評估（evaluation）前請設定 MuJoCo 的選染後端（rendering backend）：
+
+```bash
+export MUJOCO_GL=egl   # headless / HPC / cloud
+```
+
+</Tip>
+
+### 下載 LIBERO-plus 資產（download LIBERO-plus assets）
+
+LIBERO-plus 的擴充資產包（asset pack）另外提供。請從 [Hugging Face 資料集](https://huggingface.co/datasets/Sylvest/LIBERO-plus/tree/main)下載 `assets.zip`，並解壓縮到 LIBERO-plus 套件目錄（package directory）中：
+
+```bash
+# After installing the package, find where it was installed:
+python -c "import libero; print(libero.__file__)"
+# Then extract assets.zip into <package_root>/libero/assets/
+```
+
+## 評估（evaluation）
+
+### 建議：預設評估（default evaluation）
+
+在四個標準套件（standard suites）上評估（evaluate，每個任務 task 10 個回合 episode）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
+```
+
+### 單一任務組評估（single task-suite evaluation）
+
+在單一 LIBERO-plus 套件（suite）上評估（evaluation）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+- `--env.task` 選擇套件（suite，`libero_spatial`、`libero_object` 等）。
+- `--env.task_ids` 限定特定的任務索引（task indices，`[0]`、`[1,2,3]` 等）。省略則套件（suite）中的所有任務（tasks）。
+- `--eval.batch_size` 控制平行執行（run in parallel）的環境（environments）數量。
+- `--eval.n_episodes` 設定每個任務要執行的回合數量（how many episodes to run per task）。
+
+### 多任務組評估（multi task-suite evaluation）
+
+透過傳入以逗號分隔的清單（comma-separated list），可一次在多個套件（multiple suites）上對策略（policy）進行基準測試（benchmark）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+### 控制模式（control mode）
+
+LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）進行訓練（training），因此請確保模式（mode）與您的策略（policy）相符：
+
+```bash
+--env.control_mode=relative   # or "absolute"
+```
+
+### 策略輸入與輸出（policy inputs and outputs）
+
+**觀測（observations）：**
+
+- `observation.state` — 8 維本體感覺特徵（8-dim proprioceptive features，末端效應器位置eef position、軸角朝向 axis-angle orientation、夾爪 gripper qpos）
+- `observation.images.image` — 主攝影機視角（main camera view, `agentview_image`），HWC uint8
+- `observation.images.image2` — 手腕攝影機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
+
+**動作（actions）：**
+
+- 在 `Box(-1, 1, shape=(7,))` 中的連續控制 — 6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+
+### 建議的評估回合數（recommended evaluation episodes）
+
+為了可重現的基準測試（reproducible benchmarking），請在四個標準套件（suites，Spatial、Object、Goal、Long）上使用**每個任務 10 個回合（10 episodes per task）**。這總共會有 400 個回合（episodes），並與已發表結果所使用的協定（protocol）一致。
+
+## 訓練（training）
+
+### 資料集（dataset）
+
+LIBERO-plus 的 LeRobot 格式訓練資料集（training dataset）可於此取得：
+
+- [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
+
+### 訓練指令範例（example training command）
+
+```bash
+lerobot-train \
+    --policy.type=smolvla \
+    --policy.repo_id=${HF_USER}/smolvla_libero_plus \
+    --policy.load_vlm_weights=true \
+    --dataset.repo_id=lerobot/libero_plus \
+    --env.type=libero_plus \
+    --env.task=libero_spatial \
+    --output_dir=./outputs/ \
+    --steps=100000 \
+    --batch_size=4 \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1 \
+    --env_eval_freq=1000
+```
+
+## 與 LIBERO 的關係（relationship to LIBERO）
+
+LIBERO-plus 是 LIBERO 的即插即用擴充（drop-in extension）：
+
+- 相同的 Python gym 介面（`LiberoEnv`、`LiberoProcessorStep`）
+- 相同的攝影機名稱與觀測／動作格式（observation/action format）
+- 相同的套件（suites）名稱
+- 安裝於相同的 `libero` Python 套件名稱（package name）下（GitHub repo 不同）
+
+若要使用原始的 LIBERO 基準測試（benchmark），請參閱 [LIBERO](./libero) 並使用 `--env.type=libero`。

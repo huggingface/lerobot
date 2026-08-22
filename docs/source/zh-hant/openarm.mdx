@@ -1,0 +1,276 @@
+# OpenArm
+
+[OpenArm](https://openarm.dev) 是一款開源的 7 自由度人形手臂（7DOF humanoid arm），專為實體 AI（physical AI）研究與部署（deployment）而設計。
+
+若要取得您的 OpenArm，無論是組裝完成或 DIY 版本，並加入全球社群，請至 [openarm.dev](https://openarm.dev) 瀏覽全球經驗證與認證的製造商。
+
+## 有何獨特之處（what's unique）？
+
+- **人體尺度設計（Human-Scale Design）**：OpenArm 以類人比例設計，適合身高約 160-165 公分的人。這在實用觸及範圍（practical reach）與可控慣性（manageable inertia）之間提供了最佳平衡，可實現安全且靈敏的操作。
+
+- **安全優先架構（Safety-First Architecture）**：OpenArm 採用 QDD 可反向驅動馬達（backdrivable motors）與高順應性（compliance）打造，優先考量安全的人機互動（human-robot interaction），同時維持可用於真實世界任務（real-world tasks）的實用負載能力（峰值 6.0kg／標稱 4.1kg）。
+
+- **為耐用性而生（Built for Durability）**：關鍵結構元件（critical structural components）採用鋁與不鏽鋼構造，確保在重複性資料收集（repetitive data collection）與持續研究（continuous research）使用中都能穩健運作。
+
+- **完全可取得且可自建（Fully Accessible & Buildable）**：從 CNC 零件、3D 列印外殼到電氣接線，每個元件都設計成可讓個別研究人員與實驗室購買與自建，並提供完整的製造資料。
+
+- **實用且平價（Practical & Affordable）**：完整的雙手系統（bimanual system）售價為 6,500 美元，OpenArm 以傳統人形機器人成本的一小部分，提供研究等級的能力。
+
+## 平台需求（platform requirements）
+
+<Tip warning={true}>
+  **僅限 Linux**：OpenArm 目前僅能在 Linux 上運作。CAN 匯流排（bus） USB
+  轉接器（adapter） 沒有 macOS 驅動程式，且尚未在 Windows 上測試過。
+</Tip>
+
+## 安全指南（safety guide）
+
+在操作 OpenArm 之前，請閱讀[官方安全指南（official safety guide）](https://docs.openarm.dev/getting-started/safety-guide)。重點如下：
+
+- **牢固安裝**：以螺絲或夾具將手臂固定在平坦、穩固的表面上
+- **保持安全距離**：操作期間，讓身體部位與物體保持在運動範圍之外
+- **防護裝備**：務必配戴護目鏡；視需要使用額外的個人防護裝備（PPE）
+- **負載限制**：請勿超過指定的負載限制（payload limits，每支手臂峰值 6.0kg／標稱 4.1kg）
+- **緊急停止**：了解緊急停止裝置的位置與操作方式
+- **定期檢查**：檢查是否有螺絲鬆動、機械限位損壞、異常噪音與接線損壞
+
+## 硬體設定（hardware setup）
+
+請依照官方 [OpenArm 硬體文件](https://docs.openarm.dev)進行以下事項：
+
+- 物料清單與採購來源
+- 3D 列印說明
+- 機械組裝
+- 電氣接線
+
+硬體儲存庫（repository）可於 [github.com/enactic/openarm](https://github.com/enactic/openarm) 取得。
+
+## CAN 匯流排設定（CAN bus setup）
+
+OpenArm 使用 CAN 匯流排（bus）與 Damiao 馬達通訊。將 CAN 匯流排 USB 轉接器（adapter）插入您的 Linux PC 後，請依照 [Damiao 馬達與 CAN 匯流排指南](./damiao)來設定介面（configure the interface）。
+
+快速設定：
+
+```bash
+# 設定 CAN 介面
+lerobot-setup-can --mode=setup --interfaces=can0,can1
+
+# 測試馬達通訊
+lerobot-setup-can --mode=test --interfaces=can0,can1
+```
+
+## 安裝 LeRobot（install LeRobot） 🤗
+
+請依照我們的[安裝指南（Installation Guide）](./installation)操作，然後安裝 Damiao 馬達支援：
+
+```bash
+pip install -e ".[damiao]"
+```
+
+## 使用方式（usage）
+
+### 從臂（follower arm，機器人 robot）
+
+<hfoptions id="follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_openarm_follower
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
+
+config = OpenArmFollowerConfig(
+    port="can0",
+    side="right",  # 左臂則為 "left"
+    id="my_openarm_follower",
+)
+
+follower = OpenArmFollower(config)
+follower.connect()
+
+# 讀取當前狀態
+obs = follower.get_observation()
+print(obs)
+
+# 送出動作（位置以度為單位）
+action = {
+    "joint_1.pos": 0.0,
+    "joint_2.pos": 0.0,
+    "joint_3.pos": 0.0,
+    "joint_4.pos": 45.0,
+    "joint_5.pos": 0.0,
+    "joint_6.pos": 0.0,
+    "joint_7.pos": 0.0,
+    "gripper.pos": 0.0,
+}
+follower.send_action(action)
+
+follower.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+### 主臂（leader arm，遙操作器 teleoperator）
+
+主臂（leader arm）用於遙操作（teleoperation），透過手動移動它來控制從臂（follower arm）。
+
+<hfoptions id="leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_openarm_leader
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.teleoperators.openarm_leader import OpenArmLeader, OpenArmLeaderConfig
+
+config = OpenArmLeaderConfig(
+    port="can1",
+    id="my_openarm_leader",
+    manual_control=True,  # 停用扭矩以便手動移動
+)
+
+leader = OpenArmLeader(config)
+leader.connect()
+
+# 讀取當前位置（作為要送給從臂的動作）
+action = leader.get_action()
+print(action)
+
+leader.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+### 遙操作（teleoperation）
+
+若要以主從控制（leader-follower control）方式遙操作（teleoperation） OpenArm：
+
+```bash
+lerobot-teleoperate \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_follower \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_leader
+```
+
+### 雙手遙操作（bimanual teleoperation）
+
+若要遙操作（teleoperation）使用兩支主臂（leader arms）與兩支從臂（follower arms）的雙手（bimanual）OpenArm 設定：
+
+```bash
+lerobot-teleoperate \
+    --robot.type=bi_openarm_follower \
+    --robot.left_arm_config.port=can0 \
+    --robot.left_arm_config.side=left \
+    --robot.right_arm_config.port=can1 \
+    --robot.right_arm_config.side=right \
+    --robot.id=my_bimanual_follower \
+    --teleop.type=bi_openarm_leader \
+    --teleop.left_arm_config.port=can2 \
+    --teleop.right_arm_config.port=can3 \
+    --teleop.id=my_bimanual_leader
+```
+
+### 錄製資料（recording data）
+
+若要在遙操作（teleoperation）期間錄製資料集（record a dataset）：
+
+```bash
+lerobot-record \
+    --robot.type=openarm_follower \
+    --robot.port=can0 \
+    --robot.side=right \
+    --robot.id=my_follower \
+    --teleop.type=openarm_leader \
+    --teleop.port=can1 \
+    --teleop.id=my_leader \
+    --repo-id=my_hf_username/my_openarm_dataset \
+    --fps=30 \
+    --num-episodes=10
+```
+
+## 設定選項（configuration options）
+
+### 從臂設定（follower configuration）
+
+| 參數（parameter）     | 預設值          | 說明                                                                 |
+| --------------------- | --------------- | -------------------------------------------------------------------- |
+| `port`                | -               | CAN 介面（例如 `can0`）                                              |
+| `side`                | `None`          | 手臂側別：`"left"`、`"right"`，或 `None` 表示自訂限制                |
+| `use_can_fd`          | `True`          | 啟用 CAN FD 以獲得更高的資料傳輸率（data rates）                     |
+| `can_bitrate`         | `1000000`       | 標稱位元率（1 Mbps）                                                 |
+| `can_data_bitrate`    | `5000000`       | CAN FD 資料位元率（5 Mbps）                                          |
+| `max_relative_target` | `None`          | 相對目標位置的安全限制（safety limit for relative target positions） |
+| `position_kp`         | 各關節（joint） | 位置控制的比例增益（position control proportional gains）            |
+| `position_kd`         | 各關節（joint） | 位置控制的微分增益（position control derivative gains）              |
+
+### 主臂設定（leader configuration）
+
+| 參數（parameter）  | 預設值    | 說明                                             |
+| ------------------ | --------- | ------------------------------------------------ |
+| `port`             | -         | CAN 介面（例如 `can1`）                          |
+| `manual_control`   | `True`    | 停用扭矩（torque）以便手動移動                   |
+| `use_can_fd`       | `True`    | 啟用 CAN FD 以獲得更高的資料傳輸率（data rates） |
+| `can_bitrate`      | `1000000` | 標稱位元率（1 Mbps）                             |
+| `can_data_bitrate` | `5000000` | CAN FD 資料位元率（5 Mbps）                      |
+
+## 馬達設定（motor configuration）
+
+OpenArm 使用 Damiao 馬達，其預設設定如下：
+
+| 關節（joint）       | 馬達類型 | 發送 ID | 接收 ID |
+| ------------------- | -------- | ------- | ------- |
+| joint_1（肩部平移） | DM8009   | 0x01    | 0x11    |
+| joint_2（肩部抬升） | DM8009   | 0x02    | 0x12    |
+| joint_3（肩部旋轉） | DM4340   | 0x03    | 0x13    |
+| joint_4（肘部彎曲） | DM4340   | 0x04    | 0x14    |
+| joint_5（腕部滾轉） | DM4310   | 0x05    | 0x15    |
+| joint_6（腕部俯仰） | DM4310   | 0x06    | 0x16    |
+| joint_7（腕部旋轉） | DM4310   | 0x07    | 0x17    |
+| gripper             | DM4310   | 0x08    | 0x18    |
+
+## 疑難排解（troubleshooting）
+
+### 馬達沒有回應（no response from motors）
+
+1. 檢查電源供應連接
+2. 確認 CAN 接線（CAN-H、CAN-L、GND）
+3. 執行診斷：`lerobot-setup-can --mode=test --interfaces=can0`
+4. 更多細節請參閱 [Damiao 疑難排解指南（Damiao troubleshooting guide）](./damiao#%E7%96%91%E9%9B%A3%E6%8E%92%E8%A7%A3troubleshooting)
+
+### 找不到 CAN 介面（CAN interface not found）
+
+確認 CAN 介面（interface）已設定（configured）：
+
+```bash
+ip link show can0
+```
+
+## 資源（resources）
+
+- [OpenArm 網站](https://openarm.dev)
+- [OpenArm 文件](https://docs.openarm.dev)
+- [OpenArm GitHub](https://github.com/enactic/openarm)
+- [安全指南](https://docs.openarm.dev/getting-started/safety-guide)
+- [Damiao 馬達與 CAN 匯流排](./damiao)
