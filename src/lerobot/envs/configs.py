@@ -526,6 +526,9 @@ class RoboCasaEnv(EnvConfig):
     # you've run `python -m robocasa.scripts.download_kitchen_assets
     # --type objaverse` locally.
     obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
+    # Eval language prompt. "env_id" is the CamelCase task name used in Hub
+    # datasets and `lerobot/smolvla_robocasa`. "language" uses ep_meta["lang"].
+    task_prompt_source: str = "env_id"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
     )
@@ -534,6 +537,10 @@ class RoboCasaEnv(EnvConfig):
     def __post_init__(self):
         if self.obs_type not in ("pixels", "pixels_agent_pos"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+        if self.task_prompt_source not in ("env_id", "language"):
+            raise ValueError(
+                f"Unsupported task_prompt_source: {self.task_prompt_source}. Use 'env_id' or 'language'."
+            )
 
         # Preserve raw RoboCasa camera names end-to-end (e.g.
         # `observation.images.robot0_agentview_left`). This matches the
@@ -559,6 +566,7 @@ class RoboCasaEnv(EnvConfig):
             "observation_width": self.observation_width,
             "visualization_height": self.visualization_height,
             "visualization_width": self.visualization_width,
+            "task_prompt_source": self.task_prompt_source,
         }
         if self.split is not None:
             kwargs["split"] = self.split
