@@ -62,6 +62,7 @@ from .inference import (
     SyncInferenceConfig,
     SyncInferenceEngine,
     create_inference_engine,
+    register_inference_engine,
 )
 from .interactive import InteractiveSession
 from .strategies import (
@@ -112,4 +113,5 @@ __all__ = [
     "build_rollout_context",
     "create_inference_engine",
     "create_strategy",
+    "register_inference_engine",
 ]
