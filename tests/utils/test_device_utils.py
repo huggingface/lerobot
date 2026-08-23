@@ -13,11 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import re
 from unittest.mock import patch
 
 import pytest
 import torch
 
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig
+from lerobot.utils import device_utils
 from lerobot.utils.device_utils import get_safe_torch_device, is_torch_device_available
 
 
@@ -34,3 +39,44 @@ def test_missing_cuda_raises_valueerror():
 def test_missing_mps_raises_valueerror():
     with patch("torch.backends.mps.is_available", return_value=False), pytest.raises(ValueError, match="MPS"):
         get_safe_torch_device("mps")
+
+
+@pytest.mark.parametrize(
+    ("cuda", "kernel_module", "named_driver"),
+    [
+        ("13.0", "Kernel Module  570.86.15  Thu Jan 15 2026", "570.86.15"),
+        ("13.2", "Open Kernel Module for x86_64  580.126.09  Release Build", None),
+        ("12.8", "Kernel Module  570.86.15  Thu Jan 15 2026", None),
+        (None, "Kernel Module  570.86.15  Thu Jan 15 2026", None),
+        ("13.2", "Open Kernel Module for aarch64  TempVersion  Release Build  (r595_00)", None),
+        ("13.0", None, None),
+    ],
+)
+def test_cpu_fallback_warning_names_an_nvidia_driver_too_old_for_cuda_13(
+    monkeypatch, tmp_path, caplog, cuda, kernel_module, named_driver
+):
+    version_file = tmp_path / "version"
+    if kernel_module is not None:
+        version_file.write_text(
+            f"NVRM version: NVIDIA UNIX {kernel_module}\nGCC version:  gcc version 13.2.0\n"
+        )
+    monkeypatch.setattr(device_utils, "NVIDIA_DRIVER_VERSION_FILE", version_file)
+    monkeypatch.setattr(torch.version, "cuda", cuda)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    for make_config in (lambda: ACTConfig(device="cuda"), lambda: RewardClassifierConfig(device="cuda")):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            make_config()
+        assert "Device 'cuda' is not available" in caplog.text
+        hint = re.search(r"needs NVIDIA driver 580\.65 or newer, and this host has (\S+)\.", caplog.text)
+        assert (hint[1] if hint else None) == named_driver
+
+
+def test_driver_hint_is_empty_when_cuda_works_on_an_older_driver(monkeypatch, tmp_path):
+    """CUDA forward compatibility can run a CUDA 13 build on a driver older than 580.65."""
+    version_file = tmp_path / "version"
+    version_file.write_text("NVRM version: NVIDIA UNIX Kernel Module  570.86.15  Thu Jan 15 2026\n")
+    monkeypatch.setattr(device_utils, "NVIDIA_DRIVER_VERSION_FILE", version_file)
+    monkeypatch.setattr(torch.version, "cuda", "13.0")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert device_utils.cuda_driver_hint() == ""

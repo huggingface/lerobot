@@ -94,6 +94,8 @@ FSDP shards the model in units (typically the repeated transformer block) and ga
 --accelerator.fsdp.min_num_params=1000000                  # or: wrap every submodule above 1M params
 ```
 
+FSDP cannot split tied weights, such as a language head tied to the input embedding, across two wrap units. PyTorch 2.12 and newer stop at the first training step, and older versions silently untie them, so the two copies drift apart in training. Both kinds of wrapping can split them, so LeRobot checks the wrap units before sharding, on every PyTorch version, and stops with an error that names the tied parameters. In that case, use `--accelerator.fsdp.wrap_modules` with modules that keep the tied weights together, in place of `--accelerator.fsdp.min_num_params` if you set it, since the two cannot be combined. Naming only the repeated block class usually works, because the embedding and the head then stay together in the root unit; naming leaf classes such as `Embedding` or `Linear` splits them.
+
 If a policy doesn't declare `_fsdp_wrap_modules` and no `--accelerator.fsdp.wrap_modules` or `--accelerator.fsdp.min_num_params` is passed, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
 
 Other sharding settings:

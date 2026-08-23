@@ -76,6 +76,7 @@ jobs:
           tags: ${{ env.DOCKER_IMAGE_NAME_CPU }}
 
   # This job builds a GPU image for testing & distribution
+  # Its CUDA 13 PyTorch needs an NVIDIA driver of 580.65 or newer on every runner that uses it.
   build-docker-gpu:
     permissions:
       contents: read

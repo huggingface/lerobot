@@ -29,7 +29,12 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
+from lerobot.utils.device_utils import (
+    auto_select_torch_device,
+    cuda_driver_hint,
+    is_amp_available,
+    is_torch_device_available,
+)
 from lerobot.utils.hub import HubMixin
 
 from .types import FeatureType, PolicyFeature
@@ -91,7 +96,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logger.warning(
+                f"Device '{self.device}' is not available. Switching to '{auto_device}'.{cuda_driver_hint()}"
+            )
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary

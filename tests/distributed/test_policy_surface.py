@@ -15,6 +15,7 @@
 # limitations under the License.
 """The declarative policy surface and its distributed-side consumers."""
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -85,16 +86,39 @@ class TestStripAccelerateCpHooks:
         assert len(model.self_attn._forward_pre_hooks) == 1
 
 
+class DeclaredBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = nn.Linear(4, 4)
+
+
 class _DeclaredPolicy(nn.Module):
     _fsdp_wrap_modules = ["DeclaredBlock"]
 
     def __init__(self):
         super().__init__()
         self.net = nn.Linear(4, 4)
+        self.block = DeclaredBlock()
 
 
 class _UndeclaredPolicy(nn.Module):
     _fsdp_wrap_modules = None
+
+
+class _TiedPolicy(nn.Module):
+    """A language head tied to the input embedding, 1024 parameters each."""
+
+    _fsdp_wrap_modules = None
+
+    def __init__(self):
+        super().__init__()
+        self.embed = nn.Embedding(64, 16)
+        self.head = nn.Linear(16, 64, bias=False)
+        self.head.weight = self.embed.weight
+
+
+class _TiedLeafDeclaredPolicy(_TiedPolicy):
+    _fsdp_wrap_modules = ["Embedding"]
 
 
 def _accelerator_with(plugin) -> SimpleNamespace:
@@ -119,9 +143,14 @@ class TestSetFsdpWrapModules:
         assert plugin.transformer_cls_names_to_wrap == ["DeclaredBlock"]
 
     def test_user_override_wins(self):
-        plugin = FSDPConfig(wrap_modules=["UserBlock"]).build_plugin()
+        plugin = FSDPConfig(wrap_modules=["Linear"]).build_plugin()
         set_fsdp_wrap_modules(_accelerator_with(plugin), _DeclaredPolicy())
-        assert plugin.transformer_cls_names_to_wrap == ["UserBlock"]
+        assert plugin.transformer_cls_names_to_wrap == ["Linear"]
+
+    def test_wrap_name_missing_from_the_model_fails_before_prepare(self):
+        plugin = FSDPConfig(wrap_modules=["UserBlock"]).build_plugin()
+        with pytest.raises(ValueError, match="Could not find the transformer layer class UserBlock"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), _DeclaredPolicy())
 
     def test_no_wrap_source_fails_loudly(self):
         plugin = FSDPConfig().build_plugin()
@@ -132,6 +161,41 @@ class TestSetFsdpWrapModules:
         plugin = FSDPConfig(min_num_params=1024).build_plugin()
         set_fsdp_wrap_modules(_accelerator_with(plugin), _UndeclaredPolicy())
         assert plugin.transformer_cls_names_to_wrap is None
+
+    def test_size_based_policy_rejects_splitting_tied_weights(self):
+        plugin = FSDPConfig(min_num_params=512).build_plugin()
+        replace = r"Replace --accelerator\.fsdp\.min_num_params with --accelerator\.fsdp\.wrap_modules"
+        older = "older versions silently untie them"
+        with pytest.raises(ValueError, match=rf"'embed\.weight' and 'head\.weight'.*{older}\. {replace}"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), _TiedPolicy())
+
+    def test_policy_declaration_rejects_splitting_tied_weights(self):
+        plugin = FSDPConfig().build_plugin()
+        with pytest.raises(ValueError, match=r"'embed\.weight' and 'head\.weight'.*wrap_modules"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), _TiedLeafDeclaredPolicy())
+
+    @pytest.mark.parametrize(
+        "fsdp",
+        [
+            {"min_num_params": 1024},
+            {"min_num_params": 512, "ignored_modules": "embed"},
+            {"min_num_params": 512, "ignored_modules": "emb"},
+        ],
+    )
+    def test_tied_weight_check_agrees_with_accelerate(self, fsdp):
+        from accelerate.utils import get_module_children_bottom_up
+        from accelerate.utils.fsdp_utils import fsdp2_prepare_auto_wrap_policy, get_parameters_from_modules
+
+        plugin = FSDPConfig(**fsdp).build_plugin()
+        model = _TiedPolicy()
+        # The units and ignored parameters accelerate's FSDP2 preparation would use.
+        is_unit = fsdp2_prepare_auto_wrap_policy(plugin, model)
+        units = {m for m in get_module_children_bottom_up(model)[:-1] if is_unit(m)}
+        ignored = get_parameters_from_modules(plugin.ignored_modules, model, "cpu")
+        # Each copy of the tie sits in its own child of the root, so a child that becomes a unit splits it.
+        splits = bool(units & {model.embed, model.head}) and model.embed.weight not in ignored
+        with pytest.raises(ValueError, match="different FSDP units") if splits else nullcontext():
+            set_fsdp_wrap_modules(_accelerator_with(plugin), model)
 
     def test_non_sharded_run_is_noop(self):
         set_fsdp_wrap_modules(_accelerator_with(None), _UndeclaredPolicy())

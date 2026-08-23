@@ -29,7 +29,7 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
-from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
+from lerobot.utils.device_utils import auto_select_torch_device, cuda_driver_hint, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
 from .types import PolicyFeature
@@ -70,7 +70,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def __post_init__(self) -> None:
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logger.warning(
+                f"Device '{self.device}' is not available. Switching to '{auto_device}'.{cuda_driver_hint()}"
+            )
             self.device = auto_device.type
 
     @property

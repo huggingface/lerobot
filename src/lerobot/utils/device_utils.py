@@ -15,9 +15,34 @@
 # limitations under the License.
 
 import logging
+import re
 from contextlib import nullcontext
+from pathlib import Path
 
 import torch
+
+NVIDIA_DRIVER_VERSION_FILE = Path("/proc/driver/nvidia/version")
+
+
+def cuda_driver_hint() -> str:
+    """Explain a CUDA 13 build of torch that sees no GPU because the NVIDIA driver is older than 580.65.
+
+    Returns an empty string for other builds, when CUDA works (CUDA forward compatibility can run it on an
+    older driver), on hosts without a readable Linux driver version, and when the driver is new enough.
+    """
+    if not torch.version.cuda or int(torch.version.cuda.split(".")[0]) < 13 or torch.cuda.is_available():
+        return ""
+    try:
+        found = re.search(r"Kernel Module.*?\s((\d+)\.(\d+)[.\d]*)", NVIDIA_DRIVER_VERSION_FILE.read_text())
+    except OSError:
+        return ""
+    if found is None or (int(found[2]), int(found[3])) >= (580, 65):
+        return ""
+    return (
+        f" This PyTorch is a CUDA {torch.version.cuda} build, which needs NVIDIA driver 580.65 or newer, and "
+        f"this host has {found[1]}. Update the driver, or install a CUDA 12 build of PyTorch: "
+        "https://huggingface.co/docs/lerobot/installation#pytorch-cuda-variant-linux-only"
+    )
 
 
 def auto_select_torch_device() -> torch.device:
