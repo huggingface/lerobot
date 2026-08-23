@@ -250,7 +250,7 @@ def curate_cameras(
             verdicts[key] = _parse_verdict(key, result, cfg)
         # Pass 2: joint labeling (mount type + label only; quality untouched).
         if cfg.joint_labeling and len(callable_keys) >= 2:
-            relabeled = _joint_label(frames_by_camera, callable_keys, cfg, vlm)
+            relabeled = _joint_label(frames_by_camera, callable_keys, verdicts, cfg, vlm)
             for key, (mount_type, label) in relabeled.items():
                 verdicts[key].mount_type = mount_type
                 verdicts[key].view_label = label
@@ -261,15 +261,18 @@ def curate_cameras(
 def _joint_label(
     frames_by_camera: dict[str, list[Any]],
     camera_keys: list[str],
+    verdicts: dict[str, CameraVerdict],
     cfg: CameraCurationConfig,
     vlm: Any,
 ) -> dict[str, tuple[str | None, str | None]]:
-    """Show all cameras together and ask for one mount type + label each.
+    """Show all cameras together and ask for a FINAL mount type + label each.
 
-    Returns ``{camera_key: (mount_type, view_label)}`` for cameras present in the
-    response (positionally). The label is reconciled against the mount type with
-    the same deterministic rule as the per-camera pass. Quality is never touched
-    here, so this can't leak a quality verdict across cameras.
+    Each camera is shown with its per-camera (pass 1) preliminary mount type +
+    view label as evidence — the model's OWN prior judgment, never the dataset
+    key name, so this can't bias toward an unreliable existing key. Returns
+    ``{camera_key: (mount_type, view_label)}`` for cameras present in the response
+    (positionally), the label reconciled against the mount type with the same
+    deterministic rule as the per-camera pass. Quality is never touched here.
     """
     prompt = _load_joint_label_prompt().format(
         n=len(camera_keys),
@@ -283,6 +286,16 @@ def _joint_label(
         # back to camera_keys by position.
         content.append({"type": "text", "text": f"Camera {i}:"})
         content.extend(to_image_blocks(frames_by_camera[key]))
+        v = verdicts[key]
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"Camera {i} preliminary: mount_type={v.mount_type or MOUNT_UNKNOWN}, "
+                    f"view_label={v.view_label or 'unknown'}"
+                ),
+            }
+        )
     content.append({"type": "text", "text": prompt})
 
     results = vlm.generate_json([[{"role": "user", "content": content}]])
