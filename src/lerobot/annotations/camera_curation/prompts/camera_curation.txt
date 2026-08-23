@@ -259,18 +259,26 @@ HIGH + OBLIQUE ACROSS WORKSPACE -> side.
 
 OVERHEAD / BIRD'S-EYE -> top.
 
-When physical direction is reliably identifiable, use:
+DEFAULT TO PLAIN "side". A plain "side" is always preferable to a guessed
+direction. Only add a direction (front_side / rear_side / left_side / right_side)
+when there is STRONG, EXPLICIT evidence of where the camera physically sits
+relative to the ROBOT'S OWN orientation:
 
-  - "front_side"
-  - "rear_side"
-  - "left_side"
-  - "right_side"
+  - You must first be able to tell which way the robot itself FACES (its front /
+    base / working direction). If you cannot confidently establish the robot's
+    orientation, you CANNOT determine a direction -> use plain "side".
+  - front_side: the camera is clearly IN FRONT of the robot, facing its front.
+  - rear_side: the camera is clearly BEHIND the robot, facing its back.
+  - left_side / right_side: the camera is clearly off to the robot's left / right.
 
-Use plain "side" when the view is clearly oblique/external but its direction
-cannot be reliably determined.
+If there is ANY doubt about the direction, use plain "side".
 
-Do NOT infer front/rear/left/right merely from where the robot appears within the
-image.
+Do NOT infer front/rear/left/right from:
+
+  - where the robot or objects happen to appear within the image;
+  - which way the gripper points;
+  - image orientation, tilt, rotation, or mirroring;
+  - an assumption that the camera is probably "in front".
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 
