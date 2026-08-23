@@ -373,6 +373,9 @@ jobs:
           file: docker/Dockerfile.benchmark.robotwin
           push: false
           load: true
+          # The image derives its CUDA toolkit from the torch in lerobot-gpu:latest, so it has
+          # to resolve the current base rather than a copy cached on the runner.
+          pull: true
           tags: lerobot-benchmark-robotwin:ci
           cache-from: type=local,src=/tmp/.buildx-cache-robotwin
           cache-to: type=local,dest=/tmp/.buildx-cache-robotwin,mode=max
