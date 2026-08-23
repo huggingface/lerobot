@@ -182,20 +182,19 @@ Evidence:
   - substantial side faces of objects;
   - a clear oblique view across the work surface.
 
-DEFAULT TO PLAIN "side". A plain "side" is always preferable to a guessed
-direction. Only add a direction (front_side / rear_side / left_side / right_side)
-with STRONG, EXPLICIT evidence of where the camera physically sits relative to the
-ROBOT'S OWN orientation:
+Add a direction (front_side / rear_side / left_side / right_side) when the
+camera's position relative to the robot is reasonably clear; fall back to plain
+"side" only when the direction is genuinely ambiguous.
 
-  - first establish which way the robot itself FACES (its front / base / working
-    direction); if you cannot confidently establish that, use plain "side";
-  - front_side: clearly IN FRONT of the robot; rear_side: clearly BEHIND it;
-  - left_side / right_side: clearly off to the robot's left / right.
+  - judge direction from where the camera sits relative to the ROBOT'S OWN facing
+    (its front / base / working direction) whenever that can be read from the scene;
+  - front_side: in front of the robot; rear_side: behind it;
+  - left_side / right_side: off to the robot's left / right.
 
-If there is ANY doubt about the direction, use plain "side".
-
-Do NOT infer front/rear/left/right from where the robot or objects appear in the
-image, from gripper direction, or from image orientation/tilt/mirroring.
+You do not need certainty, only reasonable visual support; use plain "side" only
+when you genuinely cannot tell. Do not force a direction from weak cues alone —
+where the robot or objects appear in the image, gripper direction, or image
+orientation/tilt/mirroring are not reliable on their own.
 
 4. DUPLICATE TOP CANDIDATES
 
