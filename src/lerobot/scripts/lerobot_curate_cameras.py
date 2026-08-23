@@ -77,17 +77,15 @@ def _write_and_echo_report(report: dict, cfg: CameraCurationConfig, default_name
     return out
 
 
-# Sample frames from the central portion of the episode, skipping the
-# unrepresentative start/end (setup, teardown, an operator reaching in to reset
-# the scene) so the quality + view judgments reflect the actual task.
-_SAMPLE_WINDOW = (0.25, 0.75)
+def _central_indices(n: int, k: int, window: tuple[float, float] = (0.0, 1.0)) -> list[int]:
+    """Return k indices spread across ``window`` (lo, hi fractions) of n items.
 
-
-def _central_indices(n: int, k: int) -> list[int]:
-    """Return k indices spread across the central ``_SAMPLE_WINDOW`` of n items."""
+    The default window is the whole episode; narrowing it skips the
+    unrepresentative start/end (setup, teardown, an operator resetting the scene).
+    """
     if n <= 0 or k <= 0:
         return []
-    lo, hi = _SAMPLE_WINDOW
+    lo, hi = window
     a = int(n * lo)
     b = max(a, min(n - 1, int(round(n * hi)) - 1))
     if k == 1:
@@ -135,7 +133,7 @@ def _sample_frames(
         record = records[0] if records else None
         if record is not None:
             ts_all = list(record.frame_timestamps)
-            timestamps = [ts_all[i] for i in _central_indices(len(ts_all), cfg.n_frames)]
+            timestamps = [ts_all[i] for i in _central_indices(len(ts_all), cfg.n_frames, cfg.sample_window)]
             if timestamps:
                 for key in video_cameras:
                     frames[key] = provider.frames_at(record, timestamps, camera_key=key)
@@ -144,7 +142,7 @@ def _sample_frames(
     if image_cameras:
         if dataset is not None:
             n = len(dataset)
-            for i in _central_indices(n, cfg.n_frames):
+            for i in _central_indices(n, cfg.n_frames, cfg.sample_window):
                 item = dataset[i]
                 for key in image_cameras:
                     if key in item:

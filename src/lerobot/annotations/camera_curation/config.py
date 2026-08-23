@@ -81,6 +81,12 @@ class CameraCurationConfig:
     # None commits to the default branch.
     branch: str | None = None
 
+    # Fraction of the episode to sample frames from, as (lo, hi) in [0, 1].
+    # Defaults to the whole episode — the wider the span, the more arm motion is
+    # visible, which helps tell a moving wrist camera from a fixed one. Narrow it
+    # (e.g. 0.25, 0.75) to skip setup/teardown frames.
+    sample_window: tuple[float, float] = (0.0, 1.0)
+
     # Episode inspected by the VLM (first episode by default).
     episode_index: int = 0
     # Frames sampled from that episode per camera and shown to the VLM.

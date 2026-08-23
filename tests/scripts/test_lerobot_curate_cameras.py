@@ -35,17 +35,20 @@ from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
     [
         (0, 4, []),
         (5, 0, []),
-        (10, 1, [4]),  # single frame -> middle of the central window
-        (100, 1, [49]),  # middle of [25, 74]
-        (100, 4, [25, 41, 58, 74]),  # spread across the central 25%-75%
+        (10, 1, [4]),  # single frame -> middle of the episode
+        (100, 1, [49]),
+        (100, 4, [0, 33, 66, 99]),  # whole episode by default (endpoints included)
     ],
 )
-def test_central_indices(n, k, expected):
-    idxs = _central_indices(n, k)
-    assert idxs == expected
-    # never the very first or very last frame (avoids setup/teardown)
-    if n >= 4 and idxs:
-        assert idxs[0] > 0 and idxs[-1] < n - 1
+def test_central_indices_whole_episode(n, k, expected):
+    assert _central_indices(n, k) == expected
+
+
+def test_central_indices_custom_window():
+    # A narrowed window skips the very start/end.
+    idxs = _central_indices(100, 4, (0.25, 0.75))
+    assert idxs == [25, 41, 58, 74]
+    assert idxs[0] > 0 and idxs[-1] < 99
 
 
 def test_to_uint8_frame_scales_floats():
