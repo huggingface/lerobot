@@ -118,6 +118,32 @@ def _make_min_meta(root: Path, camera_key: str, dtype: str = "video") -> None:
     df.to_parquet(root / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
 
 
+def _make_min_meta_multi(root: Path, camera_keys: list[str], dtype: str = "video") -> None:
+    """Like ``_make_min_meta`` but with several cameras (for chain/swap renames)."""
+    (root / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+    features: dict = {
+        k: {
+            "dtype": dtype,
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+            "info": {"video.fps": 10.0} if dtype == "video" else None,
+        }
+        for k in camera_keys
+    }
+    features["action"] = {"dtype": "float32", "shape": (2,), "names": None}
+    write_info(DatasetInfo(codebase_version="v3.0", fps=10, features=features), root)
+    stats = {k: {"mean": [0.0]} for k in camera_keys}
+    stats["action"] = {"mean": [0.0]}
+    write_json(stats, root / "meta" / "stats.json")
+    cols: dict = {"episode_index": [0]}
+    for k in camera_keys:
+        cols[f"videos/{k}/from_timestamp"] = [0.0]
+        cols[f"videos/{k}/chunk_index"] = [0]
+        cols[f"videos/{k}/file_index"] = [0]
+        cols[f"stats/{k}/mean"] = [[0.0]]
+    pd.DataFrame(cols).to_parquet(root / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
+
+
 # ------------------------------ pure logic ------------------------------
 
 
@@ -478,17 +504,74 @@ def test_rename_camera_keys_on_hub_rejects_image_keys(tmp_path):
         rename_camera_keys_on_hub("user/ds", {camera_key: "observation.images.top"}, tmp_path)
 
 
-def test_rename_camera_keys_on_hub_rejects_swaps(tmp_path):
-    _make_min_meta(tmp_path, "observation.images.a", dtype="video")
-    with (
-        patch("huggingface_hub.HfApi", return_value=MagicMock()),
-        pytest.raises(NotImplementedError, match="swap"),
-    ):
-        rename_camera_keys_on_hub(
-            "user/ds",
-            {
-                "observation.images.a": "observation.images.b",
-                "observation.images.b": "observation.images.a",
-            },
-            tmp_path,
-        )
+def test_rename_camera_keys_on_hub_chain_uses_two_commits(tmp_path):
+    # image -> top, top -> side: "top" is both a source and a target (a chain), so
+    # it can't be one commit. It goes in two: stash to temp, then place finals.
+    from huggingface_hub import CommitOperationAdd, CommitOperationCopy, CommitOperationDelete
+
+    img, top, side = (
+        "observation.images.image",
+        "observation.images.top",
+        "observation.images.side",
+    )
+    _make_min_meta_multi(tmp_path, [img, top], dtype="video")
+    img_mp4 = f"videos/{img}/chunk-000/file-000.mp4"
+    top_mp4 = f"videos/{top}/chunk-000/file-000.mp4"
+
+    fake_api = MagicMock()
+    fake_api.list_repo_files.return_value = [img_mp4, top_mp4, "meta/info.json"]
+    fake_api.create_commit.return_value = MagicMock(oid="beef")
+
+    with patch("huggingface_hub.HfApi", return_value=fake_api):
+        rename_camera_keys_on_hub("user/ds", {img: top, top: side}, tmp_path)
+
+    assert fake_api.create_commit.call_count == 2
+    first, second = (c.kwargs["operations"] for c in fake_api.create_commit.call_args_list)
+
+    tmp_seg = "videos/__lerobot_curate_tmp_"
+    # Commit 1: every original copied to a temp segment, and every original deleted;
+    # no meta yet, and nothing lands on a real final key.
+    c1_copies = [o for o in first if isinstance(o, CommitOperationCopy)]
+    assert {o.src_path_in_repo for o in c1_copies} == {img_mp4, top_mp4}
+    assert all(tmp_seg in o.path_in_repo for o in c1_copies)
+    assert {o.path_in_repo for o in first if isinstance(o, CommitOperationDelete)} == {img_mp4, top_mp4}
+    assert not any(isinstance(o, CommitOperationAdd) for o in first)
+
+    # Commit 2: temps copied to the final keys, temps deleted, meta added.
+    c2_copies = [o for o in second if isinstance(o, CommitOperationCopy)]
+    assert all(tmp_seg in o.src_path_in_repo for o in c2_copies)
+    finals = {o.path_in_repo for o in c2_copies}
+    assert finals == {
+        f"videos/{top}/chunk-000/file-000.mp4",
+        f"videos/{side}/chunk-000/file-000.mp4",
+    }
+    assert all(tmp_seg in o.path_in_repo for o in second if isinstance(o, CommitOperationDelete))
+    assert any(o.path_in_repo == "meta/info.json" for o in second if isinstance(o, CommitOperationAdd))
+
+    # meta on disk reflects the final keys
+    info = load_info(tmp_path)
+    assert top in info.features and side in info.features and img not in info.features
+
+
+def test_rename_camera_keys_on_hub_swap_uses_two_commits(tmp_path):
+    # A true 2-cycle a<->b also goes through the temp indirection in two commits.
+    from huggingface_hub import CommitOperationCopy
+
+    a, b = "observation.images.a", "observation.images.b"
+    _make_min_meta_multi(tmp_path, [a, b], dtype="video")
+    a_mp4 = f"videos/{a}/chunk-000/file-000.mp4"
+    b_mp4 = f"videos/{b}/chunk-000/file-000.mp4"
+
+    fake_api = MagicMock()
+    fake_api.list_repo_files.return_value = [a_mp4, b_mp4, "meta/info.json"]
+    fake_api.create_commit.return_value = MagicMock(oid="cafe")
+
+    with patch("huggingface_hub.HfApi", return_value=fake_api):
+        rename_camera_keys_on_hub("user/ds", {a: b, b: a}, tmp_path)
+
+    assert fake_api.create_commit.call_count == 2
+    _, second = (c.kwargs["operations"] for c in fake_api.create_commit.call_args_list)
+    finals = {o.path_in_repo for o in second if isinstance(o, CommitOperationCopy)}
+    assert finals == {a_mp4, b_mp4}  # a and b swapped into each other's paths
+    info = load_info(tmp_path)
+    assert a in info.features and b in info.features

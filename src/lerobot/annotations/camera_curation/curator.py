@@ -554,31 +554,31 @@ def rename_camera_keys_on_hub(
     """Rename camera keys on the Hub without downloading video data.
 
     Edits the small ``meta/`` files locally (under ``local_root``, which must be
-    a writable dataset root whose ``meta/`` is already present), then commits, in
-    one atomic ``create_commit``: ``CommitOperationCopy`` + ``CommitOperationDelete``
-    to move each ``videos/<old>/*`` LFS file server-side, and ``CommitOperationAdd``
-    for the edited meta files. Renames in place on ``repo_id`` (cross-repo copies
-    are unsupported); pass ``branch`` to commit to a branch and keep ``main`` intact.
+    a writable dataset root whose ``meta/`` is already present), then moves each
+    ``videos/<old>/*`` LFS file server-side with ``CommitOperationCopy`` +
+    ``CommitOperationDelete`` (no download) and adds the edited meta files.
+    Renames in place on ``repo_id`` (cross-repo copies are unsupported); pass
+    ``branch`` to commit to a branch and keep ``main`` intact.
+
+    When the mapping is acyclic and non-overlapping (no target reuses a source
+    key) the whole rename is ONE atomic commit. When a target reuses a source key
+    — a chain (``image``->``top``, ``top``->``side``) or a cycle/swap — a single
+    base-revision commit can't express it (a path would be both a copy target and
+    a delete). Those are done in TWO commits via a temporary ``videos/`` segment:
+    commit 1 copies every source to a reserved temp key and deletes the sources;
+    commit 2 copies each temp to its final key, deletes the temps, and adds the
+    meta. Every copy reads a committed revision, so arbitrary permutations work.
 
     ``path_prefix`` scopes every repo path to a sub-dataset within a nested
     collection (e.g. ``user/task`` in ``lerobot/community_dataset_v3``); the local
     ``meta/`` still lives directly under ``local_root``.
 
-    Only video keys can be moved this way — reject swaps/cycles and image keys
-    (handled by the local ``rename_features`` path instead).
+    Only video keys can be moved this way — image keys (bytes in the data parquet)
+    are rejected and handled by the local ``rename_features`` path instead.
     """
     from huggingface_hub import CommitOperationAdd, CommitOperationCopy, CommitOperationDelete, HfApi
 
     repo_prefix = f"{path_prefix}/" if path_prefix else ""
-
-    # A swap/cycle (a target that is also a source) cannot be expressed in a
-    # single base-revision commit; defer to the local rename path.
-    swaps = set(name_mapping.values()) & set(name_mapping)
-    if swaps:
-        raise NotImplementedError(
-            f"Hub rename cannot swap keys in one commit (offending: {sorted(swaps)}); "
-            "use the local rename_features path for swaps/cycles."
-        )
 
     # Determine which OLD keys are video-stored (only those have a videos/ tree)
     # BEFORE remapping the metadata.
@@ -595,48 +595,108 @@ def rename_camera_keys_on_hub(
     _remap_camera_key_in_meta(local_root, name_mapping)
 
     api = HfApi(token=token)
-    operations: list[Any] = []
 
-    # 2. Add the (small) meta files we just edited.
+    # The (small) meta files we just edited — added alongside the final key moves.
     meta_dir = local_root / "meta"
     meta_files = [meta_dir / "info.json"]
     stats_file = meta_dir / "stats.json"
     if stats_file.exists():
         meta_files.append(stats_file)
     meta_files.extend(sorted((meta_dir / "episodes").glob("*/*.parquet")))
-    for fpath in meta_files:
-        rel = fpath.relative_to(local_root).as_posix()
-        operations.append(CommitOperationAdd(path_in_repo=f"{repo_prefix}{rel}", path_or_fileobj=str(fpath)))
+    meta_ops = [
+        CommitOperationAdd(
+            path_in_repo=f"{repo_prefix}{fpath.relative_to(local_root).as_posix()}",
+            path_or_fileobj=str(fpath),
+        )
+        for fpath in meta_files
+    ]
 
-    # 3. Move video LFS files server-side (copy + delete), no download.
+    # The video files to move, grouped by old key (list once; reused for both
+    # phases so we never re-list mid-rename).
     repo_files = api.list_repo_files(repo_id, repo_type="dataset", revision=revision)
-    n_moved = 0
-    for old in video_old_keys:
-        new = name_mapping[old]
-        prefix = f"{repo_prefix}videos/{old}/"
-        for f in repo_files:
-            if f.startswith(prefix):
+    files_by_old = {
+        old: [f for f in repo_files if f.startswith(f"{repo_prefix}videos/{old}/")] for old in video_old_keys
+    }
+    n_files = sum(len(v) for v in files_by_old.values())
+    commit_target = branch or revision
+    message = commit_message or "curate: rename camera views (lerobot-curate-cameras)"
+
+    # A target that reuses a source key means a plain copy+delete would touch the
+    # same path twice in one commit; route those through a temporary key.
+    overlaps = set(name_mapping.values()) & set(name_mapping)
+
+    if not overlaps:
+        # Fast path: one atomic commit (meta + direct copy/delete per file).
+        operations: list[Any] = list(meta_ops)
+        for old, files in files_by_old.items():
+            new = name_mapping[old]
+            for f in files:
                 operations.append(
                     CommitOperationCopy(
                         src_path_in_repo=f, path_in_repo=_swap_key_in_path(f, old, new, path_prefix)
                     )
                 )
                 operations.append(CommitOperationDelete(path_in_repo=f))
-                n_moved += 1
+        logger.info(
+            "hub rename: moving %d video file(s) server-side across %d camera(s) in one commit",
+            n_files,
+            len(video_old_keys),
+        )
+        return api.create_commit(
+            repo_id=repo_id,
+            repo_type="dataset",
+            operations=operations,
+            revision=commit_target,
+            commit_message=message,
+        )
+
+    # Overlapping/cyclic rename: two commits through reserved temp keys.
+    temp_key = {old: f"__lerobot_curate_tmp_{i}__" for i, old in enumerate(sorted(files_by_old))}
     logger.info(
-        "hub rename: moving %d video file(s) server-side across %d camera(s)",
-        n_moved,
+        "hub rename: overlapping keys %s -> moving %d video file(s) across %d camera(s) in two commits",
+        sorted(overlaps),
+        n_files,
         len(video_old_keys),
     )
 
-    commit_info = api.create_commit(
+    # Commit 1: stash every source to its temp key and delete the source.
+    stash_ops: list[Any] = []
+    for old, files in files_by_old.items():
+        tmp = temp_key[old]
+        for f in files:
+            stash_ops.append(
+                CommitOperationCopy(
+                    src_path_in_repo=f, path_in_repo=_swap_key_in_path(f, old, tmp, path_prefix)
+                )
+            )
+            stash_ops.append(CommitOperationDelete(path_in_repo=f))
+    api.create_commit(
         repo_id=repo_id,
         repo_type="dataset",
-        operations=operations,
-        revision=branch or revision,
-        commit_message=commit_message or "curate: rename camera views (lerobot-curate-cameras)",
+        operations=stash_ops,
+        revision=commit_target,
+        commit_message=f"{message} (1/2: stash to temp)",
     )
-    return commit_info
+
+    # Commit 2: place each temp at its final key, delete the temp, add the meta.
+    place_ops: list[Any] = list(meta_ops)
+    for old, files in files_by_old.items():
+        tmp, new = temp_key[old], name_mapping[old]
+        for f in files:
+            temp_path = _swap_key_in_path(f, old, tmp, path_prefix)
+            place_ops.append(
+                CommitOperationCopy(
+                    src_path_in_repo=temp_path, path_in_repo=_swap_key_in_path(f, old, new, path_prefix)
+                )
+            )
+            place_ops.append(CommitOperationDelete(path_in_repo=temp_path))
+    return api.create_commit(
+        repo_id=repo_id,
+        repo_type="dataset",
+        operations=place_ops,
+        revision=commit_target,
+        commit_message=f"{message} (2/2: place final keys)",
+    )
 
 
 def as_report_dict(verdicts: list[CameraVerdict]) -> list[dict[str, Any]]:

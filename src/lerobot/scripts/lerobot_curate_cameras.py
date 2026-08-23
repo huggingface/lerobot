@@ -170,17 +170,20 @@ def _apply_rename(
     """Apply the computed ``{old: new}`` camera-key mapping.
 
     Video datasets on the Hub → download-free server-side rename commit (scoped to
-    ``path_prefix`` for a sub-dataset). Otherwise (image dataset, local-only, or a
-    swap/cycle) → local ``rename_features`` over a full copy — single-dataset only.
+    ``path_prefix`` for a sub-dataset), including overlapping/cyclic renames (the
+    Hub path routes those through a temp key). Otherwise (image dataset or a
+    local-only root) → local ``rename_features`` over a full copy — single-dataset
+    only.
 
     ``commit_lock`` serializes the Hub commit across concurrent workers so
     parallel renames don't race on the branch head ref.
     """
     video_keys = set(meta.video_keys)
     all_video = set(mapping) <= video_keys
-    has_swap = bool(set(mapping.values()) & set(mapping))
 
-    if cfg.repo_id is not None and all_video and not has_swap:
+    # The Hub path now handles overlapping/cyclic renames (via a temp key), so a
+    # swap no longer forces the local path — only image data / local roots do.
+    if cfg.repo_id is not None and all_video:
         if cfg.drop_unusable:
             logger.warning(
                 "--drop_unusable is only applied via the local rename path; the Hub rename keeps "
@@ -221,8 +224,7 @@ def _apply_rename(
 
     # Local path: needs the full dataset, so re-load without the episode filter.
     require_package("datasets", "dataset")
-    from lerobot.datasets import LeRobotDataset as _LeRobotDataset
-    from lerobot.datasets import remove_feature, rename_features
+    from lerobot.datasets import LeRobotDataset as _LeRobotDataset, remove_feature, rename_features
 
     logger.info("Local rename path (image/local/swap): loading the full dataset from %s", root)
     full = _LeRobotDataset(cfg.repo_id or "local", root=root)
