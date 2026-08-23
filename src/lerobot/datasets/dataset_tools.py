@@ -606,6 +606,74 @@ def _copy_and_reindex_data(
     return episode_data_metadata
 
 
+def _try_keep_episodes_from_video_by_stream_copy(
+    input_path: Path,
+    output_path: Path,
+    episodes_to_keep: list[tuple[int, int]],
+    fps: float,
+) -> bool:
+    """Keep only specified episodes from a video file by copying the encoded bitstream.
+
+    `DatasetWriter` encodes one video per episode and `concatenate_video_files` joins them with
+    ffmpeg's concat demuxer in stream-copy mode, so every episode in a packed file starts on a
+    keyframe. Dropping episodes is then pure packet selection and the pixels never need decoding.
+
+    Alignment is verified rather than assumed: if any boundary falls inside a GOP, nothing is
+    written and the caller re-encodes instead.
+
+    Args:
+        input_path: Source video file path.
+        output_path: Destination video file path.
+        episodes_to_keep: Half-open (start_frame, end_frame) ranges to keep.
+        fps: Frame rate of the video.
+
+    Returns:
+        True if the output was written, False if the file is not GOP-aligned.
+    """
+    import av
+
+    with av.open(str(input_path)) as in_container:
+        if not in_container.streams.video:
+            return False
+
+        v_in = in_container.streams.video[0]
+        packets = [packet for packet in in_container.demux(v_in) if packet.size > 0]
+
+        # Demuxing yields packets in decode order. A closed GOP occupies the same contiguous span
+        # in decode and presentation order, so counting packets up to a keyframe gives that
+        # keyframe's presentation index even though B-frames reorder within the GOP.
+        gop_boundaries = {i for i, packet in enumerate(packets) if packet.is_keyframe}
+        gop_boundaries.add(len(packets))
+
+        if any(start not in gop_boundaries or end not in gop_boundaries for start, end in episodes_to_keep):
+            return False
+
+        if v_in.time_base is None:
+            return False
+        ticks_per_frame = round((1 / fps) / v_in.time_base)
+        if ticks_per_frame <= 0:
+            return False
+
+        with av.open(str(output_path), mode="w") as out_container:
+            v_out = out_container.add_stream_from_template(v_in)
+
+            out_start = 0
+            for start, end in episodes_to_keep:
+                segment = packets[start:end]
+                # Rebase onto the output timeline; dts is left for the muxer to derive so that
+                # B-frame reorder delay is handled per container rather than by hand.
+                pts_offset = out_start - min(packet.pts for packet in segment)
+                for packet in segment:
+                    packet.pts += pts_offset
+                    packet.dts = None
+                    packet.stream = v_out
+                    out_container.mux(packet)
+
+                out_start += (end - start) * ticks_per_frame
+
+    return True
+
+
 def _keep_episodes_from_video_with_av(
     input_path: Path,
     output_path: Path,
@@ -818,17 +886,20 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                logging.info(
-                    f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
-                    f"with {len(episodes_to_keep_ranges)} episodes"
-                )
-                _keep_episodes_from_video_with_av(
-                    src_video_path,
-                    dst_video_path,
-                    episodes_to_keep_ranges,
-                    src_dataset.meta.fps,
-                    video_encoder,
-                )
+                if not _try_keep_episodes_from_video_by_stream_copy(
+                    src_video_path, dst_video_path, episodes_to_keep_ranges, src_dataset.meta.fps
+                ):
+                    logging.info(
+                        f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
+                        f"with {len(episodes_to_keep_ranges)} episodes"
+                    )
+                    _keep_episodes_from_video_with_av(
+                        src_video_path,
+                        dst_video_path,
+                        episodes_to_keep_ranges,
+                        src_dataset.meta.fps,
+                        video_encoder,
+                    )
 
                 cumulative_ts = 0.0
                 for old_idx in sorted_keep_episodes:
