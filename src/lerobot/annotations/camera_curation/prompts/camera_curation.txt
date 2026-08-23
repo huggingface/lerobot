@@ -4,11 +4,16 @@ together to judge the camera, not any single moment.
 
 Do two things and return them as one JSON object.
 
-1. QUALITY. Decide whether this camera view is usable for training a policy.
-   Mark it UNUSABLE if EITHER:
-   - it has a genuine capture defect: blurry / out of focus, badly over- or
-     under-exposed, static/frozen, corrupted, or otherwise not showing the scene
-     clearly; OR
+1. QUALITY. Decide whether this camera view is usable for training a policy. A
+   USABLE view must actually show the real robot and the workspace/objects it
+   works on, clearly enough to learn from. Mark it UNUSABLE if EITHER:
+   - it does not clearly show that real scene. This covers genuine capture
+     defects (blurry / out of focus, badly over- or under-exposed, corrupted,
+     static/frozen) AND frames that are not a real camera feed at all: a
+     PLACEHOLDER or "no camera" / "no signal" icon, a test pattern, an app or
+     logo graphic, or a blank / solid-colour / nearly-empty frame that does not
+     depict the robot and its workspace. If the frame is not a genuine view of
+     the robot scene, it is UNUSABLE; OR
    - a human is clearly part of the scene. These are teleoperated recordings and
      the operator should not be in the working area. Mark UNUSABLE when a person,
      or a human hand/arm, is PROMINENTLY or PERSISTENTLY in view — e.g. an
