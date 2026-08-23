@@ -82,6 +82,11 @@ first | previous | current
 
 With two cameras, the external-camera row is placed above the wrist-camera row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
 
+### Generation behavior
+
+`temperature=1.0` by default, which makes the model more stochastic and has been observed increase robustness to reward-hacking, but this prevents reproducible inference.
+Use `temperature=0.0` for greedy, reproducible offline inference.
+
 ### Compute rewards (sparse or dense)
 
 `compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every trajectory timestep.
