@@ -20,6 +20,7 @@ import pytest
 import torch
 
 pytest.importorskip("transformers")
+pytest.importorskip("qwen_vl_utils")
 
 from lerobot.rewards.soler1.configuration_soler1 import SOLER1Config  # noqa: E402
 from lerobot.rewards.soler1.modeling_soler1 import SOLER1RewardModel  # noqa: E402
@@ -39,7 +40,6 @@ def test_soler1_transformers_end_to_end():
     config = SOLER1Config(
         device="cuda",
         external_image_key="observation.images.front",
-        max_new_tokens=600,
     )
 
     preprocessor, _ = make_soler1_pre_post_processors(config)
@@ -48,10 +48,10 @@ def test_soler1_transformers_end_to_end():
     try:
         trajectory = torch.stack(
             [
-                torch.zeros(64, 64, 3),
-                torch.ones(64, 64, 3),
+                torch.zeros(3, 64, 64, dtype=torch.uint8),
+                torch.full((3, 64, 64), 255, dtype=torch.uint8),
             ]
-        )  # shape: (2, 64, 64, 3)
+        ).unsqueeze(0)  # canonical shape: (B=1, T=2, C=3, H=64, W=64)
 
         batch = preprocessor(
             {

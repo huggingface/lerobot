@@ -12,703 +12,343 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for SOLE-R1's trajectory composite-image processor."""
+"""Tests for SOLE-R1 static preprocessing; no reward-model weights are loaded."""
 
 from __future__ import annotations
 
+from typing import Any
+
+import cv2
 import pytest
 import torch
+from torch import Tensor
 
-from lerobot.lerobot_types import TransitionKey
+from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.processor import PolicyProcessorPipeline
+from lerobot.rewards.soler1.configuration_soler1 import SOLER1Config
 from lerobot.rewards.soler1.processor_soler1 import (
     COMPOSITE_WIDTH,
     FRAME_SIZE,
     PADDING,
+    SINGLE_VIEW_COMPOSITE_HEIGHT,
     SOLER1_COMPOSITE_IMAGE_KEY,
-    SOLER1_ORIGINAL_LENGTH_KEY,
-    SOLER1_SAMPLE_INDICES_KEY,
+    SOLER1_IMAGE_GRID_THW_KEY,
+    SOLER1_IMAGE_TOKEN_COUNT_KEY,
+    SOLER1_PIXEL_VALUES_KEY,
+    TWO_VIEW_COMPOSITE_HEIGHT,
     SOLER1CompositeProcessorStep,
+    SOLER1ImageEncoderProcessorStep,
+    _composite_to_smart_resized_pil,
     _to_btchw_uint8,
+    make_soler1_pre_post_processors,
+    resize_with_padding,
 )
+from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
+from tests.utils import skip_if_package_missing
 
-EXTERNAL_KEY = "observation.images.front"
+EXTERNAL_KEY = "observation.images.external"
 WRIST_KEY = "observation.images.wrist"
 
 
-def _image(value: int) -> torch.Tensor:
-    return torch.full(
-        (3, 4, 4),
-        value,
+def _video(
+    batch_size: int = 1,
+    timesteps: int = 3,
+    *,
+    height: int = 32,
+    width: int = 48,
+    offset: int = 0,
+) -> Tensor:
+    values = torch.arange(
+        offset,
+        offset + batch_size * timesteps,
         dtype=torch.uint8,
-    )
-
-
-def _video(values: list[int]) -> torch.Tensor:
-    return torch.stack(
-        [_image(value) for value in values],
-        dim=0,
-    )
-
-
-def _batched_video(
-    trajectories: list[list[int]],
-) -> torch.Tensor:
-    return torch.stack(
-        [_video(values) for values in trajectories],
-        dim=0,
-    )
+    ).reshape(batch_size, timesteps)
+    return values[:, :, None, None, None].repeat(1, 1, 3, height, width)
 
 
 def _transition(
-    external: torch.Tensor,
     *,
-    wrist: torch.Tensor | None = None,
-) -> dict:
-    observation = {
-        EXTERNAL_KEY: external,
-    }
-
+    external: Tensor | None = None,
+    wrist: Tensor | None = None,
+) -> EnvTransition:
+    observation: dict[str, Any] = {}
+    if external is not None:
+        observation[EXTERNAL_KEY] = external
     if wrist is not None:
         observation[WRIST_KEY] = wrist
-
     return {
         TransitionKey.OBSERVATION: observation,
-        TransitionKey.COMPLEMENTARY_DATA: {
-            "task": "pick up the cube",
-        },
+        TransitionKey.COMPLEMENTARY_DATA: {"task": "pick up the cube"},
     }
 
 
-def test_to_btchw_uint8_adds_batch_dimension_to_tchw():
-    images = torch.stack(
-        [
-            torch.full((3, 4, 4), 10, dtype=torch.uint8),
-            torch.full((3, 4, 4), 20, dtype=torch.uint8),
-        ]
-    )
+def test_canonical_btchw_input_preserves_batches_and_all_timesteps() -> None:
+    step = SOLER1CompositeProcessorStep(external_image_key=EXTERNAL_KEY)
 
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
-    )
-
-    assert result.shape == (1, 2, 3, 4, 4)
-    assert result.dtype == torch.uint8
-    assert torch.all(result[:, 0] == 10)
-    assert torch.all(result[:, 1] == 20)
-
-
-def test_to_btchw_uint8_preserves_btchw():
-    images = torch.ones(
-        2,
-        5,
-        3,
-        4,
-        4,
-        dtype=torch.uint8,
-    )
-
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
-    )
-
-    assert result.shape == (2, 5, 3, 4, 4)
-    assert result.dtype == torch.uint8
-
-
-def test_to_btchw_uint8_converts_channel_last_float():
-    images = torch.ones(
-        2,
-        5,
-        4,
-        4,
-        3,
-    )
-
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
-    )
-
-    assert result.shape == (2, 5, 3, 4, 4)
-    assert result.dtype == torch.uint8
-    assert result.max().item() == 255
-
-
-def test_to_btchw_uint8_expands_grayscale():
-    images = torch.ones(
-        2,
-        5,
-        1,
-        4,
-        4,
-        dtype=torch.uint8,
-    )
-
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
-    )
-
-    assert result.shape == (2, 5, 3, 4, 4)
-    assert torch.equal(
-        result[:, :, 0],
-        result[:, :, 1],
-    )
-    assert torch.equal(
-        result[:, :, 1],
-        result[:, :, 2],
-    )
-
-
-def test_to_btchw_uint8_rejects_invalid_dimensions():
-    with pytest.raises(ValueError, match="expected.*shape"):
-        _to_btchw_uint8(
-            torch.zeros(3, 4, 4),
-            image_key="image",
-        )
-
-
-def test_to_btchw_uint8_rejects_invalid_channels():
-    with pytest.raises(ValueError, match="1 or 3 channels"):
-        _to_btchw_uint8(
-            torch.zeros(1, 2, 4, 4, 2),
-            image_key="image",
-        )
-
-
-def test_to_btchw_uint8_rejects_empty_trajectory():
-    with pytest.raises(
-        ValueError,
-        match="at least one frame",
-    ):
-        _to_btchw_uint8(
-            torch.zeros(
-                1,
-                0,
-                3,
-                4,
-                4,
-            ),
-            image_key="image",
-        )
-
-
-def test_external_trajectory_composites():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
-
-    external = _batched_video([[10, 20, 30]])
-
-    output = step(_transition(external))
+    output = step(_transition(external=_video(batch_size=2, timesteps=3)))
     composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
 
-    assert composites.shape == (
-        1,
-        3,
-        3,
-        FRAME_SIZE,
-        COMPOSITE_WIDTH,
-    )
-
-    # Timestep 0: first=10, previous=10, current=10.
-    assert torch.all(composites[:, 0, ..., :FRAME_SIZE] == 10)
-    assert torch.all(
-        composites[
-            :,
-            0,
-            ...,
-            FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
-        ]
-        == 10
-    )
-    assert torch.all(
-        composites[
-            :,
-            0,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 10
-    )
-
-    # Timestep 1: first=10, previous=10, current=20.
-    assert torch.all(composites[:, 1, ..., :FRAME_SIZE] == 10)
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
-        ]
-        == 10
-    )
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 20
-    )
-
-    # Timestep 2: first=10, previous=20, current=30.
-    assert torch.all(composites[:, 2, ..., :FRAME_SIZE] == 10)
-    assert torch.all(
-        composites[
-            :,
-            2,
-            ...,
-            FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
-        ]
-        == 20
-    )
-    assert torch.all(
-        composites[
-            :,
-            2,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 30
-    )
+    assert composites.shape == (2, 3, 3, SINGLE_VIEW_COMPOSITE_HEIGHT, COMPOSITE_WIDTH)
+    # Inspect the center pixel so letterbox padding does not affect the assertion.
+    center = FRAME_SIZE // 2
+    previous_x = FRAME_SIZE + PADDING + center
+    current_x = 2 * (FRAME_SIZE + PADDING) + center
+    assert composites[0, 2, 0, center, previous_x].item() == 1
+    assert composites[0, 2, 0, center, current_x].item() == 2
+    assert composites[1, 2, 0, center, previous_x].item() == 4
+    assert composites[1, 2, 0, center, current_x].item() == 5
 
 
-def test_multiple_trajectories_are_processed_independently():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
+def test_rank_four_is_rejected_as_ambiguous() -> None:
+    images = torch.zeros(3, 3, 32, 48, dtype=torch.uint8)
 
-    external = _batched_video(
-        [
-            [10, 20],
-            [100, 200],
-        ]
-    )
-
-    output = step(_transition(external))
-    composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
-
-    assert composites.shape == (
-        2,
-        2,
-        3,
-        FRAME_SIZE,
-        COMPOSITE_WIDTH,
-    )
-
-    assert torch.all(
-        composites[
-            0,
-            1,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 20
-    )
-    assert torch.all(
-        composites[
-            1,
-            1,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 200
-    )
+    with pytest.raises(ValueError, match="ambiguous rank-4"):
+        _to_btchw_uint8(images, image_key=EXTERNAL_KEY)
 
 
-def test_composite_column_separators_are_black():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
+def test_channels_last_is_rejected_by_canonical_contract() -> None:
+    images = torch.zeros(1, 2, 32, 48, 3, dtype=torch.uint8)
 
-    external = _batched_video([[10, 20]])
-
-    output = step(_transition(external))
-    composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
-
-    first_separator = composites[
-        ...,
-        FRAME_SIZE : FRAME_SIZE + PADDING,
-    ]
-    second_separator = composites[
-        ...,
-        2 * FRAME_SIZE + PADDING : 2 * (FRAME_SIZE + PADDING),
-    ]
-
-    assert torch.count_nonzero(first_separator) == 0
-    assert torch.count_nonzero(second_separator) == 0
+    with pytest.raises(ValueError, match="channels-first"):
+        _to_btchw_uint8(images, image_key=EXTERNAL_KEY)
 
 
-def test_dual_view_composite_places_external_above_wrist():
+def test_external_and_wrist_batch_time_dimensions_must_match() -> None:
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
         wrist_image_key=WRIST_KEY,
     )
 
-    external = _batched_video([[10, 20]])
-    wrist = _batched_video([[100, 200]])
-
-    output = step(
-        _transition(
-            external,
-            wrist=wrist,
-        )
-    )
-    composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
-
-    assert composites.shape == (
-        1,
-        2,
-        3,
-        2 * FRAME_SIZE + PADDING,
-        COMPOSITE_WIDTH,
-    )
-
-    # External row at timestep 1.
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            :FRAME_SIZE,
-            :FRAME_SIZE,
-        ]
-        == 10
-    )
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            :FRAME_SIZE,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 20
-    )
-
-    # Black separator between camera rows.
-    assert (
-        torch.count_nonzero(
-            composites[
-                ...,
-                FRAME_SIZE : FRAME_SIZE + PADDING,
-                :,
-            ]
-        )
-        == 0
-    )
-
-    # Wrist row at timestep 1.
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            FRAME_SIZE + PADDING :,
-            :FRAME_SIZE,
-        ]
-        == 100
-    )
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            FRAME_SIZE + PADDING :,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 200
-    )
-
-
-def test_processor_is_stateless_between_calls():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
-
-    first_output = step(_transition(_batched_video([[10, 20]])))
-    second_output = step(_transition(_batched_video([[100, 200]])))
-
-    first_composites = first_output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
-    second_composites = second_output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
-
-    assert torch.all(first_composites[:, 1, ..., :FRAME_SIZE] == 10)
-    assert torch.all(second_composites[:, 1, ..., :FRAME_SIZE] == 100)
-
-
-def test_missing_observation_raises():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
-
-    transition = {
-        TransitionKey.OBSERVATION: None,
-        TransitionKey.COMPLEMENTARY_DATA: {},
-    }
-
-    with pytest.raises(
-        ValueError,
-        match="observation dictionary",
-    ):
-        step(transition)
-
-
-def test_missing_external_image_raises():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-    )
-
-    transition = {
-        TransitionKey.OBSERVATION: {},
-        TransitionKey.COMPLEMENTARY_DATA: {},
-    }
-
-    with pytest.raises(
-        KeyError,
-        match="external image key",
-    ):
-        step(transition)
-
-
-def test_missing_configured_wrist_image_raises():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-        wrist_image_key=WRIST_KEY,
-    )
-
-    external = _batched_video([[10, 20]])
-
-    with pytest.raises(
-        KeyError,
-        match="wrist image key",
-    ):
-        step(_transition(external))
-
-
-def test_external_and_wrist_dimensions_must_match():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-        wrist_image_key=WRIST_KEY,
-    )
-
-    external = _batched_video([[10, 20, 30]])
-    wrist = _batched_video([[100, 200]])
-
-    with pytest.raises(
-        ValueError,
-        match="different external and wrist batch/time dimensions",
-    ):
+    with pytest.raises(ValueError, match="different external and wrist batch/time dimensions"):
         step(
             _transition(
-                external,
-                wrist=wrist,
+                external=_video(batch_size=1, timesteps=3),
+                wrist=_video(batch_size=1, timesteps=2),
             )
         )
 
 
-def test_get_config():
+@pytest.mark.parametrize(
+    ("external_key", "wrist_key", "external", "wrist", "expected_height"),
+    [
+        (EXTERNAL_KEY, None, _video(timesteps=2, offset=10), None, SINGLE_VIEW_COMPOSITE_HEIGHT),
+        (None, WRIST_KEY, None, _video(timesteps=2, offset=20), SINGLE_VIEW_COMPOSITE_HEIGHT),
+        (
+            EXTERNAL_KEY,
+            WRIST_KEY,
+            _video(timesteps=2, offset=10),
+            _video(timesteps=2, offset=20),
+            TWO_VIEW_COMPOSITE_HEIGHT,
+        ),
+    ],
+)
+def test_supported_camera_modes_have_expected_composite_dimensions(
+    external_key: str | None,
+    wrist_key: str | None,
+    external: Tensor | None,
+    wrist: Tensor | None,
+    expected_height: int,
+) -> None:
     step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-        wrist_image_key=WRIST_KEY,
-        num_samples=10,
+        external_image_key=external_key,
+        wrist_image_key=wrist_key,
     )
 
-    assert step.get_config() == {
-        "external_image_key": EXTERNAL_KEY,
-        "wrist_image_key": WRIST_KEY,
-        "num_samples": 10,
-    }
-
-
-def test_get_config_preserves_custom_num_samples():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-        wrist_image_key=None,
-        num_samples=5,
-    )
-
-    assert step.get_config() == {
-        "external_image_key": EXTERNAL_KEY,
-        "wrist_image_key": None,
-        "num_samples": 5,
-    }
-
-
-def test_to_btchw_uint8_accepts_unbatched_channels_last_trajectory():
-    images = torch.ones(
-        5,
-        4,
-        6,
-        3,
-        dtype=torch.uint8,
-    )
-
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
-    )
-
-    assert result.shape == (1, 5, 3, 4, 6)
-
-
-def test_wrist_only_trajectory_composites():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=None,
-        wrist_image_key=WRIST_KEY,
-    )
-    wrist = _batched_video([[10, 20]])
-    transition = {
-        TransitionKey.OBSERVATION: {
-            WRIST_KEY: wrist,
-        },
-        TransitionKey.COMPLEMENTARY_DATA: {
-            "task": "pick up the cube",
-        },
-    }
-
-    output = step(transition)
+    output = step(_transition(external=external, wrist=wrist))
     composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
 
-    assert composites.shape == (
-        1,
-        2,
-        3,
-        FRAME_SIZE,
-        COMPOSITE_WIDTH,
-    )
-    assert torch.all(composites[:, 1, ..., :FRAME_SIZE] == 10)
-    assert torch.all(
-        composites[
-            :,
-            1,
-            ...,
-            2 * (FRAME_SIZE + PADDING) :,
-        ]
-        == 20
-    )
+    assert composites.shape == (1, 2, 3, expected_height, COMPOSITE_WIDTH)
 
 
-def test_downsampling_happens_before_composite_construction():
+def test_external_and_wrist_composite_order() -> None:
+    external = torch.full((1, 2, 3, 32, 32), 10, dtype=torch.uint8)
+    wrist = torch.full((1, 2, 3, 32, 32), 20, dtype=torch.uint8)
     step = SOLER1CompositeProcessorStep(
         external_image_key=EXTERNAL_KEY,
-        num_samples=3,
+        wrist_image_key=WRIST_KEY,
     )
 
-    # Original indices: 0, 1, 2, 3, 4
-    # Sampled indices:  0, 2, 4
-    external = _batched_video([[10, 20, 30, 40, 50]])
+    output = step(_transition(external=external, wrist=wrist))
+    composites = output[TransitionKey.OBSERVATION][SOLER1_COMPOSITE_IMAGE_KEY]
+    panel_centers = (
+        FRAME_SIZE // 2,
+        FRAME_SIZE + PADDING + FRAME_SIZE // 2,
+        2 * (FRAME_SIZE + PADDING) + FRAME_SIZE // 2,
+    )
+    external_center_y = FRAME_SIZE // 2
+    wrist_center_y = FRAME_SIZE + PADDING + FRAME_SIZE // 2
 
-    output = step(_transition(external))
-    observation = output[TransitionKey.OBSERVATION]
+    for center_x in panel_centers:
+        assert torch.all(composites[:, :, :, external_center_y, center_x] == 10)
+        assert torch.all(composites[:, :, :, wrist_center_y, center_x] == 20)
 
-    composites = observation[SOLER1_COMPOSITE_IMAGE_KEY]
-    sample_indices = observation[SOLER1_SAMPLE_INDICES_KEY]
-    original_length = observation[SOLER1_ORIGINAL_LENGTH_KEY]
+    assert torch.all(composites[:, :, :, FRAME_SIZE : FRAME_SIZE + PADDING, :] == 0)
 
-    assert sample_indices.tolist() == [
-        0,
-        2,
-        4,
-    ]
-    assert original_length.item() == 5
-    assert composites.shape == (
-        1,
+
+def test_no_configured_camera_is_rejected() -> None:
+    step = SOLER1CompositeProcessorStep(external_image_key=None, wrist_image_key=None)
+
+    with pytest.raises(ValueError, match="at least one camera"):
+        step(_transition())
+
+
+@pytest.mark.parametrize(
+    ("external_key", "wrist_key", "transition", "expected_message"),
+    [
+        (EXTERNAL_KEY, None, _transition(wrist=_video()), "external image key"),
+        (None, WRIST_KEY, _transition(external=_video()), "wrist image key"),
+    ],
+)
+def test_missing_configured_camera_is_rejected(
+    external_key: str | None,
+    wrist_key: str | None,
+    transition: EnvTransition,
+    expected_message: str,
+) -> None:
+    step = SOLER1CompositeProcessorStep(
+        external_image_key=external_key,
+        wrist_image_key=wrist_key,
+    )
+
+    with pytest.raises(KeyError, match=expected_message):
+        step(transition)
+
+
+def test_letterbox_uses_opencv_inter_area(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lerobot.rewards.soler1 import processor_soler1
+
+    interpolation_values: list[int] = []
+    original_resize = processor_soler1.cv2.resize
+
+    def _record_resize(*args: Any, **kwargs: Any) -> Any:
+        interpolation_values.append(kwargs["interpolation"])
+        return original_resize(*args, **kwargs)
+
+    monkeypatch.setattr(processor_soler1.cv2, "resize", _record_resize)
+
+    resized = resize_with_padding(torch.zeros(3, 32, 48, dtype=torch.uint8))
+
+    assert resized.shape == (3, FRAME_SIZE, FRAME_SIZE)
+    assert interpolation_values == [cv2.INTER_AREA]
+
+
+@skip_if_package_missing("qwen-vl-utils", import_name="qwen_vl_utils")
+def test_post_composite_smart_resize_matches_public_dimensions() -> None:
+    single_view = torch.zeros(
         3,
-        3,
-        FRAME_SIZE,
+        SINGLE_VIEW_COMPOSITE_HEIGHT,
         COMPOSITE_WIDTH,
+        dtype=torch.uint8,
     )
-
-    # Sampled position 1 corresponds to original frame 2.
-    # Its previous sampled frame is original frame 0, not frame 1.
-    previous_column = composites[
-        :,
-        1,
-        ...,
-        FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
-    ]
-    current_column = composites[
-        :,
-        1,
-        ...,
-        2 * (FRAME_SIZE + PADDING) :,
-    ]
-
-    assert torch.all(previous_column == 10)
-    assert torch.all(current_column == 30)
-
-    # Sampled position 2 corresponds to original frame 4.
-    # Its previous sampled frame is original frame 2.
-    previous_column = composites[
-        :,
-        2,
-        ...,
-        FRAME_SIZE + PADDING : 2 * FRAME_SIZE + PADDING,
-    ]
-    current_column = composites[
-        :,
-        2,
-        ...,
-        2 * (FRAME_SIZE + PADDING) :,
-    ]
-
-    assert torch.all(previous_column == 30)
-    assert torch.all(current_column == 50)
-
-
-def test_to_btchw_uint8_accepts_batched_single_frames_with_time_dimension():
-    images = torch.ones(
-        2,
-        1,
+    two_views = torch.zeros(
         3,
-        4,
-        4,
+        TWO_VIEW_COMPOSITE_HEIGHT,
+        COMPOSITE_WIDTH,
         dtype=torch.uint8,
     )
 
-    result = _to_btchw_uint8(
-        images,
-        image_key="image",
+    assert _composite_to_smart_resized_pil(
+        single_view,
+        factor=28,
+        min_pixels=3136,
+        max_pixels=12845056,
+    ).size == (1176, 392)
+    assert _composite_to_smart_resized_pil(
+        two_views,
+        factor=28,
+        min_pixels=3136,
+        max_pixels=12845056,
+    ).size == (1176, 784)
+
+
+class _FakeImageProcessor:
+    merge_size = 2
+
+    def __call__(self, *, images: list[Any], return_tensors: str) -> dict[str, Tensor]:
+        assert return_tensors == "pt"
+        grids = [[1, 24 if image.height == 392 else 48, 74] for image in images]
+        image_grid_thw = torch.tensor(grids, dtype=torch.long)
+        patch_count = int(image_grid_thw.prod(dim=-1).sum().item())
+        return {
+            "pixel_values": torch.zeros(patch_count, 8),
+            "image_grid_thw": image_grid_thw,
+        }
+
+
+class _FakeAutoProcessor:
+    def __init__(self) -> None:
+        self.image_processor = _FakeImageProcessor()
+
+    @classmethod
+    def from_pretrained(cls, *args: Any, **kwargs: Any) -> _FakeAutoProcessor:  # noqa: ARG003
+        return cls()
+
+
+def _patch_auto_processor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lerobot.rewards.soler1 import processor_soler1
+
+    monkeypatch.setattr(processor_soler1, "AutoProcessor", _FakeAutoProcessor)
+
+
+@skip_if_package_missing("transformers")
+@skip_if_package_missing("qwen-vl-utils", import_name="qwen_vl_utils")
+@pytest.mark.parametrize(
+    ("external_key", "wrist_key", "expected_grid"),
+    [
+        (EXTERNAL_KEY, None, [1, 24, 74]),
+        (None, WRIST_KEY, [1, 24, 74]),
+        (EXTERNAL_KEY, WRIST_KEY, [1, 48, 74]),
+    ],
+)
+def test_static_preprocessing_without_loading_reward_model(
+    monkeypatch: pytest.MonkeyPatch,
+    external_key: str | None,
+    wrist_key: str | None,
+    expected_grid: list[int],
+) -> None:
+    _patch_auto_processor(monkeypatch)
+    external = _video(batch_size=2, timesteps=3) if external_key is not None else None
+    wrist = _video(batch_size=2, timesteps=3, offset=20) if wrist_key is not None else None
+    composite_step = SOLER1CompositeProcessorStep(
+        external_image_key=external_key,
+        wrist_image_key=wrist_key,
     )
+    encoder_step = SOLER1ImageEncoderProcessorStep(model_name="fake")
 
-    assert result.shape == (2, 1, 3, 4, 4)
-    assert result.dtype == torch.uint8
-
-
-def test_unbatched_tchw_trajectory_is_one_trajectory():
-    step = SOLER1CompositeProcessorStep(
-        external_image_key=EXTERNAL_KEY,
-        num_samples=None,
-    )
-
-    trajectory = torch.stack(
-        [
-            torch.full((3, 4, 4), 10, dtype=torch.uint8),
-            torch.full((3, 4, 4), 20, dtype=torch.uint8),
-            torch.full((3, 4, 4), 30, dtype=torch.uint8),
-        ]
-    )
-
-    output = step(_transition(trajectory))
+    output = encoder_step(composite_step(_transition(external=external, wrist=wrist)))
     observation = output[TransitionKey.OBSERVATION]
 
-    composites = observation[SOLER1_COMPOSITE_IMAGE_KEY]
-    sample_indices = observation[SOLER1_SAMPLE_INDICES_KEY]
-    original_length = observation[SOLER1_ORIGINAL_LENGTH_KEY]
+    assert SOLER1_COMPOSITE_IMAGE_KEY not in observation
+    assert observation[SOLER1_IMAGE_GRID_THW_KEY].shape == (2, 3, 3)
+    assert observation[SOLER1_IMAGE_GRID_THW_KEY][0, 0].tolist() == expected_grid
+    assert observation[SOLER1_PIXEL_VALUES_KEY].shape[:2] == (2, 3)
+    assert observation[SOLER1_IMAGE_TOKEN_COUNT_KEY].shape == (2, 3)
+    assert (
+        observation[SOLER1_IMAGE_TOKEN_COUNT_KEY][0, 0].item()
+        == torch.tensor(expected_grid).prod().item() // 4
+    )
 
-    assert composites.shape == (
-        1,
-        3,
-        3,
-        FRAME_SIZE,
-        COMPOSITE_WIDTH,
+
+@skip_if_package_missing("transformers")
+@skip_if_package_missing("qwen-vl-utils", import_name="qwen_vl_utils")
+def test_processor_serialization_and_reconstruction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    _patch_auto_processor(monkeypatch)
+    config = SOLER1Config(
+        device="cpu",
+        external_image_key=EXTERNAL_KEY,
+        wrist_image_key=WRIST_KEY,
     )
-    torch.testing.assert_close(
-        sample_indices,
-        torch.tensor([0, 1, 2]),
+    preprocessor, _ = make_soler1_pre_post_processors(config)
+
+    preprocessor.save_pretrained(tmp_path)
+    loaded = PolicyProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
     )
-    assert original_length.item() == 3
+
+    assert [type(step) for step in loaded.steps] == [type(step) for step in preprocessor.steps]
+    assert loaded.steps[0].get_config() == preprocessor.steps[0].get_config()
+    assert loaded.steps[1].get_config() == preprocessor.steps[1].get_config()
