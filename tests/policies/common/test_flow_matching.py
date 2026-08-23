@@ -21,6 +21,7 @@ smolvla sampling loop (including its RTC hook semantics): any divergence from th
 reference is a behavior change for released checkpoints.
 """
 
+import pytest
 import torch
 
 from lerobot.policies.common.flow_matching import (
@@ -28,6 +29,8 @@ from lerobot.policies.common.flow_matching import (
     sample_beta,
     sample_noise,
     sample_time_beta,
+    staircase_substep,
+    staircase_time,
 )
 
 
@@ -191,3 +194,120 @@ def test_euler_integrate_debug_tracking_fires_even_when_rtc_disabled():
     assert len(proc.tracked) == 4
     # track() receives the POST-update x_t; the last one is the returned sample.
     assert torch.equal(proc.tracked[-1]["x_t"], out)
+
+
+def test_euler_integrate_clamps_trained_rtc_prefix_and_sets_clean_time():
+    noise = torch.ones(1, 4, 1)
+    hard_prefix = torch.tensor([[[2.0], [3.0], [0.0], [0.0]]])
+    hard_prefix_mask = torch.tensor([[[True], [True], [False], [False]]])
+    seen_times = []
+
+    def denoise_fn(x_t, time_tensor):
+        seen_times.append(time_tensor.clone())
+        return torch.ones_like(x_t)
+
+    out = euler_integrate(
+        denoise_fn,
+        noise,
+        2,
+        hard_prefix=hard_prefix,
+        hard_prefix_mask=hard_prefix_mask,
+    )
+
+    torch.testing.assert_close(out[:, :2], hard_prefix[:, :2])
+    assert all(torch.equal(time[:, :2], torch.zeros(1, 2)) for time in seen_times)
+
+
+# ---------------------------------------------------------------------------
+# piR2 staircase schedule (arXiv 2607.26055)
+# ---------------------------------------------------------------------------
+
+
+def _reference_staircase(delay: int, horizon: int) -> torch.Tensor:
+    """Eq. 3 written out region by region, converted to the t=0-clean convention."""
+    values = []
+    for position in range(horizon):
+        if position < delay:
+            tau = 1.0
+        elif position < horizon - delay:
+            tau = 1.0 - (position - delay) / (horizon - 2 * delay)
+        else:
+            tau = 0.0
+        values.append(1.0 - tau)
+    return torch.tensor(values)
+
+
+@pytest.mark.parametrize(("delay", "horizon"), [(1, 16), (2, 16), (5, 50), (3, 12)])
+def test_staircase_time_matches_paper_equation(delay, horizon):
+    torch.testing.assert_close(
+        staircase_time(delay, horizon, device="cpu"), _reference_staircase(delay, horizon)
+    )
+
+
+def test_staircase_substep_emits_exact_actions_under_an_oracle_velocity():
+    batch, horizon, dim, delay = 2, 16, 3, 2
+    actions = torch.randn(batch, horizon, dim)
+    noise = torch.randn(batch, horizon, dim)
+    time = staircase_time(delay, horizon, device="cpu")
+    x_t = time[None, :, None] * noise + (1 - time[None, :, None]) * actions
+
+    # The exact conditional velocity, so one substep must land on the analytic solution.
+    emitted, next_buffer = staircase_substep(
+        lambda x, t: noise - actions, x_t, delay, noise=torch.zeros(batch, delay, dim)
+    )
+
+    # Positions [delay, 2 * delay) are the ones the shift carries to t=0.
+    torch.testing.assert_close(emitted, actions[:, delay : 2 * delay], atol=1e-6, rtol=0)
+    # And the just-emitted actions become the next call's clamped front.
+    torch.testing.assert_close(next_buffer[:, :delay], actions[:, delay : 2 * delay], atol=1e-6, rtol=0)
+
+
+def test_staircase_substep_moves_every_position_to_the_shifted_schedule():
+    batch, horizon, dim, delay = 2, 16, 3, 3
+    actions = torch.randn(batch, horizon, dim)
+    noise = torch.randn(batch, horizon, dim)
+    time = staircase_time(delay, horizon, device="cpu")
+    x_t = time[None, :, None] * noise + (1 - time[None, :, None]) * actions
+
+    _, next_buffer = staircase_substep(
+        lambda x, t: noise - actions, x_t, delay, noise=torch.zeros(batch, delay, dim)
+    )
+
+    shifted = time[(torch.arange(horizon) - delay).clamp(min=0)]
+    expected = shifted[None, :, None] * noise + (1 - shifted[None, :, None]) * actions
+    # Compare before the slide drops the front `delay` positions.
+    torch.testing.assert_close(next_buffer[:, : horizon - delay], expected[:, delay:], atol=1e-6, rtol=0)
+
+
+def test_staircase_substep_appends_fresh_noise_to_the_tail():
+    batch, horizon, dim, delay = 2, 12, 3, 2
+    tail = torch.full((batch, delay, dim), 7.0)
+
+    _, next_buffer = staircase_substep(
+        lambda x, t: torch.zeros_like(x), torch.zeros(batch, horizon, dim), delay, noise=tail
+    )
+
+    assert next_buffer.shape == (batch, horizon, dim)
+    torch.testing.assert_close(next_buffer[:, -delay:], tail)
+
+
+def test_staircase_substep_advance_never_moves_away_from_clean():
+    seen = {}
+
+    def denoise_fn(x_t, time_tensor):
+        seen["time"] = time_tensor
+        return torch.zeros_like(x_t)
+
+    x_t = torch.zeros(1, 16, 2)
+    before, _ = staircase_substep(denoise_fn, x_t, 2)
+    torch.testing.assert_close(seen["time"][0], staircase_time(2, 16, device="cpu"))
+    assert before.shape == (1, 2, 2)
+
+
+@pytest.mark.parametrize(
+    ("delay", "horizon", "match"),
+    [(0, 16, "delay must be >= 1"), (9, 16, r"2 \* delay <= horizon")],
+)
+def test_staircase_substep_rejects_unusable_delays(delay, horizon, match):
+    with pytest.raises(ValueError, match=match):
+        staircase_substep(lambda x, t: torch.zeros_like(x), torch.zeros(1, horizon, 2), delay)

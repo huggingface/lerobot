@@ -16,7 +16,9 @@
 
 import builtins
 import logging
+import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
@@ -52,7 +54,13 @@ from lerobot.utils.constants import (
     OBS_STATE,
 )
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    euler_integrate,
+    sample_noise,
+    sample_time_beta,
+    staircase_substep,
+    staircase_time,
+)
 from ..common.vla_utils import (
     clone_past_key_values,
     create_sinusoidal_pos_embedding,
@@ -71,6 +79,176 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+
+
+def _prepare_trained_rtc_prefix(
+    x_t: Tensor,
+    prev_chunk_left_over: Tensor | None,
+    inference_delay: int,
+    training_max_delay: int,
+) -> tuple[Tensor | None, Tensor | None]:
+    """Pad and validate a hard prefix for training-time RTC inference."""
+    if prev_chunk_left_over is None or inference_delay <= 0:
+        return None, None
+    if training_max_delay <= 0:
+        raise ValueError(
+            "RTC mode='trained' requires a checkpoint trained with policy.rtc_training_max_delay > 0."
+        )
+    if inference_delay > training_max_delay:
+        raise ValueError(
+            f"Measured RTC inference delay ({inference_delay}) exceeds the checkpoint's "
+            f"rtc_training_max_delay ({training_max_delay})."
+        )
+    if inference_delay >= x_t.shape[1]:
+        raise ValueError(
+            f"RTC inference delay ({inference_delay}) must be smaller than chunk_size ({x_t.shape[1]})."
+        )
+
+    previous = prev_chunk_left_over.to(device=x_t.device, dtype=x_t.dtype)
+    if not torch.isfinite(previous).all():
+        raise ValueError("RTC prefix contains NaN or Inf values.")
+    if previous.ndim == 2:
+        previous = previous.unsqueeze(0)
+    if previous.ndim != 3:
+        raise ValueError(f"Expected RTC prefix shape (B, T, A), got {tuple(previous.shape)}")
+    if previous.shape[0] == 1 and x_t.shape[0] > 1:
+        previous = previous.expand(x_t.shape[0], -1, -1)
+    if previous.shape[0] != x_t.shape[0]:
+        raise ValueError(
+            f"RTC prefix batch size ({previous.shape[0]}) does not match policy batch ({x_t.shape[0]})."
+        )
+    if previous.shape[1] < inference_delay:
+        raise ValueError(f"RTC prefix has {previous.shape[1]} steps, but inference_delay={inference_delay}.")
+    if previous.shape[2] > x_t.shape[2]:
+        raise ValueError(
+            f"RTC prefix action dimension ({previous.shape[2]}) exceeds model dimension ({x_t.shape[2]})."
+        )
+
+    padded_prefix = torch.zeros_like(x_t)
+    padded_prefix[:, :inference_delay, : previous.shape[2]] = previous[:, :inference_delay]
+    prefix_mask = torch.arange(x_t.shape[1], device=x_t.device) < inference_delay
+    prefix_mask = prefix_mask[None, :, None].expand(x_t.shape[0], -1, x_t.shape[2])
+    return padded_prefix, prefix_mask
+
+
+def _sample_training_rtc_prefix_mask(
+    batch_size: int,
+    action_horizon: int,
+    max_delay: int,
+    device: torch.device,
+) -> Tensor | None:
+    """Sample a clean action-prefix length independently for each training example."""
+    if max_delay <= 0:
+        return None
+    delays = torch.randint(0, max_delay + 1, (batch_size,), device=device)
+    positions = torch.arange(action_horizon, device=device)
+    return positions.unsqueeze(0) < delays.unsqueeze(1)
+
+
+@dataclass
+class CachedPrefix:
+    """Cached vision-language prefix, valid across many action-expert calls.
+
+    Holding this instead of re-running the backbone every call is what takes the VLM off the
+    control-rate critical path (arXiv 2607.26055, Sec. 3.2).
+    """
+
+    prefix_pad_masks: Tensor
+    past_key_values: object
+    # ``time.perf_counter()`` at capture, so the engine can tell the expert how stale this is.
+    captured_at: float | None = None
+
+
+def _build_staircase_schedule(
+    batch_size: int,
+    action_horizon: int,
+    max_delay: int,
+    shared_time: Tensor,
+    *,
+    time_jitter: float = 0.0,
+    warmup_prob: float = 0.0,
+) -> tuple[Tensor, Tensor]:
+    """Sample the piR2 latency-adaptive staircase (arXiv 2607.26055, Eq. 3).
+
+    The paper writes the schedule with tau=1 clean and tau=0 noise, in three regions: a clean
+    front of ``delay`` in-flight actions, a linear ramp across the interior, and a pure-noise
+    tail of ``delay`` freshly appended slots. Under this file's opposite convention (t=0 clean,
+    t=1 noise) all three collapse into one clamped ramp, since the clamp reproduces the flat
+    front and tail exactly.
+
+    Returns ``(prefix_mask, position_time)``: the front positions to clamp and drop from the
+    loss, and the per-position flow timestep.
+    """
+    device = shared_time.device
+    delays = torch.randint(0, max_delay + 1, (batch_size, 1), device=device)
+    positions = torch.arange(action_horizon, device=device).unsqueeze(0)
+    # Ramp slope 1 / (H - 2d); the widest delay is validated to leave a non-empty interior.
+    interior = (action_horizon - 2 * delays).clamp(min=1)
+    position_time = ((positions - delays) / interior).clamp(0.0, 1.0).to(shared_time.dtype)
+
+    if time_jitter > 0.0:
+        # Paper Alg. 1 line 11 jitters every position, including the front, and then overwrites
+        # the front with ground-truth actions without restoring its timestep.
+        jitter = torch.empty_like(position_time).uniform_(-time_jitter, time_jitter)
+        position_time = (position_time + jitter).clamp(0.0, 1.0)
+
+    prefix_mask = positions < delays
+
+    if warmup_prob > 0.0:
+        # Warm-up branch: a standard shared-timestep flow batch with no clamped front, so the
+        # same weights can still denoise a chunk from pure noise to initialize the buffer.
+        # The paper draws this once per batch; drawing per example gives the same expectation
+        # with lower variance.
+        is_warmup = torch.rand((batch_size, 1), device=device) < warmup_prob
+        position_time = torch.where(is_warmup, shared_time[:, None].expand_as(position_time), position_time)
+        prefix_mask = prefix_mask & ~is_warmup
+
+    return prefix_mask, position_time
+
+
+def _build_flow_matching_inputs(
+    actions: Tensor,
+    noise: Tensor,
+    time: Tensor,
+    prefix_mask: Tensor | None,
+    position_time: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Keep the sampled RTC prefix clean while noising the remaining action chunk."""
+    if position_time is not None:
+        model_time = position_time
+        expanded_time = position_time.unsqueeze(-1)
+    elif prefix_mask is None:
+        model_time = time
+        expanded_time = time[:, None, None]
+    else:
+        model_time = time[:, None].expand_as(prefix_mask)
+        model_time = torch.where(prefix_mask, torch.zeros_like(model_time), model_time)
+        expanded_time = model_time.unsqueeze(-1)
+    x_t = expanded_time * noise + (1 - expanded_time) * actions
+    if position_time is not None and prefix_mask is not None:
+        # A jittered front carries a timestep slightly off zero, so the clean values have to be
+        # written in explicitly rather than falling out of the interpolation.
+        x_t = torch.where(prefix_mask.unsqueeze(-1), actions, x_t)
+    return x_t, model_time
+
+
+def _reduce_training_rtc_loss(
+    losses: Tensor,
+    prefix_mask: Tensor | None,
+    reduction: str,
+) -> Tensor:
+    """Average flow loss over predicted postfix actions, excluding the clean RTC prefix."""
+    if reduction not in {"mean", "none"}:
+        raise ValueError(f"Unsupported loss reduction: {reduction!r}")
+    if prefix_mask is None:
+        return losses.mean() if reduction == "mean" else losses.mean(dim=(1, 2))
+
+    postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+    if reduction == "none":
+        numerator = (losses * postfix_mask).sum(dim=(1, 2))
+        denominator = postfix_mask.sum(dim=(1, 2))
+        return numerator / denominator.clamp(min=1)
+    return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
 
 
 # Define the complete layer computation function for gradient checkpointing
@@ -611,18 +789,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         actions,
         noise,
         time,
+        prefix_mask: Tensor | None = None,
         states=None,
         state_masks=None,
+        position_time: Tensor | None = None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        x_t, model_time = _build_flow_matching_inputs(actions, noise, time, prefix_mask, position_time)
         u_t = noise - actions
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, model_time)
 
         if (
             self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -693,6 +872,48 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
+        prefix_pad_masks, past_key_values = self.prefill_prefix(
+            images, img_masks, tokens, masks, states, state_masks
+        )
+
+        rtc_mode = "guided"
+        trained_prefix = trained_prefix_mask = None
+        if self._rtc_enabled():
+            rtc_mode = self.rtc_processor.rtc_config.mode
+            if rtc_mode == "trained":
+                training_max_delay = int(getattr(self.config, "rtc_training_max_delay", 0))
+                if training_max_delay <= 0:
+                    raise ValueError(
+                        "RTC mode='trained' requires a checkpoint trained with "
+                        "policy.rtc_training_max_delay > 0."
+                    )
+                trained_prefix, trained_prefix_mask = _prepare_trained_rtc_prefix(
+                    noise,
+                    kwargs.get("prev_chunk_left_over"),
+                    int(kwargs.get("inference_delay") or 0),
+                    training_max_delay,
+                )
+
+        return euler_integrate(
+            self._prefix_denoise_fn(prefix_pad_masks, past_key_values),
+            noise,
+            num_steps,
+            rtc_processor=self.rtc_processor,
+            rtc_enabled=self._rtc_enabled() and rtc_mode == "guided",
+            inference_delay=kwargs.get("inference_delay"),
+            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
+            execution_horizon=kwargs.get("execution_horizon"),
+            hard_prefix=trained_prefix,
+            hard_prefix_mask=trained_prefix_mask,
+        )
+
+    def prefill_prefix(self, images, img_masks, tokens, masks, states=None, state_masks=None):
+        """Run the vision-language prefix once and return its attention mask and KV cache.
+
+        The cache stays valid for as many action-expert calls as you care to make against it, so
+        a background thread can refresh it as fast as the backbone allows while the expert keeps
+        denoising against the newest one available (arXiv 2607.26055, Sec. 3.2).
+        """
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks
         )
@@ -709,21 +930,51 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+        return prefix_pad_masks, past_key_values
 
-        return euler_integrate(
-            lambda input_x_t, current_timestep: self.denoise_step(
-                prefix_pad_masks=prefix_pad_masks,
-                past_key_values=past_key_values,
-                x_t=input_x_t,
-                timestep=current_timestep,
-            ),
-            noise,
-            num_steps,
-            rtc_processor=self.rtc_processor,
-            rtc_enabled=self._rtc_enabled(),
-            inference_delay=kwargs.get("inference_delay"),
-            prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
-            execution_horizon=kwargs.get("execution_horizon"),
+    def _prefix_denoise_fn(self, prefix_pad_masks, past_key_values):
+        return lambda x_t, timestep: self.denoise_step(
+            prefix_pad_masks=prefix_pad_masks,
+            past_key_values=past_key_values,
+            x_t=x_t,
+            timestep=timestep,
+        )
+
+    def warm_start_staircase_buffer(
+        self,
+        prefix_pad_masks,
+        past_key_values,
+        delay,
+        *,
+        noise=None,
+        num_steps=None,
+    ) -> Tensor:
+        """Denoise a full chunk from pure noise, then re-noise it onto the staircase.
+
+        Episode start has no in-flight actions to condition on, so piR2 falls back to a standard
+        full denoise and then puts the result back at the per-position noise levels the steady
+        state expects. The 20% shared-timestep branch during training is what keeps the weights
+        able to do this first pass.
+        """
+        if num_steps is None:
+            num_steps = self.config.num_inference_steps
+        if noise is None:
+            shape = (prefix_pad_masks.shape[0], self.config.chunk_size, self.config.max_action_dim)
+            noise = self.sample_noise(shape, prefix_pad_masks.device)
+
+        clean = euler_integrate(self._prefix_denoise_fn(prefix_pad_masks, past_key_values), noise, num_steps)
+
+        time = staircase_time(delay, clean.shape[1], device=clean.device, dtype=clean.dtype)
+        fresh = self.sample_noise(clean.shape, clean.device).to(dtype=clean.dtype)
+        return time[None, :, None] * fresh + (1 - time[None, :, None]) * clean
+
+    def staircase_denoise_step(self, prefix_pad_masks, past_key_values, x_t, delay, *, noise=None):
+        """One piR2 call against a cached prefix: emit ``delay`` actions and slide the buffer."""
+        return staircase_substep(
+            self._prefix_denoise_fn(prefix_pad_masks, past_key_values),
+            x_t,
+            delay,
+            noise=noise,
         )
 
     def denoise_step(
@@ -1033,7 +1284,10 @@ class PI05Policy(PreTrainedPolicy):
         # Create processor if config provided
         # If RTC is not enabled - we can still track the denoising data
         if self.config.rtc_config is not None:
-            self.rtc_processor = RTCProcessor(self.config.rtc_config)
+            self.rtc_processor = RTCProcessor(
+                self.config.rtc_config,
+                trained_mode_supported=int(getattr(self.config, "rtc_training_max_delay", 0)) > 0,
+            )
 
             model_value = getattr(self, "model", None)
             if model_value is not None:
@@ -1221,6 +1475,49 @@ class PI05Policy(PreTrainedPolicy):
 
         return actions
 
+    @torch.no_grad()
+    def encode_prefix(self, batch: dict[str, Tensor]) -> CachedPrefix:
+        """Run the vision-language prefix and return a cache the action expert can reuse.
+
+        In piR2 this is the only work that scales with backbone size, and it is meant to run on
+        a background thread at whatever rate it can manage while the expert keeps stepping.
+        """
+        self.eval()
+        images, img_masks = self._preprocess_images(batch)
+        states, state_masks = self._prepare_memory_states(batch)
+        tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        prefix_pad_masks, past_key_values = self.model.prefill_prefix(
+            images, img_masks, tokens, masks, states, state_masks
+        )
+        return CachedPrefix(
+            prefix_pad_masks=prefix_pad_masks,
+            past_key_values=past_key_values,
+            captured_at=time.perf_counter(),
+        )
+
+    @torch.no_grad()
+    def warm_start_realtime_buffer(self, prefix: CachedPrefix, delay: int) -> Tensor:
+        """Build the initial action buffer at episode start, when nothing is in flight yet."""
+        self.eval()
+        return self.model.warm_start_staircase_buffer(prefix.prefix_pad_masks, prefix.past_key_values, delay)
+
+    @torch.no_grad()
+    def realtime_substep(self, prefix: CachedPrefix, buffer: Tensor, delay: int) -> tuple[Tensor, Tensor]:
+        """Advance the buffer by one denoising step, returning ``delay`` finished actions.
+
+        ``prefix`` may have been encoded several control steps ago; the clamped clean front of
+        ``buffer`` is what tells the expert where the robot currently is.
+        """
+        self.eval()
+        emitted, next_buffer = self.model.staircase_denoise_step(
+            prefix.prefix_pad_masks,
+            prefix.past_key_values,
+            buffer,
+            delay,
+        )
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        return emitted[:, :, :original_action_dim], next_buffer
+
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.
 
@@ -1239,6 +1536,23 @@ class PI05Policy(PreTrainedPolicy):
 
         noise = self.model.sample_noise(actions.shape, actions.device)
         time = self.model.sample_time(actions.shape[0], actions.device)
+        position_time = None
+        if self.config.rtc_training_schedule == "staircase" and self.config.rtc_training_max_delay > 0:
+            prefix_mask, position_time = _build_staircase_schedule(
+                actions.shape[0],
+                actions.shape[1],
+                self.config.rtc_training_max_delay,
+                time,
+                time_jitter=self.config.staircase_time_jitter,
+                warmup_prob=self.config.staircase_warmup_prob,
+            )
+        else:
+            prefix_mask = _sample_training_rtc_prefix_mask(
+                actions.shape[0],
+                actions.shape[1],
+                self.config.rtc_training_max_delay,
+                actions.device,
+            )
 
         # Compute loss (no separate state needed for PI05)
         losses = self.model.forward(
@@ -1249,28 +1563,31 @@ class PI05Policy(PreTrainedPolicy):
             actions,
             noise,
             time,
+            prefix_mask=prefix_mask,
             states=states,
             state_masks=state_masks,
+            position_time=position_time,
         )
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
 
-        loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
-        }
+        if prefix_mask is None:
+            loss_per_dim = losses.mean(dim=(0, 1))
+        else:
+            postfix_mask = (~prefix_mask).unsqueeze(-1).expand_as(losses)
+            loss_per_dim = (losses * postfix_mask).sum(dim=(0, 1)) / postfix_mask.sum(dim=(0, 1)).clamp(min=1)
+        loss_dict = {"loss_per_dim": loss_per_dim.detach().cpu().numpy().tolist()}
 
         if reduction == "none":
-            # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="none")
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
-        else:
-            # Default: return scalar mean loss
-            loss = losses.mean()
-            loss_dict["loss"] = loss.item()
-            return loss, loss_dict
+
+        loss = _reduce_training_rtc_loss(losses, prefix_mask, reduction="mean")
+        loss_dict["loss"] = loss.item()
+        return loss, loss_dict
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
