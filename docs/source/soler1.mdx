@@ -73,6 +73,7 @@ Camera trajectories must use the explicit channels-first shape:
 ```
 
 Both the batch and time dimensions are required, including when either is one.
+SOLE-R1 does not perform temporal sampling. The caller or shared reward pipeline is responsible for selecting the sequence; every supplied timestep is processed.
 
 For every evaluated timestep, the preprocessor creates the composite expected by SOLE-R1:
 
@@ -84,8 +85,9 @@ With two cameras, the external-camera row is placed above the wrist-camera row. 
 
 ### Generation behavior
 
-`temperature=1.0` by default, which makes the model more stochastic and has been observed to increase robustness to reward hacking, but this prevents reproducible inference.
-Use `temperature=0.0` for greedy, reproducible offline inference.
+`temperature=1.0` matches the public SOLE-R1 serving default and enables
+sampled generation. Use `temperature=0.0` for greedy, reproducible offline
+inference.
 
 ### Compute rewards (sparse or dense)
 
@@ -119,14 +121,9 @@ progress = reward_model.compute_progress(batch)
 print(progress.shape)  # (1, 8)
 ```
 
-The first sampled timestep is defined as `0%`. Later timesteps are evaluated sequentially because the prompt for the current timestep includes the previous predicted progress.
+The first supplied timestep is defined as `0%`. Later timesteps are evaluated sequentially because the prompt for the current timestep includes the previous predicted progress.
 
 With the default `reward_scale=0.01`, a generated progress value of `75%` produces a reward of `0.75`.
-
-## Offline dataset labeling
-
-Use the included command to compute one SOLE-R1 progress value for every
-timestep in the selected episodes:
 
 ## Success output
 

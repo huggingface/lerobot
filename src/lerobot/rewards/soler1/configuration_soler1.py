@@ -33,9 +33,9 @@ class SOLER1Config(RewardModelConfig):
     ``temperature=1.0`` matches the public online server. Use ``0.0`` for
     greedy, reproducible offline inference.
 
-    ``input_features`` describes raw caller-provided images. No fixed spatial
-    shape is inserted because arbitrary positive image sizes are supported and
-    letterboxed during preprocessing.
+    ``input_features`` is intentionally left empty by default. ``PolicyFeature``
+    requires a fixed shape, while SOLE-R1 accepts caller-provided raw images
+    with arbitrary positive spatial dimensions before 384 x 384 letterboxing.
     """
 
     pretrained_path: str | None = None

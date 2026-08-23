@@ -352,3 +352,69 @@ def test_processor_serialization_and_reconstruction(
     assert [type(step) for step in loaded.steps] == [type(step) for step in preprocessor.steps]
     assert loaded.steps[0].get_config() == preprocessor.steps[0].get_config()
     assert loaded.steps[1].get_config() == preprocessor.steps[1].get_config()
+
+
+class _LocalQwenAutoProcessor:
+    def __init__(self) -> None:
+        from transformers import Qwen2VLImageProcessor
+
+        # Matches the published SOLE-R1/Qwen3-VL processor configuration.
+        self.image_processor = Qwen2VLImageProcessor(
+            size={
+                "shortest_edge": 65536,
+                "longest_edge": 16777216,
+            },
+            patch_size=16,
+            temporal_patch_size=2,
+            merge_size=2,
+            image_mean=[0.5, 0.5, 0.5],
+            image_std=[0.5, 0.5, 0.5],
+        )
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        *args: Any,
+        **kwargs: Any,
+    ) -> _LocalQwenAutoProcessor:
+        return cls()
+
+
+@skip_if_package_missing("transformers")
+@skip_if_package_missing("qwen-vl-utils", import_name="qwen_vl_utils")
+@pytest.mark.parametrize(
+    ("external_key", "wrist_key", "expected_grid"),
+    [
+        (EXTERNAL_KEY, None, [1, 24, 74]),
+        (None, WRIST_KEY, [1, 24, 74]),
+        (EXTERNAL_KEY, WRIST_KEY, [1, 48, 74]),
+    ],
+)
+def test_real_qwen_image_grid_matches_public_preprocessing(
+    monkeypatch: pytest.MonkeyPatch,
+    external_key: str | None,
+    wrist_key: str | None,
+    expected_grid: list[int],
+) -> None:
+    from lerobot.rewards.soler1 import processor_soler1
+
+    monkeypatch.setattr(
+        processor_soler1,
+        "AutoProcessor",
+        _LocalQwenAutoProcessor,
+    )
+
+    external = _video(timesteps=1) if external_key is not None else None
+    wrist = _video(timesteps=1, offset=20) if wrist_key is not None else None
+
+    composite_step = SOLER1CompositeProcessorStep(
+        external_image_key=external_key,
+        wrist_image_key=wrist_key,
+    )
+    encoder_step = SOLER1ImageEncoderProcessorStep(model_name="local-test-processor")
+
+    output = encoder_step(composite_step(_transition(external=external, wrist=wrist)))
+    observation = output[TransitionKey.OBSERVATION]
+
+    assert observation[SOLER1_IMAGE_GRID_THW_KEY].shape == (1, 1, 3)
+    assert observation[SOLER1_IMAGE_GRID_THW_KEY][0, 0].tolist() == expected_grid
