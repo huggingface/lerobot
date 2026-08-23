@@ -139,6 +139,27 @@ def test_curate_cameras_canonicalizes_combo_order():
     assert verdicts["observation.images.b"].view_label == "right_side"
 
 
+def test_curate_cameras_joint_labeling_second_pass():
+    # Pass 1 (per-camera) gives non-colliding but wrong labels; the joint second
+    # pass re-decides both by comparison. Quality stays from pass 1.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, joint_labeling=True)
+    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "blur_reason": None, "view_label": "front"},  # cam a (pass 1)
+            {"usable": False, "blur_reason": "out of focus", "view_label": "wrist"},  # cam b (pass 1)
+            {"cameras": [{"view_label": "top"}, {"view_label": "left_side"}]},  # joint pass 2
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    # labels overwritten by the joint pass
+    assert verdicts["observation.images.a"].view_label == "top"
+    assert verdicts["observation.images.b"].view_label == "left_side"
+    # quality untouched by the joint (labels-only) pass
+    assert verdicts["observation.images.b"].usable is False
+    assert verdicts["observation.images.b"].blur_reason == "out of focus"
+
+
 def test_curate_cameras_relabels_on_conflict():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)  # relabel_on_conflict defaults True
     frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}

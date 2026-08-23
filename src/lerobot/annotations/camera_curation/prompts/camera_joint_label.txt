@@ -1,0 +1,35 @@
+These {n} camera views all come from the SAME robot-manipulation episode, shown
+together and numbered "Camera 1", "Camera 2", ... in order. Compare them against
+each other and give EACH one a view label from this closed vocabulary:
+
+  {vocabulary}
+
+  - front  : faces the robot head-on from its working side — the gripper and the
+             manipulated objects face you, and the arm looks foreshortened
+             (pointing toward / away, not spread across the frame).
+  - rear   : behind the robot — motor backs, mounting and cabling are prominent
+             and the arm reaches away from you.
+  - side   : the arm seen in PROFILE, its links spanning left-to-right across the
+             frame — qualify with the side it is on: "left_side" / "right_side".
+  - top    : above the workspace looking straight DOWN onto it (overhead).
+  - bottom : below the workspace looking up.
+  - wrist  : mounted on the arm/gripper and moving with it (the gripper and object
+             are close up) — qualify "left_wrist" / "right_wrist" when there are two.
+
+Camera mounts may be TILTED or ROTATED; judge each view from the robot's and the
+work surface's orientation, mentally leveling the image — not from the frame
+edges. The cameras of one setup almost always point from DIFFERENT places, so use
+the side-by-side comparison to give each a DISTINCT label; only repeat a label if
+two cameras genuinely share the same viewpoint.
+
+{combo_rule}Put the direction first in a combo ("left_side", "right_wrist"). Use
+"left"/"right" only as such a qualifier. Do not invent words outside the vocabulary.
+
+Output strictly valid JSON, no prose, no code fences: one entry per camera IN THE
+SAME ORDER as the numbered groups above.
+
+  {{
+    "cameras": [
+      {{"view_label": "<one label from the vocabulary>"}}
+    ]
+  }}

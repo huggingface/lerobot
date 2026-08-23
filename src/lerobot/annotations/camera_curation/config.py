@@ -97,6 +97,14 @@ class CameraCurationConfig:
     # collisions then resolve by confidence only.
     ignore_key_names: bool = False
 
+    # Second labeling pass: after the per-camera pass, show ALL of a dataset's
+    # cameras together in one call and re-decide each label by comparing them
+    # (better at telling top/side/front apart than judging cameras in isolation).
+    # Labels-only — quality stays from the per-camera pass, so no cross-camera
+    # leak. When on, it supersedes relabel_on_conflict (which is the narrower
+    # colliding-cameras-only version).
+    joint_labeling: bool = False
+
     # When two cameras of a dataset get the same view label, run a second joint
     # VLM pass over just those cameras (all shown together) asking for DISTINCT
     # labels, before falling back to on_collision. Labels-only, so it can't leak

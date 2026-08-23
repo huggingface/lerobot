@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_curation.txt"
 _RELABEL_PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_relabel.txt"
+_JOINT_LABEL_PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_joint_label.txt"
 
 # The canonical prefix every curated camera key gets.
 OBS_IMAGE_PREFIX = "observation.images."
@@ -66,6 +67,10 @@ def _load_prompt() -> str:
 
 def _load_relabel_prompt() -> str:
     return _RELABEL_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _load_joint_label_prompt() -> str:
+    return _JOINT_LABEL_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: bool) -> bool:
@@ -146,9 +151,11 @@ def curate_cameras(
     """Judge each camera's quality + view label from a few sampled frames.
 
     ``frames_by_camera`` maps a camera key to a list of decoded frames (torch
-    tensors or PIL images). One batched ``generate_json`` call is issued across
-    all cameras. Cameras with no frames are still reported (usable, unlabeled)
-    so the caller sees the full camera set.
+    tensors or PIL images). Pass 1 judges each camera on its own (quality + an
+    initial label). Then, with ``cfg.joint_labeling``, a second labels-only pass
+    shows all cameras together and re-decides each label by comparison; otherwise
+    ``cfg.relabel_on_conflict`` only re-labels cameras that collided. Quality is
+    always the per-camera verdict. Cameras with no frames are reported unlabeled.
     """
     ordered_keys = list(frames_by_camera)
     callable_keys = [k for k in ordered_keys if frames_by_camera[k]]
@@ -158,11 +165,18 @@ def curate_cameras(
     }
 
     if callable_keys:
+        # Pass 1: per-camera (quality + initial label).
         messages_batch = [_build_messages(frames_by_camera[k], cfg) for k in callable_keys]
         results = vlm.generate_json(messages_batch)
         for key, result in zip(callable_keys, results, strict=True):
             verdicts[key] = _parse_verdict(key, result, cfg)
-        if cfg.relabel_on_conflict:
+        # Pass 2: joint labeling (labels only; quality untouched).
+        if cfg.joint_labeling and len(callable_keys) >= 2:
+            relabeled = _joint_relabel(frames_by_camera, callable_keys, None, cfg, vlm)
+            for key, new_label in relabeled.items():
+                if new_label:
+                    verdicts[key].view_label = new_label
+        elif cfg.relabel_on_conflict:
             _relabel_conflicts(verdicts, frames_by_camera, callable_keys, cfg, vlm)
 
     return [verdicts[k] for k in ordered_keys]
@@ -203,21 +217,30 @@ def _relabel_conflicts(
 def _joint_relabel(
     frames_by_camera: dict[str, list[Any]],
     camera_keys: list[str],
-    current_label: str,
+    current_label: str | None,
     cfg: CameraCurationConfig,
     vlm: Any,
 ) -> dict[str, str]:
-    """Show the colliding cameras together and ask for one DISTINCT label each.
+    """Show several cameras together and ask for one label each.
 
-    Returns ``{camera_key: view_label}`` for the entries that came back valid
-    (canonicalized); cameras missing/invalid in the response are left out.
+    ``current_label`` set → the colliding-cameras prompt (all were labeled the
+    same); ``None`` → the general joint-labeling prompt (relabel every camera by
+    comparison). Returns ``{camera_key: view_label}`` for entries that came back
+    valid (canonicalized); missing/invalid ones are left out.
     """
-    prompt = _load_relabel_prompt().format(
-        n=len(camera_keys),
-        current_label=current_label,
-        vocabulary=", ".join(cfg.view_vocabulary),
-        combo_rule=_combo_rule(cfg),
-    )
+    if current_label is None:
+        prompt = _load_joint_label_prompt().format(
+            n=len(camera_keys),
+            vocabulary=", ".join(cfg.view_vocabulary),
+            combo_rule=_combo_rule(cfg),
+        )
+    else:
+        prompt = _load_relabel_prompt().format(
+            n=len(camera_keys),
+            current_label=current_label,
+            vocabulary=", ".join(cfg.view_vocabulary),
+            combo_rule=_combo_rule(cfg),
+        )
     content: list[dict[str, Any]] = []
     for i, key in enumerate(camera_keys, 1):
         content.append({"type": "text", "text": f'Camera {i} ("{key}"):'})
