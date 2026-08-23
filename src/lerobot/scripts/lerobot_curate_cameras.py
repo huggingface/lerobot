@@ -383,18 +383,67 @@ def _collection_report_path(cfg: CameraCurationConfig) -> Path:
     return Path(cfg.report_path) if cfg.report_path is not None else Path(_COLLECTION_REPORT_NAME)
 
 
-def _load_completed_subdatasets(report_path: Path) -> dict[str, Any]:
-    """Load already-completed sub-datasets (entries without an ``error``) from a
-    prior report/progress file, so ``--resume`` can skip them and retry failures."""
+# Aggregate sets tracked across a nested sweep; each becomes a sorted list in the
+# summary report. ``failed`` maps subpath -> error (kept for retry + visibility).
+_AGG_SET_KEYS = (
+    "completed",
+    "renamed",
+    "with_unusable",
+    "with_name_collision",
+    "conflicts",
+    "rename_skipped",
+)
+
+
+def _empty_aggregate() -> dict[str, Any]:
+    agg: dict[str, Any] = {k: set() for k in _AGG_SET_KEYS}
+    agg["failed"] = {}
+    return agg
+
+
+def _seed_aggregate_from_report(agg: dict[str, Any], report_path: Path) -> None:
+    """Seed the aggregate from a prior summary file so ``--resume`` can continue.
+
+    Reads only the summary lists (``completed``/``renamed``/…) and ``failed`` — the
+    file carries no per-dataset detail. Best-effort: a missing/corrupt file just
+    means a fresh start.
+    """
     if not report_path.exists():
-        return {}
+        return
     try:
         prior = json.loads(report_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("resume: could not read %s (%s); starting fresh", report_path, exc)
-        return {}
-    subdatasets = prior.get("subdatasets", {}) if isinstance(prior, dict) else {}
-    return {sp: e for sp, e in subdatasets.items() if not (isinstance(e, dict) and "error" in e)}
+        return
+    if not isinstance(prior, dict):
+        return
+    for key in _AGG_SET_KEYS:
+        vals = prior.get(key)
+        if isinstance(vals, list):
+            agg[key].update(vals)
+    failed = prior.get("failed")
+    if isinstance(failed, dict):
+        agg["failed"].update(failed)
+
+
+def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) -> None:
+    """Fold one sub-dataset's result into the aggregate (no per-dataset detail kept)."""
+    if isinstance(entry, dict) and "error" in entry:
+        agg["failed"][subpath] = entry["error"]  # not marked completed -> retried on resume
+        return
+    agg["failed"].pop(subpath, None)  # a previously-failed dataset that now succeeded
+    agg["completed"].add(subpath)
+    cameras = (entry.get("cameras") or {}) if isinstance(entry, dict) else {}
+    if any((cam or {}).get("proposed_new_key") for cam in cameras.values()):
+        agg["renamed"].add(subpath)
+    if entry.get("has_unusable"):
+        agg["with_unusable"].add(subpath)
+    if entry.get("has_name_collision"):
+        agg["with_name_collision"].add(subpath)
+    if entry.get("collisions"):
+        agg["conflicts"].add(subpath)
+    if entry.get("rename_error"):
+        agg["rename_skipped"].add(subpath)
 
 
 def _fetch_progress_from_hub(cfg: CameraCurationConfig, report_path: Path) -> bool:
@@ -443,51 +492,32 @@ def _persist_progress_to_hub(cfg: CameraCurationConfig, report_path: Path, lock:
         logger.warning("progress: failed to upload checkpoint to the Hub (%s)", exc)
 
 
-def _build_collection_report(
-    cfg: CameraCurationConfig, all_subpaths: list[str], collection: dict[str, Any]
+def _summary_report(
+    cfg: CameraCurationConfig, all_subpaths: list[str], agg: dict[str, Any]
 ) -> dict[str, Any]:
-    """Assemble the aggregated nested report (also written incrementally as progress)."""
-    failed = {sp: e["error"] for sp, e in collection.items() if isinstance(e, dict) and "error" in e}
-    rename_skipped = {
-        sp: e["rename_error"] for sp, e in collection.items() if isinstance(e, dict) and "rename_error" in e
-    }
-    conflicts = {
-        sp: e["collisions"] for sp, e in collection.items() if isinstance(e, dict) and "collisions" in e
-    }
-    # Sub-datasets whose keys were actually renamed (some camera got a new key).
-    renamed = sorted(
-        sp
-        for sp, e in collection.items()
-        if isinstance(e, dict)
-        and "error" not in e
-        and any((cam or {}).get("proposed_new_key") for cam in (e.get("cameras") or {}).values())
-    )
-    # Per-dataset flags surfaced by build_report: an unusable view, or a name
-    # collision that was disambiguated with a numeric suffix.
-    with_unusable = sorted(
-        sp for sp, e in collection.items() if isinstance(e, dict) and e.get("has_unusable")
-    )
-    with_name_collision = sorted(
-        sp for sp, e in collection.items() if isinstance(e, dict) and e.get("has_name_collision")
-    )
+    """Assemble the aggregated nested summary — counts plus lists of sub-datasets by
+    outcome, no per-dataset detail (that lives in each dataset's own meta/info.json).
+
+    The ``completed`` list is what ``--resume`` reads to skip finished sub-datasets.
+    """
     return {
         "repo_id": cfg.repo_id,
         "mode": cfg.mode,
         "n_total": len(all_subpaths),
-        "n_done": len(collection),
-        "n_failed": len(failed),
-        "n_rename_skipped": len(rename_skipped),
-        "n_conflicts": len(conflicts),
-        "n_renamed": len(renamed),
-        "n_with_unusable": len(with_unusable),
-        "n_with_name_collision": len(with_name_collision),
-        "renamed": renamed,
-        "with_unusable": with_unusable,
-        "with_name_collision": with_name_collision,
-        "failed": failed,
-        "rename_skipped": rename_skipped,
-        "conflicts": conflicts,
-        "subdatasets": collection,
+        "n_done": len(agg["completed"]),
+        "n_renamed": len(agg["renamed"]),
+        "n_failed": len(agg["failed"]),
+        "n_rename_skipped": len(agg["rename_skipped"]),
+        "n_conflicts": len(agg["conflicts"]),
+        "n_with_unusable": len(agg["with_unusable"]),
+        "n_with_name_collision": len(agg["with_name_collision"]),
+        "renamed": sorted(agg["renamed"]),
+        "with_unusable": sorted(agg["with_unusable"]),
+        "with_name_collision": sorted(agg["with_name_collision"]),
+        "conflicts": sorted(agg["conflicts"]),
+        "rename_skipped": sorted(agg["rename_skipped"]),
+        "failed": dict(sorted(agg["failed"].items())),
+        "completed": sorted(agg["completed"]),
     }
 
 
@@ -512,30 +542,30 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
     total = len(subpaths)
     commit_lock = threading.Lock()
 
-    collection: dict[str, Any] = {}
+    agg = _empty_aggregate()
     if cfg.resume:
         # On an ephemeral pod the local file is gone, so pull the checkpoint from
         # the Hub first when it is not on disk.
         if cfg.progress_to_hub and not report_path.exists():
             _fetch_progress_from_hub(cfg, report_path)
-        collection = _load_completed_subdatasets(report_path)
-        if collection:
+        _seed_aggregate_from_report(agg, report_path)
+        if agg["completed"]:
             logger.info(
                 "resume: %d/%d sub-dataset(s) already done in %s; processing the rest",
-                len(collection),
+                len(agg["completed"]),
                 total,
                 report_path,
             )
 
-    todo = [sp for sp in subpaths if sp not in collection]
+    todo = [sp for sp in subpaths if sp not in agg["completed"]]
 
     def _record(sp: str, entry: dict[str, Any]) -> None:
-        # Persist after every completion so a crashed/killed sweep can --resume.
-        collection[sp] = entry
+        # Fold into the aggregate and persist after every completion so a
+        # crashed/killed sweep can --resume. Only the summary is written — the
+        # per-camera detail already lives in each sub-dataset's meta/info.json.
+        _update_aggregate(agg, sp, entry)
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(_build_collection_report(cfg, subpaths, collection), indent=2), encoding="utf-8"
-        )
+        report_path.write_text(json.dumps(_summary_report(cfg, subpaths, agg), indent=2), encoding="utf-8")
         if cfg.progress_to_hub:
             _persist_progress_to_hub(cfg, report_path, commit_lock)
 
@@ -567,15 +597,16 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
     #  - failed: couldn't process the dataset at all (retried on the next --resume).
     #  - rename_skipped: whole-dataset rename skipped (on_collision="error").
     #  - conflicts: some cameras skipped for a label conflict but the rest renamed.
-    report = _build_collection_report(cfg, subpaths, collection)
+    report = _summary_report(cfg, subpaths, agg)
     logger.info(
-        "curate-cameras: %d ok, %d failed, %d whole-rename-skipped, %d with camera conflicts, "
-        "%d renamed (of %d)",
-        total - report["n_failed"] - report["n_rename_skipped"],
+        "curate-cameras: %d done, %d renamed, %d failed, %d whole-rename-skipped, "
+        "%d with camera conflicts, %d with unusable view (of %d)",
+        report["n_done"],
+        report["n_renamed"],
         report["n_failed"],
         report["n_rename_skipped"],
         report["n_conflicts"],
-        report["n_renamed"],
+        report["n_with_unusable"],
         total,
     )
     if report["failed"]:

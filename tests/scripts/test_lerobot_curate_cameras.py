@@ -25,11 +25,13 @@ from unittest.mock import MagicMock, patch  # noqa: E402
 
 from lerobot.annotations.camera_curation.config import CameraCurationConfig  # noqa: E402
 from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
-    _build_collection_report,
     _central_indices,
     _discover_subpaths,
-    _load_completed_subdatasets,
+    _empty_aggregate,
+    _seed_aggregate_from_report,
+    _summary_report,
     _to_uint8_frame,
+    _update_aggregate,
 )
 
 
@@ -88,58 +90,70 @@ def test_discover_subpaths_nested_and_single():
 import json  # noqa: E402
 
 
-def test_load_completed_subdatasets_skips_errors(tmp_path):
+def test_summary_report_tallies_no_per_dataset_detail():
+    cfg = CameraCurationConfig(repo_id="u/collection", mode="rename")
+    agg = _empty_aggregate()
+    _update_aggregate(agg, "u/ok", {"cameras": {"a": {"proposed_new_key": "observation.images.top"}}})
+    _update_aggregate(agg, "u/noop", {"cameras": {"a": {"proposed_new_key": None}}})
+    _update_aggregate(agg, "u/bad", {"error": "boom"})
+    _update_aggregate(
+        agg,
+        "u/flag",
+        {
+            "cameras": {"a": {"proposed_new_key": "observation.images.top_1"}},
+            "has_unusable": True,
+            "has_name_collision": True,
+        },
+    )
+    report = _summary_report(cfg, ["u/ok", "u/noop", "u/bad", "u/flag"], agg)
+    assert report["n_total"] == 4
+    assert report["n_done"] == 3  # ok, noop, flag (bad failed -> not done)
+    assert report["failed"] == {"u/bad": "boom"} and report["n_failed"] == 1
+    assert set(report["renamed"]) == {"u/ok", "u/flag"} and report["n_renamed"] == 2
+    assert report["with_unusable"] == ["u/flag"] and report["n_with_unusable"] == 1
+    assert report["with_name_collision"] == ["u/flag"] and report["n_with_name_collision"] == 1
+    assert set(report["completed"]) == {"u/ok", "u/noop", "u/flag"}  # resume source
+    assert "subdatasets" not in report  # summary only — no per-dataset detail
+
+
+def test_update_aggregate_retry_clears_failure():
+    # A dataset that failed then succeeds on retry moves out of failed into done.
+    agg = _empty_aggregate()
+    _update_aggregate(agg, "u/x", {"error": "boom"})
+    assert agg["failed"] == {"u/x": "boom"} and "u/x" not in agg["completed"]
+    _update_aggregate(agg, "u/x", {"cameras": {"a": {"proposed_new_key": "observation.images.top"}}})
+    assert agg["failed"] == {} and "u/x" in agg["completed"] and "u/x" in agg["renamed"]
+
+
+def test_seed_aggregate_from_report_roundtrip(tmp_path):
     report = tmp_path / "progress.json"
     report.write_text(
         json.dumps(
             {
-                "subdatasets": {
-                    "u/ok": {
-                        "cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top"}}
-                    },
-                    "u/clean": {"cameras": {}},
-                    "u/bad": {"error": "boom"},
-                }
+                "completed": ["u/a", "u/b"],
+                "renamed": ["u/a"],
+                "with_unusable": ["u/b"],
+                "failed": {"u/c": "boom"},
             }
         ),
         encoding="utf-8",
     )
-    done = _load_completed_subdatasets(report)
-    # completed = every entry without an "error" (bad one is retried on resume)
-    assert set(done) == {"u/ok", "u/clean"}
+    agg = _empty_aggregate()
+    _seed_aggregate_from_report(agg, report)
+    assert agg["completed"] == {"u/a", "u/b"}  # what --resume skips
+    assert agg["renamed"] == {"u/a"}
+    assert agg["with_unusable"] == {"u/b"}
+    assert agg["failed"] == {"u/c": "boom"}  # u/c retried (not in completed)
 
 
-def test_load_completed_subdatasets_missing_or_corrupt(tmp_path):
-    assert _load_completed_subdatasets(tmp_path / "nope.json") == {}
+def test_seed_aggregate_missing_or_corrupt(tmp_path):
+    agg = _empty_aggregate()
+    _seed_aggregate_from_report(agg, tmp_path / "nope.json")
+    assert agg["completed"] == set()
     corrupt = tmp_path / "corrupt.json"
     corrupt.write_text("{not json", encoding="utf-8")
-    assert _load_completed_subdatasets(corrupt) == {}
-
-
-def test_build_collection_report_tallies():
-    cfg = CameraCurationConfig(repo_id="u/collection", mode="rename")
-    collection = {
-        "u/ok": {"cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top"}}},
-        "u/noop": {"cameras": {"observation.images.top": {"proposed_new_key": None}}},
-        "u/bad": {"error": "boom"},
-        "u/conf": {"cameras": {}, "collisions": {"observation.images.x": "reason"}},
-        "u/flagged": {
-            "cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top_1"}},
-            "has_unusable": True,
-            "has_name_collision": True,
-        },
-    }
-    all_sp = ["u/ok", "u/noop", "u/bad", "u/conf", "u/flagged"]
-    report = _build_collection_report(cfg, all_sp, collection)
-    assert report["n_total"] == 5
-    assert report["n_done"] == 5
-    assert report["n_failed"] == 1 and report["failed"] == {"u/bad": "boom"}
-    assert report["n_conflicts"] == 1
-    assert set(report["renamed"]) == {"u/ok", "u/flagged"}  # both have a real proposed_new_key
-    assert report["n_renamed"] == 2
-    # per-dataset flags rolled up for the checkpoint
-    assert report["with_unusable"] == ["u/flagged"] and report["n_with_unusable"] == 1
-    assert report["with_name_collision"] == ["u/flagged"] and report["n_with_name_collision"] == 1
+    _seed_aggregate_from_report(agg, corrupt)
+    assert agg["completed"] == set()
 
 
 def test_persist_progress_to_hub_uploads(tmp_path):
