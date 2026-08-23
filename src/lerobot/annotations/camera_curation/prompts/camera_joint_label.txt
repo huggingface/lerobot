@@ -13,12 +13,17 @@ each other and give EACH one a view label from this closed vocabulary:
              frame — qualify with the side it is on: "left_side" / "right_side".
   - top    : above the workspace looking straight DOWN onto it (overhead).
   - bottom : below the workspace looking up.
-  - wrist  : mounted on the arm/gripper and moving with it (the gripper and object
-             are close up) — qualify "left_wrist" / "right_wrist" when there are two.
+  - wrist  : mounted ON the arm and moving WITH it, so its whole background SHIFTS
+             from frame to frame while the gripper stays roughly in place. A
+             close-up of the gripper is NOT enough: if a camera's background is
+             STABLE across its frames (only the arm/objects move), it is a FIXED
+             camera, not a wrist. Qualify "left_wrist" / "right_wrist" for two.
 
-Camera mounts may be TILTED or ROTATED; judge each view from the robot's and the
-work surface's orientation, mentally leveling the image — not from the frame
-edges. The cameras of one setup almost always point from DIFFERENT places, so use
+A wrist camera moves with the arm (its background changes across its frames);
+every other label is a FIXED camera whose background stays put while the arm
+moves through it. Camera mounts may be TILTED or ROTATED; judge each view from
+the robot's and the work surface's orientation, mentally leveling the image — not
+from the frame edges. The cameras of one setup almost always point from DIFFERENT places, so use
 the side-by-side comparison to give each a DISTINCT label; only repeat a label if
 two cameras genuinely share the same viewpoint.
 

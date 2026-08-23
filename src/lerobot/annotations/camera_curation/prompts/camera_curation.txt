@@ -61,14 +61,21 @@ Do two things and return them as one JSON object.
               "right_side".
    - top    : looking straight down on the workspace from above (overhead).
    - bottom : looking up at the workspace from below.
-   - wrist  : mounted on the arm/gripper and moving with it — you see the gripper
-              and the object close up and the viewpoint shifts as the arm moves;
-              qualify with the arm when there are two — "left_wrist" / "right_wrist".
+   - wrist  : mounted ON the arm and moving WITH it, so the whole background
+              SHIFTS from frame to frame while the gripper stays roughly in place.
+              A close-up of the gripper is NOT enough on its own: if the
+              background is STABLE across the frames (only the arm and objects
+              move through an otherwise fixed scene), it is a FIXED camera, NOT a
+              wrist. Qualify "left_wrist" / "right_wrist" when there are two.
 
-   Quick test for the front / rear / side confusion: if the arm's length runs
-   LEFT-TO-RIGHT across the frame, it is a SIDE view; if the arm mainly points
-   toward or away from you, it is FRONT (workspace facing you) or REAR (workspace
-   away from you, back of the robot facing you).
+   Decide in two steps. FIRST, wrist vs fixed: does the whole background move
+   between the frames (the viewpoint travels with the arm)? If yes → wrist. If the
+   background stays put while only the arm/objects move → it is a FIXED camera,
+   so choose from front/rear/side/top/bottom. THEN, for a fixed camera, resolve
+   front/rear/side: if the arm's length runs LEFT-TO-RIGHT across the frame it is
+   a SIDE view; if the arm mainly points toward or away from you it is FRONT
+   (workspace facing you) or REAR (back of the robot facing you); if it looks
+   straight down onto the workspace it is TOP.
 
    {combo_rule}When you combine a direction with a position, put the direction
    first ("left_side", "right_wrist"). Use "left"/"right" only as such a
