@@ -24,7 +24,7 @@ delay estimation, emission counts, guards) rather than anything about denoising 
 import logging
 import time
 from collections import deque
-from threading import Event, Timer
+from threading import Event, Thread, Timer
 
 import pytest
 import torch
@@ -167,6 +167,42 @@ def test_max_delay_never_exceeds_half_the_chunk():
     assert engine._max_delay == CHUNK_SIZE // 2  # noqa: SLF001
 
 
+def test_max_delay_is_capped_by_what_the_checkpoint_trained_on():
+    """A staircase checkpoint has only denoised ramps as deep as its trained delay, so the
+    runtime estimate must not go deeper however slow the action head turns out to be."""
+    policy = _FakePolicy()
+    policy.config.rtc_training_max_delay = 1
+
+    engine = _make_engine(policy=policy, max_delay=CHUNK_SIZE)
+    assert engine._max_delay == 1  # noqa: SLF001
+
+    # However long a call takes, the estimate stays inside the trained ramp.
+    assert estimate_pir2_delay(deque([5.0]), 1 / 50, engine._max_delay) == 1  # noqa: SLF001
+
+
+def test_a_generous_trained_delay_still_yields_to_the_schedule_limit():
+    """The two bounds compose: the ramp needs a clean front whatever the checkpoint allows."""
+    policy = _FakePolicy()
+    policy.config.rtc_training_max_delay = CHUNK_SIZE
+
+    engine = _make_engine(policy=policy)
+    assert engine._max_delay == CHUNK_SIZE // 2  # noqa: SLF001
+
+
+def test_engine_sets_up_the_inherited_query_channel():
+    """Regression: the constructor assigned ``_task`` directly instead of delegating to
+    ``InferenceEngine.__init__``, so the query and autosteer state it allocates never
+    existed. Nothing failed until the first control tick, when ``pump_query`` reached for
+    the lock and the rollout died with an AttributeError seconds after the robot connected.
+    """
+    engine = _make_engine()
+
+    assert engine.task == "do the thing"
+    assert not engine.has_pending_query
+    assert engine.autosteer_goal is None
+    assert engine.ask("what do you see?")
+
+
 # ---------------------------------------------------------------------------
 # Loop behavior
 # ---------------------------------------------------------------------------
@@ -230,6 +266,36 @@ def test_substeps_reuse_one_cached_prefix_instead_of_re_encoding():
     assert policy.prefix_encode_calls == 1
     assert len(policy.substep_delays) == 3
     assert all(prefix is engine._prefix for prefix in policy.seen_prefixes)  # noqa: SLF001
+
+
+def test_prefix_refresh_is_paced_so_the_expert_keeps_the_device():
+    """Regression: the backbone thread re-encoded in a tight loop.
+
+    Both threads share one accelerator, so an unpaced refresh took it for the whole episode and
+    the expert stepped at a few Hz against a 50 Hz control loop -- 93% of ticks had no action to
+    send and the robot held each one until the next arrived, which reads as a violent stutter.
+    """
+    policy = _FakePolicy()
+    engine = _make_engine(policy=policy, prefix_refresh_hz=20.0)
+    engine._obs_holder = {"obs": {}, "robot_type": "fake"}  # noqa: SLF001
+    engine.resume()
+
+    vlm = Thread(target=engine._vlm_loop, daemon=True)  # noqa: SLF001
+    vlm.start()
+    time.sleep(0.25)
+    engine._shutdown_event.set()  # noqa: SLF001
+    vlm.join(timeout=2.0)
+
+    # 20 Hz over ~0.25 s is ~5 encodes. The bound is what matters: an unpaced loop against a
+    # no-op backbone runs thousands of times in the same window.
+    assert 1 <= policy.prefix_encode_calls <= 12
+
+
+def test_prefix_refresh_rate_defaults_to_the_staleness_budget():
+    engine = _make_engine()
+
+    # Two refreshes per chunk-long budget: comfortably fresh, without monopolising the device.
+    assert engine._prefix_refresh_period_s == pytest.approx(CHUNK_SIZE / (2 * 30.0))  # noqa: SLF001
 
 
 def test_denoise_loop_waits_for_the_first_cache():

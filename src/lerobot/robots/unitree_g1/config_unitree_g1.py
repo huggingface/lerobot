@@ -84,3 +84,11 @@ class UnitreeG1Config(RobotConfig):
     # Add left/right gripper commands to the action space, forwarded to the bridge's CAN
     # hands. Requires run_g1_server.py --grippers on the robot.
     grippers: bool = False
+
+    # Report the robot's own proprioception -- 29 joint angles, plus gripper closedness when
+    # `grippers` is set -- instead of letting the controller's `observation_ft` replace it.
+    # A token-space controller normally echoes its last decoded token as the state, which is
+    # what a policy trained on its own token history wants. A policy trained on joint angles
+    # while a token controller drove the body needs the opposite, and the two are
+    # indistinguishable from the controller name alone, so it has to be declared.
+    raw_proprio: bool = False

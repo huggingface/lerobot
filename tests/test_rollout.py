@@ -391,6 +391,34 @@ def test_ring_buffer_tensor_bytes():
 # ---------------------------------------------------------------------------
 
 
+def test_policy_facing_features_keep_every_state_convention():
+    """Regression: the filter admitted only ``.pos``/``.vel``, so the G1's ``.q`` joints were
+    dropped and ``observation.state`` arrived as the 2 grippers against a 31-dim normalizer."""
+    from lerobot.rollout.context import select_policy_facing_features
+
+    features = select_policy_facing_features(
+        {
+            "kLeftHipPitch.q": float,
+            "kLeftHipRoll.q": float,
+            "left_gripper.pos": float,
+            "x.vel": float,
+            "ego_view": (480, 640, 3),
+            # Channels a robot publishes but the policy was never trained on.
+            "kLeftHipPitch.dq": float,
+            "kLeftHipPitch.tau": float,
+            "wireless_remote": bytes,
+        }
+    )
+
+    assert list(features) == [
+        "kLeftHipPitch.q",
+        "kLeftHipRoll.q",
+        "left_gripper.pos",
+        "x.vel",
+        "ego_view",
+    ]
+
+
 def test_thread_safe_robot_delegates():
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
     from tests.mocks.mock_robot import MockRobot, MockRobotConfig

@@ -22,8 +22,9 @@ denoising step on it, hands the finished front to the robot, slides the buffer f
 appends fresh noise at the back -- so the schedule reproduces itself and the robot is fed
 continuously without ever waiting for a full chunk.
 
-The vision-language prefix runs on its own thread as fast as the backbone allows, and each
-denoising step conditions on whichever cache is newest. On pi0.5 that prefix carries joint state
+The vision-language prefix runs on its own thread, paced so the expert keeps the accelerator
+it needs to hit the control rate, and each denoising step conditions on whichever cache is
+newest. On pi0.5 that prefix carries joint state
 too, since proprioception is discretized into the tokenized prompt; the clamped clean front of
 the buffer is what keeps the expert anchored to where the robot actually is. That covers
 configuration but not the gap between commanded and actual position, so this engine will not
@@ -34,6 +35,7 @@ react to an external disturbance the way a dedicated proprioception channel woul
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
 from threading import Event, Lock, Thread
@@ -52,6 +54,12 @@ from .base import InferenceEngine
 logger = logging.getLogger(__name__)
 
 _IDLE_SLEEP_S = 0.001
+_THROUGHPUT_LOG_INTERVAL_S = 5.0
+# Refreshes per staleness budget. The prefix is worth rebuilding well before it goes stale,
+# but rebuilding it as fast as the backbone allows only starves the expert it steers. Two is
+# what a measured pi0.5 fits: at 50 Hz the expert claims ~60% of the device, and one refresh
+# per half-budget spends about three quarters of the rest.
+_PREFIX_REFRESHES_PER_BUDGET = 2
 _JOIN_TIMEOUT_S = 5.0
 _MAX_CONSECUTIVE_ERRORS = 3
 # Floor for the finished-action cushion, so a d=1 schedule still absorbs one slow call.
@@ -86,6 +94,7 @@ class PiR2InferenceEngine(InferenceEngine):
         device: str | None,
         latency_window: int = 20,
         max_delay: int | None = None,
+        prefix_refresh_hz: float | None = None,
         shutdown_event: Event | None = None,
     ) -> None:
         required_methods = (
@@ -108,24 +117,50 @@ class PiR2InferenceEngine(InferenceEngine):
                 "checkpoint has never seen a ramped noise schedule and will not denoise it."
             )
 
+        super().__init__(task=task)
+
         self._policy = policy
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._robot = robot_wrapper
         self._hw_features = hw_features
-        self._task = task
         self._fps = fps
         self._device = device or "cpu"
 
         chunk_size = int(policy.config.chunk_size)
         # 2 * d <= H is what keeps a non-empty ramp between the clean front and the noise tail.
-        self._max_delay = min(max_delay or chunk_size // 2, chunk_size // 2)
+        schedule_limit = chunk_size // 2
+        # A staircase checkpoint has only ever denoised ramps as deep as the delay it trained
+        # with, so a runtime estimate above that hands it a shape it has never seen -- actions
+        # that stay plausible while the body they drive does not. RTC refuses to start on the
+        # same mismatch; bound it here rather than let measured latency pick the depth.
+        self._trained_max_delay = int(getattr(policy.config, "rtc_training_max_delay", 0))
+        if self._trained_max_delay > 0:
+            schedule_limit = min(schedule_limit, self._trained_max_delay)
+        self._max_delay = min(max_delay or schedule_limit, schedule_limit)
         self._latencies: deque[float] = deque(maxlen=latency_window)
+
+        # Both threads want the same GPU, so the expert's step time says nothing on its own:
+        # what matters is how it compares to the prefix encode it is queued behind. Tracked
+        # together so a starving control loop can be read off one line.
+        self._prefix_latencies: deque[float] = deque(maxlen=latency_window)
+        self._emitted_total = 0
+        self._last_throughput_log = 0.0
 
         # A prefix older than the chunk it is steering is worth surfacing: the clean front can
         # only anchor the expert for so long before the plan behind it is answering a dead question.
         self._stale_prefix_steps = chunk_size
         self._last_stale_warning = 0.0
+
+        # Both threads share one accelerator, so "as fast as the backbone allows" is not free:
+        # every prefix encode is time the expert is not stepping, and the expert has to hit the
+        # control rate while the prefix only has to stay inside the staleness budget above.
+        # Left unpaced on a device where the backbone is slow, the expert never gets the device
+        # and the control loop starves -- the robot holding each action until the next arrives.
+        if prefix_refresh_hz is not None and prefix_refresh_hz > 0:
+            self._prefix_refresh_period_s = 1.0 / prefix_refresh_hz
+        else:
+            self._prefix_refresh_period_s = chunk_size / (_PREFIX_REFRESHES_PER_BUDGET * fps)
 
         self._buffer: torch.Tensor | None = None
         self._prefix: Any = None
@@ -168,7 +203,12 @@ class PiR2InferenceEngine(InferenceEngine):
         self._thread.start()
         self._vlm_thread = Thread(target=self._vlm_loop, daemon=True, name="PiR2VLM")
         self._vlm_thread.start()
-        logger.info("piR2 inference started (max delay %d)", self._max_delay)
+        bound = (
+            f"checkpoint rtc_training_max_delay={self._trained_max_delay}"
+            if self._trained_max_delay > 0 and self._max_delay == self._trained_max_delay
+            else "schedule limit chunk_size // 2"
+        )
+        logger.info("piR2 inference started (max delay %d, bounded by %s)", self._max_delay, bound)
 
     def stop(self) -> None:
         """Signal the background threads to stop and wait for them."""
@@ -232,7 +272,7 @@ class PiR2InferenceEngine(InferenceEngine):
         """Turn a raw observation into a policy batch (normalize, tokenize, move to device)."""
         obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
         obs_batch = prepare_observation_for_inference(
-            obs_batch, torch.device(self._device), self._task, self._robot.robot_type
+            obs_batch, torch.device(self._device), self.task, self._robot.robot_type
         )
         return self._preprocessor(obs_batch)
 
@@ -241,7 +281,8 @@ class PiR2InferenceEngine(InferenceEngine):
             return self._obs_holder.get("obs")
 
     def _vlm_loop(self) -> None:
-        """Refresh the vision-language cache as fast as the backbone allows, off the critical path."""
+        """Refresh the vision-language cache in the background, paced to leave the expert the device."""
+        last_encode_started = -math.inf
         try:
             while not self._shutdown_event.is_set():
                 if not self._policy_active.is_set():
@@ -255,7 +296,15 @@ class PiR2InferenceEngine(InferenceEngine):
                 # refresh below on purpose: this loop never blocks on its own, so a query
                 # queued behind it would otherwise never be picked up.
                 self._service_query(obs)
+                # Paced rather than skipped wholesale, and after the query above, so a question
+                # is still answered promptly while the device goes back to the expert.
+                started = time.perf_counter()
+                if started - last_encode_started < self._prefix_refresh_period_s:
+                    time.sleep(_IDLE_SLEEP_S)
+                    continue
+                last_encode_started = started
                 prefix = self._policy.encode_prefix(self._prepare_batch(obs))
+                self._prefix_latencies.append(time.perf_counter() - started)
                 with self._prefix_lock:
                     self._prefix = prefix
         except Exception:
@@ -321,6 +370,7 @@ class PiR2InferenceEngine(InferenceEngine):
                     self._publish(emitted)
 
                     self._latencies.append(time.perf_counter() - started)
+                    self._report_throughput()
                     consecutive_errors = 0
                 except Exception:
                     consecutive_errors += 1
@@ -334,9 +384,42 @@ class PiR2InferenceEngine(InferenceEngine):
             if self._global_shutdown_event is not None:
                 self._global_shutdown_event.set()
 
+    def _report_throughput(self) -> None:
+        """Log how the expert is keeping up, and what it is sharing the device with.
+
+        A control loop starves when the expert emits fewer actions per second than the
+        rollout's fps. The prefix time sits alongside it because the two threads contend for
+        one accelerator: an expert step far slower than it should be, next to a prefix encode
+        that never stops, is that contention rather than a slow expert.
+        """
+        now = time.perf_counter()
+        if now - self._last_throughput_log < _THROUGHPUT_LOG_INTERVAL_S:
+            return
+        elapsed = now - self._last_throughput_log
+        emitted_per_s = self._emitted_total / elapsed if self._last_throughput_log else float("nan")
+        self._last_throughput_log = now
+        self._emitted_total = 0
+
+        substep_ms = 1e3 * sum(self._latencies) / len(self._latencies) if self._latencies else float("nan")
+        prefix_ms = (
+            1e3 * sum(self._prefix_latencies) / len(self._prefix_latencies)
+            if self._prefix_latencies
+            else float("nan")
+        )
+        logger.info(
+            "piR2 throughput: %.1f actions/s (control loop wants %.1f) · expert step %.1f ms · "
+            "prefix encode %.1f ms · %d pending",
+            emitted_per_s,
+            self._fps,
+            substep_ms,
+            prefix_ms,
+            self.pending_actions(),
+        )
+
     def _publish(self, emitted: torch.Tensor) -> None:
         """Post-process the finished actions and queue them for the control loop."""
         processed = self._postprocessor(emitted).squeeze(0)
         with self._emitted_lock:
             for step in range(processed.shape[0]):
                 self._emitted.append(processed[step])
+        self._emitted_total += processed.shape[0]

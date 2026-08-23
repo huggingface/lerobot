@@ -298,6 +298,38 @@ class TestObservationFeatures:
         features = factory(controller=LocomotionOnlyController()).observation_features
         assert set(features) == {f"{joint.name}.q" for joint in G1_29_JointIndex}
 
+    def test_raw_proprio_takes_the_state_back(self, make_robot):
+        """A policy trained on joint angles while a token controller drove the body wants the
+        robot's own proprio, hands included -- the opposite of the echo above, and not
+        deducible from the controller name."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController(), raw_proprio=True, grippers=True)
+
+        assert list(robot.observation_features) == [
+            *(f"{joint.name}.q" for joint in G1_29_JointIndex),
+            "left_gripper.pos",
+            "right_gripper.pos",
+        ]
+
+    def test_gripper_state_latches_the_last_command(self, make_robot):
+        """The CAN hands report no position, and the recordings never had one: their gripper
+        state is the previous command verbatim."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController(), raw_proprio=True, grippers=True)
+
+        assert robot._gripper_obs == {"left_gripper.pos": 0.0, "right_gripper.pos": 0.0}
+
+        robot._record_gripper_obs({"left_gripper.pos": 1.0, "right_gripper.pos": 0.25})
+        assert robot._gripper_obs["left_gripper.pos"] == 1.0
+        assert robot._gripper_obs["right_gripper.pos"] == 0.25
+
+        # A token-only action leaves the hands holding their last command.
+        robot._record_gripper_obs({"motion_token.0.pos": 0.5})
+        assert robot._gripper_obs["left_gripper.pos"] == 1.0
+
+        robot._record_gripper_obs({"left_gripper.pos": 1.7})
+        assert robot._gripper_obs["left_gripper.pos"] == 1.0
+
     def test_cameras_are_added_alongside_state(self, make_robot):
         factory, _ = make_robot
         robot = factory(controller=TokenController(), cameras={"ego_view": make_camera_config()})

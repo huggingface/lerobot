@@ -82,8 +82,13 @@ class PiR2InferenceConfig(InferenceEngineConfig):
 
     # Rolling window of action-head call latencies used to derive the per-call delay.
     latency_window: int = 20
-    # Upper bound on that delay. ``None`` uses the largest the schedule allows (chunk_size // 2).
+    # Upper bound on that delay. ``None`` uses the largest the schedule allows (chunk_size // 2),
+    # further bounded by the checkpoint's own ``rtc_training_max_delay`` when it declares one.
     max_delay: int | None = None
+    # How often the background thread rebuilds the vision-language prefix. ``None`` derives a
+    # rate from the staleness budget. Lower it when the backbone is slow enough that refreshing
+    # starves the action expert of the accelerator, which shows up as a starved control loop.
+    prefix_refresh_hz: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +154,7 @@ def create_inference_engine(
             device=device,
             latency_window=config.latency_window,
             max_delay=config.max_delay,
+            prefix_refresh_hz=config.prefix_refresh_hz,
             shutdown_event=shutdown_event,
         )
     raise ValueError(f"Unknown inference engine type: {type(config).__name__}")

@@ -247,6 +247,10 @@ class UnitreeG1(Robot):
         # on a CAN bus the bridge owns, not on the G1's 29 motors.
         self._gripper_sock = None
         self._gripper_last: dict[str, float] = {}
+        # Last commanded closedness per hand, echoed back as observation under `raw_proprio`.
+        # The CAN hands report no position, and the teleop recordings never had one either:
+        # their gripper "state" is the previous command verbatim, so this reproduces it.
+        self._gripper_obs: dict[str, float] = {"left_gripper.pos": 0.0, "right_gripper.pos": 0.0}
         self._gripper_drops = 0
         self._gripper_drop_logged = 0.0
         self._hand_cmd_pubs: dict[str, object] = {}
@@ -353,7 +357,10 @@ class UnitreeG1(Robot):
     def observation_features(self) -> dict[str, type | tuple]:
         # A controller advertising its own proprio state (SONIC's 64-D token echo) replaces the
         # raw joint positions rather than extending them, the way action_features hands the
-        # action space over to the controller.
+        # action space over to the controller. `raw_proprio` opts back out of that handover.
+        if self.config.raw_proprio:
+            return {**self._motors_ft, **self._grippers_ft, **self._cameras_ft}
+
         controller_ft = _controller_schema(self.controller, self.config.controller, "observation_ft")
         proprio_ft = self._motors_ft if controller_ft is None else dict(controller_ft)
         return {**proprio_ft, **self._cameras_ft}
@@ -539,6 +546,10 @@ class UnitreeG1(Robot):
     def _get_observation_client(self) -> RobotObservation:
         self._recv_client_state()
         obs: dict = dict(self._client_state_latest)
+        # The robot forwards every scalar it has, but the hands are on the bridge's CAN bus
+        # and report nothing, so their state is ours to supply.
+        if self.config.grippers:
+            obs.update(self._gripper_obs)
         for cam_name, cam in self._cameras.items():
             if getattr(cam, "use_rgb", True):
                 obs[cam_name] = cam.read_latest()
@@ -814,6 +825,9 @@ class UnitreeG1(Robot):
         if self.controller is not None and hasattr(self.controller, "observation_state"):
             obs.update(self.controller.observation_state())
 
+        if self.config.grippers:
+            obs.update(self._gripper_obs)
+
         # Cameras - read images from ZMQ cameras
         for cam_name, cam in self._cameras.items():
             if getattr(cam, "use_rgb", True):
@@ -868,6 +882,17 @@ class UnitreeG1(Robot):
             return
         self._gripper_last.update(cmd)
 
+    def _record_gripper_obs(self, action: RobotAction) -> None:
+        """Latch the commanded closedness so the next observation can report it.
+
+        Read before the following ``send_action``, this lands one tick behind the command,
+        which is the relation the recordings hold: state[t + 1] is action[t] exactly.
+        """
+        for key in self._gripper_obs:
+            value = action.get(key)
+            if value is not None:
+                self._gripper_obs[key] = min(1.0, max(0.0, float(value)))
+
     def _send_gripper_cmd_sim(self, action: RobotAction) -> None:
         """Drive the sim's Dex3 hands from the same closedness the real grippers get."""
         for side, key in (("left", "left_gripper.pos"), ("right", "right_gripper.pos")):
@@ -886,6 +911,7 @@ class UnitreeG1(Robot):
         # same side channel from either role -- the client talks to the bridge directly.
         if self.config.grippers:
             self._send_gripper_cmd(action)
+            self._record_gripper_obs(action)
 
         if self._client:
             return self._send_action_client(action)

@@ -159,6 +159,35 @@ def _resolve_action_key_order(
     return policy_action_names
 
 
+# The suffixes a robot may spell its scalar state features with. Robots use one convention
+# each -- `.pos` for the arms, `.vel` for a mobile base, `.q` on the Unitree G1, which
+# inherits it from the DDS joint naming -- so accepting all three is a no-op outside each.
+STATE_FEATURE_SUFFIXES = (".pos", ".vel", ".q")
+
+
+def select_policy_facing_features(
+    all_obs_features: dict[str, type | tuple],
+) -> dict[str, type | tuple]:
+    """Narrow a robot's observation features to the ones that become policy tensors.
+
+    Values are either a tuple (a camera's shape) or the ``float`` type itself, used as a
+    sentinel for a scalar feature -- see the ``dict[str, type | tuple]`` annotation on
+    ``Robot.observation_features``. Cameras are kept wholesale; scalars are kept by suffix,
+    which drops the velocity and torque channels a robot may also publish.
+
+    Getting this wrong is silent until the normalizer: whatever survives is concatenated
+    into ``observation.state``, and a checkpoint expecting more dimensions fails with a
+    bare size mismatch naming neither the robot nor the missing keys. It has bitten twice
+    -- LeKiwi's 3 base ``.vel`` keys against a 9-dim checkpoint, and all 29 of the G1's
+    ``.q`` joints against a 31-dim one, leaving just the two grippers.
+    """
+    return {
+        key: value
+        for key, value in all_obs_features.items()
+        if isinstance(value, tuple) or (value is float and key.endswith(STATE_FEATURE_SUFFIXES))
+    }
+
+
 def _align_state_feature_order(
     observation_features_hw: dict[str, type | tuple], policy_action_names: list[str] | None
 ) -> dict[str, type | tuple]:
@@ -410,19 +439,7 @@ def build_rollout_context(
     # action target; velocity and torque channels (when present) are kept in
     # the raw observation but excluded from the policy-facing tensors.
     all_obs_features = robot.observation_features
-    # ``observation_features`` values are either a tuple (camera shape) or the
-    # ``float`` type itself used as a sentinel for scalar motor features —
-    # see ``dict[str, type | tuple]`` annotation on ``Robot.observation_features``.
-    # Keep cameras (tuple) plus both joint-position (.pos) and base-velocity (.vel)
-    # scalar state features. LeKiwi's observation.state is 9-dim (6 arm .pos +
-    # x/y/theta.vel) and the policy was trained/normalized on all 9; the old .pos-only
-    # filter fed a 6-dim state into a 9-dim normalizer → RuntimeError (size 6 vs 9).
-    # Pure-arm robots have no .vel state keys, so this is a no-op for them.
-    observation_features_hw = {
-        k: v
-        for k, v in all_obs_features.items()
-        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
-    }
+    observation_features_hw = select_policy_facing_features(all_obs_features)
     policy_action_names = getattr(policy_config, "action_feature_names", None)
     observation_features_hw = _align_state_feature_order(
         observation_features_hw,
