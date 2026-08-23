@@ -26,7 +26,7 @@ Usage::
     python -m examples.isaac_teleop_to_so101.override_reset_pose [--port /dev/ttyACM0] [--id so101_follower_arm]
 
     # 2. Launch teleop with the SAME --robot.id — it will now reset to this pose on startup
-    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm
 """
 
 import argparse

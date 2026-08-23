@@ -50,7 +50,6 @@ if TYPE_CHECKING or _isaacteleop_available:
     from isaacteleop.cloudxr import CloudXRLauncher
     from isaacteleop.retargeting_engine.interface import (
         ExecutionEvents,
-        ExecutionState,
         GraphExecutable,
         RetargeterIO,
     )
@@ -58,7 +57,6 @@ if TYPE_CHECKING or _isaacteleop_available:
 else:
     CloudXRLauncher = None
     ExecutionEvents = None
-    ExecutionState = None
     GraphExecutable = None
     RetargeterIO = None
     TeleopSession = None
@@ -67,7 +65,7 @@ else:
 logger = logging.getLogger(__name__)
 
 # Gripper closedness [0, 1] -> SO-101 follower motor units [0, 100] (RANGE_0_100, 100 = OPEN).
-# Shared by the XR processor and leader device, which invert via ``pos = (1 - c) * SCALE``.
+# The XR processor inverts via ``pos = (1 - c) * SCALE``.
 _GRIPPER_MOTOR_SCALE = 100.0
 
 
@@ -229,14 +227,6 @@ class IsaacTeleopTeleoperator(Teleoperator):
     # ------------------------------------------------------------------
     # Stepping (shared)
     # ------------------------------------------------------------------
-
-    def _running_events(self) -> ExecutionEvents:
-        """Constant ``RUNNING`` ``ExecutionEvents`` for a device with no clutch lifecycle.
-
-        Keeps the stream flowing; ``reset`` stays ``False``. A clutched device that needs
-        a real lifecycle should build its own ``ExecutionEvents`` instead.
-        """
-        return ExecutionEvents(execution_state=ExecutionState.RUNNING, reset=False)
 
     def _step(
         self,

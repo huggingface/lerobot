@@ -1,13 +1,9 @@
 # Isaac Teleop → SO-101
 
 Teleoperate an SO-101/SO-100 follower arm — and record LeRobot datasets — with NVIDIA
-[Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop). Two input devices ship today:
-
-- **XR (VR) controller** (`--teleop.type=xr_controller`) — the controller's grip pose drives the
-  end-effector through a squeeze-to-engage clutch and LeRobot's Cartesian IK pipeline; the analog
-  trigger drives the gripper.
-- **SO-101 leader arm** (`--teleop.type=so101_leader`) — a back-drivable leader arm mirrored 1:1
-  onto the follower via Isaac Teleop's native `so101_leader` plugin (no clutch, no IK).
+[Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop). The input device is an **XR (VR)
+controller**: its grip pose drives the end-effector through a squeeze-to-engage clutch and
+LeRobot's Cartesian IK pipeline, and the analog trigger drives the gripper.
 
 The full narrative guide (how the clutch works, CloudXR setup, headset pairing, tuning, and
 troubleshooting) is in the [LeRobot docs](https://huggingface.co/docs/lerobot/isaac_teleop)
@@ -20,11 +16,7 @@ reference.
   [system requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)
   for supported OS/GPU/headset combinations; `isaacteleop` publishes Linux wheels only).
 - An SO-101 (or SO-100) follower arm, calibrated with `lerobot-calibrate`.
-- For the XR device: a CloudXR-capable headset (e.g. Quest 3, Pico 4, Apple Vision Pro) on the
-  same network.
-- For the leader device: a second, back-drivable SO-101 leader arm and the `so101_leader` plugin
-  binary built from the Isaac Teleop source tree (see
-  [Build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)).
+- A CloudXR-capable headset (e.g. Quest 3, Pico 4, Apple Vision Pro) on the same network.
 
 ## Installation
 
@@ -62,14 +54,13 @@ python -m isaacteleop.cloudxr --accept-eula
 
 Run everything from the repo root with `python -m` so the `examples` package resolves.
 
-### Teleoperate — XR controller
+### Teleoperate
 
 ```bash
 python -m examples.isaac_teleop_to_so101.teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.id=so101_follower_arm \
-    --teleop.type=xr_controller
+    --robot.id=so101_follower_arm
 ```
 
 On startup the script launches the CloudXR runtime (~30 s), prints the workstation IP to enter in
@@ -89,19 +80,6 @@ python -m examples.isaac_teleop_to_so101.override_reset_pose --port /dev/ttyACM0
 which writes it to `HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`; runs with the same
 `--robot.id` use it automatically.
 
-### Teleoperate — SO-101 leader arm
-
-```bash
-python -m examples.isaac_teleop_to_so101.teleoperate \
-    --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm \
-    --teleop.type=so101_leader --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
-    --launch_plugin=/path/to/IsaacTeleop/install/plugins/so101_leader/so101_leader_plugin
-```
-
-The follower is first slewed to the leader's pose over `--align_duration` seconds
-(`--align=false` to skip), then mirrors it 1:1. The plugin reuses the serial leader's calibration
-(`HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<teleop.id>.json`).
-
 ### Record a dataset
 
 `record.py` takes the same `--robot.*`/`--teleop.*`/loop flags plus `lerobot-record`-style
@@ -110,18 +88,16 @@ The follower is first slewed to the leader's pose over `--align_duration` second
 ```bash
 python -m examples.isaac_teleop_to_so101.record \
     --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm \
-    --teleop.type=xr_controller \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
     --dataset.repo_id=<hf_user>/<dataset_name> \
     --dataset.single_task="Pick up the cube" \
     --dataset.num_episodes=3 --dataset.episode_time_s=20 --dataset.reset_time_s=5
 ```
 
-With the XR controller the clutch is the episode boundary: releasing the squeeze (after engaging it
-at least once) ends and saves the episode, then the arm slews back to its reset pose during the
-reset window and the clutch is re-homed there. One episode is one uninterrupted squeeze.
-`--reset_to_origin=false` disables the slew (startup, declutch and between episodes alike); the
-leader arm has no clutch, so its episodes still end on `--dataset.episode_time_s` or a key.
+The clutch is the episode boundary: releasing the squeeze (after engaging it at least once) ends
+and saves the episode, then the arm slews back to its reset pose during the reset window and the
+clutch is re-homed there. One episode is one uninterrupted squeeze. `--reset_to_origin=false`
+disables the slew (startup, declutch and between episodes alike).
 
 Keyboard shortcuts (terminal-first, so they work over SSH): **Right/n** end episode early,
 **Left/r** re-record, **Esc/q** stop after the current episode.
@@ -132,12 +108,11 @@ Run either script with `--help` for all flags.
 
 ```
 isaac_teleop/            device library: session lifecycle (base.py), XRController (with its
-                         in-pipeline clutch retargeter), SO101LeaderArm, configs, and the
-                         XR→IK processor step
-common.py                shared loop infra: device bundles, IK pipeline wiring,
-                         reset/align slews, URDF fetch, keyboard listener
-teleoperate.py           teleoperation CLI (device selected via --teleop.type)
-record.py                dataset-recording CLI (same device selection + --dataset.*)
+                         in-pipeline clutch retargeter), configs, and the XR→IK processor step
+common.py                shared loop infra: device bundle, IK pipeline wiring, reset slew,
+                         URDF fetch, keyboard listener
+teleoperate.py           teleoperation CLI
+record.py                dataset-recording CLI (same flags + --dataset.*)
 override_reset_pose.py   save the current joints as the per-arm reset pose
 default.env              CloudXR device-profile overrides passed to the launcher
 ```

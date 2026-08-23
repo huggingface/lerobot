@@ -69,7 +69,7 @@ else:
 # The engage-relative clutch retargeter landed in isaacteleop 1.5; the rest of this example works
 # against older releases. Resolve it tolerantly here and fail with an actionable message from
 # XRController's constructor (see _require_clutch_retargeter) -- a hard import error here would
-# also break the SO-101 leader-arm device, which never touches XR.
+# take down the whole isaac_teleop package import instead.
 SO101ClutchRetargeter = None
 _CLUTCH_IMPORT_ERROR: Exception | None = None
 if _isaacteleop_available:

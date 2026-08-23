@@ -9,10 +9,8 @@ In LeRobot, Isaac Teleop ships as a self-contained example under
 [`examples/isaac_teleop_to_so101/`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101).
 Each Isaac Teleop input device is its own `Teleoperator` subclass in the example's
 `isaac_teleop` package, sharing one session lifecycle (see `IsaacTeleopTeleoperator`). The
-devices available today are the **XR controller** (`XRController`) and a back-drivable
-**SO-101 leader arm** (`SO101LeaderArm`); Manus gloves and hand/full-body tracking are the
-natural next devices. This guide focuses on the XR controller; the SO-101 leader is summarized
-under [Run the example](#step-3-run-the-example).
+device available today is the **XR controller** (`XRController`); Manus gloves and
+hand/full-body tracking are the natural next devices.
 
 **In this guide you'll learn:**
 
@@ -37,8 +35,8 @@ uv pip install -e ".[isaac-teleop,feetech,dataset]" "huggingface_hub>=1.5"
 The `isaac-teleop` extra pulls `isaacteleop[cloudxr,retargeters-lite]~=1.5` together with
 `lerobot[kinematics]` (Placo IK) and `scipy`. The `cloudxr` extra brings the CloudXR runtime
 bindings. `retargeters-lite` is the scipy-only retargeter tier: the only Isaac retargeter this
-example runs is the SO-101 clutch inside `XRController` (the leader arm exposes its source node
-directly, and IK is LeRobot's Placo pipeline), so the full `retargeters` extra
+example runs is the SO-101 clutch inside `XRController` (IK is LeRobot's Placo pipeline), so the
+full `retargeters` extra
 (`dex-retargeting`, `nlopt`, `torch`) would add several packages nothing here imports. Install it
 alongside if you want the hand retargeters.
 
@@ -275,13 +273,12 @@ separate download step :
 
 ```bash
 python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
-    --robot.id=so101_follower_arm --teleop.type=xr_controller
+    --robot.id=so101_follower_arm
 ```
 
 The CLI is `lerobot-teleoperate`-style (draccus): `--robot.*` configures the SO-101 follower and
-`--teleop.type` selects the Isaac input device (`xr_controller` | `so101_leader`), with
-`--teleop.*` its device knobs. `--teleop.type=xr_controller` runs the XR-controller path described
-above. The startup safety contract: by default it slews all joints to a default reset pose over
+`--teleop.*` the XR controller (all knobs defaulted, so `--teleop.*` is optional). The startup
+safety contract: by default it slews all joints to a default reset pose over
 `--reset_duration` seconds (`--reset_to_origin=false` keeps the arm where it is), then seeds the
 clutch home from the arm's measured pose so the first engage is jump-free; the follower is
 commanded only while the clutch is engaged. The same slew runs again every time you release the
@@ -297,40 +294,6 @@ priority over the built-in default on the next run. Because it lives in the user
 the repo), your override stays on your machine, and both `teleoperate` and `record` honor it
 when launched with the same `--robot.id`.
 
-The other device, `--teleop.type=so101_leader`, mirrors the follower 1:1 from a back-drivable
-SO-101 _leader arm_ whose joints are streamed by Isaac Teleop's native `so101_leader` plugin (no
-clutch, no IK — the leader and follower share the SO-101 kinematics).
-
-The `so101_leader_plugin` binary is a C++ plugin that is **not** part of the `isaacteleop` pip
-package — you build it from the Isaac Teleop source tree. Follow
-[Build Isaac Teleop from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)
-(in short, from your Isaac Teleop checkout: `cmake -B build && cmake --build build --parallel &&
-cmake --install build`); the build installs the plugins under `<IsaacTeleop>/install/plugins/`, so
-the binary lands at `install/plugins/so101_leader/so101_leader_plugin` — the `--launch_plugin` path
-below. See the plugin's own `README.md` (next to the binary) for its serial/calibration details.
-
-Point `--teleop.port` at the physical leader's serial port and `--launch_plugin` at that plugin
-binary to have the script spawn it after CloudXR is up:
-
-```bash
-python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
-    --robot.id=so101_follower_arm --teleop.type=so101_leader \
-    --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
-    --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
-```
-
-(Note `so101_leader` here is the _Isaac_ leader, resolved against the Isaac Teleop device
-registry, distinct from `lerobot-teleoperate`'s serial `so101_leader`.) When a `--teleop.port` is
-set, the plugin's tick→radian calibration is inferred from `--teleop.id` and passed to the plugin
-as its third positional arg — the LeRobot-format JSON at
-`HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json`, the same file the serial SO-101 leader
-uses (`lerobot-calibrate --teleop.type=so101_leader --teleop.id=<id>`). If it is missing the script
-warns and the plugin uses built-in defaults. Run `python -m examples.isaac_teleop_to_so101.teleoperate --help` for all flags. Its
-startup safety contract: by default the follower is
-slewed to the leader's first reading over `--align_duration` seconds (`--align=false` to skip) so
-the arm does not snap when the mirror begins, and while the leader stream is stale the follower is
-held at its measured pose.
-
 The URDF fetch uses `huggingface_hub` (already a LeRobot dependency) against the public
 `lerobot/robot-urdfs` bucket, so it needs no login. It is cached under
 `HF_LEROBOT_HOME/robot-urdfs/so101/`; delete that folder to force a re‑download.
@@ -339,18 +302,17 @@ Then, in your headset: squeeze and hold the grip to engage, move the controller 
 arm, twist/tilt it to orient the wrist, and press the trigger to close the gripper
 (proportionally — release to open). Releasing the grip sends the arm back to its reset pose.
 
-To record a dataset (not just teleoperate), use `record.py` in the same folder. It dispatches on
-`--teleop.type` (`xr_controller` | `so101_leader`) exactly like `teleoperate.py`, so either device
-can drive the follower, and it saves the commanded joints to a LeRobot dataset (`lerobot-record`-style
-`--dataset.*` flags). See its module docstring for the full CLI and the keyboard recording shortcuts.
+To record a dataset (not just teleoperate), use `record.py` in the same folder. It takes the same
+`--robot.*`/`--teleop.*`/loop flags as `teleoperate.py` and saves the commanded joints to a LeRobot
+dataset (`lerobot-record`-style `--dataset.*` flags). See its module docstring for the full CLI and
+the keyboard recording shortcuts.
 
-**The clutch is the episode boundary.** On the XR path an episode ends the moment you release the
+**The clutch is the episode boundary.** An episode ends the moment you release the
 squeeze (having engaged it at least once), the episode is saved, and the arm slews back to its reset
 pose during the reset window — re-homing the clutch there behind the same readiness interlock
 startup uses. One episode is one uninterrupted squeeze. `teleoperate.py` runs the same
 slew on release without the recording half, so on both scripts every squeeze starts from the reset
-pose. `--reset_to_origin=false` disables the slew (startup, declutch and between episodes alike),
-and the leader arm, having no clutch, still ends episodes on `--dataset.episode_time_s` or a key.
+pose. `--reset_to_origin=false` disables the slew (startup, declutch and between episodes alike).
 
 ## Important pipeline steps and options
 
@@ -439,8 +401,7 @@ NVIDIA Isaac Teleop documentation ([docs home](https://nvidia.github.io/IsaacTel
   and [architecture overview](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html) —
   how source nodes and retargeters compose into a pipeline.
 - [Build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html) —
-  build `isaacteleop` (and its C++ plugins, including the `so101_leader` plugin used above) from a
-  local checkout.
+  build `isaacteleop` from a local checkout.
 - [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html) and
   the [CloudXR SDK docs](https://docs.nvidia.com/cloudxr-sdk) — supported platforms, GPUs,
   CloudXR/OpenXR runtime versions, and headsets.

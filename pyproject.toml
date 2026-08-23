@@ -213,7 +213,7 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486,<2.57.0 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
-# NVIDIA Isaac Teleop (XR / leader-arm teleoperation, see examples/isaac_teleop_to_so101/).
+# NVIDIA Isaac Teleop (XR teleoperation, see examples/isaac_teleop_to_so101/).
 # 1.5 is currently pre-release and its Linux wheels live on the NVIDIA index only (public PyPI
 # carries an sdist that does not build), so isaacteleop is pinned to the `nvidia` index below and
 # the specifier names a pre-release to opt this one package into pre-release resolution.

@@ -14,36 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleoperate an SO-101 follower arm via NVIDIA Isaac Teleop.
+"""Teleoperate an SO-101 follower arm from an NVIDIA Isaac Teleop XR (VR) controller.
 
-``lerobot-teleoperate``-style CLI (draccus): ``--teleop.type`` selects the Isaac device
-(``xr_controller`` | ``so101_leader``), ``--robot.*`` the follower::
+``lerobot-teleoperate``-style CLI (draccus): ``--robot.*`` configures the follower,
+``--teleop.*`` the XR controller::
 
-    # XR (VR) controller: clutch + soft-orientation IK
     python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower \
-        --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=xr_controller
+        --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm
 
-    # SO-101 leader arm: 1:1 joint mirror (real leader on /dev/ttyACM1)
-    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower \
-        --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm --teleop.type=so101_leader \
-        --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
-        --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
+The pipeline, clutch/IK internals, and reset-pose behavior live in ``common.py``.
 
-``--teleop.type`` resolves against the Isaac device registry (see :class:`IsaacTeleopConfig`),
-distinct from the serial ``so101_leader``. The pipelines, clutch/IK/align internals, and
-reset-pose behavior live in ``common.py``.
-
-On the XR path the clutch bounds a teleoperation segment: releasing the squeeze (having engaged
-it at least once) slews the arm back to its reset pose and re-homes the clutch there, so the
-next squeeze starts from a known pose. ``--reset_to_origin=false`` disables the slew (startup
-and every declutch alike). The leader arm has no clutch and is unaffected.
+The clutch bounds a teleoperation segment: releasing the squeeze (having engaged it at least
+once) slews the arm back to its reset pose and re-homes the clutch there, so the next squeeze
+starts from a known pose. ``--reset_to_origin=false`` disables the slew (startup and every
+declutch alike).
 
 Requires the ``isaacteleop`` package and an OpenXR runtime (install instructions in this
 folder's ``README.md``).
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
@@ -51,48 +42,34 @@ from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (register
 from lerobot.utils.robot_utils import precise_sleep
 
 from .common import (
-    ALIGN_DURATION_S,
     FPS,
     RESET_DURATION_S,
     DeclutchLatch,
     HoldLatch,
     build_device,
 )
-from .isaac_teleop import IsaacTeleopConfig
+from .isaac_teleop import XRControllerConfig
 
 
 @dataclass
 class TeleoperateConfig:
     """``lerobot-teleoperate``-style CLI for the Isaac Teleop -> SO-101 example.
 
-    The fields below are the loop/launch knobs (not part of either device's config); the
-    ``[xr]`` / ``[leader]`` tags mark which device a knob applies to. Use ``--flag=false``
-    for booleans (draccus style).
+    The fields below the configs are the loop knobs (not part of the device's config). Use
+    ``--flag=false`` for booleans (draccus style).
     """
 
-    # Isaac Teleop input device + its knobs (--teleop.type=xr_controller|so101_leader,
-    # then --teleop.<field>=...). Resolved against IsaacTeleopConfig's own choice registry.
-    teleop: IsaacTeleopConfig
     # SO-101 FOLLOWER arm (--robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=...).
     robot: RobotConfig
+    # XR controller knobs (--teleop.<field>=...); all defaulted, so --teleop.* is optional.
+    teleop: XRControllerConfig = field(default_factory=XRControllerConfig)
 
-    # [leader] Path to the so101_leader plugin binary to spawn AFTER CloudXR is up (it then
-    # inherits the runtime env). None (default) -> assume the plugin already runs externally.
-    # The leader's serial port is --teleop.port (forwarded to the plugin; empty -> synthetic).
-    launch_plugin: str | None = None
-
-    # [xr] Slew all joints to a default reset pose before the loop AND on every declutch
+    # Slew all joints to a default reset pose before the loop AND on every declutch
     # (--reset_to_origin=false to keep the arm where it is). After the slew the clutch seeds its
     # home from the measured pose.
     reset_to_origin: bool = True
-    # [xr] Duration [s] of the reset-to-origin slew.
+    # Duration [s] of the reset-to-origin slew.
     reset_duration: float = RESET_DURATION_S
-
-    # [leader] Slew the follower to the leader's first pose before mirroring (--align=false to
-    # begin the 1:1 mirror immediately; the follower may snap).
-    align: bool = True
-    # [leader] Duration [s] of the startup alignment slew.
-    align_duration: float = ALIGN_DURATION_S
 
 
 @parser.wrap()
@@ -109,8 +86,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
             # Releasing the clutch ends the segment: reset() slews the arm to its reset pose and
             # re-homes the clutch there. Both latches are stale across the slew — the held pose
-            # predates it and the declutch has fired — so replace them. A device without a
-            # clutch reports engaged forever and never gets here.
+            # predates it and the declutch has fired — so replace them.
             if declutch.update(device.engaged()):
                 device.reset()
                 hold = HoldLatch(motor_names)

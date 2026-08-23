@@ -16,16 +16,13 @@
 
 """Shared device + control-loop infrastructure for the Isaac Teleop -> SO-101 examples.
 
-Consumed by ``teleoperate.py`` and ``record.py``, which both build a per-device
-:class:`Device` bundle and run the same loop: read -> (maybe command) -> hold-when-idle ->
-sleep. A :class:`Device` bundles ``compute(obs) -> RobotAction | None`` (``None`` = hold at
-the measured pose while idle), ``startup``, ``cleanup``, plus ``engaged`` and ``reset``,
-which both entry points use to send the arm home on declutch — ``record.py`` also ends the
-recorded episode there. The devices:
-
-* ``xr_controller`` — an :class:`XRController` whose in-pipeline clutch retargeter emits an
-  absolute base-frame EE target for LeRobot's Cartesian IK pipeline.
-* ``so101_leader`` — a back-drivable leader arm mirrored 1:1 into the follower.
+Consumed by ``teleoperate.py`` and ``record.py``, which both build the :class:`Device`
+bundle and run the same loop: read -> (maybe command) -> hold-when-idle -> sleep. A
+:class:`Device` bundles ``compute(obs) -> RobotAction | None`` (``None`` = hold at the
+measured pose while idle), ``startup``, ``cleanup``, plus ``engaged`` and ``reset``, which
+both entry points use to send the arm home on declutch — ``record.py`` also ends the
+recorded episode there. The device is an :class:`XRController` whose in-pipeline clutch
+retargeter emits an absolute base-frame EE target for LeRobot's Cartesian IK pipeline.
 
 Requires the ``isaacteleop`` package and an OpenXR runtime (install instructions in this
 folder's ``README.md``). User-facing guide: ``docs/source/isaac_teleop.mdx``.
@@ -34,7 +31,6 @@ folder's ``README.md``). User-facing guide: ``docs/source/isaac_teleop.mdx``.
 import json
 import logging
 import socket
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -59,15 +55,13 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEBoundsAndSafety,
     InverseKinematicsEEToJoints,
 )
-from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, HF_LEROBOT_HOME, TELEOPERATORS
+from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.robot_utils import precise_sleep
 
 from .isaac_teleop import (
-    IsaacTeleopConfig,
     MapXRControllerActionToRobotAction,
-    SO101LeaderArm,
-    SO101LeaderArmConfig,
     XRController,
+    XRControllerConfig,
 )
 
 # Fixed rate [Hz] for the teleoperate loop and the pre-loop slews / connect-wait poll sleeps.
@@ -84,27 +78,23 @@ class LoopConfig(Protocol):
     from either entry point's concrete config.
     """
 
-    teleop: IsaacTeleopConfig
+    teleop: XRControllerConfig
     robot: RobotConfig
-    launch_plugin: str | None
     reset_to_origin: bool
     reset_duration: float
-    align: bool
-    align_duration: float
 
 
-# Per-device bundle consumed by the shared loop. ``compute`` returns None to mean
+# Device bundle consumed by the shared loop. ``compute`` returns None to mean
 # "idle -> hold at the measured pose"; ``startup`` warms up; ``cleanup`` reaps/disconnects.
 # ``engaged`` reports the clutch state of the frame ``compute`` last processed, and ``reset``
-# returns the arm to its reset pose. The defaults describe a device with no clutch and no reset
-# pose (the leader arm): always engaged, so the declutch edge the loops watch for never fires.
+# returns the arm to its reset pose.
 @dataclass(frozen=True)
 class Device:
     compute: Callable[[RobotObservation | None], RobotAction | None]
     startup: Callable[[], None]
     cleanup: Callable[[], None]
-    engaged: Callable[[], bool] = lambda: True
-    reset: Callable[[], None] = lambda: None
+    engaged: Callable[[], bool]
+    reset: Callable[[], None]
 
 
 def hold_action(obs: RobotObservation, motor_names: list[str]) -> dict[str, float]:
@@ -140,8 +130,7 @@ class DeclutchLatch:
 
     Arms on the first engaged frame, so a segment that starts disengaged (the operator has not
     squeezed yet) is not ended on frame 0. One instance per segment — a recorded episode, or one
-    teleoperate squeeze; once it has fired it keeps reporting True. Devices with no clutch report
-    ``engaged`` forever, so it never fires.
+    teleoperate squeeze; once it has fired it keeps reporting True.
     """
 
     def __init__(self):
@@ -158,20 +147,15 @@ class DeclutchLatch:
 def slew(
     robot,
     motor_names: list[str],
-    target_fn: Callable[[], dict[str, float]],
+    target: dict[str, float],
     duration_s: float,
 ) -> None:
-    """Linearly slew all joints from their current measured pose toward a target.
-
-    ``target_fn`` is called EACH step, so the leader can pass a live re-read (landing on its
-    current pose at ``alpha == 1`` for a continuous handoff) while XR passes a constant.
-    """
+    """Linearly slew all joints from their current measured pose to ``target``."""
     obs = robot.get_observation()
     start = {name: float(obs[f"{name}.pos"]) for name in motor_names}
     n_steps = max(1, int(duration_s * FPS))
     for step in range(1, n_steps + 1):
         alpha = step / n_steps
-        target = target_fn()
         action = {f"{name}.pos": start[name] + alpha * (target[name] - start[name]) for name in motor_names}
         robot.send_action(action)
         precise_sleep(1.0 / FPS)
@@ -335,8 +319,7 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
         joint_names=motor_names,
     )
 
-    teleop_config = cfg.teleop  # XRControllerConfig (selected via --teleop.type=xr_controller)
-    teleop_device = XRController(teleop_config)
+    teleop_device = XRController(cfg.teleop)
 
     # The clutch (below) turns the raw grip pose into an absolute base-frame ee_pose; this
     # pipeline maps it to joint targets: rename -> bounds/rate-limit -> IK.
@@ -397,7 +380,7 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
         if cfg.reset_to_origin:
             print(f"Resetting to origin over {cfg.reset_duration:.1f} s…")
-            slew(robot, motor_names, lambda: reset_target, cfg.reset_duration)
+            slew(robot, motor_names, reset_target, cfg.reset_duration)
             print("Reset complete.")
 
         teleop_device.set_home_base_T_ee(_measured_base_T_ee(robot.get_observation()))
@@ -483,159 +466,16 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
 
 
 # ============================================================================
-# SO-101 leader arm device
-# ============================================================================
-
-# Default duration [s] for the startup alignment slew (follower current -> leader first pose).
-ALIGN_DURATION_S = 3.0
-
-# How long to wait for the leader plugin to start streaming before aligning / looping.
-LEADER_WARMUP_TIMEOUT_S = 20.0
-
-# The plugin converts the leader's servo ticks to radians, so it reuses the serial SO-101
-# leader's calibration, stored by lerobot-calibrate under SO101Leader.name == "so_leader".
-SO_LEADER_CALIBRATION_NAME = "so_leader"
-
-
-def _leader_calibration_path(cfg: LoopConfig) -> Path | None:
-    """Infer the calibration JSON the launched plugin should read, or None.
-
-    Path convention: ``HF_LEROBOT_CALIBRATION / teleoperators / so_leader / {--teleop.id}.json``
-    (or ``--teleop.calibration_dir`` if set). Returns None (plugin falls back to defaults) when
-    it does not exist, warning if an id was given, or when no ``--teleop.id`` is set.
-    """
-    if not cfg.teleop.id:
-        return None
-    calib_dir = cfg.teleop.calibration_dir or (
-        HF_LEROBOT_CALIBRATION / TELEOPERATORS / SO_LEADER_CALIBRATION_NAME
-    )
-    calib_path = Path(calib_dir) / f"{cfg.teleop.id}.json"
-    if calib_path.is_file():
-        return calib_path
-    print(
-        f"WARNING: no leader calibration at {calib_path}; the plugin will use built-in defaults. "
-        f"Calibrate with the serial leader (`lerobot-calibrate --teleop.type=so101_leader "
-        f"--teleop.id={cfg.teleop.id}`) or the plugin's `calibrate` subcommand."
-    )
-    return None
-
-
-def _wait_for_leader(teleop: SO101LeaderArm, timeout_s: float) -> dict[str, float]:
-    """Poll the leader until it streams a live frame; return that frame's ``{joint}.pos``.
-
-    Raises ``SystemExit`` if no live frame arrives within ``timeout_s`` (plugin not pushing,
-    wrong ``--teleop.collection_id``, or CloudXR not up).
-    """
-    print(f"Waiting up to {timeout_s:.0f}s for the so101_leader plugin to stream…")
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        action = teleop.get_action()
-        if teleop.is_tracking:
-            print("Leader is streaming.")
-            return action
-        time.sleep(1.0 / FPS)
-    raise SystemExit(
-        f"FAILED: leader did not stream within {timeout_s:.0f}s. Is the so101_leader plugin "
-        "running and pushing (check --teleop.collection_id)? Is CloudXR up?"
-    )
-
-
-def _maybe_launch_plugin(cfg: LoopConfig) -> subprocess.Popen | None:
-    """Spawn the so101_leader plugin if ``--launch_plugin <path>`` was given (after connect())."""
-    if cfg.launch_plugin is None:
-        return None
-    if not Path(cfg.launch_plugin).exists():
-        raise SystemExit(
-            f"plugin binary not found: {cfg.launch_plugin} (build it in the IsaacTeleop repo first)"
-        )
-    leader_port = cfg.teleop.port  # SO101LeaderArmConfig.port, forwarded to the plugin
-    backend = f"leader on {leader_port}" if leader_port else "synthetic trajectory"
-    print(f"launching plugin: {cfg.launch_plugin} ({backend})")
-    # Positional args: [device_path] [collection_id] [calibration_file]. Empty device_path ->
-    # synthetic backend. Calibration (only real hardware needs it) is appended when a port is set.
-    argv = [cfg.launch_plugin, leader_port, cfg.teleop.collection_id]
-    if leader_port:
-        calib_path = _leader_calibration_path(cfg)
-        if calib_path is not None:
-            argv.append(str(calib_path))
-            print(f"  leader calibration: {calib_path}")
-    # Spawned after connect() so it inherits the CloudXR runtime env (XR_RUNTIME_JSON, ...).
-    proc = subprocess.Popen(argv)
-    time.sleep(1.5)  # let it create its OpenXR session and start pushing
-    return proc
-
-
-def setup_leader(cfg: LoopConfig, robot, motor_names: list[str]) -> Device:
-    """Build the SO-101 leader arm device bundle (1:1 joint mirror)."""
-    teleop_config = cfg.teleop  # SO101LeaderArmConfig (selected via --teleop.type=so101_leader)
-    teleop = SO101LeaderArm(teleop_config)
-
-    plugin_proc: subprocess.Popen | None = None
-
-    def startup() -> None:
-        nonlocal plugin_proc
-        # connect() auto-launches CloudXR (unless opted out); spawn the plugin AFTER so it
-        # inherits the runtime env. The plugin is reaped in cleanup().
-        teleop.connect()
-        plugin_proc = _maybe_launch_plugin(cfg)
-
-        if not teleop.is_connected:
-            raise ValueError("Teleop is not connected!")
-
-        # Block until the leader streams a live frame (clear error if it never does).
-        _wait_for_leader(teleop, LEADER_WARMUP_TIMEOUT_S)
-
-        if cfg.align:
-            print(f"Aligning follower to leader over {cfg.align_duration:.1f}s…")
-
-            # Re-read the live leader pose once per step so alpha=1 lands on its current pose
-            # from a single coherent frame.
-            def _leader_target() -> dict[str, float]:
-                leader_now = teleop.get_action()
-                return {name: float(leader_now[f"{name}.pos"]) for name in motor_names}
-
-            slew(robot, motor_names, _leader_target, cfg.align_duration)
-            print("Alignment complete.")
-
-        print(
-            "Starting joint-mirror loop. Back-drive the leader to teleoperate the follower… (Ctrl-C to stop)"
-        )
-
-    def compute(robot_obs: RobotObservation | None) -> RobotAction | None:
-        leader_action = teleop.get_action()
-        # Hold the follower at its measured pose when the leader drops out (stale stream)
-        # rather than commanding a possibly-old target.
-        if not teleop.is_tracking:
-            return None
-        return leader_action
-
-    def cleanup() -> None:
-        # A plugin-reaping failure must not skip the session disconnect (and vice versa
-        # the disconnect runs after the plugin stops pushing on it).
-        try:
-            if plugin_proc is not None:
-                plugin_proc.terminate()
-                try:
-                    plugin_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    plugin_proc.kill()
-        finally:
-            teleop.disconnect()
-
-    return Device(compute=compute, startup=startup, cleanup=cleanup)
-
-
-# ============================================================================
 # Shared setup
 # ============================================================================
 
 
 def build_device(cfg: LoopConfig) -> tuple:
-    """Connect the follower, build the selected Isaac device, and run its pre-loop startup.
+    """Connect the follower, build the XR device, and run its pre-loop startup.
 
     Connects the follower FIRST (so the startup slew / clutch-home seed can read live joints),
-    dispatches on ``--teleop.type``, then runs ``device.startup()`` before returning. On any
-    failure after ``connect()`` the follower is disconnected so the connection never leaks.
+    then runs ``device.startup()`` before returning. On any failure after ``connect()`` the
+    follower is disconnected so the connection never leaks.
 
     Returns ``(robot, device, motor_names)``.
     """
@@ -663,11 +503,7 @@ def build_device(cfg: LoopConfig) -> tuple:
         # Joint names in action order, read from {name}.pos action features (robot-agnostic).
         motor_names = [key.removesuffix(".pos") for key in robot.action_features if key.endswith(".pos")]
 
-        if isinstance(cfg.teleop, SO101LeaderArmConfig):
-            device = setup_leader(cfg, robot, motor_names)
-        else:
-            device = setup_xr(cfg, robot, motor_names)
-
+        device = setup_xr(cfg, robot, motor_names)
         device.startup()
     except BaseException:
         # Reap a partially-started device, then always disconnect the follower.

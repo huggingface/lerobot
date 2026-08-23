@@ -16,37 +16,26 @@
 
 """Configuration dataclasses for NVIDIA Isaac Teleop-backed teleoperators.
 
-:class:`IsaacTeleopConfig` holds the shared fields; each device adds its own subclass
-(e.g. :class:`XRControllerConfig`, :class:`SO101LeaderArmConfig`).
+:class:`IsaacTeleopConfig` holds the session fields shared by every device;
+:class:`XRControllerConfig` adds the XR controller's own knobs.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
-
-from draccus import ChoiceRegistry
 
 from lerobot.teleoperators.config import TeleoperatorConfig
 
 
 @dataclass(kw_only=True)
-class IsaacTeleopConfig(TeleoperatorConfig, ChoiceRegistry):
+class IsaacTeleopConfig(TeleoperatorConfig):
     """Shared config for all Isaac Teleop-backed teleoperators.
 
-    Uses its own draccus ``_choice_registry`` (decoupled from the global
-    :class:`TeleoperatorConfig` one) so ``--teleop.type`` on a field typed
-    ``IsaacTeleopConfig`` resolves against ONLY the Isaac devices — letting them claim
-    short names (``xr_controller``, ``so101_leader``) without colliding with the global
-    registry. These devices are selected by the example scripts, not routed through
-    ``make_teleoperator_from_config``.
-
-    The redundant ``ChoiceRegistry`` base is load-bearing: draccus >= 0.11 only honors
-    ``--teleop.type`` for a *direct* subclass of it, and dropping it silently degrades this
-    class to a plain nested dataclass.
+    Deliberately NOT a draccus choice type: the example scripts type their ``teleop`` field
+    as the concrete device config, so ``--teleop.<field>`` parses as a plain nested dataclass
+    with no ``--teleop.type`` selector. These devices are constructed by the example scripts,
+    not routed through ``make_teleoperator_from_config``.
     """
-
-    _choice_registry: ClassVar[dict] = {}
 
     app_name: str = "LeTeleop"
     """Application name for the OpenXR / Isaac Teleop session."""
@@ -73,7 +62,6 @@ _DEFAULT_BASE_T_ANCHOR: list[list[float]] = [
 ]
 
 
-@IsaacTeleopConfig.register_subclass("xr_controller")
 @dataclass(kw_only=True)
 class XRControllerConfig(IsaacTeleopConfig):
     """Config for Isaac Teleop XR (VR) controller teleoperation.
@@ -113,39 +101,3 @@ class XRControllerConfig(IsaacTeleopConfig):
     def __post_init__(self):
         if self.hand_side not in ("left", "right"):
             raise ValueError(f"hand_side must be 'left' or 'right', got {self.hand_side!r}")
-
-
-# Provisional gripper open/close endpoints [rad], normalizing the streamed gripper angle
-# into the follower's RANGE_0_100 jaw target. Derived from the so101_leader plugin README's
-# example calibration (home_ticks=2048, range 2000..3000; angle = (ticks-home)*2*pi/4096).
-_DEFAULT_GRIPPER_OPEN_RAD = -0.074
-_DEFAULT_GRIPPER_CLOSE_RAD = 1.460
-
-
-@IsaacTeleopConfig.register_subclass("so101_leader")
-@dataclass(kw_only=True)
-class SO101LeaderArmConfig(IsaacTeleopConfig):
-    """Config for an Isaac Teleop SO-101 *leader arm* (generic joint-space device).
-
-    Mirrors the leader's joint angles 1:1 onto a follower SO-101. The leader state is
-    streamed in radians by the native ``so101_leader`` plugin and read via a
-    ``JointStateSource``; the device converts arm joints to degrees and the gripper to the
-    follower's RANGE_0_100 jaw target (no IK/clutch/retargeter on the LeRobot side).
-    """
-
-    port: str = ""
-    """Serial port of the physical LEADER arm (e.g. ``/dev/ttyACM1``), forwarded to the
-    plugin (which reads the servos) when the example launches it. Empty -> the plugin runs
-    its synthetic trajectory."""
-
-    collection_id: str = "so101_leader"
-    """Tensor collection id the leader plugin pushes on; must match the running
-    ``so101_leader`` plugin (its second positional arg, default ``"so101_leader"``)."""
-
-    gripper_open_rad: float = _DEFAULT_GRIPPER_OPEN_RAD
-    """Leader gripper angle [rad] at fully OPEN -> follower jaw 100. Provisional default;
-    set from the plugin's ``calibrate`` subcommand. See ``_DEFAULT_GRIPPER_OPEN_RAD``."""
-
-    gripper_close_rad: float = _DEFAULT_GRIPPER_CLOSE_RAD
-    """Leader gripper angle [rad] at fully CLOSED -> follower jaw 0. Provisional default;
-    set from the plugin's ``calibrate`` subcommand. See ``_DEFAULT_GRIPPER_CLOSE_RAD``."""

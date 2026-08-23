@@ -16,13 +16,12 @@
 
 """NVIDIA Isaac Teleop teleoperators for LeRobot.
 
-Each input device is an :class:`IsaacTeleopTeleoperator` subclass: :class:`XRController`
-(XR/VR controller) and :class:`SO101LeaderArm` (back-drivable SO-101 leader arm) ship today.
+Each input device is an :class:`IsaacTeleopTeleoperator` subclass; :class:`XRController`
+(XR/VR controller) ships today.
 """
 
 from .base import IsaacTeleopTeleoperator
-from .config_isaac_teleop import IsaacTeleopConfig, SO101LeaderArmConfig, XRControllerConfig
-from .teleop_so101_leader_arm import SO101LeaderArm, leader_joints_to_robot_action
+from .config_isaac_teleop import IsaacTeleopConfig, XRControllerConfig
 from .teleop_xr_controller import XRController
 from .xr_controller_processor import MapXRControllerActionToRobotAction
 
@@ -30,9 +29,6 @@ __all__ = [
     "IsaacTeleopConfig",
     "IsaacTeleopTeleoperator",
     "MapXRControllerActionToRobotAction",
-    "SO101LeaderArm",
-    "SO101LeaderArmConfig",
     "XRController",
     "XRControllerConfig",
-    "leader_joints_to_robot_action",
 ]

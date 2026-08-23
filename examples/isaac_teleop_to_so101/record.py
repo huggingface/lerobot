@@ -17,17 +17,13 @@
 """Record a LeRobot dataset via NVIDIA Isaac Teleop -> SO-101.
 
 Runs ``teleoperate.py``'s control loop while also saving each frame to a LeRobot dataset.
-``--teleop.type`` selects the device (``xr_controller`` | ``so101_leader``) as in
-``teleoperate.py``.
 
 Usage::
 
-    # XR (VR) controller: clutch + soft-orientation IK
     python -m examples.isaac_teleop_to_so101.record \\
         --robot.type=so101_follower \\
         --robot.port=/dev/ttyACM0 \\
         --robot.id=so101_follower_arm \\
-        --teleop.type=xr_controller \\
         --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \\
         --dataset.repo_id=<hf_user>/<dataset_name> \\
         --dataset.single_task="Pick up vial from rack on the left side" \\
@@ -35,21 +31,12 @@ Usage::
         --dataset.episode_time_s=20 \\
         --dataset.reset_time_s=5
 
-    # SO-101 leader arm: 1:1 joint mirror (real leader on /dev/ttyACM1)
-    python -m examples.isaac_teleop_to_so101.record \\
-        --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm \\
-        --teleop.type=so101_leader --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \\
-        --launch_plugin=/path/to/IsaacTeleop/install/plugins/so101_leader/so101_leader_plugin \\
-        --dataset.repo_id=<hf_user>/<dataset_name> --dataset.single_task="Pick up the cube" \\
-        --dataset.num_episodes=3 --dataset.episode_time_s=20 --dataset.reset_time_s=5
+The loop knobs mirror ``teleoperate.py``.
 
-The loop/launch knobs mirror ``teleoperate.py`` (tagged ``[xr]`` / ``[leader]`` below).
-
-With the XR controller, releasing the squeeze ends the episode (and saves it) once you have
-engaged the clutch at least once, then the arm slews back to its reset pose during the reset
-window — so an episode is one uninterrupted squeeze, with no mid-episode re-clutching.
-``--reset_to_origin=false`` disables the slew (startup and between episodes alike). The leader
-arm has no clutch, so its episodes still end on ``--dataset.episode_time_s`` or a key.
+Releasing the squeeze ends the episode (and saves it) once you have engaged the clutch at
+least once, then the arm slews back to its reset pose during the reset window — so an episode
+is one uninterrupted squeeze, with no mid-episode re-clutching. ``--reset_to_origin=false``
+disables the slew (startup and between episodes alike).
 
 Keyboard shortcuts: Right/n = end episode early and save, Left/r = discard + re-record,
 Esc/q = stop after the current episode. All frames are recorded (including hold frames).
@@ -57,7 +44,7 @@ Esc/q = stop after the current episode. All frames are recorded (including hold 
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -81,7 +68,6 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
 
 from .common import (
-    ALIGN_DURATION_S,
     RESET_DURATION_S,
     DeclutchLatch,
     Device,
@@ -89,39 +75,29 @@ from .common import (
     build_device,
     init_keyboard_listener,
 )
-from .isaac_teleop import IsaacTeleopConfig
+from .isaac_teleop import XRControllerConfig
 
 
 @dataclass
 class RecordConfig:
     """CLI config for Isaac Teleop -> SO-101 dataset recording.
 
-    ``--robot.*`` / ``--teleop.*`` / ``--dataset.*`` configure the follower, device, and
-    recording; the loop/launch knobs below carry the same ``[xr]`` / ``[leader]`` tags as
-    ``teleoperate.py``. Use ``--flag=false`` for booleans (draccus style).
+    ``--robot.*`` / ``--teleop.*`` / ``--dataset.*`` configure the follower, XR controller,
+    and recording; the loop knobs below are the same ones ``teleoperate.py`` takes. Use
+    ``--flag=false`` for booleans (draccus style).
     """
 
     robot: RobotConfig
-    # --teleop.type=xr_controller|so101_leader, resolved against IsaacTeleopConfig's registry.
-    teleop: IsaacTeleopConfig
     dataset: DatasetRecordConfig
+    # XR controller knobs (--teleop.<field>=...); all defaulted, so --teleop.* is optional.
+    teleop: XRControllerConfig = field(default_factory=XRControllerConfig)
 
-    # [leader] Path to the so101_leader plugin binary to spawn after CloudXR is up (it then
-    # inherits the runtime env). None (default) -> assume the plugin already runs externally.
-    launch_plugin: str | None = None
-
-    # [xr] Slew all joints to the reset pose before the first episode AND in every reset window
+    # Slew all joints to the reset pose before the first episode AND in every reset window
     # (--reset_to_origin=false to keep the arm where it is). After the slew the clutch seeds its
     # home from the measured pose.
     reset_to_origin: bool = True
-    # [xr] Duration [s] of the reset-to-origin slew (passed through to setup_xr).
+    # Duration [s] of the reset-to-origin slew (passed through to setup_xr).
     reset_duration: float = RESET_DURATION_S
-
-    # [leader] Slew the follower to the leader's first pose before mirroring (--align=false to
-    # begin the 1:1 mirror immediately; the follower may snap).
-    align: bool = True
-    # [leader] Duration [s] of the startup alignment slew.
-    align_duration: float = ALIGN_DURATION_S
 
     # Resume recording on an existing (previously interrupted) dataset.
     resume: bool = False
@@ -165,8 +141,7 @@ def _record_loop(
         if record_frames:
             observation_frame = build_dataset_frame(dataset.features, obs, prefix=OBS_STR)
 
-        # Device idle (XR clutch disengaged, or leader stream stale) -> hold the pose
-        # latched on the active->idle edge.
+        # Device idle (clutch disengaged) -> hold the pose latched on the active->idle edge.
         action = hold.resolve(device.compute(obs), obs)
 
         # Releasing the clutch is the end-of-episode signal. Checked before the frame is sent
@@ -192,8 +167,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
-    # Connect the follower, build the selected Isaac device, and run its pre-loop startup
-    # (reset slew / leader align) — shared with teleoperate.py.
+    # Connect the follower, build the XR device, and run its pre-loop startup (reset slew) —
+    # shared with teleoperate.py.
     robot, device, motor_names = build_device(cfg)
 
     # Build dataset feature spec.  The IK pipeline lives inside device.compute(), so the
@@ -272,9 +247,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                 )
 
-                # Reset window: slew the arm back to its reset pose and re-home the clutch (a
-                # device without one no-ops), then give the operator time to reposition the
-                # scene. Skipped for the last episode (or if stop_recording was set).
+                # Reset window: slew the arm back to its reset pose and re-home the clutch, then
+                # give the operator time to reposition the scene. Skipped for the last episode
+                # (or if stop_recording was set).
                 if not events["stop_recording"] and (
                     recorded_episodes < cfg.dataset.num_episodes - 1 or events["rerecord_episode"]
                 ):
