@@ -243,7 +243,10 @@ def _joint_relabel(
         )
     content: list[dict[str, Any]] = []
     for i, key in enumerate(camera_keys, 1):
-        content.append({"type": "text", "text": f'Camera {i} ("{key}"):'})
+        # Number the cameras neutrally — never show the key name, which would bias
+        # the model toward the (often unreliable) existing label. Responses map
+        # back to camera_keys by position.
+        content.append({"type": "text", "text": f"Camera {i}:"})
         content.extend(to_image_blocks(frames_by_camera[key]))
     content.append({"type": "text", "text": prompt})
 
