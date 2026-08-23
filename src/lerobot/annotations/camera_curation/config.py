@@ -24,17 +24,18 @@ from lerobot.annotations.steerable_pipeline.config import AnnotationJobConfig, V
 
 # The closed vocabulary of canonical camera-view labels. Combos are formed by
 # joining two of these with ``_`` (e.g. ``left_wrist``).
-# Base positions relative to the robot + the left/right qualifiers used to
-# disambiguate side and wrist views (e.g. left_side, right_wrist).
+# Base positions (side / top / bottom / wrist) plus the direction qualifiers used
+# as suffixes to say WHERE around the robot a side/wrist camera sits
+# (front_side, rear_side, left_side, right_side, left_wrist, right_wrist).
 DEFAULT_VIEW_VOCABULARY: tuple[str, ...] = (
-    "front",
-    "rear",
     "side",
     "top",
     "bottom",
     "wrist",
     "left",
     "right",
+    "front",
+    "rear",
 )
 
 

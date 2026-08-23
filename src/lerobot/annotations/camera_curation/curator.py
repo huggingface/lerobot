@@ -73,17 +73,32 @@ def _load_joint_label_prompt() -> str:
     return _JOINT_LABEL_PROMPT_PATH.read_text(encoding="utf-8")
 
 
+# Direction qualifiers: suffix-only words that say where a side/wrist camera sits.
+# They never stand alone as a label — always "<qualifier>_<position>".
+_QUALIFIERS = ("left", "right", "front", "rear")
+
+
 def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: bool) -> bool:
-    """True if ``label`` is a single vocab word, or (when allowed) an underscore
-    combo of at most two distinct vocab words."""
+    """Validate a view label against the vocabulary.
+
+    A single token must be a POSITION (a vocab word that is not a direction
+    qualifier) — e.g. ``side``/``top``/``wrist``, never a bare ``front``/``left``.
+    A combo (when allowed) must be exactly one qualifier + one position, e.g.
+    ``front_side`` or ``left_wrist``; nonsense like ``front_rear`` or ``side_top``
+    is rejected.
+    """
     if not label:
         return False
     tokens = label.split("_")
-    if not allow_combos:
-        return len(tokens) == 1 and tokens[0] in vocabulary
-    if not (1 <= len(tokens) <= 2):
+    if not all(tok in vocabulary for tok in tokens):
         return False
-    return all(tok in vocabulary for tok in tokens) and len(set(tokens)) == len(tokens)
+    if len(tokens) == 1:
+        return tokens[0] not in _QUALIFIERS
+    if not allow_combos or len(tokens) != 2 or tokens[0] == tokens[1]:
+        return False
+    qualifiers = [t for t in tokens if t in _QUALIFIERS]
+    positions = [t for t in tokens if t not in _QUALIFIERS]
+    return len(qualifiers) == 1 and len(positions) == 1
 
 
 def _combo_rule(cfg: CameraCurationConfig) -> str:
@@ -374,15 +389,12 @@ def _extract_vocab_tokens(camera_key: str, vocabulary: tuple[str, ...]) -> list[
     return [tok for tok in vocabulary if tok in parts]
 
 
-# Directional qualifiers that prefix a position word (left_side, right_wrist).
-_QUALIFIERS = ("left", "right")
-
-
 def _order_combo(tokens: list[str], vocabulary: tuple[str, ...]) -> str:
     """Join vocab tokens into a combo label with the direction first.
 
-    A left/right qualifier leads, the position word follows — ``{wrist, left}`` →
-    ``left_wrist``, ``{side, right}`` → ``right_side``.
+    A direction qualifier (left/right/front/rear) leads, the position word
+    follows — ``{wrist, left}`` → ``left_wrist``, ``{side, front}`` →
+    ``front_side``.
     """
     uniq = list(dict.fromkeys(tokens))
 

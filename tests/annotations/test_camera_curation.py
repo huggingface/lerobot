@@ -42,7 +42,7 @@ from lerobot.datasets.io_utils import load_info, write_info  # noqa: E402
 from lerobot.datasets.utils import DatasetInfo  # noqa: E402
 from lerobot.utils.io_utils import load_json, write_json  # noqa: E402
 
-VOCAB = ("front", "rear", "side", "top", "bottom", "wrist", "left", "right")
+VOCAB = ("side", "top", "bottom", "wrist", "left", "right", "front", "rear")
 
 
 def _queued_vlm(responses: list) -> StubVlmClient:
@@ -92,11 +92,17 @@ def _make_min_meta(root: Path, camera_key: str, dtype: str = "video") -> None:
 
 
 def test_is_valid_view_label():
-    assert is_valid_view_label("top", VOCAB, allow_combos=True)
-    assert is_valid_view_label("left_wrist", VOCAB, allow_combos=True)
+    assert is_valid_view_label("top", VOCAB, allow_combos=True)  # position
+    assert is_valid_view_label("side", VOCAB, allow_combos=True)  # position
+    assert is_valid_view_label("left_wrist", VOCAB, allow_combos=True)  # qualifier + position
+    assert is_valid_view_label("front_side", VOCAB, allow_combos=True)  # front is a suffix now
+    assert is_valid_view_label("rear_side", VOCAB, allow_combos=True)
     assert not is_valid_view_label("left_wrist", VOCAB, allow_combos=False)
+    assert not is_valid_view_label("front", VOCAB, allow_combos=True)  # bare qualifier
+    assert not is_valid_view_label("left", VOCAB, allow_combos=True)  # bare qualifier
+    assert not is_valid_view_label("front_rear", VOCAB, allow_combos=True)  # two qualifiers
+    assert not is_valid_view_label("side_top", VOCAB, allow_combos=True)  # two positions
     assert not is_valid_view_label("banana", VOCAB, allow_combos=True)
-    assert not is_valid_view_label("left_left", VOCAB, allow_combos=True)  # duplicate token
     assert not is_valid_view_label("top_wrist_front", VOCAB, allow_combos=True)  # 3 tokens
     assert not is_valid_view_label("", VOCAB, allow_combos=True)
 
@@ -146,7 +152,7 @@ def test_curate_cameras_joint_labeling_second_pass():
     frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
     vlm = _queued_vlm(
         [
-            {"usable": True, "blur_reason": None, "view_label": "front"},  # cam a (pass 1)
+            {"usable": True, "blur_reason": None, "view_label": "side"},  # cam a (pass 1)
             {"usable": False, "blur_reason": "out of focus", "view_label": "wrist"},  # cam b (pass 1)
             {"cameras": [{"view_label": "top"}, {"view_label": "left_side"}]},  # joint pass 2
         ]
@@ -163,17 +169,17 @@ def test_curate_cameras_joint_labeling_second_pass():
 def test_curate_cameras_relabels_on_conflict():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)  # relabel_on_conflict defaults True
     frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
-    # Per-camera pass gives both "front" (collision); the joint relabel pass then
+    # Per-camera pass gives both "top" (collision); the joint relabel pass then
     # differentiates them. Quality verdicts stay from the per-camera pass.
     vlm = _queued_vlm(
         [
-            {"usable": True, "blur_reason": None, "view_label": "front"},  # cam a (per-camera)
-            {"usable": False, "blur_reason": "human operator visible", "view_label": "front"},  # cam b
-            {"cameras": [{"view_label": "front"}, {"view_label": "left_side"}]},  # joint relabel
+            {"usable": True, "blur_reason": None, "view_label": "top"},  # cam a (per-camera)
+            {"usable": False, "blur_reason": "human operator visible", "view_label": "top"},  # cam b
+            {"cameras": [{"view_label": "top"}, {"view_label": "left_side"}]},  # joint relabel
         ]
     )
     verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
-    assert verdicts["observation.images.a"].view_label == "front"
+    assert verdicts["observation.images.a"].view_label == "top"
     assert verdicts["observation.images.b"].view_label == "left_side"  # relabeled, no collision
     # quality is untouched by the relabel pass
     assert verdicts["observation.images.b"].usable is False
@@ -186,13 +192,13 @@ def test_curate_cameras_no_relabel_when_disabled():
     # Only the per-camera responses are consumed; no joint relabel call is made.
     vlm = _queued_vlm(
         [
-            {"usable": True, "blur_reason": None, "view_label": "front"},
-            {"usable": True, "blur_reason": None, "view_label": "front"},
+            {"usable": True, "blur_reason": None, "view_label": "top"},
+            {"usable": True, "blur_reason": None, "view_label": "top"},
         ]
     )
     verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
-    assert verdicts["observation.images.a"].view_label == "front"
-    assert verdicts["observation.images.b"].view_label == "front"  # left colliding
+    assert verdicts["observation.images.a"].view_label == "top"
+    assert verdicts["observation.images.b"].view_label == "top"  # left colliding
 
 
 def test_build_name_mapping_and_collision():
@@ -200,14 +206,14 @@ def test_build_name_mapping_and_collision():
     existing = {"observation.images.cam_0": {}, "observation.images.cam_1": {}, "observation.images.top": {}}
     verdicts = [
         CameraVerdict("observation.images.cam_0", usable=True, view_label="left_wrist"),
-        CameraVerdict("observation.images.cam_1", usable=True, view_label="front"),
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="side"),
         # already canonical -> skipped by build_name_mapping
         CameraVerdict("observation.images.top", usable=True, view_label="top"),
     ]
     mapping, skipped = build_name_mapping(verdicts, existing, cfg)
     assert mapping == {
         "observation.images.cam_0": "observation.images.left_wrist",
-        "observation.images.cam_1": "observation.images.front",
+        "observation.images.cam_1": "observation.images.side",
     }
     assert skipped == {}
     # proposed_new_key stamped back onto the verdicts
@@ -220,14 +226,14 @@ def test_build_name_mapping_partial_skip_keeps_most_confident():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     existing = {f"observation.images.cam_{i}": {} for i in range(3)}
     verdicts = [
-        CameraVerdict("observation.images.cam_0", usable=True, view_label="front", confidence=0.9),
-        CameraVerdict("observation.images.cam_1", usable=True, view_label="front", confidence=0.5),
+        CameraVerdict("observation.images.cam_0", usable=True, view_label="side", confidence=0.9),
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="side", confidence=0.5),
         CameraVerdict("observation.images.cam_2", usable=True, view_label="top", confidence=0.8),
     ]
     mapping, skipped = build_name_mapping(verdicts, existing, cfg)
-    # cam_0 wins "front" (higher confidence), cam_2 is unique, cam_1 is skipped.
+    # cam_0 wins "side" (higher confidence), cam_2 is unique, cam_1 is skipped.
     assert mapping == {
-        "observation.images.cam_0": "observation.images.front",
+        "observation.images.cam_0": "observation.images.side",
         "observation.images.cam_2": "observation.images.top",
     }
     assert set(skipped) == {"observation.images.cam_1"}
@@ -236,8 +242,8 @@ def test_build_name_mapping_partial_skip_keeps_most_confident():
 def test_build_name_mapping_skip_target_taken_by_existing_feature():
     # A label already used by an untouched feature can't be freed by confidence.
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
-    existing = {"observation.images.cam_0": {}, "observation.images.front": {}}
-    verdicts = [CameraVerdict("observation.images.cam_0", usable=True, view_label="front", confidence=1.0)]
+    existing = {"observation.images.cam_0": {}, "observation.images.side": {}}
+    verdicts = [CameraVerdict("observation.images.cam_0", usable=True, view_label="side", confidence=1.0)]
     mapping, skipped = build_name_mapping(verdicts, existing, cfg)
     assert mapping == {}
     assert set(skipped) == {"observation.images.cam_0"}

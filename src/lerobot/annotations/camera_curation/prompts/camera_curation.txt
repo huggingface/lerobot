@@ -37,30 +37,19 @@ Do two things and return them as one JSON object.
    Set "blur_reason" to the reason for any UNUSABLE verdict (e.g. "out of focus",
    "human operator visible").
 
-2. VIEW LABEL. Choose the best label for where this camera sits relative to the
-   robot, using ONLY this closed vocabulary:
+2. VIEW LABEL. Choose where this camera sits relative to the robot, using ONLY
+   this closed vocabulary:
 
      {vocabulary}
 
-   This kind of robot arm has no obvious "face", so anchor "front" to its WORKING
-   direction: the front is the side the arm reaches out toward to manipulate
-   objects — the side the workspace and the manipulated objects are on. (No human
-   is ever in these frames; do not use a person as a cue.) Then judge from what
-   the camera actually shows:
-
-   - front  : you see the robot from its working side, roughly head-on. The
-              gripper and the manipulated objects face you, and the arm mostly
-              moves TOWARD / AWAY from you (it looks foreshortened, not spread
-              out across the frame).
-   - rear   : you see the robot from behind — motor backs, mounting and cabling
-              are the prominent features, and the arm reaches AWAY from you into
-              a workspace you can barely see.
-   - side   : you see the arm in PROFILE — its links span left-to-right across
-              the frame and you can read its full reach sideways. ALWAYS qualify
-              with which side of the robot the camera is on: "left_side" or
-              "right_side".
-   - top    : looking straight down on the workspace from above (overhead).
-   - bottom : looking up at the workspace from below.
+   - side   : a FIXED camera viewing the robot from around it at working height
+              (not overhead, not on the arm). Add a direction saying WHERE around
+              the robot it sits: "front_side" (in front, facing the robot),
+              "rear_side" (behind it, its back toward you), "left_side" or
+              "right_side" (off to that side). Use plain "side" only if you
+              cannot tell the direction.
+   - top    : a FIXED camera above the workspace looking straight DOWN (overhead).
+   - bottom : a FIXED camera below the workspace looking up.
    - wrist  : mounted ON the arm and moving WITH it, so the whole background
               SHIFTS from frame to frame while the gripper stays roughly in place.
               A close-up of the gripper is NOT enough on its own: if the
@@ -70,16 +59,14 @@ Do two things and return them as one JSON object.
 
    Decide in two steps. FIRST, wrist vs fixed: does the whole background move
    between the frames (the viewpoint travels with the arm)? If yes → wrist. If the
-   background stays put while only the arm/objects move → it is a FIXED camera,
-   so choose from front/rear/side/top/bottom. THEN, for a fixed camera, resolve
-   front/rear/side: if the arm's length runs LEFT-TO-RIGHT across the frame it is
-   a SIDE view; if the arm mainly points toward or away from you it is FRONT
-   (workspace facing you) or REAR (back of the robot facing you); if it looks
-   straight down onto the workspace it is TOP.
+   background stays put while only the arm/objects move → it is a FIXED camera.
+   THEN for a fixed camera: looking straight DOWN on the workspace → top; looking
+   UP from below → bottom; otherwise (viewing the robot from around it at height)
+   → side, with a direction: front_side / rear_side / left_side / right_side.
 
-   {combo_rule}When you combine a direction with a position, put the direction
-   first ("left_side", "right_wrist"). Use "left"/"right" only as such a
-   qualifier, never on their own. Do not invent words outside the vocabulary.
+   {combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
+   left/right/front/rear are direction qualifiers — use them only as a suffix on
+   side/wrist, never on their own. Do not invent words outside the vocabulary.
 
 Output strictly valid JSON, no prose, no code fences, with exactly these keys:
 

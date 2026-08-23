@@ -4,15 +4,13 @@ each other and give EACH one a view label from this closed vocabulary:
 
   {vocabulary}
 
-  - front  : faces the robot head-on from its working side — the gripper and the
-             manipulated objects face you, and the arm looks foreshortened
-             (pointing toward / away, not spread across the frame).
-  - rear   : behind the robot — motor backs, mounting and cabling are prominent
-             and the arm reaches away from you.
-  - side   : the arm seen in PROFILE, its links spanning left-to-right across the
-             frame — qualify with the side it is on: "left_side" / "right_side".
-  - top    : above the workspace looking straight DOWN onto it (overhead).
-  - bottom : below the workspace looking up.
+  - side   : a FIXED camera viewing the robot from around it at working height
+             (not overhead, not on the arm) — add a direction for WHERE it sits:
+             "front_side" (in front, facing the robot), "rear_side" (behind it),
+             "left_side" / "right_side" (off to that side); plain "side" if you
+             cannot tell.
+  - top    : a FIXED camera above the workspace looking straight DOWN (overhead).
+  - bottom : a FIXED camera below the workspace looking up.
   - wrist  : mounted ON the arm and moving WITH it, so its whole background SHIFTS
              from frame to frame while the gripper stays roughly in place. A
              close-up of the gripper is NOT enough: if a camera's background is
@@ -27,8 +25,9 @@ from the frame edges. The cameras of one setup almost always point from DIFFEREN
 the side-by-side comparison to give each a DISTINCT label; only repeat a label if
 two cameras genuinely share the same viewpoint.
 
-{combo_rule}Put the direction first in a combo ("left_side", "right_wrist"). Use
-"left"/"right" only as such a qualifier. Do not invent words outside the vocabulary.
+{combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
+left/right/front/rear are direction qualifiers — use them only as a suffix on
+side/wrist, never on their own. Do not invent words outside the vocabulary.
 
 Output strictly valid JSON, no prose, no code fences: one entry per camera IN THE
 SAME ORDER as the numbered groups above.

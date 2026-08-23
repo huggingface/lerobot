@@ -248,10 +248,11 @@ VLM backend for a **dataset-filtering / curation** pass. It downloads only the
 1. **flag** whether the view is blurry / unusable (including a visible human
    teleoperator), and
 2. **label** the view with a canonical name from a closed vocabulary describing
-   where the camera sits relative to the robot: `front` (facing the robot),
-   `rear` (behind it), `side` (qualified as `left_side` / `right_side`), `top`
-   (overhead), `bottom` (from below), and `wrist` (on the arm, qualified as
-   `left_wrist` / `right_wrist`).
+   where the camera sits relative to the robot: `top` (overhead), `bottom` (from
+   below), `wrist` (on the arm, moving with it — qualified `left_wrist` /
+   `right_wrist`), and `side` for any fixed around-the-robot view, qualified with
+   a direction suffix — `front_side`, `rear_side`, `left_side`, `right_side` (or
+   plain `side` when the direction is unclear).
 
 It runs in one of two modes:
 
