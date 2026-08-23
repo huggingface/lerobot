@@ -1,5 +1,5 @@
-You are jointly reviewing {n} camera streams from the SAME robot-manipulation
-episode.
+You are performing CANONICAL VIEW ASSIGNMENT for {n} camera streams from the SAME
+robot-manipulation episode.
 
 The streams are shown as "Camera 1", "Camera 2", etc. These identifiers are
 ARBITRARY and contain NO information about camera position or mounting.
@@ -15,8 +15,12 @@ from an independent per-camera analysis.
 
 Treat the preliminary result as useful evidence but not absolute ground truth.
 
-Your task is to use the joint comparison to produce the FINAL mount type and
-view label for every camera.
+This is NOT merely a repeat of the independent per-camera classification. Your job
+is to assign each camera its FINAL, CANONICAL mount type and view label by
+comparing the cameras directly against each other. The final labels are intended
+to become semantic camera feature names within the robot setup, such as
+"top", "side", "front_side", or "wrist" — so they should express the real
+geometric role of each camera relative to the others.
 
 Use ONLY this closed view-label vocabulary:
 
@@ -28,11 +32,15 @@ Mount type must be one of:
   - "robot_mounted"
   - "unknown"
 
-Cameras are NOT required to have different labels.
+COLLISIONS ARE EXPECTED
 
-Multiple cameras may legitimately share a semantic label.
-
-NEVER change a classification merely to make labels unique.
+Preliminary per-camera labels may collide because each camera was classified
+independently. During the joint pass, compare cameras with the same preliminary
+label and determine whether they actually represent different physical
+viewpoints. If their geometry is meaningfully different, refine them into the most
+appropriate distinct canonical view labels. Do not invent distinctions when the
+physical viewpoints are genuinely equivalent, and never change mount_type merely
+to eliminate a label collision.
 
 1. REVIEW MOUNT TYPE
 
@@ -185,53 +193,132 @@ Otherwise use "side".
 
 Do NOT infer direction merely from where the robot appears in the image.
 
-4. REQUIRED JOINT TOP-VS-SIDE COMPARISON
+4. DUPLICATE TOP CANDIDATES
 
-This comparison is especially important when TWO OR MORE fixed cameras were
-preliminarily classified as "top".
+If TWO OR MORE FIXED cameras are preliminary candidates for top, they MUST be
+compared directly.
 
-Do NOT automatically accept multiple "top" labels.
+Do not simply apply the absolute top definition independently to each camera.
 
-Instead, compare their VIEWING GEOMETRY directly.
+Rank the candidate cameras by how strongly OVERHEAD their viewing geometry is.
 
-For each candidate, evaluate:
+Compare:
 
-  - bird's-eye character;
-  - proportion of object TOP surfaces versus SIDE surfaces;
-  - amount of visible vertical geometry;
-  - strength of perspective depth across the workspace;
-  - near-versus-far size changes;
-  - perspective convergence;
-  - whether the camera looks DOWN ONTO or ACROSS the work surface.
+  - how directly the camera looks DOWN ONTO the work surface;
+  - how much objects are seen from their TOP faces;
+  - how little of their VERTICAL/SIDE faces are visible;
+  - how weak the near-to-far perspective is across the workspace;
+  - how little perspective convergence is present;
+  - how bird's-eye-like the manipulation area appears;
+  - whether the camera looks DOWN ONTO the workspace or diagonally ACROSS it.
 
-A genuine TOP view should be more strongly overhead:
+The camera with the strongest overall overhead/bird's-eye geometry is the
+strongest candidate for the canonical label:
 
-  - stronger bird's-eye geometry;
-  - more top surfaces;
-  - less vertical geometry;
-  - weaker perspective depth.
+  top
 
-An elevated SIDE view should be more oblique:
+For every other fixed camera initially classified as top, compare it RELATIVE to
+the strongest top candidate.
 
-  - stronger near/far depth;
-  - more side and vertical surfaces;
-  - stronger perspective convergence;
-  - clearer viewing direction across the workspace.
+If another camera:
 
-If Camera A is clearly more overhead while Camera B is clearly more oblique:
+  - looks substantially more ACROSS the workspace;
+  - has stronger near-to-far depth;
+  - shows more vertical or side surfaces;
+  - has stronger perspective convergence;
+  - views the workspace more diagonally/obliquely;
 
-Camera A -> "top"
-Camera B -> side label
+then it should be classified as a side view:
 
-Do NOT call Camera B "top" merely because it is elevated or points downward.
+  - side
+  - front_side
+  - rear_side
+  - left_side
+  - right_side
 
-However, do NOT force different labels when the geometry genuinely supports the
-same category. Two cameras may both legitimately be top.
+depending on the visual evidence.
 
-The comparison is used to identify geometric differences, NOT to enforce label
-uniqueness.
+IMPORTANT:
 
-5. TOP VS SIDE DECISION RULE
+A camera may look somewhat top-down when considered ALONE but still be a side view
+relative to another camera that is clearly more overhead.
+
+Do not classify a camera as top merely because:
+
+  - it is elevated;
+  - it points downward;
+  - much of the tabletop is visible.
+
+The distinction is:
+
+  - predominantly bird's-eye / DOWN ONTO workspace -> top
+  - predominantly oblique / ACROSS workspace -> side
+
+Example
+
+Suppose two fixed cameras are independently classified as top.
+
+Camera A:
+
+  - nearly bird's-eye;
+  - objects mostly visible from above;
+  - little vertical geometry;
+  - weak depth perspective.
+
+Camera B:
+
+  - elevated and looking downward;
+  - but visibly more oblique;
+  - more object side faces are visible;
+  - stronger near/far perspective;
+  - looks diagonally across the workspace.
+
+The FINAL joint labels should be:
+
+  Camera A -> top
+  Camera B -> side
+
+Do NOT keep both as top merely because both satisfy a loose absolute definition of
+an elevated downward-looking camera.
+
+5. CANONICAL-ROLE RULE
+
+The final joint labels represent CANONICAL camera roles within the robot setup.
+When two fixed cameras have clearly different viewing geometry, prefer labels that
+express that geometric difference. For multiple plausible top candidates, top
+should normally represent the camera with the strongest genuine overhead/bird's-eye
+geometry, while substantially more oblique fixed views should be classified as
+side views.
+
+However, do NOT force uniqueness when two cameras genuinely have effectively the
+same physical viewpoint. In that exceptional case, duplicate labels are allowed
+and the downstream system will handle the naming collision separately.
+
+6. PRESERVE MOUNT TYPE DURING CANONICALIZATION
+
+NEVER solve a view-label collision by changing a camera from fixed to
+robot_mounted.
+
+For example, this is INVALID collision resolution:
+
+  Camera A: fixed/top
+  Camera B: fixed/top
+  -> Camera A: fixed/top
+  -> Camera B: robot_mounted/wrist
+
+unless there is independent, positive visual evidence that Camera B actually moves
+with the robot.
+
+Resolve fixed-camera collisions using fixed-camera geometry only:
+
+  fixed/top
+  fixed/top
+  -> fixed/top
+  -> fixed/side
+
+when the visual evidence supports that distinction.
+
+7. TOP VS SIDE DECISION RULE
 
 For every fixed top/side candidate, explicitly choose between:
 
@@ -244,7 +331,7 @@ Use viewing geometry rather than camera height.
 When uncertain between an elevated side view and a true overhead view, favor
 "side" unless the bird's-eye geometry provides positive evidence for "top".
 
-6. UNCERTAINTY AND SPECIFICITY
+8. UNCERTAINTY AND SPECIFICITY
 
 Use "unknown" instead of guessing when the category cannot be established
 reliably.
@@ -254,7 +341,7 @@ Prefer a less-specific valid label over unsupported specificity:
   - "side" instead of guessing front/rear/left/right;
   - "wrist" instead of guessing left/right wrist.
 
-7. CONSISTENCY
+9. CONSISTENCY
 
 Valid combinations include:
 
