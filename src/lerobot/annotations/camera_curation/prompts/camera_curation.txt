@@ -13,7 +13,12 @@ Do two things and return them as one JSON object.
      PLACEHOLDER or "no camera" / "no signal" icon, a test pattern, an app or
      logo graphic, or a blank / solid-colour / nearly-empty frame that does not
      depict the robot and its workspace. If the frame is not a genuine view of
-     the robot scene, it is UNUSABLE; OR
+     the robot scene, it is UNUSABLE. HOWEVER, a real close-up in which the work
+     surface or a manipulated object fills most of the frame (a flat panel, a
+     tabletop, the object being handled) is a GENUINE view — keep it usable; do
+     NOT call the work surface itself an "obstruction". Only flag an obstruction
+     when a FOREIGN object blocks the lens and NO part of the task or robot is
+     visible in ANY of the frames shown; OR
    - a human is clearly part of the scene. These are teleoperated recordings and
      the operator should not be in the working area. Mark UNUSABLE when a person,
      or a human hand/arm, is PROMINENTLY or PERSISTENTLY in view — e.g. an
