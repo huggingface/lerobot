@@ -64,42 +64,36 @@ preprocessor, _ = make_reward_pre_post_processors(cfg)
 
 ### Inputs
 
-SOLE-R1 supports an external camera, a wrist camera, or both. At least one
-camera key must be configured.
+SOLE-R1 supports an external camera, a wrist camera, or both. At least one camera key must be configured.
 
-LeRobot channels-first trajectories use:
+Camera trajectories must use the explicit channels-first shape:
 
 ```text
-(T, C, H, W)
 (B, T, C, H, W)
 ```
 
-Channels-last `(T, H, W, C)` and `(B, T, H, W, C)` inputs are also accepted.
+Both the batch and time dimensions are required, including when either is one.
 
-For every evaluated timestep, the preprocessor creates the composite expected
-by SOLE-R1:
+For every evaluated timestep, the preprocessor creates the composite expected by SOLE-R1:
 
 ```text
 first | previous | current
 ```
 
-With two cameras, the external-camera row is placed above the wrist-camera
-row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
+With two cameras, the external-camera row is placed above the wrist-camera row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
 
 ### Compute rewards (sparse or dense)
 
-`compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every
-trajectory timestep. If `num_samples` is set, SOLE-R1 evaluates only the
-uniformly downsampled frames and linearly interpolates between them to fill in rewards for all trajectory timesteps.
+`compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every trajectory timestep.
 
 ```python
 import torch
 
-# One channels-first trajectory: (T, C, H, W).
+# One channels-first trajectory: (B, T, C, H, W).
 frames = torch.randint(
     0,
     256,
-    (8, 3, 224, 224),
+    (1, 8, 3, 224, 224),
     dtype=torch.uint8,
 )
 
@@ -120,41 +114,14 @@ progress = reward_model.compute_progress(batch)
 print(progress.shape)  # (1, 8)
 ```
 
-The first sampled timestep is defined as `0%`. Later timesteps are evaluated
-sequentially because the prompt for the current timestep includes the previous
-predicted progress.
+The first sampled timestep is defined as `0%`. Later timesteps are evaluated sequentially because the prompt for the current timestep includes the previous predicted progress.
 
-With the default `reward_scale=0.01`, a generated progress value of `75%`
-produces a reward of `0.75`.
+With the default `reward_scale=0.01`, a generated progress value of `75%` produces a reward of `0.75`.
 
 ## Offline dataset labeling
 
 Use the included command to compute one SOLE-R1 progress value for every
 timestep in the selected episodes:
-
-```bash
-uv run python -m lerobot.rewards.soler1.compute_rabc_weights \
-    --dataset-repo-id lerobot/libero_10 \
-    --external-image-key observation.images.image \
-    --num-samples 30 \
-    --device cuda \
-    --output-path soler1_progress.parquet
-```
-
-By default, SOLE-R1 evaluates 30 uniformly spaced anchor frames and
-interpolates the resulting progress values across the complete trajectory.
-Use --num-samples 0 to run inference at every timestep.
-
-To render an overlay:
-
-```bash
-uv run examples/dataset/create_progress_videos.py \
-    --repo-id lerobot/libero_10 \
-    --episode 0 \
-    --camera-key observation.images.image \
-    --progress-file soler1_progress.parquet \
-    --gif
-```
 
 ## Success output
 
@@ -166,6 +133,8 @@ cfg = make_reward_model_config(
     device="cuda",
     reward_output="success",
     success_threshold=0.8,
+    external_image_key="observation.images.top",
+    wrist_image_key="observation.images.wrist",
 )
 ```
 
