@@ -372,3 +372,150 @@ def test_stream_parameters_waits_and_retries_on_empty_queue():
     close_learner_service_stub(channel, server)
 
     assert received_params == [b"param_after_wait", b"param_after_wait_2"]
+
+
+@skip_if_package_missing("grpcio", "grpc")
+@pytest.mark.timeout(25)  # force cross-platform watchdog
+def test_establish_learner_connection_retries_when_workers_saturated():
+    """A replacement actor must not hang forever at Ready() when the learner's gRPC
+    thread pool is fully occupied by one already-connected actor's long-lived RPCs
+    (StreamParameters, SendTransitions, SendInteractions) -- exactly MAX_WORKERS calls.
+
+    This reproduces #3979: without a deadline on stub.Ready(), establish_learner_connection's
+    retry loop never gets a chance to retry because the call never returns.
+    """
+    import contextlib
+    import threading
+    from concurrent import futures
+
+    import grpc
+
+    from lerobot.rl.actor import establish_learner_connection
+    from lerobot.rl.learner_service import MAX_WORKERS, LearnerService
+    from lerobot.transport import services_pb2, services_pb2_grpc
+
+    shutdown_event = Event()
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
+
+    servicer = LearnerService(
+        shutdown_event=shutdown_event,
+        parameters_queue=parameters_queue,
+        seconds_between_pushes=1,
+        transition_queue=transitions_queue,
+        interaction_message_queue=interactions_queue,
+    )
+
+    # Mirror production exactly: learner.py builds the server's executor with MAX_WORKERS
+    # threads and nothing more -- there is no headroom above one actor's RPC count.
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
+    services_pb2_grpc.add_LearnerServiceServicer_to_server(servicer, server)
+    port = server.add_insecure_port("[::]:0")
+    server.start()
+
+    channel = grpc.insecure_channel(f"localhost:{port}")
+    stub = services_pb2_grpc.LearnerServiceStub(channel)
+
+    # Occupy all MAX_WORKERS=3 worker threads with the same three long-lived RPCs one real
+    # actor opens. None of them ever finishes on its own -- exactly like a lingering/half-open
+    # connection from a previous actor.
+    stream_call = stub.StreamParameters(services_pb2.Empty())
+
+    def _drain_stream():
+        try:
+            for _ in stream_call:
+                pass
+        except grpc.RpcError:
+            pass
+
+    threading.Thread(target=_drain_stream, daemon=True).start()
+
+    release_gate = threading.Event()  # never set during the saturated phase
+
+    def _blocking_client_iterator():
+        release_gate.wait()
+        return
+        yield  # pragma: no cover - unreachable; keeps this a generator
+
+    def _call_and_ignore_cancellation(stub_method):
+        # Expected once the channel is closed during test cleanup.
+        with contextlib.suppress(grpc.RpcError):
+            stub_method(_blocking_client_iterator())
+
+    threading.Thread(target=_call_and_ignore_cancellation, args=(stub.SendTransitions,), daemon=True).start()
+    threading.Thread(target=_call_and_ignore_cancellation, args=(stub.SendInteractions,), daemon=True).start()
+
+    # Give the three RPCs a moment to actually reach the server and occupy their workers.
+    time.sleep(0.5)
+
+    # A raw Ready() call with an explicit deadline must fail fast with DEADLINE_EXCEEDED
+    # instead of hanging -- proves the pool is genuinely starved, not just slow.
+    with pytest.raises(grpc.RpcError) as exc_info:
+        stub.Ready(services_pb2.Empty(), timeout=2)
+    assert exc_info.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+
+    # The actual regression: establish_learner_connection's retry loop must return in
+    # bounded time instead of hanging forever on the first Ready() call.
+    start = time.time()
+    connected = establish_learner_connection(stub, Event(), attempts=2)
+    elapsed = time.time() - start
+
+    release_gate.set()
+    shutdown_event.set()
+    channel.close()
+    server.stop(None)
+
+    assert connected is False
+    # 2 attempts * (READY_RPC_TIMEOUT_S deadline + 2s retry sleep) plus slack.
+    assert elapsed < 20
+
+
+@skip_if_package_missing("grpcio", "grpc")
+@pytest.mark.timeout(5)  # force cross-platform watchdog
+def test_stream_parameters_stops_when_context_goes_inactive():
+    """StreamParameters must release its worker when the peer disconnects, even if the
+    parameters queue never gets new data and shutdown_event is never set. Before the fix,
+    the loop only checked shutdown_event, so a dead/half-open peer held the worker forever.
+    """
+    from lerobot.rl.learner_service import LearnerService
+    from lerobot.transport import services_pb2
+
+    class _FakeContext:
+        """Stand-in for grpc.ServicerContext exposing only is_active(), controlled by the test."""
+
+        def __init__(self):
+            self._active = True
+
+        def is_active(self):
+            return self._active
+
+        def disconnect(self):
+            self._active = False
+
+    shutdown_event = Event()
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
+
+    servicer = LearnerService(
+        shutdown_event=shutdown_event,
+        parameters_queue=parameters_queue,
+        seconds_between_pushes=0.05,
+        transition_queue=transitions_queue,
+        interaction_message_queue=interactions_queue,
+        queue_get_timeout=0.01,
+    )
+
+    context = _FakeContext()
+    stream = servicer.StreamParameters(services_pb2.Empty(), context)
+
+    # Simulate the client disconnecting / cancelling before any parameters were ever pushed.
+    context.disconnect()
+
+    # Without checking context.is_active(), the generator loops forever on the empty queue
+    # (shutdown_event is never set); with the fix it must stop as soon as it notices.
+    with pytest.raises(StopIteration):
+        next(stream)
+
+    shutdown_event.set()  # cleanup safety net in case the generator is still alive
