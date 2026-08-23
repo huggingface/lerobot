@@ -37,8 +37,19 @@ Do two things and return them as one JSON object.
    Set "blur_reason" to the reason for any UNUSABLE verdict (e.g. "out of focus",
    "human operator visible").
 
-2. VIEW LABEL. Choose where this camera sits relative to the robot, using ONLY
-   this closed vocabulary:
+2. VIEW LABEL. Before choosing a label, FIRST determine whether the camera is
+   FIXED or ROBOT-MOUNTED by comparing multiple frames over time. A robot-mounted
+   camera moves rigidly with the arm/wrist/end effector: as the robot moves, the
+   entire viewpoint and background change, while the gripper/wrist often stays
+   relatively stable in the image. A fixed camera keeps a stable viewpoint of the
+   workspace: the background and table stay approximately stationary while the
+   robot moves through the image. The presence, proximity, or size of a gripper
+   alone is NOT evidence of a wrist camera. Only robot-mounted cameras may receive
+   a "wrist" label; fixed cameras must be classified by their external viewpoint
+   (top, front, rear, side, etc.).
+
+   Then choose where this camera sits relative to the robot, using ONLY this
+   closed vocabulary:
 
      {vocabulary}
 
