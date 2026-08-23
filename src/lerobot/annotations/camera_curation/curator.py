@@ -41,11 +41,19 @@ from .config import CameraCurationConfig
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_curation.txt"
-_RELABEL_PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_relabel.txt"
 _JOINT_LABEL_PROMPT_PATH = Path(__file__).parent / "prompts" / "camera_joint_label.txt"
 
 # The canonical prefix every curated camera key gets.
 OBS_IMAGE_PREFIX = "observation.images."
+
+# The mount-type categories the VLM may return.
+MOUNT_ROBOT = "robot_mounted"
+MOUNT_FIXED = "fixed"
+MOUNT_UNKNOWN = "unknown"
+_MOUNT_TYPES = (MOUNT_FIXED, MOUNT_ROBOT, MOUNT_UNKNOWN)
+
+# The single POSITION word of a wrist label (robot-mounted cameras only).
+_WRIST_POSITION = "wrist"
 
 
 @dataclass
@@ -57,16 +65,15 @@ class CameraVerdict:
     view_label: str | None
     blur_reason: str | None = None
     confidence: float | None = None
-    # Populated by ``build_name_mapping`` once collisions are resolved.
+    # How the camera is mounted ("fixed" / "robot_mounted" / "unknown" / None).
+    mount_type: str | None = None
+    # Populated by ``build_name_mapping`` once collisions are resolved (pure
+    # Python, deterministic — the VLM never sees or proposes a dataset key).
     proposed_new_key: str | None = None
 
 
 def _load_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def _load_relabel_prompt() -> str:
-    return _RELABEL_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def _load_joint_label_prompt() -> str:
@@ -76,6 +83,50 @@ def _load_joint_label_prompt() -> str:
 # Direction qualifiers: suffix-only words that say where a side/wrist camera sits.
 # They never stand alone as a label — always "<qualifier>_<position>".
 _QUALIFIERS = ("left", "right", "front", "rear")
+
+
+def _position_token(label: str) -> str | None:
+    """The single non-qualifier POSITION word of a (valid) label.
+
+    ``left_wrist`` -> ``wrist``, ``front_side`` -> ``side``, ``top`` -> ``top``.
+    """
+    positions = [tok for tok in label.split("_") if tok not in _QUALIFIERS]
+    return positions[0] if positions else None
+
+
+def _normalize_mount_type(raw: Any) -> str | None:
+    """Coerce a raw VLM ``mount_type`` string to a known category or None."""
+    if not raw:
+        return None
+    value = str(raw).strip().lower()
+    return value if value in _MOUNT_TYPES else None
+
+
+def _reconcile_label_with_mount(view_label: str | None, mount_type: str | None) -> str | None:
+    """Deterministically reconcile a view label against the mount type.
+
+    ``mount_type`` is the more reliable signal (it is judged from temporal
+    motion), so it is authoritative over the finer view label:
+
+    - ``robot_mounted``  -> the camera is a wrist camera. Keep an existing wrist
+      label (preserving handedness); otherwise force plain ``wrist`` (even when
+      the label was missing/``unknown``).
+    - ``fixed``          -> a wrist label contradicts a fixed mount, so drop it
+      (we cannot infer the fixed position) and leave the camera unlabeled; any
+      non-wrist label is kept.
+    - ``unknown``/None   -> no mount signal, so trust the view label as-is.
+
+    This replaces the old VLM "relabel" pass with a pure, deterministic check.
+    """
+    if mount_type == MOUNT_ROBOT:
+        if view_label is not None and _position_token(view_label) == _WRIST_POSITION:
+            return view_label
+        return _WRIST_POSITION
+    if mount_type == MOUNT_FIXED:
+        if view_label is not None and _position_token(view_label) == _WRIST_POSITION:
+            return None
+        return view_label
+    return view_label
 
 
 def is_valid_view_label(label: str, vocabulary: tuple[str, ...], allow_combos: bool) -> bool:
@@ -128,25 +179,10 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
     blur_reason = result.get("blur_reason")
     blur_reason = str(blur_reason) if blur_reason else None
 
-    raw_label = result.get("view_label")
-    label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
-    # "unknown" is an explicit abstain — the model isn't sure, so leave the camera
-    # unlabeled (no rename) rather than forcing a guess.
-    if label == "unknown":
-        view_label = None
-    elif is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
-        # Canonicalize combo order (``wrist_left`` -> ``left_wrist``) so the set
-        # of possible keys is deterministic regardless of the VLM's word order.
-        view_label = _order_combo(label.split("_"), cfg.view_vocabulary)
-    else:
-        view_label = None
-        if raw_label:
-            logger.warning(
-                "camera %s: VLM returned view_label=%r which is not in the vocabulary %s; leaving unlabeled",
-                camera_key,
-                raw_label,
-                cfg.view_vocabulary,
-            )
+    mount_type = _normalize_mount_type(result.get("mount_type"))
+    view_label = _parse_view_label(camera_key, result.get("view_label"), cfg)
+    # Mount type is the authoritative signal: reconcile the finer label against it.
+    view_label = _reconcile_label_with_mount(view_label, mount_type)
 
     confidence = result.get("confidence")
     try:
@@ -160,7 +196,28 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
         view_label=view_label,
         blur_reason=blur_reason,
         confidence=confidence,
+        mount_type=mount_type,
     )
+
+
+def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig) -> str | None:
+    """Normalize and validate a raw VLM ``view_label`` into a canonical label or None."""
+    label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
+    # "unknown" is an explicit abstain — the model isn't sure, so leave the camera
+    # unlabeled (no rename) rather than forcing a guess.
+    if label == "unknown" or not label:
+        return None
+    if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
+        # Canonicalize combo order (``wrist_left`` -> ``left_wrist``) so the set
+        # of possible keys is deterministic regardless of the VLM's word order.
+        return _order_combo(label.split("_"), cfg.view_vocabulary)
+    logger.warning(
+        "camera %s: VLM returned view_label=%r which is not in the vocabulary %s; leaving unlabeled",
+        camera_key,
+        raw_label,
+        cfg.view_vocabulary,
+    )
+    return None
 
 
 def curate_cameras(
@@ -171,11 +228,12 @@ def curate_cameras(
     """Judge each camera's quality + view label from a few sampled frames.
 
     ``frames_by_camera`` maps a camera key to a list of decoded frames (torch
-    tensors or PIL images). Pass 1 judges each camera on its own (quality + an
-    initial label). Then, with ``cfg.joint_labeling``, a second labels-only pass
-    shows all cameras together and re-decides each label by comparison; otherwise
-    ``cfg.relabel_on_conflict`` only re-labels cameras that collided. Quality is
-    always the per-camera verdict. Cameras with no frames are reported unlabeled.
+    tensors or PIL images). Pass 1 judges each camera on its own (quality + mount
+    type + an initial label, the label reconciled against the mount type). With
+    ``cfg.joint_labeling`` a second mount-type+label pass shows all cameras
+    together and re-decides by comparison. Quality is always the per-camera
+    verdict. Any remaining label collisions are resolved deterministically later
+    in :func:`build_name_mapping`. Cameras with no frames are reported unlabeled.
     """
     ordered_keys = list(frames_by_camera)
     callable_keys = [k for k in ordered_keys if frames_by_camera[k]]
@@ -185,82 +243,39 @@ def curate_cameras(
     }
 
     if callable_keys:
-        # Pass 1: per-camera (quality + initial label).
+        # Pass 1: per-camera (quality + mount type + initial label).
         messages_batch = [_build_messages(frames_by_camera[k], cfg) for k in callable_keys]
         results = vlm.generate_json(messages_batch)
         for key, result in zip(callable_keys, results, strict=True):
             verdicts[key] = _parse_verdict(key, result, cfg)
-        # Pass 2: joint labeling (labels only; quality untouched).
+        # Pass 2: joint labeling (mount type + label only; quality untouched).
         if cfg.joint_labeling and len(callable_keys) >= 2:
-            relabeled = _joint_relabel(frames_by_camera, callable_keys, None, cfg, vlm)
-            for key, new_label in relabeled.items():
-                if new_label:
-                    verdicts[key].view_label = new_label
-        elif cfg.relabel_on_conflict:
-            _relabel_conflicts(verdicts, frames_by_camera, callable_keys, cfg, vlm)
+            relabeled = _joint_label(frames_by_camera, callable_keys, cfg, vlm)
+            for key, (mount_type, label) in relabeled.items():
+                verdicts[key].mount_type = mount_type
+                verdicts[key].view_label = label
 
     return [verdicts[k] for k in ordered_keys]
 
 
-def _relabel_conflicts(
-    verdicts: dict[str, CameraVerdict],
-    frames_by_camera: dict[str, list[Any]],
-    callable_keys: list[str],
-    cfg: CameraCurationConfig,
-    vlm: Any,
-) -> None:
-    """For each label shared by 2+ cameras, run a joint labels-only pass over just
-    those cameras and overwrite their ``view_label`` with the distinct results.
-
-    Quality (``usable``/``blur_reason``) is untouched — it stays as judged
-    per-camera, so this can never leak a quality verdict across cameras.
-    """
-    groups: dict[str, list[str]] = {}
-    for key in callable_keys:
-        label = verdicts[key].view_label
-        if label is not None:
-            groups.setdefault(label, []).append(key)
-
-    for label, keys in groups.items():
-        if len(keys) < 2:
-            continue
-        logger.info(
-            "joint relabel: %d cameras share label %r; asking the VLM to differentiate them",
-            len(keys),
-            label,
-        )
-        for key, new_label in _joint_relabel(frames_by_camera, keys, label, cfg, vlm).items():
-            if new_label:
-                verdicts[key].view_label = new_label
-
-
-def _joint_relabel(
+def _joint_label(
     frames_by_camera: dict[str, list[Any]],
     camera_keys: list[str],
-    current_label: str | None,
     cfg: CameraCurationConfig,
     vlm: Any,
-) -> dict[str, str]:
-    """Show several cameras together and ask for one label each.
+) -> dict[str, tuple[str | None, str | None]]:
+    """Show all cameras together and ask for one mount type + label each.
 
-    ``current_label`` set → the colliding-cameras prompt (all were labeled the
-    same); ``None`` → the general joint-labeling prompt (relabel every camera by
-    comparison). Returns ``{camera_key: view_label}`` for entries that came back
-    valid (canonicalized); missing/invalid ones are left out.
+    Returns ``{camera_key: (mount_type, view_label)}`` for cameras present in the
+    response (positionally). The label is reconciled against the mount type with
+    the same deterministic rule as the per-camera pass. Quality is never touched
+    here, so this can't leak a quality verdict across cameras.
     """
-    if current_label is None:
-        prompt = _load_joint_label_prompt().format(
-            n=len(camera_keys),
-            vocabulary=", ".join(cfg.view_vocabulary),
-            combo_rule=_combo_rule(cfg),
-        )
-    else:
-        prompt = _load_relabel_prompt().format(
-            n=len(camera_keys),
-            current_label=current_label,
-            vocabulary=", ".join(cfg.view_vocabulary),
-            combo_rule=_combo_rule(cfg),
-        )
+    prompt = _load_joint_label_prompt().format(
+        n=len(camera_keys),
+        vocabulary=", ".join(cfg.view_vocabulary),
+        combo_rule=_combo_rule(cfg),
+    )
     content: list[dict[str, Any]] = []
     for i, key in enumerate(camera_keys, 1):
         # Number the cameras neutrally — never show the key name, which would bias
@@ -274,16 +289,17 @@ def _joint_relabel(
     result = results[0] if results else None
     items = result.get("cameras") if isinstance(result, dict) else None
     if not isinstance(items, list):
-        logger.warning("joint relabel: response missing a 'cameras' list; keeping original labels")
+        logger.warning("joint label: response missing a 'cameras' list; keeping per-camera labels")
         return {}
 
-    out: dict[str, str] = {}
+    out: dict[str, tuple[str | None, str | None]] = {}
     for i, key in enumerate(camera_keys):
         item = items[i] if i < len(items) else None
-        raw = item.get("view_label") if isinstance(item, dict) else None
-        label = str(raw).strip().lower().replace(" ", "_") if raw else ""
-        if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
-            out[key] = _order_combo(label.split("_"), cfg.view_vocabulary)
+        if not isinstance(item, dict):
+            continue
+        mount_type = _normalize_mount_type(item.get("mount_type"))
+        label = _parse_view_label(key, item.get("view_label"), cfg)
+        out[key] = (mount_type, _reconcile_label_with_mount(label, mount_type))
     return out
 
 
@@ -445,6 +461,7 @@ def build_report(
         "cameras": {
             v.camera_key: {
                 "view_label": v.view_label,
+                "mount_type": v.mount_type,
                 "usable": v.usable,
                 "blur_reason": v.blur_reason,
                 "confidence": v.confidence,
@@ -492,6 +509,7 @@ def stamp_verdicts_into_info(root: Path, verdicts: list[CameraVerdict]) -> None:
             feature["info"] = {}
         feature["info"]["curation"] = {
             "view_label": v.view_label,
+            "mount_type": v.mount_type,
             "usable": v.usable,
             "blur_reason": v.blur_reason,
             "confidence": v.confidence,

@@ -1,104 +1,235 @@
-You are inspecting frames from ONE camera of a robot manipulation dataset. All
-frames come from the same fixed camera during a single episode; use them
-together to judge the camera, not any single moment.
+You are inspecting frames from ONE camera stream of a robot-manipulation dataset.
+All frames come from the SAME camera during a single episode and are shown in
+chronological order. Use the frames together to reason about the camera across
+time; do not judge from a single frame.
 
-Do two things and return them as one JSON object.
+Perform THREE tasks:
 
-1. QUALITY. Decide whether this camera view is usable for training a policy. A
-   USABLE view must actually show the real robot and the workspace/objects it
-   works on, clearly enough to learn from. Mark it UNUSABLE if EITHER:
-   - it does not clearly show that real scene. This covers genuine capture
-     defects (blurry / out of focus, badly over- or under-exposed, corrupted,
-     static/frozen) AND frames that are not a real camera feed at all: a
-     PLACEHOLDER or "no camera" / "no signal" icon, a test pattern, an app or
-     logo graphic, or a blank / solid-colour / nearly-empty frame that does not
-     depict the robot and its workspace. If the frame is not a genuine view of
-     the robot scene, it is UNUSABLE. HOWEVER, a real close-up in which the work
-     surface or a manipulated object fills most of the frame (a flat panel, a
-     tabletop, the object being handled) is a GENUINE view — keep it usable; do
-     NOT call the work surface itself an "obstruction". Only flag an obstruction
-     when a FOREIGN object blocks the lens and NO part of the task or robot is
-     visible in ANY of the frames shown; OR
-   - a human is clearly part of the scene. These are teleoperated recordings and
-     the operator should not be in the working area. Mark UNUSABLE when a person,
-     or a human hand/arm, is PROMINENTLY or PERSISTENTLY in view — e.g. an
-     operator reaching into the workspace through much of the episode. But a
-     SMALL, PARTIAL intrusion at the edge of the frame — a hand briefly poking in
-     from the side while the robot works — is tolerable and stays usable. Only
-     the robot manipulator should occupy the workspace; do not mistake the
-     robot's own gripper/arm for a human limb.
-   Otherwise it is usable.
+1. determine whether the camera is usable;
+2. determine whether its viewpoint is FIXED or ROBOT_MOUNTED;
+3. classify its physical viewpoint.
 
-   Do NOT mark a view unusable because the robot's own gripper, arm, or
-   end-effector is visible or partially blocks the view — that is EXPECTED,
-   especially for a wrist-mounted camera where the gripper is normally in frame.
-   Carefully distinguish the robot (a metal/plastic manipulator) from a human
-   limb: the robot occluding its own workspace is fine; a human in frame is not.
-   Set "blur_reason" to the reason for any UNUSABLE verdict (e.g. "out of focus",
-   "human operator visible").
+Return the result as one JSON object.
 
-2. VIEW LABEL. Choose where this camera sits relative to the robot, using ONLY
-   this closed vocabulary:
+1. QUALITY
 
-     {vocabulary}
+Decide whether this camera view is usable for training a robot policy.
 
-   - side   : a FIXED camera viewing the robot from around it at working height
-              (not overhead, not on the arm). Add a direction saying WHERE around
-              the robot it sits: "front_side" (in front, facing the robot),
-              "rear_side" (behind it, its back toward you), "left_side" or
-              "right_side" (off to that side). Use plain "side" only if you
-              cannot tell the direction.
-   - top    : a FIXED camera above the workspace looking straight DOWN (overhead).
-   - bottom : a FIXED camera below the workspace looking up.
-   - wrist  : physically mounted ON the moving robot arm / wrist / end effector,
-              so the WHOLE viewpoint travels with the arm (see the wrist rules
-              below). Default to plain "wrist"; only add handedness with strong
-              evidence (see "wrist handedness").
+A USABLE view must show a genuine camera view of the robot manipulation scene
+clearly enough to learn from.
 
-   WRIST-CAMERA RULES. Classify a camera as "wrist" ONLY when there is strong
-   evidence it is physically mounted on the moving arm/wrist/end effector. Do NOT
-   call it wrist just because a gripper is visible, the arm fills much of the
-   image, the view is close to the manipulation area, the camera points roughly
-   where the gripper points, or it is mounted above the table near the robot.
+Mark it UNUSABLE if the frames do not clearly show the real scene because of:
 
-   Use the SEVERAL frames over time. A wrist camera shows EGOCENTRIC motion: when
-   the arm changes pose the entire viewpoint changes with it; the background shows
-   large viewpoint/parallax shifts correlated with the robot's motion; the gripper
-   or wrist tends to stay at roughly the same place/orientation relative to the
-   camera; the workspace appears to move AROUND the camera. A FIXED external camera
-   is the opposite: the table, walls and background stay in the same camera frame;
-   the robot moves THROUGH the image; the gripper may move a lot within the image;
-   the scene's viewpoint stays geometrically fixed. If the background stays fixed
-   while only the arm/gripper moves, the camera MUST NOT be classified as wrist.
+  - severe blur or being out of focus;
+  - severe over- or under-exposure;
+  - corrupted frames;
+  - a static/frozen camera feed;
+  - a placeholder, "no camera", or "no signal" image;
+  - a test pattern;
+  - an application/logo graphic;
+  - a blank, solid-colour, or nearly-empty image that does not depict the task;
+  - a foreign obstruction blocking the lens such that no useful part of the task
+    or robot is visible in any provided frame.
 
-   Decide in a strict order:
-   1. Compare all frames chronologically; decide whether the camera itself moves
-      with the robot (egocentric) or the scene viewpoint stays fixed.
-   2. If it moves with the robot → wrist.
-   3. If it stays fixed → an external camera: looking predominantly DOWN at the
-      workspace → top (it need NOT be perfectly vertical — an elevated, mostly
-      downward view is top even if the wrist/gripper is very prominent); looking
-      UP from below → bottom; otherwise a view from around the robot at height →
-      side, with a direction (front_side / rear_side / left_side / right_side, or
-      plain "side" if you cannot tell).
-   4. If this cannot be determined reliably, answer "unknown" rather than guess.
+A real close-up is NOT an obstruction. If the work surface, manipulated object,
+robot arm, gripper, or end effector fills most of the image, it is still a
+genuine camera view and may be usable.
 
-   WRIST HANDEDNESS. Do NOT infer left/right during view classification — first
-   return plain "wrist". Add "left_wrist" / "right_wrist" ONLY with explicit,
-   reliable evidence that the robot has distinct left and right manipulators AND
-   this camera can be tied to one of them. Do NOT infer handedness from which side
-   of the image the arm appears on, the gripper's orientation, mirroring, or an
-   apparent left/right in a single frame. If handedness is uncertain, keep "wrist".
+The robot's own arm, gripper, or end effector may partially block the workspace.
+This is expected and MUST NOT by itself make the camera unusable.
 
-   {combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
-   left/right/front/rear are direction qualifiers — use them only as a suffix on
-   side/wrist, never on their own. Do not invent words outside the vocabulary.
+Also mark the camera UNUSABLE if a human operator, human hand, or human arm is
+PROMINENTLY or PERSISTENTLY visible in the working area.
 
-Output strictly valid JSON, no prose, no code fences, with exactly these keys:
+A small or brief partial human intrusion at the edge of the image is tolerable.
+
+Carefully distinguish human limbs from the robot's own manipulator.
+
+Set "blur_reason" to a short reason for an unusable verdict, otherwise null.
+
+2. MOUNT TYPE
+
+Before assigning a view label, determine how the camera is mounted.
+
+Choose exactly one:
+
+  - "fixed"
+  - "robot_mounted"
+  - "unknown"
+
+A ROBOT_MOUNTED camera is physically attached to the moving robot arm, wrist,
+gripper, or end effector.
+
+Use temporal evidence across the provided frames.
+
+A robot-mounted camera exhibits EGOCENTRIC motion:
+
+  - when the arm changes pose, the entire camera viewpoint changes with it;
+  - the background/workspace undergoes viewpoint or parallax changes correlated
+    with robot motion;
+  - a visible part of the wrist/gripper may remain relatively stable with respect
+    to the camera;
+  - the workspace appears to move around the camera as the arm moves.
+
+A FIXED camera keeps the same physical viewpoint of the scene:
+
+  - the table, walls, fixtures, and other static scene geometry remain in
+    approximately the same camera coordinate system;
+  - the robot moves THROUGH the image;
+  - the arm or gripper may move substantially within the image;
+  - the overall viewpoint of the workspace does not travel with the robot.
+
+IMPORTANT:
+
+Seeing a gripper or robot arm is NOT evidence that the camera is robot-mounted.
+
+Do NOT infer robot mounting merely because:
+
+  - the gripper is visible;
+  - the gripper occupies much of the image;
+  - the camera is close to the manipulation;
+  - the camera points approximately where the gripper points;
+  - the robot arm partially blocks the workspace;
+  - the view looks unusual or close-up.
+
+If the static environment remains fixed while the robot moves through the image,
+the camera is FIXED.
+
+If there is insufficient temporal evidence to determine this reliably, use
+"unknown".
+
+3. VIEW LABEL
+
+Choose a view label using ONLY this closed vocabulary:
+
+  {vocabulary}
+
+Classify hierarchically.
+
+If mount_type == "robot_mounted"
+
+The view label is:
+
+  - "wrist"
+
+Default to plain "wrist".
+
+Only use "left_wrist" or "right_wrist" when there is explicit and reliable
+evidence that:
+
+  1. the robot has distinct left and right manipulators; AND
+  2. this particular camera can reliably be associated with one of them.
+
+Do NOT infer wrist handedness from:
+
+  - which side of the image the arm appears on;
+  - gripper orientation;
+  - apparent left/right direction in one image;
+  - image mirroring;
+  - camera rotation.
+
+If handedness is uncertain, use "wrist".
+
+If mount_type == "fixed"
+
+Classify primarily by the camera's PHYSICAL POSITION relative to the manipulation
+workspace, using viewing direction and perspective as supporting evidence.
+
+top
+
+Use "top" when the camera is positioned predominantly ABOVE the manipulation
+workspace and looks predominantly DOWN toward it.
+
+The camera does NOT need to point perfectly vertically downward.
+
+An elevated, oblique camera can still be "top" when its physical position is
+primarily above the workspace.
+
+Typical evidence includes:
+
+  - a large amount of horizontal work surface is visible;
+  - objects are substantially visible from above;
+  - the view gives an overhead/global perspective of the manipulation area;
+  - depth along the table plane appears relatively compressed.
+
+Do NOT change a fixed camera from "top" to "wrist" merely because a robot arm or
+gripper is prominent.
+
+bottom
+
+Use "bottom" when the camera is physically below the manipulation workspace and
+looks upward toward it.
+
+side views
+
+A fixed camera positioned primarily OUTSIDE the workspace boundary and looking
+INWARD toward the manipulation area is a side view.
+
+This remains a side view even when the camera is elevated and therefore looks
+somewhat downward.
+
+Side views typically show:
+
+  - stronger perspective depth across the workspace;
+  - more vertical surfaces;
+  - objects and robot geometry more from the side than from above.
+
+When reliably identifiable, qualify where the camera physically sits relative to
+the robot/workspace:
+
+  - "front_side": camera in front, looking toward the robot/workspace;
+  - "rear_side": camera behind, looking toward the robot/workspace;
+  - "left_side": camera on the left;
+  - "right_side": camera on the right.
+
+Use plain "side" when it is clearly a side/external view but the direction cannot
+be reliably established.
+
+Do NOT infer left/right/front/rear merely from where the robot appears within the
+image.
+
+Camera images may be tilted, rolled, rotated, or mirrored. Reason about the
+physical workspace geometry rather than image-frame edges.
+
+If mount_type == "unknown"
+
+Use "unknown" unless the view label can nevertheless be established with strong
+visual evidence.
+
+TOP VS SIDE — IMPORTANT
+
+For elevated fixed cameras, do NOT classify solely from how much the camera
+points downward.
+
+Ask where the camera is most likely physically located relative to the workspace:
+
+  - predominantly ABOVE the manipulation area -> "top";
+  - predominantly OUTSIDE its front/rear/left/right boundary looking inward ->
+    a side view.
+
+A side camera can be high and look downward.
+A top camera can be oblique.
+
+Use the complete scene geometry across all provided frames to make this
+distinction.
+
+OUTPUT
+
+{combo_rule}
+
+Direction qualifiers must only be used with side/wrist labels. Do not invent
+labels outside the vocabulary.
+
+Return strictly valid JSON with exactly these keys:
 
   {{
-    "usable": true or false,
-    "blur_reason": "<short reason if unusable, else null>",
-    "view_label": "<a vocabulary label, a combo joined by '_', or \"unknown\">",
-    "confidence": <number between 0 and 1>
+    "usable": true,
+    "blur_reason": null,
+    "mount_type": "fixed",
+    "view_label": "top",
+    "confidence": 0.95
   }}
+
+"confidence" must be a number between 0 and 1.
+
+Return JSON only. No prose and no code fences.

@@ -254,6 +254,13 @@ VLM backend for a **dataset-filtering / curation** pass. It downloads only the
    a direction suffix — `front_side`, `rear_side`, `left_side`, `right_side` (or
    plain `side` when the direction is unclear).
 
+The VLM first decides, from motion across the sampled frames, whether each camera
+is `fixed` or `robot_mounted` (recorded as `mount_type`); a `robot_mounted` camera
+is the only one that can be a `wrist`, and this mount verdict deterministically
+overrides the finer label (so a prominent gripper on a fixed overhead camera stays
+`top`, never `wrist`). Any residual label collisions are resolved deterministically
+in Python — the VLM never sees the existing dataset key names.
+
 It runs in one of two modes:
 
 - `--mode=report` (default) — write the labels + verdicts into `meta/`

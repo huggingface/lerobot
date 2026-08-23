@@ -31,6 +31,7 @@ import pandas as pd  # noqa: E402
 from lerobot.annotations.camera_curation.config import CameraCurationConfig  # noqa: E402
 from lerobot.annotations.camera_curation.curator import (  # noqa: E402
     CameraVerdict,
+    _reconcile_label_with_mount,
     build_name_mapping,
     curate_cameras,
     is_valid_view_label,
@@ -107,6 +108,22 @@ def test_is_valid_view_label():
     assert not is_valid_view_label("", VOCAB, allow_combos=True)
 
 
+def test_reconcile_label_with_mount():
+    # robot_mounted is authoritative -> always a wrist label.
+    assert _reconcile_label_with_mount("top", "robot_mounted") == "wrist"
+    assert _reconcile_label_with_mount(None, "robot_mounted") == "wrist"
+    assert _reconcile_label_with_mount("left_wrist", "robot_mounted") == "left_wrist"  # keep handedness
+    # fixed -> a wrist label contradicts the mount and is dropped; others kept.
+    assert _reconcile_label_with_mount("wrist", "fixed") is None
+    assert _reconcile_label_with_mount("right_wrist", "fixed") is None
+    assert _reconcile_label_with_mount("top", "fixed") == "top"
+    assert _reconcile_label_with_mount("front_side", "fixed") == "front_side"
+    # unknown / no mount signal -> trust the label as-is.
+    assert _reconcile_label_with_mount("top", "unknown") == "top"
+    assert _reconcile_label_with_mount("wrist", None) == "wrist"
+    assert _reconcile_label_with_mount(None, None) is None
+
+
 def test_curate_cameras_parses_and_validates(tmp_path):
     cfg = CameraCurationConfig(view_vocabulary=VOCAB)
     frames = {
@@ -162,60 +179,65 @@ def test_curate_cameras_unknown_is_abstain():
     assert verdicts["observation.images.b"].view_label is None  # case-insensitive
 
 
+def test_curate_cameras_mount_type_is_authoritative():
+    # Mount type overrides the finer label deterministically (no VLM relabel):
+    #  - robot_mounted + a fixed label  -> forced to plain "wrist"
+    #  - robot_mounted + no label       -> "wrist" (mount alone is enough)
+    #  - fixed + a wrist label          -> dropped (can't infer a fixed position)
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    frames = {
+        "observation.images.a": [_tiny_image()],
+        "observation.images.b": [_tiny_image()],
+        "observation.images.c": [_tiny_image()],
+    }
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "mount_type": "robot_mounted", "view_label": "top"},
+            {"usable": True, "mount_type": "robot_mounted", "view_label": "unknown"},
+            {"usable": True, "mount_type": "fixed", "view_label": "wrist"},
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].view_label == "wrist"
+    assert verdicts["observation.images.a"].mount_type == "robot_mounted"
+    assert verdicts["observation.images.b"].view_label == "wrist"
+    assert verdicts["observation.images.c"].view_label is None  # wrist on a fixed cam dropped
+
+
+def test_curate_cameras_robot_mount_keeps_handedness():
+    # A robot-mounted camera already labeled with handedness keeps it.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    frames = {"observation.images.a": [_tiny_image()]}
+    vlm = _queued_vlm([{"usable": True, "mount_type": "robot_mounted", "view_label": "left_wrist"}])
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].view_label == "left_wrist"
+
+
 def test_curate_cameras_joint_labeling_second_pass():
     # Pass 1 (per-camera) gives non-colliding but wrong labels; the joint second
-    # pass re-decides both by comparison. Quality stays from pass 1.
+    # pass re-decides both (mount type + label) by comparison. Quality stays from
+    # pass 1.
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, joint_labeling=True)
     frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
     vlm = _queued_vlm(
         [
-            {"usable": True, "blur_reason": None, "view_label": "side"},  # cam a (pass 1)
-            {"usable": False, "blur_reason": "out of focus", "view_label": "wrist"},  # cam b (pass 1)
-            {"cameras": [{"view_label": "top"}, {"view_label": "left_side"}]},  # joint pass 2
+            {"usable": True, "mount_type": "fixed", "view_label": "side"},  # cam a (pass 1)
+            {"usable": False, "blur_reason": "out of focus", "mount_type": "fixed", "view_label": "side"},
+            {  # joint pass 2
+                "cameras": [
+                    {"mount_type": "fixed", "view_label": "top"},
+                    {"mount_type": "fixed", "view_label": "left_side"},
+                ]
+            },
         ]
     )
     verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
     # labels overwritten by the joint pass
     assert verdicts["observation.images.a"].view_label == "top"
     assert verdicts["observation.images.b"].view_label == "left_side"
-    # quality untouched by the joint (labels-only) pass
+    # quality untouched by the joint (mount + label only) pass
     assert verdicts["observation.images.b"].usable is False
     assert verdicts["observation.images.b"].blur_reason == "out of focus"
-
-
-def test_curate_cameras_relabels_on_conflict():
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB)  # relabel_on_conflict defaults True
-    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
-    # Per-camera pass gives both "top" (collision); the joint relabel pass then
-    # differentiates them. Quality verdicts stay from the per-camera pass.
-    vlm = _queued_vlm(
-        [
-            {"usable": True, "blur_reason": None, "view_label": "top"},  # cam a (per-camera)
-            {"usable": False, "blur_reason": "human operator visible", "view_label": "top"},  # cam b
-            {"cameras": [{"view_label": "top"}, {"view_label": "left_side"}]},  # joint relabel
-        ]
-    )
-    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
-    assert verdicts["observation.images.a"].view_label == "top"
-    assert verdicts["observation.images.b"].view_label == "left_side"  # relabeled, no collision
-    # quality is untouched by the relabel pass
-    assert verdicts["observation.images.b"].usable is False
-    assert verdicts["observation.images.b"].blur_reason == "human operator visible"
-
-
-def test_curate_cameras_no_relabel_when_disabled():
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, relabel_on_conflict=False)
-    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
-    # Only the per-camera responses are consumed; no joint relabel call is made.
-    vlm = _queued_vlm(
-        [
-            {"usable": True, "blur_reason": None, "view_label": "top"},
-            {"usable": True, "blur_reason": None, "view_label": "top"},
-        ]
-    )
-    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
-    assert verdicts["observation.images.a"].view_label == "top"
-    assert verdicts["observation.images.b"].view_label == "top"  # left colliding
 
 
 def test_build_name_mapping_and_collision():
