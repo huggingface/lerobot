@@ -58,6 +58,35 @@ def _queued_vlm(responses: list) -> StubVlmClient:
     return StubVlmClient(responder=responder)
 
 
+def _capturing_vlm(responses: list) -> tuple[StubVlmClient, list]:
+    """Stub VLM that records every message batch it is asked to complete.
+
+    Returns ``(client, seen)`` where ``seen`` accumulates each ``_messages``
+    passed to the responder, so a test can assert what content reached the VLM.
+    """
+    state = {"i": 0}
+    seen: list = []
+
+    def responder(_messages):
+        seen.append(_messages)
+        r = responses[state["i"]]
+        state["i"] += 1
+        return r
+
+    return StubVlmClient(responder=responder), seen
+
+
+def _all_text_sent(seen: list) -> str:
+    """Concatenate every text block across all captured message batches."""
+    texts: list[str] = []
+    for messages in seen:
+        for message in messages:
+            for block in message.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(str(block.get("text", "")))
+    return "\n".join(texts)
+
+
 def _tiny_image() -> PIL.Image.Image:
     return PIL.Image.new("RGB", (16, 12))
 
@@ -238,6 +267,37 @@ def test_curate_cameras_joint_labeling_second_pass():
     # quality untouched by the joint (mount + label only) pass
     assert verdicts["observation.images.b"].usable is False
     assert verdicts["observation.images.b"].blur_reason == "out of focus"
+
+
+def test_vlm_never_sees_camera_key():
+    # The VLM must classify purely from pixels + neutral "Camera i" numbering; the
+    # existing dataset key name (often unreliable/misleading) must never reach it,
+    # in either the per-camera or the joint pass.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, joint_labeling=True)
+    frames = {
+        "observation.images.ZZSECRETLEFT": [_tiny_image()],
+        "observation.images.ZZSECRETRIGHT": [_tiny_image()],
+    }
+    vlm, seen = _capturing_vlm(
+        [
+            {"usable": True, "mount_type": "fixed", "view_label": "top"},  # per-camera cam 1
+            {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"},  # per-camera cam 2
+            {  # joint pass
+                "cameras": [
+                    {"mount_type": "fixed", "view_label": "top"},
+                    {"mount_type": "robot_mounted", "view_label": "wrist"},
+                ]
+            },
+        ]
+    )
+    curate_cameras(frames, cfg, vlm)
+
+    sent = _all_text_sent(seen)
+    assert "ZZSECRET" not in sent  # no fragment of either camera key
+    assert "observation.images" not in sent  # nor the canonical prefix
+    # sanity: the neutral numbering and preliminary evidence DID reach the VLM
+    assert "Camera 1:" in sent and "Camera 2:" in sent
+    assert "preliminary" in sent
 
 
 def test_build_name_mapping_and_collision():
