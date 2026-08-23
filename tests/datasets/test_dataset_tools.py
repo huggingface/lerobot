@@ -27,6 +27,7 @@ import pandas as pd  # noqa: E402
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
+    _resolve_rename_collisions,
     add_features,
     convert_image_to_video_dataset,
     delete_episodes,
@@ -38,7 +39,6 @@ from lerobot.datasets.dataset_tools import (
     rename_features,
     split_dataset,
 )
-from lerobot.datasets.dataset_tools import _resolve_rename_collisions
 from lerobot.datasets.io_utils import load_info, load_stats
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
@@ -1543,10 +1543,14 @@ def test_resolve_rename_collisions_error_and_suffix():
     # target collides with an untouched key
     with pytest.raises(ValueError, match="existing feature"):
         _resolve_rename_collisions({"a": "c"}, features, "error")
-    # suffix disambiguates deterministically
+    # suffix disambiguates deterministically: a contended target is numbered on
+    # every instance from _1 (not top / top_2), in sorted-source order.
     resolved = _resolve_rename_collisions({"a": "top", "b": "top"}, features, "suffix")
-    assert set(resolved.values()) == {"top", "top_2"}
-    assert resolved["a"] == "top"  # sorted-source order keeps the first
+    assert set(resolved.values()) == {"top_1", "top_2"}
+    assert resolved["a"] == "top_1"  # sorted-source order
+    # a target used by a single source stays bare
+    solo = _resolve_rename_collisions({"a": "top", "b": "wrist"}, features, "suffix")
+    assert solo == {"a": "top", "b": "wrist"}
 
 
 def test_rename_image_feature(sample_dataset, tmp_path):
@@ -1621,7 +1625,7 @@ def test_rename_collision_suffix(two_camera_image_dataset, tmp_path):
             on_collision="suffix",
         )
     keys = set(renamed.meta.features)
-    assert {"observation.images.top", "observation.images.top_2"} <= keys
+    assert {"observation.images.top_1", "observation.images.top_2"} <= keys
 
 
 def test_rename_identity_only_raises(sample_dataset, tmp_path):

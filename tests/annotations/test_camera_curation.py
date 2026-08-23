@@ -374,6 +374,29 @@ def test_build_name_mapping_skip_target_taken_by_existing_feature():
     assert set(skipped) == {"observation.images.cam_0"}
 
 
+def test_build_name_mapping_suffix_numbers_from_one():
+    # on_collision="suffix" renames ALL cameras; a contended label is numbered
+    # from _1 (top_1, top_2), a unique label stays bare.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, on_collision="suffix", ignore_key_names=True)
+    existing = {
+        "observation.images.cam_0": {},
+        "observation.images.cam_1": {},
+        "observation.images.cam_2": {},
+    }
+    verdicts = [
+        CameraVerdict("observation.images.cam_0", usable=True, view_label="top", confidence=0.9),
+        CameraVerdict("observation.images.cam_1", usable=True, view_label="top", confidence=0.8),
+        CameraVerdict("observation.images.cam_2", usable=True, view_label="wrist", confidence=0.7),
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert skipped == {}  # nothing skipped — every camera renamed
+    assert mapping == {
+        "observation.images.cam_0": "observation.images.top_1",
+        "observation.images.cam_1": "observation.images.top_2",
+        "observation.images.cam_2": "observation.images.wrist",
+    }
+
+
 def test_build_name_mapping_error_mode_raises():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, on_collision="error")
     clash = [
@@ -411,6 +434,34 @@ def test_build_name_mapping_disambiguates_two_wrists_from_source_names():
         "observation.images.cam_right": "observation.images.right_wrist",
     }
     assert skipped == {}
+
+
+def test_build_report_flags_unusable_and_collision():
+    from lerobot.annotations.camera_curation.curator import build_report
+
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    verdicts = [
+        CameraVerdict("observation.images.a", usable=True, view_label="top"),
+        CameraVerdict("observation.images.b", usable=True, view_label="top"),
+        CameraVerdict("observation.images.c", usable=False, view_label=None, blur_reason="placeholder"),
+    ]
+    mapping = {  # a/b collided on "top" and were suffixed
+        "observation.images.a": "observation.images.top_1",
+        "observation.images.b": "observation.images.top_2",
+    }
+    report = build_report(verdicts, mapping, cfg)
+    assert report["has_unusable"] is True
+    assert report["unusable_cameras"] == ["observation.images.c"]
+    assert report["has_name_collision"] is True
+    assert report["suffixed_cameras"] == ["observation.images.a", "observation.images.b"]
+
+    # A clean dataset (all usable, no suffix) reports both flags False.
+    clean = build_report(
+        [CameraVerdict("observation.images.a", usable=True, view_label="top")],
+        {"observation.images.a": "observation.images.top"},
+        cfg,
+    )
+    assert clean["has_unusable"] is False and clean["has_name_collision"] is False
 
 
 def test_write_report(tmp_path):

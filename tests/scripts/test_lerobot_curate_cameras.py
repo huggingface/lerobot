@@ -123,14 +123,23 @@ def test_build_collection_report_tallies():
         "u/noop": {"cameras": {"observation.images.top": {"proposed_new_key": None}}},
         "u/bad": {"error": "boom"},
         "u/conf": {"cameras": {}, "collisions": {"observation.images.x": "reason"}},
+        "u/flagged": {
+            "cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top_1"}},
+            "has_unusable": True,
+            "has_name_collision": True,
+        },
     }
-    report = _build_collection_report(cfg, ["u/ok", "u/noop", "u/bad", "u/conf"], collection)
-    assert report["n_total"] == 4
-    assert report["n_done"] == 4
+    all_sp = ["u/ok", "u/noop", "u/bad", "u/conf", "u/flagged"]
+    report = _build_collection_report(cfg, all_sp, collection)
+    assert report["n_total"] == 5
+    assert report["n_done"] == 5
     assert report["n_failed"] == 1 and report["failed"] == {"u/bad": "boom"}
     assert report["n_conflicts"] == 1
-    assert report["renamed"] == ["u/ok"]  # only the one with a real proposed_new_key
-    assert report["n_renamed"] == 1
+    assert set(report["renamed"]) == {"u/ok", "u/flagged"}  # both have a real proposed_new_key
+    assert report["n_renamed"] == 2
+    # per-dataset flags rolled up for the checkpoint
+    assert report["with_unusable"] == ["u/flagged"] and report["n_with_unusable"] == 1
+    assert report["with_name_collision"] == ["u/flagged"] and report["n_with_name_collision"] == 1
 
 
 def test_persist_progress_to_hub_uploads(tmp_path):

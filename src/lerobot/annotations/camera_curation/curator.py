@@ -466,11 +466,25 @@ def build_report(
     mapping: dict[str, str],
     cfg: CameraCurationConfig,
 ) -> dict[str, Any]:
-    """Assemble the machine-readable curation report."""
+    """Assemble the machine-readable curation report.
+
+    ``has_unusable`` / ``unusable_cameras`` flag any view judged unusable, and
+    ``has_name_collision`` / ``suffixed_cameras`` flag cameras whose canonical
+    label clashed and was disambiguated with a numeric suffix (``top_1``, ``top_2``)
+    — surfaced per dataset so a curation sweep is auditable at a glance.
+    """
+    unusable_cameras = sorted(v.camera_key for v in verdicts if not v.usable)
+    # A numeric suffix on the new key means the label collided and was suffixed
+    # (vocabulary labels never end in ``_<digits>``, so this is unambiguous).
+    suffixed_cameras = sorted(old for old, new in mapping.items() if re.search(r"_\d+$", new))
     return {
         "repo_id": cfg.repo_id,
         "episode_index": cfg.episode_index,
         "view_vocabulary": list(cfg.view_vocabulary),
+        "has_unusable": bool(unusable_cameras),
+        "unusable_cameras": unusable_cameras,
+        "has_name_collision": bool(suffixed_cameras),
+        "suffixed_cameras": suffixed_cameras,
         "cameras": {
             v.camera_key: {
                 "view_label": v.view_label,

@@ -513,8 +513,9 @@ def _resolve_rename_collisions(
     either two sources mapping to the same target, or a target equal to an
     untouched existing key. Swaps/cycles between sources are *not* collisions
     (handled downstream). ``on_collision="error"`` raises listing every offending
-    pair; ``"suffix"`` disambiguates deterministically (``top`` → ``top_2`` → …)
-    in sorted-source order.
+    pair; ``"suffix"`` disambiguates deterministically in sorted-source order — a
+    target contended by several sources is numbered on EVERY instance from 1
+    (``top_1``, ``top_2``, …), while a target used by a single source stays bare.
     """
     if on_collision not in ("error", "suffix"):
         raise ValueError(f"on_collision must be 'error' or 'suffix', got {on_collision!r}")
@@ -543,18 +544,27 @@ def _resolve_rename_collisions(
             )
         return dict(name_mapping)
 
-    # suffix mode: greedily de-collide in a deterministic (sorted) order.
+    # suffix mode: de-collide in a deterministic (sorted) order. A target
+    # contended by 2+ sources (or clashing with an untouched key) is numbered on
+    # every instance from _1; a target used by exactly one source stays bare.
+    contended = duplicate_targets | untouched_collisions
     used = set(untouched)
+    counters: dict[str, int] = {}
     resolved: dict[str, str] = {}
     for src in sorted(name_mapping):
         target = name_mapping[src]
-        if target in used:
-            base, i = target, 2
-            while target in used:
-                target = f"{base}_{i}"
-                i += 1
-        resolved[src] = target
-        used.add(target)
+        if target not in contended and target not in used:
+            resolved[src] = target
+            used.add(target)
+            continue
+        i = counters.get(target, 0) + 1
+        candidate = f"{target}_{i}"
+        while candidate in used:
+            i += 1
+            candidate = f"{target}_{i}"
+        counters[target] = i
+        resolved[src] = candidate
+        used.add(candidate)
     return resolved
 
 
@@ -702,9 +712,7 @@ def rename_features(
     if missing:
         raise ValueError(f"Feature(s) not found in dataset: {missing}")
 
-    bad_required = sorted(
-        {name for pair in mapping.items() for name in pair if name in _REQUIRED_FEATURES}
-    )
+    bad_required = sorted({name for pair in mapping.items() for name in pair if name in _REQUIRED_FEATURES})
     if bad_required:
         raise ValueError(f"Cannot rename to/from required features: {bad_required}")
 

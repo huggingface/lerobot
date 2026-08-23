@@ -462,6 +462,14 @@ def _build_collection_report(
         and "error" not in e
         and any((cam or {}).get("proposed_new_key") for cam in (e.get("cameras") or {}).values())
     )
+    # Per-dataset flags surfaced by build_report: an unusable view, or a name
+    # collision that was disambiguated with a numeric suffix.
+    with_unusable = sorted(
+        sp for sp, e in collection.items() if isinstance(e, dict) and e.get("has_unusable")
+    )
+    with_name_collision = sorted(
+        sp for sp, e in collection.items() if isinstance(e, dict) and e.get("has_name_collision")
+    )
     return {
         "repo_id": cfg.repo_id,
         "mode": cfg.mode,
@@ -471,7 +479,11 @@ def _build_collection_report(
         "n_rename_skipped": len(rename_skipped),
         "n_conflicts": len(conflicts),
         "n_renamed": len(renamed),
+        "n_with_unusable": len(with_unusable),
+        "n_with_name_collision": len(with_name_collision),
         "renamed": renamed,
+        "with_unusable": with_unusable,
+        "with_name_collision": with_name_collision,
         "failed": failed,
         "rename_skipped": rename_skipped,
         "conflicts": conflicts,
