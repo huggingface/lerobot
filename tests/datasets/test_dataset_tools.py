@@ -18,6 +18,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 
@@ -26,6 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
+    _load_episode_with_stats,
     add_features,
     convert_image_to_video_dataset,
     delete_episodes,
@@ -36,7 +38,7 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
@@ -1555,3 +1557,30 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+def test_load_episode_with_stats_reads_each_metadata_file_once(sample_dataset):
+    """The optional cache reads a metadata file once per file instead of once per episode.
+
+    Without it, editing a dataset re-read the whole episodes metadata parquet for every episode,
+    which dominates runtime on datasets with many episodes.
+    """
+    num_episodes = sample_dataset.meta.total_episodes
+    if sample_dataset.meta.episodes is None:
+        sample_dataset.meta.episodes = load_episodes(sample_dataset.meta.root)
+
+    uncached = [_load_episode_with_stats(sample_dataset, idx) for idx in range(num_episodes)]
+
+    cache = {}
+    with patch("lerobot.datasets.dataset_tools.pd.read_parquet", wraps=pd.read_parquet) as spy_read_parquet:
+        cached = [_load_episode_with_stats(sample_dataset, idx, cache) for idx in range(num_episodes)]
+
+    # The fixture's episodes all live in a single metadata file, so one read covers all of them.
+    assert spy_read_parquet.call_count == 1
+    assert len(cache) == 1
+
+    assert [row["episode_index"] for row in cached] == list(range(num_episodes))
+    for cached_row, uncached_row in zip(cached, uncached, strict=True):
+        assert cached_row.keys() == uncached_row.keys()
+        for key in cached_row:
+            np.testing.assert_array_equal(cached_row[key], uncached_row[key])
