@@ -397,6 +397,52 @@ def _load_completed_subdatasets(report_path: Path) -> dict[str, Any]:
     return {sp: e for sp, e in subdatasets.items() if not (isinstance(e, dict) and "error" in e)}
 
 
+def _fetch_progress_from_hub(cfg: CameraCurationConfig, report_path: Path) -> bool:
+    """Best-effort: pull the progress log from the collection repo to ``report_path``.
+
+    Lets ``--resume`` recover the checkpoint on a fresh (ephemeral) pod. Returns
+    True if a file was fetched; never raises (a missing file just means fresh run).
+    """
+    from huggingface_hub import hf_hub_download
+
+    try:
+        cached = hf_hub_download(
+            repo_id=cfg.repo_id,
+            repo_type="dataset",
+            filename=report_path.name,
+            revision=cfg.branch,
+        )
+    except Exception as exc:  # noqa: BLE001 - no checkpoint on the Hub yet is normal
+        logger.info("resume: no progress checkpoint on the Hub (%s); starting fresh", exc)
+        return False
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(cached, report_path)
+    logger.info("resume: fetched progress checkpoint from the Hub -> %s", report_path)
+    return True
+
+
+def _persist_progress_to_hub(cfg: CameraCurationConfig, report_path: Path, lock: "threading.Lock") -> None:
+    """Best-effort: upload the progress log to the collection repo (under ``lock``).
+
+    Serialized with the rename commits (same branch head) so uploads don't race
+    concurrent renames. A failed checkpoint upload is logged, never fatal.
+    """
+    from huggingface_hub import HfApi
+
+    try:
+        with lock:
+            HfApi().upload_file(
+                path_or_fileobj=str(report_path),
+                path_in_repo=report_path.name,
+                repo_id=cfg.repo_id,
+                repo_type="dataset",
+                revision=cfg.branch,
+                commit_message="curate: progress checkpoint (lerobot-curate-cameras)",
+            )
+    except Exception as exc:  # noqa: BLE001 - a lost checkpoint must not sink the sweep
+        logger.warning("progress: failed to upload checkpoint to the Hub (%s)", exc)
+
+
 def _build_collection_report(
     cfg: CameraCurationConfig, all_subpaths: list[str], collection: dict[str, Any]
 ) -> dict[str, Any]:
@@ -456,6 +502,10 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
 
     collection: dict[str, Any] = {}
     if cfg.resume:
+        # On an ephemeral pod the local file is gone, so pull the checkpoint from
+        # the Hub first when it is not on disk.
+        if cfg.progress_to_hub and not report_path.exists():
+            _fetch_progress_from_hub(cfg, report_path)
         collection = _load_completed_subdatasets(report_path)
         if collection:
             logger.info(
@@ -474,6 +524,8 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
         report_path.write_text(
             json.dumps(_build_collection_report(cfg, subpaths, collection), indent=2), encoding="utf-8"
         )
+        if cfg.progress_to_hub:
+            _persist_progress_to_hub(cfg, report_path, commit_lock)
 
     parallelism = max(1, min(cfg.parallelism, len(todo))) if todo else 1
     logger.info(

@@ -131,3 +131,55 @@ def test_build_collection_report_tallies():
     assert report["n_conflicts"] == 1
     assert report["renamed"] == ["u/ok"]  # only the one with a real proposed_new_key
     assert report["n_renamed"] == 1
+
+
+def test_persist_progress_to_hub_uploads(tmp_path):
+    import threading
+
+    from lerobot.scripts.lerobot_curate_cameras import _persist_progress_to_hub
+
+    report = tmp_path / "camera_curation_collection.json"
+    report.write_text('{"subdatasets": {}}', encoding="utf-8")
+    cfg = CameraCurationConfig(repo_id="u/collection", branch="curated")
+    api = MagicMock()
+    with patch("huggingface_hub.HfApi", return_value=api):
+        _persist_progress_to_hub(cfg, report, threading.Lock())
+    kwargs = api.upload_file.call_args.kwargs
+    assert kwargs["repo_id"] == "u/collection"
+    assert kwargs["repo_type"] == "dataset"
+    assert kwargs["revision"] == "curated"
+    assert kwargs["path_in_repo"] == "camera_curation_collection.json"
+
+
+def test_persist_progress_to_hub_swallows_errors(tmp_path):
+    import threading
+
+    from lerobot.scripts.lerobot_curate_cameras import _persist_progress_to_hub
+
+    report = tmp_path / "p.json"
+    report.write_text("{}", encoding="utf-8")
+    cfg = CameraCurationConfig(repo_id="u/c")
+    api = MagicMock()
+    api.upload_file.side_effect = RuntimeError("network down")
+    with patch("huggingface_hub.HfApi", return_value=api):
+        _persist_progress_to_hub(cfg, report, threading.Lock())  # must not raise
+
+
+def test_fetch_progress_from_hub_copies(tmp_path):
+    from lerobot.scripts.lerobot_curate_cameras import _fetch_progress_from_hub
+
+    remote = tmp_path / "remote.json"
+    remote.write_text('{"subdatasets": {"u/ok": {"cameras": {}}}}', encoding="utf-8")
+    dest = tmp_path / "out" / "camera_curation_collection.json"
+    cfg = CameraCurationConfig(repo_id="u/collection")
+    with patch("huggingface_hub.hf_hub_download", return_value=str(remote)):
+        assert _fetch_progress_from_hub(cfg, dest) is True
+    assert dest.exists() and "u/ok" in dest.read_text()
+
+
+def test_fetch_progress_from_hub_missing_returns_false(tmp_path):
+    from lerobot.scripts.lerobot_curate_cameras import _fetch_progress_from_hub
+
+    cfg = CameraCurationConfig(repo_id="u/collection")
+    with patch("huggingface_hub.hf_hub_download", side_effect=FileNotFoundError("404")):
+        assert _fetch_progress_from_hub(cfg, tmp_path / "x.json") is False

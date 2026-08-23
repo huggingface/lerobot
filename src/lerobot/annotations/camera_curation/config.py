@@ -128,10 +128,15 @@ class CameraCurationConfig:
     report_path: Path | None = None
 
     # Resume a nested sweep: skip sub-datasets already recorded (without an error)
-    # in the report/progress file, and process only the rest. Requires the report
-    # file to have survived (a persistent --report_path, or a local run); an
-    # ephemeral HF-Jobs pod loses it on restart unless it is on a mounted path.
+    # in the report/progress file, and process only the rest.
     resume: bool = False
+
+    # Persist the nested progress/resume log to the Hub (the collection repo) after
+    # each sub-dataset, and fetch it back on --resume. This is what makes --resume
+    # work on an ephemeral HF-Jobs pod, whose local filesystem is wiped on restart:
+    # the checkpoint lives on the Hub instead of on disk. Uploaded to --branch when
+    # set. Adds one small metadata commit per sub-dataset.
+    progress_to_hub: bool = False
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     job: AnnotationJobConfig = field(default_factory=AnnotationJobConfig)
