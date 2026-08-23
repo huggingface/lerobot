@@ -94,6 +94,8 @@ FSDP shards the model in units (typically the repeated transformer block) and ga
 --accelerator.fsdp.min_num_params=1000000                  # or: wrap every submodule above 1M params
 ```
 
+On PyTorch 2.12 and newer, FSDP refuses to split tied weights, such as a language head tied to the input embedding, across two wrap units. Size-based wrapping can split them, and the first training step then stops with `Parameter '...' is shared with a parameter already managed by another FSDP group`. For a policy with tied weights, pass `--accelerator.fsdp.wrap_modules` with modules that keep the tied weights together. Naming only the repeated block class usually works, because the embedding and the head then stay together in the root unit; naming leaf classes such as `Embedding` or `Linear` splits them.
+
 If a policy doesn't declare `_fsdp_wrap_modules` and no `--accelerator.fsdp.wrap_modules` or `--accelerator.fsdp.min_num_params` is passed, the run fails at startup rather than silently wrapping only the root module (which would forfeit all sharding memory savings).
 
 Other sharding settings:
