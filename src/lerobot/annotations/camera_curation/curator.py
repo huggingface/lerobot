@@ -105,7 +105,7 @@ def _combo_rule(cfg: CameraCurationConfig) -> str:
     if cfg.allow_combos:
         return (
             "You may combine at most two of these words with an underscore when "
-            "one word is not precise enough (e.g. \"left_wrist\"). "
+            'one word is not precise enough (e.g. "left_wrist"). '
         )
     return "Use exactly one of these words (no combinations). "
 
@@ -130,18 +130,23 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
 
     raw_label = result.get("view_label")
     label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
-    view_label = label if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos) else None
-    if view_label is not None:
+    # "unknown" is an explicit abstain — the model isn't sure, so leave the camera
+    # unlabeled (no rename) rather than forcing a guess.
+    if label == "unknown":
+        view_label = None
+    elif is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
         # Canonicalize combo order (``wrist_left`` -> ``left_wrist``) so the set
         # of possible keys is deterministic regardless of the VLM's word order.
-        view_label = _order_combo(view_label.split("_"), cfg.view_vocabulary)
-    if raw_label and view_label is None:
-        logger.warning(
-            "camera %s: VLM returned view_label=%r which is not in the vocabulary %s; leaving unlabeled",
-            camera_key,
-            raw_label,
-            cfg.view_vocabulary,
-        )
+        view_label = _order_combo(label.split("_"), cfg.view_vocabulary)
+    else:
+        view_label = None
+        if raw_label:
+            logger.warning(
+                "camera %s: VLM returned view_label=%r which is not in the vocabulary %s; leaving unlabeled",
+                camera_key,
+                raw_label,
+                cfg.view_vocabulary,
+            )
 
     confidence = result.get("confidence")
     try:
@@ -373,9 +378,7 @@ def _skip_colliding(
         kept[winner] = target
         for cam in cams:
             if cam != winner:
-                skipped[cam] = (
-                    f"label '{target}' also chosen by a more confident camera ({winner})"
-                )
+                skipped[cam] = f"label '{target}' also chosen by a more confident camera ({winner})"
     return kept, skipped
 
 
@@ -420,9 +423,7 @@ def _disambiguate_from_source_names(
         if counts[label] < 2:
             continue  # unique label — leave the VLM's clean single word alone
         label_tokens = label.split("_")
-        extra = next(
-            (tok for tok in _extract_vocab_tokens(cam, vocabulary) if tok not in label_tokens), None
-        )
+        extra = next((tok for tok in _extract_vocab_tokens(cam, vocabulary) if tok not in label_tokens), None)
         if extra is None:
             continue
         combined = _order_combo([*label_tokens, extra], vocabulary)
@@ -505,7 +506,7 @@ def _swap_key_in_path(path: str, old_key: str, new_key: str, path_prefix: str | 
     repo_prefix = f"{path_prefix}/" if path_prefix else ""
     old = f"{repo_prefix}videos/{old_key}/"
     new = f"{repo_prefix}videos/{new_key}/"
-    return f"{new}{path[len(old):]}" if path.startswith(old) else path
+    return f"{new}{path[len(old) :]}" if path.startswith(old) else path
 
 
 def rename_camera_keys_on_hub(
@@ -551,12 +552,8 @@ def rename_camera_keys_on_hub(
     # Determine which OLD keys are video-stored (only those have a videos/ tree)
     # BEFORE remapping the metadata.
     info = load_info(local_root)
-    video_old_keys = {
-        old for old in name_mapping if info.features.get(old, {}).get("dtype") == "video"
-    }
-    image_old_keys = {
-        old for old in name_mapping if info.features.get(old, {}).get("dtype") == "image"
-    }
+    video_old_keys = {old for old in name_mapping if info.features.get(old, {}).get("dtype") == "video"}
+    image_old_keys = {old for old in name_mapping if info.features.get(old, {}).get("dtype") == "image"}
     if image_old_keys:
         raise NotImplementedError(
             f"Hub rename cannot move image data stored in the data parquet (keys: {sorted(image_old_keys)}); "

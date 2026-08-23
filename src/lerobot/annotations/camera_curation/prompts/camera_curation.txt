@@ -57,12 +57,24 @@ Do two things and return them as one JSON object.
               move through an otherwise fixed scene), it is a FIXED camera, NOT a
               wrist. Qualify "left_wrist" / "right_wrist" when there are two.
 
-   Decide in two steps. FIRST, wrist vs fixed: does the whole background move
-   between the frames (the viewpoint travels with the arm)? If yes → wrist. If the
-   background stays put while only the arm/objects move → it is a FIXED camera.
-   THEN for a fixed camera: looking straight DOWN on the workspace → top; looking
-   UP from below → bottom; otherwise (viewing the robot from around it at height)
-   → side, with a direction: front_side / rear_side / left_side / right_side.
+   Decide in a strict order, using the fact that you see SEVERAL frames over time:
+
+   1. WRIST vs FIXED — use temporal evidence. Label a camera "wrist" ONLY if the
+      CAMERA ITSELF moves with the arm: the whole background/viewpoint SHIFTS
+      across the frames while the gripper stays roughly in place. Seeing the arm,
+      wrist or gripper close to the camera is NOT sufficient — a FIXED camera may
+      have the gripper filling a large part of the frame. If the background stays
+      at a stable viewpoint while the robot moves through the image, it is FIXED,
+      not wrist. Do not infer wrist mounting from mere proximity to the gripper.
+   2. If it is robot-mounted → wrist (qualify left_wrist / right_wrist only with
+      two arms when you can tell which; otherwise plain "wrist").
+   3. If it is fixed → its geometric viewpoint: looking predominantly DOWN at the
+      workspace → top (it need NOT be perfectly vertical — an elevated camera
+      looking mostly downward is top even if the wrist/gripper is very prominent);
+      looking UP from below → bottom; otherwise a view from around the robot at
+      height → side, with a direction (front_side / rear_side / left_side /
+      right_side, or plain "side" if you cannot tell).
+   4. If the evidence is genuinely insufficient, answer "unknown" rather than guess.
 
    {combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
    left/right/front/rear are direction qualifiers — use them only as a suffix on
@@ -73,6 +85,6 @@ Output strictly valid JSON, no prose, no code fences, with exactly these keys:
   {{
     "usable": true or false,
     "blur_reason": "<short reason if unusable, else null>",
-    "view_label": "<one label from the vocabulary, combos joined by '_'>",
+    "view_label": "<a vocabulary label, a combo joined by '_', or \"unknown\">",
     "confidence": <number between 0 and 1>
   }}

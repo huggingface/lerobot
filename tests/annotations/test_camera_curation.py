@@ -145,6 +145,23 @@ def test_curate_cameras_canonicalizes_combo_order():
     assert verdicts["observation.images.b"].view_label == "right_side"
 
 
+def test_curate_cameras_unknown_is_abstain():
+    # "unknown" is an explicit abstain: the camera stays usable but unlabeled
+    # (no rename), distinct from an invalid label that also drops to None.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    frames = {"observation.images.a": [_tiny_image()], "observation.images.b": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [
+            {"usable": True, "blur_reason": None, "view_label": "unknown", "confidence": 0.3},
+            {"usable": True, "blur_reason": None, "view_label": "UNKNOWN", "confidence": 0.3},
+        ]
+    )
+    verdicts = {v.camera_key: v for v in curate_cameras(frames, cfg, vlm)}
+    assert verdicts["observation.images.a"].usable is True
+    assert verdicts["observation.images.a"].view_label is None
+    assert verdicts["observation.images.b"].view_label is None  # case-insensitive
+
+
 def test_curate_cameras_joint_labeling_second_pass():
     # Pass 1 (per-camera) gives non-colliding but wrong labels; the joint second
     # pass re-decides both by comparison. Quality stays from pass 1.
@@ -372,20 +389,24 @@ def test_rename_camera_keys_on_hub_with_path_prefix(tmp_path):
 def test_rename_camera_keys_on_hub_rejects_image_keys(tmp_path):
     camera_key = "observation.images.cam_0"
     _make_min_meta(tmp_path, camera_key, dtype="image")
-    with patch("huggingface_hub.HfApi", return_value=MagicMock()):
-        with pytest.raises(NotImplementedError, match="image data"):
-            rename_camera_keys_on_hub("user/ds", {camera_key: "observation.images.top"}, tmp_path)
+    with (
+        patch("huggingface_hub.HfApi", return_value=MagicMock()),
+        pytest.raises(NotImplementedError, match="image data"),
+    ):
+        rename_camera_keys_on_hub("user/ds", {camera_key: "observation.images.top"}, tmp_path)
 
 
 def test_rename_camera_keys_on_hub_rejects_swaps(tmp_path):
     _make_min_meta(tmp_path, "observation.images.a", dtype="video")
-    with patch("huggingface_hub.HfApi", return_value=MagicMock()):
-        with pytest.raises(NotImplementedError, match="swap"):
-            rename_camera_keys_on_hub(
-                "user/ds",
-                {
-                    "observation.images.a": "observation.images.b",
-                    "observation.images.b": "observation.images.a",
-                },
-                tmp_path,
-            )
+    with (
+        patch("huggingface_hub.HfApi", return_value=MagicMock()),
+        pytest.raises(NotImplementedError, match="swap"),
+    ):
+        rename_camera_keys_on_hub(
+            "user/ds",
+            {
+                "observation.images.a": "observation.images.b",
+                "observation.images.b": "observation.images.a",
+            },
+            tmp_path,
+        )

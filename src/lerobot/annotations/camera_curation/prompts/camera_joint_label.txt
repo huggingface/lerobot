@@ -1,6 +1,8 @@
 These {n} camera views all come from the SAME robot-manipulation episode, shown
-together and numbered "Camera 1", "Camera 2", ... in order. Compare them against
-each other and give EACH one a view label from this closed vocabulary:
+together and numbered "Camera 1", "Camera 2", ... in order. The numbers are
+arbitrary labels for referencing the groups — they carry NO information about
+where a camera sits; classify each purely from its visual content. Compare them
+against each other and give EACH one a view label from this closed vocabulary:
 
   {vocabulary}
 
@@ -17,13 +19,22 @@ each other and give EACH one a view label from this closed vocabulary:
              STABLE across its frames (only the arm/objects move), it is a FIXED
              camera, not a wrist. Qualify "left_wrist" / "right_wrist" for two.
 
-A wrist camera moves with the arm (its background changes across its frames);
-every other label is a FIXED camera whose background stays put while the arm
-moves through it. Camera mounts may be TILTED or ROTATED; judge each view from
-the robot's and the work surface's orientation, mentally leveling the image — not
-from the frame edges. The cameras of one setup almost always point from DIFFERENT places, so use
+Critical wrist-vs-fixed rule. Label a camera "wrist" ONLY when there is visual
+evidence that the CAMERA ITSELF moves rigidly with the robot arm: its whole
+background/viewpoint SHIFTS across its own frames while the gripper stays roughly
+in place. Seeing the gripper close, large, or even closing is NOT sufficient — a
+FIXED camera may have the gripper filling much of the frame. If a camera's
+background stays at a stable viewpoint while the robot moves through the image,
+it is FIXED, not wrist. In particular, a FIXED camera looking predominantly DOWN
+at the workspace is "top" even if the wrist/gripper is very prominent (it need
+not be perfectly vertical — an elevated, mostly-downward view is top).
+
+Camera mounts may be TILTED or ROTATED; judge each view from the robot's and the
+work surface's orientation, mentally leveling the image — not from the frame
+edges. The cameras of one setup almost always point from DIFFERENT places, so use
 the side-by-side comparison to give each a DISTINCT label; only repeat a label if
-two cameras genuinely share the same viewpoint.
+two cameras genuinely share the same viewpoint. If a camera's viewpoint is
+genuinely ambiguous, answer "unknown" rather than guessing.
 
 {combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
 left/right/front/rear are direction qualifiers — use them only as a suffix on
@@ -34,6 +45,6 @@ SAME ORDER as the numbered groups above.
 
   {{
     "cameras": [
-      {{"view_label": "<one label from the vocabulary>"}}
+      {{"view_label": "<a vocabulary label, a combo joined by '_', or \"unknown\">"}}
     ]
   }}
