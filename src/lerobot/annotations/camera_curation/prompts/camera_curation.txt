@@ -178,31 +178,48 @@ If handedness is uncertain, use "wrist".
 
 If mount_type == "fixed"
 
-Determine the camera's PHYSICAL POSITION relative to the manipulation workspace.
+Determine the camera's PHYSICAL VIEWING GEOMETRY relative to the manipulation
+workspace.
 
-Camera images may be tilted, rolled, rotated, or mirrored. Reason about physical
-workspace geometry, not image-frame edges.
+Camera images may be tilted, rolled, rotated, or mirrored. Reason about the
+physical workspace and perspective, not the orientation of the image frame.
 
 top
 
-Use "top" when the camera is physically positioned predominantly ABOVE the
-manipulation workspace and looks predominantly downward toward it.
+Use "top" ONLY when the camera provides a PREDOMINANTLY OVERHEAD view of the
+manipulation workspace.
 
-The camera does NOT need to point perfectly vertically downward.
+A top camera should satisfy BOTH:
 
-An elevated oblique camera is still "top" when its physical position is primarily
-above the manipulation area.
+  1. it is physically positioned above the manipulation area; AND
+  2. its viewing geometry is predominantly downward / bird's-eye rather than
+     diagonally across the workspace.
 
-Typical evidence:
+The camera does NOT need to be perfectly vertical, but the resulting perspective
+must still be primarily overhead.
 
-  - much of the horizontal work surface is visible;
-  - objects are substantially visible from above;
-  - the view gives an overhead/global perspective;
-  - perspective depth along the table plane is relatively compressed.
+Strong evidence for "top":
 
-The robot arm or gripper may be very prominent in a top view.
+  - the horizontal work surface dominates the view;
+  - objects are seen mainly from their TOP surfaces;
+  - the manipulation area has a bird's-eye or near-bird's-eye appearance;
+  - vertical faces of objects and furniture are relatively reduced;
+  - perspective depth across the table/work surface is relatively weak;
+  - the camera looks DOWN ONTO the workspace rather than ACROSS it.
 
-That does NOT make it a wrist camera.
+IMPORTANT:
+
+Being elevated is NOT sufficient for "top".
+
+Looking downward is NOT sufficient for "top".
+
+Seeing a large amount of tabletop is NOT sufficient for "top".
+
+A camera mounted high outside the workspace and looking diagonally across it is
+NOT "top". It is a side view.
+
+A robot arm or gripper may be prominent in a top view. That does NOT make it a
+wrist camera.
 
 bottom
 
@@ -211,24 +228,36 @@ looks upward toward it.
 
 side
 
-Use a side label when the camera is physically positioned primarily OUTSIDE the
-workspace boundary and looks INWARD toward the manipulation area.
+Use a side label when the camera views the workspace predominantly FROM AROUND
+IT rather than FROM ABOVE IT.
 
-A side camera may be elevated and may look downward.
+A side camera may:
 
-Therefore HIGH + DOWNWARD does NOT automatically mean "top".
+  - be mounted high;
+  - be tilted downward;
+  - show a large amount of tabletop;
+  - provide a partially top-down-looking image.
 
-The distinction is physical position:
+It is still a side view when its geometry is predominantly OBLIQUE ACROSS the
+workspace rather than overhead.
 
-  - predominantly ABOVE the workspace -> "top";
-  - predominantly OUTSIDE its boundary looking inward -> side.
+Strong evidence for a side view:
 
-Side views often show:
+  - strong perspective depth across the work surface;
+  - clear near-versus-far structure;
+  - visible vertical faces of objects, furniture, robot parts, or workspace
+    boundaries;
+  - the camera looks ACROSS the workspace rather than DOWN ONTO it;
+  - objects are seen substantially from their sides rather than primarily from
+    their top surfaces.
 
-  - stronger perspective depth across the workspace;
-  - more vertical surfaces;
-  - objects and robot geometry more from the side;
-  - a more oblique view across the work surface.
+Therefore:
+
+HIGH + DOWNWARD does NOT imply "top".
+
+HIGH + OBLIQUE ACROSS WORKSPACE -> side.
+
+OVERHEAD / BIRD'S-EYE -> top.
 
 When physical direction is reliably identifiable, use:
 
@@ -237,31 +266,53 @@ When physical direction is reliably identifiable, use:
   - "left_side"
   - "right_side"
 
-Use plain "side" when it is clearly an external side view but direction cannot
-be reliably determined.
+Use plain "side" when the view is clearly oblique/external but its direction
+cannot be reliably determined.
 
-Do NOT infer front/rear/left/right merely from where the robot appears in the
+Do NOT infer front/rear/left/right merely from where the robot appears within the
 image.
+
+TOP VS SIDE — REQUIRED GEOMETRIC TEST
+
+For EVERY fixed camera that could plausibly be either top or side, explicitly
+compare the two hypotheses before answering.
+
+Ask:
+
+Hypothesis A — TOP
+
+Does the camera look predominantly DOWN ONTO the workspace?
+
+Look for:
+
+  - bird's-eye geometry;
+  - dominant top surfaces;
+  - weak depth perspective across the work surface;
+  - relatively little vertical geometry.
+
+Hypothesis B — SIDE
+
+Does the camera look predominantly ACROSS the workspace from an oblique angle?
+
+Look for:
+
+  - strong near-to-far depth;
+  - perspective convergence;
+  - substantial vertical surfaces;
+  - substantial side faces of objects;
+  - an obvious oblique viewing direction across the work surface.
+
+Choose "top" ONLY when Hypothesis A is clearly better supported.
+
+If the camera is elevated but the geometry is clearly oblique across the
+workspace, choose a side label.
+
+Do NOT use camera height alone to decide.
 
 If mount_type == "unknown"
 
 Use "unknown" unless the physical view category can nevertheless be established
 with strong evidence.
-
-TOP VS SIDE — REQUIRED FINAL CHECK
-
-For every FIXED camera that might be either top or side, explicitly determine:
-
-Is the camera physically located primarily ABOVE the manipulation area, or
-primarily OUTSIDE its boundary looking inward?
-
-  - primarily ABOVE -> "top"
-  - primarily OUTSIDE -> a side label
-
-Do NOT decide solely from downward viewing angle.
-
-A top camera can be oblique.
-A side camera can be high and point downward.
 
 CONSISTENCY
 

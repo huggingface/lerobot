@@ -28,13 +28,11 @@ Mount type must be one of:
   - "robot_mounted"
   - "unknown"
 
-IMPORTANT:
-
 Cameras are NOT required to have different labels.
 
-Multiple cameras may legitimately be "top", "side", or "wrist".
+Multiple cameras may legitimately share a semantic label.
 
-NEVER change a label merely to make labels unique.
+NEVER change a classification merely to make labels unique.
 
 1. REVIEW MOUNT TYPE
 
@@ -43,12 +41,12 @@ First review the preliminary mount_type for each camera.
 Do NOT change mount_type merely because another camera has the same mount type or
 view label.
 
-Change the preliminary mount_type ONLY when the visual evidence provides a clear
+Change the preliminary mount_type ONLY when visual evidence provides a clear
 contradiction.
 
 Static-environment test
 
-Identify STATIC scene landmarks:
+Identify STATIC scene landmarks such as:
 
   - table/work-surface edges;
   - walls;
@@ -69,12 +67,8 @@ across its frames.
 The robot moves THROUGH the image while the static environment remains registered
 to the camera.
 
-A gripper may:
-
-  - be very prominent;
-  - stay visible across frames;
-  - pass close to the lens;
-  - occupy much of the image.
+A gripper may be prominent, stay visible across frames, pass close to the lens,
+or occupy much of the image.
 
 None of these facts makes the camera robot-mounted.
 
@@ -110,9 +104,7 @@ Do not change "fixed" to "robot_mounted" based only on ambiguity.
 
 2. ROBOT-MOUNTED CAMERAS
 
-If mount_type == "robot_mounted", use:
-
-  - "wrist"
+If mount_type == "robot_mounted", use "wrist".
 
 Use "left_wrist" or "right_wrist" ONLY when explicit and reliable evidence ties
 the camera to a distinct left or right manipulator.
@@ -124,25 +116,38 @@ When uncertain, use plain "wrist".
 
 3. FIXED CAMERAS
 
-For fixed cameras, classify according to PHYSICAL CAMERA POSITION relative to
+For fixed cameras, classify according to PHYSICAL VIEWING GEOMETRY relative to
 the manipulation workspace.
 
 top
 
-Use "top" when the camera is physically positioned predominantly ABOVE the
-manipulation workspace and looks predominantly downward.
+Use "top" ONLY when the camera provides a PREDOMINANTLY OVERHEAD view.
 
-It does NOT need to be perfectly vertical.
+A top camera should satisfy BOTH:
 
-An elevated oblique camera can be "top" if its physical position is primarily
-above the manipulation area.
+  1. it is physically above the manipulation area; AND
+  2. its viewing geometry is predominantly downward / bird's-eye.
 
-Evidence includes:
+It does NOT need to be perfectly vertical, but the resulting perspective must
+still be primarily overhead.
 
-  - substantial visibility of horizontal work surfaces;
-  - objects seen substantially from above;
-  - an overhead/global perspective;
-  - relatively compressed depth along the work surface.
+Strong evidence:
+
+  - the horizontal work surface dominates;
+  - objects are seen mainly from their top surfaces;
+  - the manipulation area has bird's-eye or near-bird's-eye geometry;
+  - relatively few vertical surfaces are visible;
+  - depth perspective across the work surface is relatively weak;
+  - the camera looks DOWN ONTO the workspace rather than ACROSS it.
+
+Being high is NOT sufficient.
+
+Looking downward is NOT sufficient.
+
+Seeing a lot of tabletop is NOT sufficient.
+
+A high camera outside the workspace looking diagonally across the table is a side
+view, not top.
 
 bottom
 
@@ -151,15 +156,23 @@ looks upward.
 
 side
 
-Use a side label when the camera is physically positioned primarily OUTSIDE the
-workspace boundary and looks INWARD.
+Use a side label when the camera views the workspace predominantly FROM AROUND IT
+rather than FROM ABOVE IT.
 
-A side camera can be elevated and can look downward.
+A side camera may be high and tilted downward.
 
-Therefore downward viewing angle alone does NOT make a camera "top".
+It may show substantial tabletop.
 
-Side views generally show stronger depth perspective, more vertical surfaces,
-and a more oblique view across the workspace.
+It is still side when the viewing geometry is predominantly oblique ACROSS the
+workspace.
+
+Evidence:
+
+  - stronger near-to-far depth;
+  - stronger perspective convergence;
+  - substantial vertical surfaces;
+  - substantial side faces of objects;
+  - a clear oblique view across the work surface.
 
 When direction is reliably identifiable:
 
@@ -170,43 +183,68 @@ When direction is reliably identifiable:
 
 Otherwise use "side".
 
-Do NOT infer direction merely from where the robot appears within the image.
+Do NOT infer direction merely from where the robot appears in the image.
 
-4. JOINT TOP-VS-SIDE COMPARISON
+4. REQUIRED JOINT TOP-VS-SIDE COMPARISON
 
-Use the other fixed cameras as RELATIVE geometric evidence.
+This comparison is especially important when TWO OR MORE fixed cameras were
+preliminarily classified as "top".
 
-For cameras that might be top or side, compare:
+Do NOT automatically accept multiple "top" labels.
 
-  - how much horizontal work surface is visible;
-  - how strongly objects are viewed from above;
-  - amount of vertical scene geometry visible;
-  - perspective depth across the work surface;
-  - apparent physical position relative to the workspace boundary.
+Instead, compare their VIEWING GEOMETRY directly.
 
-Ask for each camera:
+For each candidate, evaluate:
 
-Is this camera primarily ABOVE the manipulation area, or primarily OUTSIDE its
-boundary looking inward?
+  - bird's-eye character;
+  - proportion of object TOP surfaces versus SIDE surfaces;
+  - amount of visible vertical geometry;
+  - strength of perspective depth across the workspace;
+  - near-versus-far size changes;
+  - perspective convergence;
+  - whether the camera looks DOWN ONTO or ACROSS the work surface.
 
-  - primarily ABOVE -> "top"
-  - primarily OUTSIDE -> side
+A genuine TOP view should be more strongly overhead:
 
-The camera providing the strongest overhead/global perspective is a strong "top"
-candidate.
+  - stronger bird's-eye geometry;
+  - more top surfaces;
+  - less vertical geometry;
+  - weaker perspective depth.
 
-A camera viewing the same workspace primarily from outside its boundary should
-remain a side view even when elevated and looking downward.
+An elevated SIDE view should be more oblique:
 
-However, this comparison is evidence only.
+  - stronger near/far depth;
+  - more side and vertical surfaces;
+  - stronger perspective convergence;
+  - clearer viewing direction across the workspace.
 
-Do NOT assume exactly one camera must be top.
+If Camera A is clearly more overhead while Camera B is clearly more oblique:
 
-Do NOT assume exactly one camera must be side.
+Camera A -> "top"
+Camera B -> side label
 
-Do NOT assign different labels merely because they are different cameras.
+Do NOT call Camera B "top" merely because it is elevated or points downward.
 
-5. UNCERTAINTY AND SPECIFICITY
+However, do NOT force different labels when the geometry genuinely supports the
+same category. Two cameras may both legitimately be top.
+
+The comparison is used to identify geometric differences, NOT to enforce label
+uniqueness.
+
+5. TOP VS SIDE DECISION RULE
+
+For every fixed top/side candidate, explicitly choose between:
+
+A. predominantly DOWN ONTO the workspace -> "top"
+
+B. predominantly ACROSS the workspace -> side
+
+Use viewing geometry rather than camera height.
+
+When uncertain between an elevated side view and a true overhead view, favor
+"side" unless the bird's-eye geometry provides positive evidence for "top".
+
+6. UNCERTAINTY AND SPECIFICITY
 
 Use "unknown" instead of guessing when the category cannot be established
 reliably.
@@ -216,7 +254,7 @@ Prefer a less-specific valid label over unsupported specificity:
   - "side" instead of guessing front/rear/left/right;
   - "wrist" instead of guessing left/right wrist.
 
-6. CONSISTENCY
+7. CONSISTENCY
 
 Valid combinations include:
 
