@@ -418,6 +418,7 @@ class PaliGemmaWithExpertModel(
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
 
+        self.precision = precision
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
@@ -472,23 +473,32 @@ class PaliGemmaWithExpertModel(
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
-        if image.ndim == 5:
-            if frame_mask is None:
-                frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
-            vision_transformer = self.paligemma.model.vision_tower.vision_model
-            features = encode_video_with_mem(
-                vision_transformer,
-                image,
-                frame_mask,
-                temporal_attention_every=temporal_attention_every,
-            )
-            features = self.paligemma.model.multi_modal_projector(features)
-        else:
-            image_outputs = self.paligemma.model.get_image_features(image)
-            features = image_outputs.pooler_output
+        # That float32 pin exists so training never toggles a parameter dtype. Inference has no
+        # optimizer state to protect, so run the matmuls on tensor cores while the stored weights
+        # stay float32. Autocast accumulates in float32, which lands closer to the float32 result
+        # than casting the weights would.
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._vision_autocast(image)):
+            if image.ndim == 5:
+                if frame_mask is None:
+                    frame_mask = torch.ones(image.shape[:2], dtype=torch.bool, device=image.device)
+                vision_transformer = self.paligemma.model.vision_tower.vision_model
+                features = encode_video_with_mem(
+                    vision_transformer,
+                    image,
+                    frame_mask,
+                    temporal_attention_every=temporal_attention_every,
+                )
+                features = self.paligemma.model.multi_modal_projector(features)
+            else:
+                image_outputs = self.paligemma.model.get_image_features(image)
+                features = image_outputs.pooler_output
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
+
+    def _vision_autocast(self, image: torch.Tensor) -> bool:
+        """Whether to run the vision tower in bfloat16 for this call."""
+        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
@@ -683,6 +693,40 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             offset=self.config.time_sampling_offset,
         )
 
+    def _embed_images(
+        self, images: list[torch.Tensor], img_masks: list[torch.Tensor] | None = None
+    ) -> list[torch.Tensor]:
+        """Embed every camera, as a single batched vision-tower call where that is safe.
+
+        One 224x224 image underfills the GPU, so the tower spends most of a per-camera call on
+        launch and memory latency rather than arithmetic. Training keeps one call per camera:
+        ``_apply_checkpoint`` recomputes each camera separately during the backward pass, and
+        fusing them would multiply peak activation memory by the number of cameras.
+
+        A 5-D input is a frame history for the memory encoder, which attends across time under
+        its own per-camera mask, so those cannot be concatenated into one batch either.
+        """
+        if img_masks is None:
+            img_masks = [None] * len(images)
+        stackable = not self.training and len(images) > 1 and all(img.ndim == 4 for img in images)
+        if stackable:
+            batched = self.paligemma_with_expert.embed_image(torch.cat(images, dim=0))
+            return list(torch.chunk(batched, len(images), dim=0))
+
+        def image_embed_func(img, img_mask):
+            if img.ndim == 5:
+                return self.paligemma_with_expert.embed_image(
+                    img,
+                    frame_mask=img_mask,
+                    temporal_attention_every=self.config.memory_temporal_attention_every,
+                )
+            return self.paligemma_with_expert.embed_image(img)
+
+        return [
+            self._apply_checkpoint(image_embed_func, img, img_mask)
+            for img, img_mask in zip(images, img_masks, strict=True)
+        ]
+
     def embed_prefix(
         self, images, img_masks, tokens, masks, states=None, state_masks=None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -692,18 +736,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         att_masks = []
 
         # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
-
-            def image_embed_func(img, img_mask):
-                if img.ndim == 5:
-                    return self.paligemma_with_expert.embed_image(
-                        img,
-                        frame_mask=img_mask,
-                        temporal_attention_every=self.config.memory_temporal_attention_every,
-                    )
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img, img_mask)
+        for img_emb, img_mask in zip(self._embed_images(images, img_masks), img_masks, strict=True):
             bsize, num_img_embs = img_emb.shape[:2]
 
             embs.append(img_emb)
