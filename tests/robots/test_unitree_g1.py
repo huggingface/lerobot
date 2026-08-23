@@ -20,6 +20,8 @@ The Unitree SDK, the cameras and the arm IK are all mocked, so these run without
 or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.py``.
 """
 
+import json
+import logging
 import threading
 import time
 from contextlib import ExitStack
@@ -344,6 +346,67 @@ class TestActionFeatures:
         assert len(robot.action_features) == len(robot.observation_features) == TOKEN_DIM
 
 
+class TestGripperFeatures:
+    def test_grippers_are_off_by_default(self, make_robot):
+        """The hands are optional hardware, so a robot without them must be unchanged."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+
+        assert not [key for key in robot.action_features if "gripper" in key]
+        assert not [key for key in robot.observation_features if "gripper" in key]
+
+    def test_grippers_extend_rather_than_replace_the_action_space(self, make_robot):
+        """The hands are the robot's, not the controller's, so a controller that owns the
+        joints still gets them appended -- 64 token dims + 2 = the 66 a folding policy emits."""
+        factory, _ = make_robot
+        features = factory(controller=TokenController(), grippers=True).action_features
+
+        assert len(features) == TOKEN_DIM + 2
+        assert list(features)[-2:] == ["left_gripper.pos", "right_gripper.pos"]
+
+    @pytest.mark.parametrize(
+        "controller", [None, TokenController(), LocomotionOnlyController()], ids=["none", "token", "loco"]
+    )
+    def test_every_controller_carries_the_hands(self, make_robot, controller):
+        factory, _ = make_robot
+        features = factory(controller=controller, grippers=True).action_features
+        assert {"left_gripper.pos", "right_gripper.pos"} <= set(features)
+
+    def test_raw_proprio_takes_the_state_back_from_the_controller(self, make_robot):
+        """Regression: a policy trained on joint angles while a token controller drove the body
+        was handed the controller's 64-D token echo instead, so its 31-dim normalizer met a
+        64-dim state. `raw_proprio` restores the robot's own proprioception."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController(), grippers=True, raw_proprio=True)
+        features = robot.observation_features
+
+        assert len(features) == NUM_MOTORS + 2
+        assert not [key for key in features if key.startswith("motion_token")]
+        assert list(features)[-2:] == ["left_gripper.pos", "right_gripper.pos"]
+
+    def test_raw_proprio_spells_joints_the_way_state_is_selected(self, make_robot):
+        """Regression: the joints were advertised as `.q`, the suffix the G1 inherits from DDS,
+        but the rollout routes scalars to `observation.state` by `.pos`. All 29 were dropped
+        and the policy saw a 2-dim state of nothing but grippers."""
+        factory, _ = make_robot
+        features = factory(controller=TokenController(), grippers=True, raw_proprio=True).observation_features
+
+        policy_facing = [key for key in features if key.endswith(".pos")]
+        assert len(policy_facing) == NUM_MOTORS + 2
+        assert features["kLeftHipPitch.pos"] is float
+
+    def test_raw_proprio_reports_the_same_angles_it_advertises(self, make_robot):
+        """The advertised schema is only worth anything if `get_observation` fills it."""
+        factory, mocks = make_robot
+        robot = factory(controller=TokenController(), grippers=True, raw_proprio=True)
+        robot._lowstate = mocks["lowstate_msg"]
+        obs = robot.get_observation()
+
+        missing = [key for key in robot.observation_features if key not in obs]
+        assert not missing
+        assert obs["kLeftHipPitch.pos"] == obs["kLeftHipPitch.q"]
+
+
 # ---------------------------------------------------------------------------
 # Command publishing
 # ---------------------------------------------------------------------------
@@ -529,6 +592,90 @@ class TestSendAction:
 
         mocks["publisher_mock"].Write.assert_called_once_with(robot.msg)
         assert all(q == pytest.approx(0.2) for q in published_targets(robot).values())
+
+
+class TestGripperCommands:
+    """The hands sit on the bridge's CAN bus rather than among the 29 motors, so their
+    commands take a ZMQ side channel instead of riding lowcmd."""
+
+    @staticmethod
+    def _armed(factory, mocks, **config_kwargs):
+        robot = arm_for_publish(factory(controller=TokenController(), grippers=True, **config_kwargs), mocks)
+        # Stand in for the socket connect() would have opened against the bridge.
+        robot.config.is_simulation = False
+        robot._gripper_sock = MagicMock()
+        return robot
+
+    @staticmethod
+    def _sent(robot):
+        return [json.loads(call.args[0]) for call in robot._gripper_sock.send_string.call_args_list]
+
+    def test_closedness_is_forwarded_to_the_bridge(self, make_robot):
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks)
+
+        robot.send_action({"left_gripper.pos": 1.0, "right_gripper.pos": 0.0})
+
+        assert self._sent(robot) == [{"L": 1.0, "R": 0.0}]
+
+    def test_partial_grips_survive_the_wire(self, make_robot):
+        """The motor takes a continuous Goal_Position, so a policy's mid-range grip has to
+        arrive as itself rather than being rounded to open or closed on the way out."""
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks)
+
+        robot.send_action({"left_gripper.pos": 0.37, "right_gripper.pos": 0.62})
+
+        assert self._sent(robot) == [{"L": 0.37, "R": 0.62}]
+
+    def test_out_of_range_values_are_clamped(self, make_robot):
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks)
+
+        robot.send_action({"left_gripper.pos": 1.8, "right_gripper.pos": -0.4})
+
+        assert self._sent(robot) == [{"L": 1.0, "R": 0.0}]
+
+    def test_an_unchanged_grip_is_not_resent(self, make_robot):
+        """The bridge writes CAN for every message it accepts, so a policy streaming a held
+        grip at 30 Hz would saturate the bus doing nothing."""
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks)
+
+        for _ in range(3):
+            robot.send_action({"left_gripper.pos": 0.5, "right_gripper.pos": 0.5})
+        robot.send_action({"left_gripper.pos": 0.9, "right_gripper.pos": 0.5})
+
+        assert self._sent(robot) == [{"L": 0.5, "R": 0.5}, {"L": 0.9}]
+
+    def test_a_dropped_command_does_not_reach_the_caller(self, make_robot, caplog):
+        """A stalled hand must never take the balance loop down with it."""
+        import zmq
+
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks)
+        robot._gripper_sock.send_string.side_effect = zmq.ZMQError("no listener")
+
+        with caplog.at_level(logging.WARNING):
+            robot.send_action({"left_gripper.pos": 1.0})
+
+        assert "dropped 1 gripper command(s)" in caplog.text
+        # Nothing was accepted, so the next attempt must not be suppressed as a repeat.
+        assert robot._gripper_last == {}
+
+    def test_the_command_is_echoed_back_as_state(self, make_robot):
+        """The CAN hands report no position and the recordings never had one: their state is
+        the previous command verbatim, one tick behind."""
+        factory, mocks = make_robot
+        robot = self._armed(factory, mocks, raw_proprio=True)
+        robot._lowstate = mocks["lowstate_msg"]
+
+        assert robot.get_observation()["left_gripper.pos"] == 0.0
+        robot.send_action({"left_gripper.pos": 0.75, "right_gripper.pos": 0.25})
+        obs = robot.get_observation()
+
+        assert obs["left_gripper.pos"] == 0.75
+        assert obs["right_gripper.pos"] == 0.25
 
 
 # ---------------------------------------------------------------------------
