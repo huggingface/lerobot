@@ -89,6 +89,14 @@ class CameraCurationConfig:
     view_vocabulary: tuple[str, ...] = DEFAULT_VIEW_VOCABULARY
     allow_combos: bool = True
 
+    # Ignore the existing camera key names when choosing labels — force relabeling
+    # purely from the VLM's view of the frames. Turns off the name-based
+    # disambiguation that borrows words from the current key to break a collision
+    # (e.g. "..._left" + wrist -> left_wrist). Use it when the existing names are
+    # unreliable/misleading (a camera keyed "top" that is really a side view);
+    # collisions then resolve by confidence only.
+    ignore_key_names: bool = False
+
     # When two cameras of a dataset get the same view label, run a second joint
     # VLM pass over just those cameras (all shown together) asking for DISTINCT
     # labels, before falling back to on_collision. Labels-only, so it can't leak

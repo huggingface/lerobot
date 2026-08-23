@@ -232,6 +232,20 @@ def test_build_name_mapping_error_mode_raises():
         build_name_mapping(clash, {"observation.images.cam_0": {}, "observation.images.cam_1": {}}, cfg)
 
 
+def test_build_name_mapping_ignore_key_names_forces_relabel():
+    # With ignore_key_names, the key words are NOT used to break the collision;
+    # both want "wrist" -> the higher-confidence camera wins, the other is skipped.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, ignore_key_names=True)
+    existing = {"observation.images.cam_left": {}, "observation.images.cam_right": {}}
+    verdicts = [
+        CameraVerdict("observation.images.cam_left", usable=True, view_label="wrist", confidence=0.9),
+        CameraVerdict("observation.images.cam_right", usable=True, view_label="wrist", confidence=0.5),
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {"observation.images.cam_left": "observation.images.wrist"}
+    assert set(skipped) == {"observation.images.cam_right"}
+
+
 def test_build_name_mapping_disambiguates_two_wrists_from_source_names():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=True)
     existing = {"observation.images.cam_left": {}, "observation.images.cam_right": {}}

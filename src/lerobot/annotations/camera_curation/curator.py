@@ -263,7 +263,7 @@ def build_name_mapping(
     ``proposed_new_key``.
     """
     label_by_cam = {v.camera_key: v.view_label for v in verdicts if v.view_label is not None}
-    if cfg.allow_combos:
+    if cfg.allow_combos and not cfg.ignore_key_names:
         label_by_cam = _disambiguate_from_source_names(label_by_cam, cfg.view_vocabulary)
 
     desired: dict[str, str] = {}
