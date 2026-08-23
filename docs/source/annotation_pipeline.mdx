@@ -290,8 +290,19 @@ Some repos are **collections** of many independent datasets under per-dataset
 subfolders (e.g. `lerobot/community_dataset_v3` → `<user>/<task>/…`) and have no
 root `meta/info.json`. List the sub-datasets to curate with `--subpaths`; each is
 materialized (its `meta/` + first episode only) and curated in turn, and — in
-`--mode=rename` — renamed in place under its own prefix. Results are written to a
-single aggregated `camera_curation_collection.json` (and echoed to stdout).
+`--mode=rename` — renamed in place under its own prefix. Leave `--subpaths` off to
+auto-discover and curate **every** sub-dataset; `--parallelism` processes several
+at once against the shared VLM server (the sweep is I/O-bound, so this is the main
+throughput knob). Results are written to a single aggregated
+`camera_curation_collection.json` (and echoed to stdout).
+
+That aggregated file is rewritten **after each sub-dataset finishes**, so it
+doubles as a progress/resume log: it lists which sub-datasets were `renamed`,
+`failed`, or had `conflicts`. Pass `--resume=true` to skip sub-datasets already
+recorded there without an error and process only the rest (failures are retried) —
+so an interrupted sweep continues instead of redoing the whole collection. The
+file must have survived, so point `--report_path` at a persistent location (a
+plain local run keeps it; an HF-Jobs pod is ephemeral unless the path is mounted).
 
 ```bash
 uv run lerobot-curate-cameras \

@@ -23,9 +23,12 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from unittest.mock import MagicMock, patch  # noqa: E402
 
+from lerobot.annotations.camera_curation.config import CameraCurationConfig  # noqa: E402
 from lerobot.scripts.lerobot_curate_cameras import (  # noqa: E402
+    _build_collection_report,
     _central_indices,
     _discover_subpaths,
+    _load_completed_subdatasets,
     _to_uint8_frame,
 )
 
@@ -80,3 +83,51 @@ def test_discover_subpaths_nested_and_single():
     api.list_repo_files.return_value = ["meta/info.json", "data/chunk-000/file-000.parquet"]
     with patch("huggingface_hub.HfApi", return_value=api):
         assert _discover_subpaths("repo") is None
+
+
+import json  # noqa: E402
+
+
+def test_load_completed_subdatasets_skips_errors(tmp_path):
+    report = tmp_path / "progress.json"
+    report.write_text(
+        json.dumps(
+            {
+                "subdatasets": {
+                    "u/ok": {
+                        "cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top"}}
+                    },
+                    "u/clean": {"cameras": {}},
+                    "u/bad": {"error": "boom"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    done = _load_completed_subdatasets(report)
+    # completed = every entry without an "error" (bad one is retried on resume)
+    assert set(done) == {"u/ok", "u/clean"}
+
+
+def test_load_completed_subdatasets_missing_or_corrupt(tmp_path):
+    assert _load_completed_subdatasets(tmp_path / "nope.json") == {}
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert _load_completed_subdatasets(corrupt) == {}
+
+
+def test_build_collection_report_tallies():
+    cfg = CameraCurationConfig(repo_id="u/collection", mode="rename")
+    collection = {
+        "u/ok": {"cameras": {"observation.images.a": {"proposed_new_key": "observation.images.top"}}},
+        "u/noop": {"cameras": {"observation.images.top": {"proposed_new_key": None}}},
+        "u/bad": {"error": "boom"},
+        "u/conf": {"cameras": {}, "collisions": {"observation.images.x": "reason"}},
+    }
+    report = _build_collection_report(cfg, ["u/ok", "u/noop", "u/bad", "u/conf"], collection)
+    assert report["n_total"] == 4
+    assert report["n_done"] == 4
+    assert report["n_failed"] == 1 and report["failed"] == {"u/bad": "boom"}
+    assert report["n_conflicts"] == 1
+    assert report["renamed"] == ["u/ok"]  # only the one with a real proposed_new_key
+    assert report["n_renamed"] == 1

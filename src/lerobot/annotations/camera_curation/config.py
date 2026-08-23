@@ -123,7 +123,15 @@ class CameraCurationConfig:
     drop_unusable: bool = False
 
     # Where to write the machine-readable report (default <root>/meta/camera_curation.json).
+    # For a nested collection the aggregated report doubles as the resume log: it is
+    # rewritten after EACH sub-dataset finishes (default camera_curation_collection.json).
     report_path: Path | None = None
+
+    # Resume a nested sweep: skip sub-datasets already recorded (without an error)
+    # in the report/progress file, and process only the rest. Requires the report
+    # file to have survived (a persistent --report_path, or a local run); an
+    # ephemeral HF-Jobs pod loses it on restart unless it is on a mounted path.
+    resume: bool = False
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     job: AnnotationJobConfig = field(default_factory=AnnotationJobConfig)

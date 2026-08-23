@@ -375,6 +375,64 @@ def _process_subdataset(
         shutil.rmtree(sub_work, ignore_errors=True)
 
 
+_COLLECTION_REPORT_NAME = "camera_curation_collection.json"
+
+
+def _collection_report_path(cfg: CameraCurationConfig) -> Path:
+    """The aggregated nested report path, which doubles as the resume/progress log."""
+    return Path(cfg.report_path) if cfg.report_path is not None else Path(_COLLECTION_REPORT_NAME)
+
+
+def _load_completed_subdatasets(report_path: Path) -> dict[str, Any]:
+    """Load already-completed sub-datasets (entries without an ``error``) from a
+    prior report/progress file, so ``--resume`` can skip them and retry failures."""
+    if not report_path.exists():
+        return {}
+    try:
+        prior = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("resume: could not read %s (%s); starting fresh", report_path, exc)
+        return {}
+    subdatasets = prior.get("subdatasets", {}) if isinstance(prior, dict) else {}
+    return {sp: e for sp, e in subdatasets.items() if not (isinstance(e, dict) and "error" in e)}
+
+
+def _build_collection_report(
+    cfg: CameraCurationConfig, all_subpaths: list[str], collection: dict[str, Any]
+) -> dict[str, Any]:
+    """Assemble the aggregated nested report (also written incrementally as progress)."""
+    failed = {sp: e["error"] for sp, e in collection.items() if isinstance(e, dict) and "error" in e}
+    rename_skipped = {
+        sp: e["rename_error"] for sp, e in collection.items() if isinstance(e, dict) and "rename_error" in e
+    }
+    conflicts = {
+        sp: e["collisions"] for sp, e in collection.items() if isinstance(e, dict) and "collisions" in e
+    }
+    # Sub-datasets whose keys were actually renamed (some camera got a new key).
+    renamed = sorted(
+        sp
+        for sp, e in collection.items()
+        if isinstance(e, dict)
+        and "error" not in e
+        and any((cam or {}).get("proposed_new_key") for cam in (e.get("cameras") or {}).values())
+    )
+    return {
+        "repo_id": cfg.repo_id,
+        "mode": cfg.mode,
+        "n_total": len(all_subpaths),
+        "n_done": len(collection),
+        "n_failed": len(failed),
+        "n_rename_skipped": len(rename_skipped),
+        "n_conflicts": len(conflicts),
+        "n_renamed": len(renamed),
+        "renamed": renamed,
+        "failed": failed,
+        "rename_skipped": rename_skipped,
+        "conflicts": conflicts,
+        "subdatasets": collection,
+    }
+
+
 def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> None:
     """Curate each sub-dataset of a nested collection.
 
@@ -383,69 +441,89 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
     large speedup on a single GPU. Each worker uses its own temp dir (removed as
     soon as it is done), and Hub rename commits are serialized via ``commit_lock``
     so parallel renames don't race on the branch head.
+
+    The aggregated report is rewritten after EACH sub-dataset completes (a progress
+    log), and ``--resume`` skips sub-datasets already recorded there without an
+    error — so an interrupted sweep can pick up where it left off (retrying only
+    the failures) instead of redoing the whole collection.
     """
     if cfg.repo_id is None:
         raise ValueError("nested curation requires --repo_id (the collection repo on the Hub).")
 
+    report_path = _collection_report_path(cfg)
     total = len(subpaths)
-    parallelism = max(1, min(cfg.parallelism, total))
     commit_lock = threading.Lock()
-    collection: dict[str, Any] = {}
 
-    logger.info("curate-cameras: processing %d sub-dataset(s) with parallelism=%d", total, parallelism)
-    if parallelism == 1:
-        for i, subpath in enumerate(subpaths, 1):
-            sp, entry = _process_subdataset(cfg, vlm, subpath, i, total, commit_lock)
-            collection[sp] = entry
+    collection: dict[str, Any] = {}
+    if cfg.resume:
+        collection = _load_completed_subdatasets(report_path)
+        if collection:
+            logger.info(
+                "resume: %d/%d sub-dataset(s) already done in %s; processing the rest",
+                len(collection),
+                total,
+                report_path,
+            )
+
+    todo = [sp for sp in subpaths if sp not in collection]
+
+    def _record(sp: str, entry: dict[str, Any]) -> None:
+        # Persist after every completion so a crashed/killed sweep can --resume.
+        collection[sp] = entry
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(_build_collection_report(cfg, subpaths, collection), indent=2), encoding="utf-8"
+        )
+
+    parallelism = max(1, min(cfg.parallelism, len(todo))) if todo else 1
+    logger.info(
+        "curate-cameras: %d sub-dataset(s) total, %d to process, %d already done (parallelism=%d)",
+        total,
+        len(todo),
+        total - len(todo),
+        parallelism,
+    )
+    if not todo:
+        logger.info("curate-cameras: nothing to do — all sub-datasets already completed")
+    elif parallelism == 1:
+        for i, subpath in enumerate(todo, 1):
+            sp, entry = _process_subdataset(cfg, vlm, subpath, i, len(todo), commit_lock)
+            _record(sp, entry)
     else:
         with ThreadPoolExecutor(max_workers=parallelism) as pool:
             futures = [
-                pool.submit(_process_subdataset, cfg, vlm, subpath, i, total, commit_lock)
-                for i, subpath in enumerate(subpaths, 1)
+                pool.submit(_process_subdataset, cfg, vlm, subpath, i, len(todo), commit_lock)
+                for i, subpath in enumerate(todo, 1)
             ]
             for fut in as_completed(futures):
                 sp, entry = fut.result()
-                collection[sp] = entry
+                _record(sp, entry)
 
-    # Three top-level tallies, surfaced so they're easy to find/re-run:
-    #  - failed: couldn't process the dataset at all.
+    # Top-level tallies, surfaced so they're easy to find/re-run:
+    #  - failed: couldn't process the dataset at all (retried on the next --resume).
     #  - rename_skipped: whole-dataset rename skipped (on_collision="error").
     #  - conflicts: some cameras skipped for a label conflict but the rest renamed.
-    failed = {sp: e["error"] for sp, e in collection.items() if isinstance(e, dict) and "error" in e}
-    rename_skipped = {
-        sp: e["rename_error"] for sp, e in collection.items() if isinstance(e, dict) and "rename_error" in e
-    }
-    conflicts = {
-        sp: e["collisions"] for sp, e in collection.items() if isinstance(e, dict) and "collisions" in e
-    }
+    report = _build_collection_report(cfg, subpaths, collection)
     logger.info(
-        "curate-cameras: %d ok, %d failed, %d whole-rename-skipped, %d with camera conflicts (of %d)",
-        len(subpaths) - len(failed) - len(rename_skipped),
-        len(failed),
-        len(rename_skipped),
-        len(conflicts),
-        len(subpaths),
+        "curate-cameras: %d ok, %d failed, %d whole-rename-skipped, %d with camera conflicts, "
+        "%d renamed (of %d)",
+        total - report["n_failed"] - report["n_rename_skipped"],
+        report["n_failed"],
+        report["n_rename_skipped"],
+        report["n_conflicts"],
+        report["n_renamed"],
+        total,
     )
-    if failed:
-        logger.warning("curate-cameras: failed sub-dataset(s): %s", sorted(failed))
-    if rename_skipped:
-        logger.warning("curate-cameras: whole-rename-skipped sub-dataset(s): %s", sorted(rename_skipped))
-    if conflicts:
-        logger.warning("curate-cameras: sub-dataset(s) with skipped cameras: %s", sorted(conflicts))
+    if report["failed"]:
+        logger.warning("curate-cameras: failed sub-dataset(s): %s", sorted(report["failed"]))
+    if report["rename_skipped"]:
+        logger.warning(
+            "curate-cameras: whole-rename-skipped sub-dataset(s): %s", sorted(report["rename_skipped"])
+        )
+    if report["conflicts"]:
+        logger.warning("curate-cameras: sub-dataset(s) with skipped cameras: %s", sorted(report["conflicts"]))
 
-    report = {
-        "repo_id": cfg.repo_id,
-        "mode": cfg.mode,
-        "n_total": len(subpaths),
-        "n_failed": len(failed),
-        "n_rename_skipped": len(rename_skipped),
-        "n_conflicts": len(conflicts),
-        "failed": failed,
-        "rename_skipped": rename_skipped,
-        "conflicts": conflicts,
-        "subdatasets": collection,
-    }
-    _write_and_echo_report(report, cfg, default_name="camera_curation_collection.json")
+    _write_and_echo_report(report, cfg, default_name=_COLLECTION_REPORT_NAME)
 
 
 def _run_single(cfg: CameraCurationConfig, vlm: Any) -> None:
