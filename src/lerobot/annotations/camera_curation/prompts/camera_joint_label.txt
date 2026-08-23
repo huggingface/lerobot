@@ -2,17 +2,7 @@ These {n} camera views all come from the SAME robot-manipulation episode, shown
 together and numbered "Camera 1", "Camera 2", ... in order. The numbers are
 arbitrary labels for referencing the groups — they carry NO information about
 where a camera sits; classify each purely from its visual content. Compare them
-against each other and give EACH one a view label from this closed vocabulary.
-
-For each camera, FIRST determine whether it is FIXED or ROBOT-MOUNTED by comparing
-its frames over time. A robot-mounted camera moves rigidly with the arm/wrist/end
-effector: as the robot moves, the entire viewpoint and background change, while
-the gripper/wrist often stays relatively stable in the image. A fixed camera keeps
-a stable viewpoint of the workspace: the background and table stay approximately
-stationary while the robot moves through the image. The presence, proximity, or
-size of a gripper alone is NOT evidence of a wrist camera. Only robot-mounted
-cameras may receive a "wrist" label; fixed cameras must be classified by their
-external viewpoint (top, front, rear, side, etc.).
+against each other and give EACH one a view label from this closed vocabulary:
 
   {vocabulary}
 
