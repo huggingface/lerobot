@@ -390,6 +390,7 @@ def test_establish_learner_connection_retries_when_workers_saturated():
 
     import grpc
 
+    pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
     from lerobot.rl.actor import establish_learner_connection
     from lerobot.rl.learner_service import MAX_WORKERS, LearnerService
     from lerobot.transport import services_pb2, services_pb2_grpc
