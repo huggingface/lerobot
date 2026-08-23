@@ -50,31 +50,45 @@ Do two things and return them as one JSON object.
               cannot tell the direction.
    - top    : a FIXED camera above the workspace looking straight DOWN (overhead).
    - bottom : a FIXED camera below the workspace looking up.
-   - wrist  : mounted ON the arm and moving WITH it, so the whole background
-              SHIFTS from frame to frame while the gripper stays roughly in place.
-              A close-up of the gripper is NOT enough on its own: if the
-              background is STABLE across the frames (only the arm and objects
-              move through an otherwise fixed scene), it is a FIXED camera, NOT a
-              wrist. Qualify "left_wrist" / "right_wrist" when there are two.
+   - wrist  : physically mounted ON the moving robot arm / wrist / end effector,
+              so the WHOLE viewpoint travels with the arm (see the wrist rules
+              below). Default to plain "wrist"; only add handedness with strong
+              evidence (see "wrist handedness").
 
-   Decide in a strict order, using the fact that you see SEVERAL frames over time:
+   WRIST-CAMERA RULES. Classify a camera as "wrist" ONLY when there is strong
+   evidence it is physically mounted on the moving arm/wrist/end effector. Do NOT
+   call it wrist just because a gripper is visible, the arm fills much of the
+   image, the view is close to the manipulation area, the camera points roughly
+   where the gripper points, or it is mounted above the table near the robot.
 
-   1. WRIST vs FIXED — use temporal evidence. Label a camera "wrist" ONLY if the
-      CAMERA ITSELF moves with the arm: the whole background/viewpoint SHIFTS
-      across the frames while the gripper stays roughly in place. Seeing the arm,
-      wrist or gripper close to the camera is NOT sufficient — a FIXED camera may
-      have the gripper filling a large part of the frame. If the background stays
-      at a stable viewpoint while the robot moves through the image, it is FIXED,
-      not wrist. Do not infer wrist mounting from mere proximity to the gripper.
-   2. If it is robot-mounted → wrist (qualify left_wrist / right_wrist only with
-      two arms when you can tell which; otherwise plain "wrist").
-   3. If it is fixed → its geometric viewpoint: looking predominantly DOWN at the
-      workspace → top (it need NOT be perfectly vertical — an elevated camera
-      looking mostly downward is top even if the wrist/gripper is very prominent);
-      looking UP from below → bottom; otherwise a view from around the robot at
-      height → side, with a direction (front_side / rear_side / left_side /
-      right_side, or plain "side" if you cannot tell).
-   4. If the evidence is genuinely insufficient, answer "unknown" rather than guess.
+   Use the SEVERAL frames over time. A wrist camera shows EGOCENTRIC motion: when
+   the arm changes pose the entire viewpoint changes with it; the background shows
+   large viewpoint/parallax shifts correlated with the robot's motion; the gripper
+   or wrist tends to stay at roughly the same place/orientation relative to the
+   camera; the workspace appears to move AROUND the camera. A FIXED external camera
+   is the opposite: the table, walls and background stay in the same camera frame;
+   the robot moves THROUGH the image; the gripper may move a lot within the image;
+   the scene's viewpoint stays geometrically fixed. If the background stays fixed
+   while only the arm/gripper moves, the camera MUST NOT be classified as wrist.
+
+   Decide in a strict order:
+   1. Compare all frames chronologically; decide whether the camera itself moves
+      with the robot (egocentric) or the scene viewpoint stays fixed.
+   2. If it moves with the robot → wrist.
+   3. If it stays fixed → an external camera: looking predominantly DOWN at the
+      workspace → top (it need NOT be perfectly vertical — an elevated, mostly
+      downward view is top even if the wrist/gripper is very prominent); looking
+      UP from below → bottom; otherwise a view from around the robot at height →
+      side, with a direction (front_side / rear_side / left_side / right_side, or
+      plain "side" if you cannot tell).
+   4. If this cannot be determined reliably, answer "unknown" rather than guess.
+
+   WRIST HANDEDNESS. Do NOT infer left/right during view classification — first
+   return plain "wrist". Add "left_wrist" / "right_wrist" ONLY with explicit,
+   reliable evidence that the robot has distinct left and right manipulators AND
+   this camera can be tied to one of them. Do NOT infer handedness from which side
+   of the image the arm appears on, the gripper's orientation, mirroring, or an
+   apparent left/right in a single frame. If handedness is uncertain, keep "wrist".
 
    {combo_rule}Put the direction first in a combo ("front_side", "left_wrist").
    left/right/front/rear are direction qualifiers — use them only as a suffix on
