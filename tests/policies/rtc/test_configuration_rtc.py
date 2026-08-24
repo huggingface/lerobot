@@ -16,6 +16,8 @@
 
 """Tests for RTC configuration module."""
 
+import pytest
+
 from lerobot.configs.types import RTCAttentionSchedule
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
@@ -27,6 +29,7 @@ def test_rtc_config_default_initialization():
     config = RTCConfig()
 
     assert config.enabled is True
+    assert config.mode == "guided"
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.max_guidance_weight == 10.0
     assert config.execution_horizon == 10
@@ -34,10 +37,16 @@ def test_rtc_config_default_initialization():
     assert config.debug_maxlen == 100
 
 
+def test_rtc_config_rejects_unknown_mode():
+    with pytest.raises(ValueError, match="mode must be"):
+        RTCConfig(mode="unknown")
+
+
 def test_rtc_config_custom_initialization():
     """Test RTCConfig initializes with custom values."""
     config = RTCConfig(
         enabled=True,
+        mode="trained",
         prefix_attention_schedule=RTCAttentionSchedule.EXP,
         max_guidance_weight=5.0,
         execution_horizon=20,
@@ -46,6 +55,7 @@ def test_rtc_config_custom_initialization():
     )
 
     assert config.enabled is True
+    assert config.mode == "trained"
     assert config.prefix_attention_schedule == RTCAttentionSchedule.EXP
     assert config.max_guidance_weight == 5.0
     assert config.execution_horizon == 20
