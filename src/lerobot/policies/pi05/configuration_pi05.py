@@ -85,6 +85,7 @@ class PI05Config(PreTrainedConfig):
     empty_cameras: int = 0
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
+    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
