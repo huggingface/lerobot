@@ -353,6 +353,22 @@ def test_processor_serialization_and_reconstruction(
     assert loaded.steps[0].get_config() == preprocessor.steps[0].get_config()
     assert loaded.steps[1].get_config() == preprocessor.steps[1].get_config()
 
+    batch = {
+        EXTERNAL_KEY: _video(batch_size=2, timesteps=3),
+        WRIST_KEY: _video(batch_size=2, timesteps=3, offset=20),
+        "task": ["pick up the cube", "open the drawer"],
+    }
+
+    expected = preprocessor(batch)
+    reconstructed = loaded(batch)
+
+    for key in (
+        SOLER1_PIXEL_VALUES_KEY,
+        SOLER1_IMAGE_GRID_THW_KEY,
+        SOLER1_IMAGE_TOKEN_COUNT_KEY,
+    ):
+        torch.testing.assert_close(reconstructed[key], expected[key])
+
 
 class _LocalQwenAutoProcessor:
     def __init__(self) -> None:

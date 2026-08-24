@@ -49,51 +49,36 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound="SOLER1RewardModel")
 
 SYSTEM_PROMPT = (
-    "You are an expert roboticist with the goal of predicting task progress "
-    "percentages given frames from a video of a robot attempting to complete a task. "
-    "You first think, in the form of an internal monologue, before providing your final answer. "
-    "Your reasoning process MUST BE enclosed within <think></think> tags and should include detailed reasoning. "
-    "Your final answer MUST BE enclosed within <answer></answer> tags and should be a integer "
-    "(positive or negative) representing current task progress percentage. "
-    "Example output format: <think>[detailed reasoning process]</think>"
-    "<answer>[current task progress]%</answer>"
+    "You are an expert roboticist with the goal of predicting task progress percentages given frames from a video of a robot attempting to complete a task. "
+    + "You first think, in the form of an internal monologue, before providing your final answer. "
+    + "Your reasoning process MUST BE enclosed within <think> </think> tags and should include detailed reasoning. "
+    + "Your final answer MUST BE enclosed within <answer> </answer> tags and should be a integer (positive or negative) representing current task progress percentage. "
+    + "Example output format: <think>[detailed reasoning process]</think><answer>[current task progress]%</answer>"
 )
 
 EXTERNAL_AND_WRIST_PROMPT = (
     "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views on the top are from an external camera. "
-    "The views on the bottom are from the robot's wrist camera. "
-    "The views from the very first timestep are shown to the left. "
-    "The views from the previous timestep are shown in the middle. "
-    "The views from the current timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. "
-    "The task progress for the previous timestep is {previous_progress}%. "
-    "Predict the task progress for the current timestep."
+    + "The views on the top are from an external camera. The views on the bottom are from the robot's wrist camera. "
+    + "The views from the very first timestep are shown to the left. The views from the previous timestep are shown in the middle. The views from the current timestep are shown to the right. "
+    + "The task description is: {task_description}. "
+    + "The task progress for the very first timestep is 0%. The task progress for the previous timestep is {previous_progress}%. Predict the task progress for the current timestep."
 )
 
 EXTERNAL_ONLY_PROMPT = (
     "Here is an image containing multiple camera views of a robot attempting to complete a task. "
-    "The views from the very first timestep are shown to the left. "
-    "The views from the previous timestep are shown in the middle. "
-    "The views from the current timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. "
-    "The task progress for the previous timestep is {previous_progress}%. "
-    "Predict the task progress for the current timestep."
+    + "The views from the very first timestep are shown to the left. The views from the previous timestep are shown in the middle. The views from the current timestep are shown to the right. "
+    + "The task description is: {task_description}. "
+    + "The task progress for the very first timestep is 0%. The task progress for the previous timestep is {previous_progress}%. Predict the task progress for the current timestep."
 )
 
 WRIST_ONLY_PROMPT = (
-    "Here is an image containing multiple views from the robot's wrist camera while it is attempting "
-    "to complete a task. "
-    "The views from the very first timestep are shown to the left. "
-    "The views from the previous timestep are shown in the middle. "
-    "The views from the current timestep are shown to the right. "
-    "The task description is: {task_description}. "
-    "The task progress for the very first timestep is 0%. "
-    "The task progress for the previous timestep is {previous_progress}%. "
-    "Predict the task progress for the current timestep."
+    "Here is an image containing multiple camera views of a robot attempting to complete a task. "
+    + "The views are from the robot's wrist camera. "
+    + "The views from the very first timestep are shown to the left. The views from the previous timestep are shown in the middle. The views from the current timestep are shown to the right. "
+    + "The task description is: {task_description}. "
+    + "The task progress for the very first timestep is 0%. The task progress for the previous timestep is {previous_progress}%. Predict the task progress for the current timestep."
 )
+
 
 _ANSWER_PATTERN = re.compile(r"<answer>\s*([-+]?\d+(?:\.\d+)?)\s*%?\s*</answer>", re.IGNORECASE | re.DOTALL)
 _THINK_PATTERN = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)

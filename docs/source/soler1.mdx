@@ -85,9 +85,8 @@ With two cameras, the external-camera row is placed above the wrist-camera row. 
 
 ### Generation behavior
 
-`temperature=1.0` matches the public SOLE-R1 serving default and enables
-sampled generation. Use `temperature=0.0` for greedy, reproducible offline
-inference.
+`temperature=1.0` matches the public SOLE-R1 serving default and enables sampled generation.
+Use `temperature=0.0` for greedy decoding, which removes sampling variability (although exact cross-device reproducibility still depends on the PyTorch backend and hardware).
 
 ### Compute rewards (sparse or dense)
 
