@@ -80,7 +80,8 @@ def extract_normalization_stats(
             to underscores, and that is not reversible from the string alone:
             `observation.environment_state` and `observation.environment.state` both flatten to
             `observation_environment_state`. When a name is not declared (or none are supplied,
-            as for a checkpoint whose config predates `input_features`), every underscore is
+            as for a checkpoint whose config has no supported feature declarations), every
+            underscore is
             read back as a dot.
 
     Returns:
@@ -137,6 +138,12 @@ def extract_normalization_stats(
                 break
 
     return stats
+
+
+def get_declared_feature_names(config: dict[str, Any]) -> list[str]:
+    """Collect feature names from current and legacy policy config fields."""
+    fields = ("input_features", "output_features", "input_shapes", "output_shapes", "features")
+    return [name for field in fields for name in (config.get(field) or {})]
 
 
 def detect_features_and_norm_modes(
@@ -542,9 +549,9 @@ def main():
 
     # Extract normalization statistics
     print("Extracting normalization statistics...")
-    # `input_features` / `output_features` name features unambiguously; configs old enough to
-    # omit them leave the buffer key as the only source, with the ambiguity that implies.
-    declared_feature_names = [*config.get("input_features", {}), *config.get("output_features", {})]
+    # Current and legacy config fields name features unambiguously; configs without any of them
+    # leave the buffer key as the only source, with the ambiguity that implies.
+    declared_feature_names = get_declared_feature_names(config)
     stats = extract_normalization_stats(state_dict, feature_names=declared_feature_names)
 
     print(f"Found normalization statistics for: {list(stats.keys())}")

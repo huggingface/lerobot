@@ -20,7 +20,10 @@ Tests for normalization statistic extraction during policy migration.
 
 import torch
 
-from lerobot.processor.migrate_policy_normalization import extract_normalization_stats
+from lerobot.processor.migrate_policy_normalization import (
+    extract_normalization_stats,
+    get_declared_feature_names,
+)
 
 
 def _buffer(feature_name: str, prefix: str = "normalize_inputs.buffer_") -> dict[str, torch.Tensor]:
@@ -91,3 +94,12 @@ def test_a_feature_the_config_does_not_declare_still_migrates():
     stats = extract_normalization_stats(state_dict, feature_names=["observation.environment_state"])
 
     assert set(stats) == {"observation.environment_state", "observation.state"}
+
+
+def test_legacy_config_fields_declare_feature_names():
+    config = {"input_shapes": {"observation.environment_state": (2,)}}
+    state_dict = _buffer("observation.environment_state")
+
+    stats = extract_normalization_stats(state_dict, feature_names=get_declared_feature_names(config))
+
+    assert set(stats) == {"observation.environment_state"}
