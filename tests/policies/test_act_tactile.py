@@ -1,9 +1,25 @@
+#!/usr/bin/env python
+
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
@@ -111,7 +127,8 @@ def _build_batch(shapes, with_image_state):
 
 @pytest.mark.parametrize("encoder_type", ["cnn", "attention"])
 @pytest.mark.parametrize("scenario", ["single", "multi", "tactile_only"])
-def test_act_tactile_forward(encoder_type, scenario):
+@pytest.mark.parametrize("n_tactile_tokens", [1, 4])
+def test_act_tactile_forward(encoder_type, scenario, n_tactile_tokens):
     shapes = _SHAPES[scenario]
     with_image_state = scenario != "tactile_only"
     use_vae = with_image_state  # no proprioceptive state in tactile_only -> skip VAE encoder
@@ -131,7 +148,7 @@ def test_act_tactile_forward(encoder_type, scenario):
         n_action_steps=_CHUNK,
         use_tactile=True,
         tactile_encoder_type=encoder_type,
-        n_tactile_tokens=4,
+        n_tactile_tokens=n_tactile_tokens,
         use_vae=use_vae,
     )
     policy = ACTPolicy(config)
@@ -166,5 +183,77 @@ def test_act_tactile_forward(encoder_type, scenario):
         base_captured, base_handle = _encoder_seq_len_hook(base_policy)
         base_policy.forward(base_batch)
         base_handle.remove()
-        expected_extra = len(shapes) * config.n_tactile_tokens
+        expected_extra = len(shapes) * n_tactile_tokens
         assert seq_with_tactile - base_captured["seq"] == expected_extra
+
+
+def test_act_default_off_has_no_tactile():
+    """Default ACTConfig with use_tactile=False has no tactile encoders."""
+    input_features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+        f"{OBS_IMAGES}.cam": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
+    }
+    output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))}
+    config = ACTConfig(
+        input_features=input_features,
+        output_features=output_features,
+        use_tactile=False,
+    )
+    policy = ACTPolicy(config)
+    assert policy.model.tactile_encoder_keys == []
+    assert not hasattr(policy.model, "tactile_encoders")
+
+
+def test_tactile_int16_normalization_pipeline():
+    """Test int16 tactile tensors are safely normalized via the preprocessing pipeline."""
+    # Build config with tactile enabled
+    input_features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+        "observation.tactile.sensor_1": PolicyFeature(type=FeatureType.TACTILE, shape=(6, 6)),
+    }
+    output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))}
+    config = ACTConfig(
+        input_features=input_features,
+        output_features=output_features,
+        use_tactile=True,
+        n_tactile_tokens=2,
+    )
+
+    # Construct dataset_stats with per-cell tactile stats
+    tactile_mean = torch.randn(6, 6) * 10.0  # Non-trivial values
+    tactile_std = torch.abs(torch.randn(6, 6)) + 0.1  # Positive, some close to 0
+    tactile_std[0, 0] = 1e-8  # Very small std to exercise eps path
+    
+    dataset_stats = {
+        OBS_STATE: {"mean": torch.zeros(4), "std": torch.ones(4)},
+        "observation.tactile.sensor_1": {"mean": tactile_mean, "std": tactile_std},
+        ACTION: {"mean": torch.zeros(2), "std": torch.ones(2)},
+    }
+
+    # Get preprocessor
+    preprocessor, _ = make_act_pre_post_processors(config, dataset_stats)
+    
+    # Create batch with int16 tactile data
+    batch_size = 3
+    tactile_int16 = torch.randint(-1000, 1000, (batch_size, 6, 6), dtype=torch.int16)
+    batch = {
+        OBS_STATE: torch.randn(batch_size, 4),
+        "observation.tactile.sensor_1": tactile_int16,
+        ACTION: torch.randn(batch_size, 2),
+    }
+    
+    # Process the batch
+    processed_batch = preprocessor(batch)
+    processed_tactile = processed_batch["observation.tactile.sensor_1"]
+    
+    # Assertions
+    # (a) is floating dtype
+    assert torch.is_floating_point(processed_tactile), f"Expected float, got {processed_tactile.dtype}"
+    
+    # (b) is finite everywhere  
+    assert torch.isfinite(processed_tactile).all(), "Processed tactile should be finite"
+    
+    # (c) matches expected normalization formula
+    eps = 1e-8  # Default eps from NormalizerProcessorStep
+    expected = (tactile_int16.float() - tactile_mean) / (tactile_std + eps)
+    torch.testing.assert_close(processed_tactile, expected, atol=1e-6, rtol=1e-4)

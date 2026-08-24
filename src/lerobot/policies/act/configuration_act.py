@@ -166,6 +166,8 @@ class ACTConfig(PreTrainedConfig):
                 "`use_tactile=True` but no tactile features were found in `input_features`. "
                 "Tactile features are inputs typed `FeatureType.TACTILE`."
             )
+        if self.use_tactile and self.n_tactile_tokens < 1:
+            raise ValueError(f"`n_tactile_tokens` must be >= 1. Got {self.n_tactile_tokens}.")
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

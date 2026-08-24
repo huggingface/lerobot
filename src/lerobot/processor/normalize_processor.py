@@ -338,6 +338,15 @@ class _NormalizationMixin:
         ):
             raise ValueError(f"Unsupported normalization mode: {norm_mode}")
 
+        # Integer-typed inputs (e.g. int16 tactile grids) must be promoted to a
+        # floating dtype before (un)normalization; otherwise the dtype sync below
+        # truncates the float stats to integers and corrupts the result. Floating
+        # inputs (incl. fp16/bf16) are left untouched so mixed-precision is unaffected.
+        if not torch.is_floating_point(tensor):
+            ref_stat = next(iter(self._tensor_stats[key].values()))
+            target_dtype = ref_stat.dtype if torch.is_floating_point(ref_stat) else torch.float32
+            tensor = tensor.to(dtype=target_dtype)
+
         # For Accelerate compatibility: Ensure stats are on the same device and dtype as the input tensor
         if self._tensor_stats and key in self._tensor_stats:
             first_stat = next(iter(self._tensor_stats[key].values()))

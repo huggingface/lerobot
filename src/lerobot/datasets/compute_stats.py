@@ -520,6 +520,7 @@ def compute_episode_stats(
         if features[key]["dtype"] in {"string", "language"}:
             continue
 
+        grid_shape = None
         if features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
@@ -528,10 +529,22 @@ def compute_episode_stats(
             ep_ft_array = data
             axes_to_reduce = 0
             keepdims = data.ndim == 1
+            # Multi-dim non-image features (e.g. 2D tactile grids): compute
+            # per-cell stats by flattening the per-frame grid into one feature
+            # axis, then restore the grid shape. This yields per-element stats
+            # and a frame-count-independent shape.
+            if ep_ft_array.ndim > 2:
+                grid_shape = ep_ft_array.shape[1:]
+                ep_ft_array = ep_ft_array.reshape(ep_ft_array.shape[0], -1)
 
         ep_stats[key] = get_feature_stats(
             ep_ft_array, axis=axes_to_reduce, keepdims=keepdims, quantile_list=quantile_list
         )
+
+        if grid_shape is not None:
+            ep_stats[key] = {
+                k: v if k == "count" else v.reshape(grid_shape) for k, v in ep_stats[key].items()
+            }
 
         if features[key]["dtype"] in ["image", "video"]:
             normalization_factor = 1.0 if is_depth_map(features[key]) else 255.0

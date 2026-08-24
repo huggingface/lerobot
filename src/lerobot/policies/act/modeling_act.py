@@ -272,6 +272,8 @@ class TactileCNN(nn.Module):
         pooled_size: tuple[int, int] = (2, 2),
     ):
         super().__init__()
+        # input_shape is accepted for interface parity; AdaptiveAvgPool makes the
+        # head shape-independent, so it is intentionally not used here.
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -301,8 +303,10 @@ class TactileCNN(nn.Module):
 class TactileAttentionCNN(nn.Module):
     """Conv backbone with spatial attention and global pooling. Outputs (B, feature_dim)."""
 
-    def __init__(self, input_shape: tuple[int, int], feature_dim: int = 512, dropout: float = 0.4):
+    def __init__(self, input_shape: tuple[int, int], feature_dim: int = 512, dropout: float = 0.3):
         super().__init__()
+        # input_shape is accepted for interface parity; AdaptiveAvgPool makes the
+        # head shape-independent, so it is intentionally not used here.
         self.conv1 = nn.Conv2d(1, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
@@ -472,7 +476,10 @@ class ACT(nn.Module):
             self.tactile_encoders = nn.ModuleDict()
             for key, ft in self.config.tactile_features.items():
                 self.tactile_encoder_keys.append(key)
-                self.tactile_encoders[key.replace(".", "_")] = TactileTokenEncoder(
+                module_key = key.replace(".", "_")
+                if module_key in self.tactile_encoders:
+                    raise ValueError(f"Tactile sensor key collision after sanitization: {module_key!r}")
+                self.tactile_encoders[module_key] = TactileTokenEncoder(
                     encoder_type=config.tactile_encoder_type,
                     input_shape=ft.shape,
                     feature_dim=config.dim_model,
