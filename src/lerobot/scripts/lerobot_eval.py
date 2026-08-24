@@ -50,8 +50,11 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 """
 
 import concurrent.futures as cf
+import datetime as dt
 import json
 import logging
+import platform
+import subprocess
 import threading
 import time
 from collections import defaultdict
@@ -63,6 +66,8 @@ from functools import partial
 from pathlib import Path
 from pprint import pformat
 from typing import TYPE_CHECKING, Any, TypedDict
+
+import lerobot
 
 import einops
 import gymnasium as gym
@@ -103,6 +108,66 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_eval_provenance(cfg: EvalPipelineConfig) -> dict[str, Any]:
+    """Collects provenance metadata for reproducible evaluations."""
+    git_commit = None
+    try:
+        git_commit = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            .strip()
+        )
+    except Exception:
+        pass
+
+    policy_path = getattr(cfg.policy, "path", None) if hasattr(cfg, "policy") and cfg.policy is not None else None
+    if policy_path is None and hasattr(cfg.policy, "pretrained_path") and cfg.policy.pretrained_path is not None:
+        policy_path = str(cfg.policy.pretrained_path)
+
+    policy_type = getattr(cfg.policy, "type", None) if hasattr(cfg, "policy") and cfg.policy is not None else None
+
+    env_type = getattr(cfg.env, "type", None) if hasattr(cfg, "env") and cfg.env is not None else None
+    env_task = getattr(cfg.env, "task", None) if hasattr(cfg, "env") and cfg.env is not None else None
+    env_fps = getattr(cfg.env, "fps", None) if hasattr(cfg, "env") and cfg.env is not None else None
+
+    gpu_model = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+
+    return {
+        "tool": {
+            "name": "lerobot-eval",
+            "version": getattr(lerobot, "__version__", "unknown"),
+            "git_commit": git_commit,
+        },
+        "policy": {
+            "path": str(policy_path) if policy_path else None,
+            "type": policy_type,
+        },
+        "environment": {
+            "type": env_type,
+            "task": env_task,
+            "fps": env_fps,
+        },
+        "system": {
+            "os": platform.system(),
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "gpu_model": gpu_model,
+        },
+        "eval_settings": {
+            "n_episodes": getattr(cfg.eval, "n_episodes", None) if hasattr(cfg, "eval") else None,
+            "batch_size": getattr(cfg.eval, "batch_size", 1) if hasattr(cfg, "eval") else 1,
+            "seed": getattr(cfg, "seed", None),
+            "device": str(getattr(cfg.policy, "device", "cpu")) if hasattr(cfg, "policy") and cfg.policy is not None else "cpu",
+        },
+        "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
 
 
 def _env_features_to_dataset_features(env_features: dict) -> dict:
@@ -814,6 +879,9 @@ def eval_main(cfg: EvalPipelineConfig):
             logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
+
+    # Attach evaluation provenance
+    info["provenance"] = get_eval_provenance(cfg)
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
