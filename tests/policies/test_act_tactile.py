@@ -67,16 +67,18 @@ def test_tactile_config_property_and_validation():
             tactile_encoder_type="bogus",
         )
 
+    # use_tactile enabled but no tactile features present: construction succeeds
+    # (features are attached from the dataset later); validate_features() is what raises.
+    no_tactile = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
+            f"{OBS_IMAGES}.cam": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
+        },
+        output_features=output_features,
+        use_tactile=True,
+    )
     with pytest.raises(ValueError):
-        # use_tactile enabled but no tactile features present
-        ACTConfig(
-            input_features={
-                OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(10,)),
-                f"{OBS_IMAGES}.cam": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 96, 96)),
-            },
-            output_features=output_features,
-            use_tactile=True,
-        )
+        no_tactile.validate_features()
 
     # Tactile as the sole input modality must be accepted (no images / state / env_state).
     tactile_only = ACTConfig(

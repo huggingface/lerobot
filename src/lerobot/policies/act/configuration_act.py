@@ -161,11 +161,6 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError(
                 f"`tactile_encoder_type` must be 'cnn' or 'attention'. Got {self.tactile_encoder_type}."
             )
-        if self.use_tactile and not self.tactile_features:
-            raise ValueError(
-                "`use_tactile=True` but no tactile features were found in `input_features`. "
-                "Tactile features are inputs typed `FeatureType.TACTILE`."
-            )
         if self.use_tactile and self.n_tactile_tokens < 1:
             raise ValueError(f"`n_tactile_tokens` must be >= 1. Got {self.n_tactile_tokens}.")
 
@@ -182,6 +177,11 @@ class ACTConfig(PreTrainedConfig):
         if not self.image_features and not self.env_state_feature and not self.tactile_features:
             raise ValueError(
                 "You must provide at least one image, the environment state, or a tactile sensor among the inputs."
+            )
+        if self.use_tactile and not self.tactile_features:
+            raise ValueError(
+                "`use_tactile=True` but no tactile features were found in `input_features`. "
+                "Tactile features are inputs typed `FeatureType.TACTILE`."
             )
 
     @property
