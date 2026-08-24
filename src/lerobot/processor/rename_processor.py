@@ -43,10 +43,7 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     def observation(self, observation):
         processed_obs = {}
         for key, value in observation.items():
-            if key in self.rename_map:
-                processed_obs[self.rename_map[key]] = value
-            else:
-                processed_obs[key] = value
+            processed_obs[_rename_key_with_metadata(key, self.rename_map)] = value
 
         return processed_obs
 
@@ -91,3 +88,22 @@ def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -
         new_key = rename_map.get(old_key, old_key)
         renamed[new_key] = deepcopy(sub_stats) if sub_stats is not None else {}
     return renamed
+
+
+def _rename_key_with_metadata(key: str, rename_map: dict[str, str]) -> str:
+    """Rename a feature key while preserving temporal sampling metadata suffixes."""
+    if key in rename_map:
+        return rename_map[key]
+    for suffix in ("_is_pad", "_padding_mask"):
+        if key.endswith(suffix):
+            base = key[: -len(suffix)]
+            if base in rename_map:
+                return f"{rename_map[base]}{suffix}"
+    return key
+
+
+def rename_batch_keys(batch: dict[str, Any], rename_map: dict[str, str] | None) -> dict[str, Any]:
+    """Canonicalize raw dataset keys before they are grouped into a transition."""
+    if not rename_map:
+        return batch
+    return {_rename_key_with_metadata(key, rename_map): value for key, value in batch.items()}
