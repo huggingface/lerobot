@@ -59,3 +59,14 @@ def test_tactile_config_property_and_validation():
             output_features=output_features,
             use_tactile=True,
         )
+
+    # Tactile as the sole input modality must be accepted (no images / state / env_state).
+    tactile_only = ACTConfig(
+        input_features={
+            "observation.tactile.sensor_1": PolicyFeature(type=FeatureType.TACTILE, shape=(6, 6))
+        },
+        output_features=output_features,
+        use_tactile=True,
+    )
+    tactile_only.validate_features()  # must not raise
+    assert list(tactile_only.tactile_features) == ["observation.tactile.sensor_1"]
