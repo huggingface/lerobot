@@ -16,6 +16,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.optim import AdamWConfig
 
 
@@ -90,6 +91,7 @@ class ACTConfig(PreTrainedConfig):
             "VISUAL": NormalizationMode.MEAN_STD,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
+            "TACTILE": NormalizationMode.MEAN_STD,
         }
     )
 
@@ -117,6 +119,12 @@ class ACTConfig(PreTrainedConfig):
     # Inference.
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
+
+    # Tactile sensor configuration (optional; disabled by default).
+    use_tactile: bool = False
+    tactile_encoder_type: str = "cnn"  # "cnn" | "attention"
+    n_tactile_tokens: int = 4
+    tactile_dropout: float = 0.3
 
     # Training and loss computation.
     dropout: float = 0.1
@@ -149,6 +157,15 @@ class ACTConfig(PreTrainedConfig):
             raise ValueError(
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
+        if self.use_tactile and self.tactile_encoder_type not in ("cnn", "attention"):
+            raise ValueError(
+                f"`tactile_encoder_type` must be 'cnn' or 'attention'. Got {self.tactile_encoder_type}."
+            )
+        if self.use_tactile and not self.tactile_features:
+            raise ValueError(
+                "`use_tactile=True` but no tactile features were found in `input_features`. "
+                "Tactile features are keys starting with 'observation.tactile.'."
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -160,8 +177,10 @@ class ACTConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        if not self.image_features and not self.env_state_feature and not self.tactile_features:
+            raise ValueError(
+                "You must provide at least one image, the environment state, or a tactile sensor among the inputs."
+            )
 
     @property
     def observation_delta_indices(self) -> None:
@@ -170,6 +189,12 @@ class ACTConfig(PreTrainedConfig):
     @property
     def action_delta_indices(self) -> list:
         return list(range(self.chunk_size))
+
+    @property
+    def tactile_features(self) -> dict[str, PolicyFeature]:
+        if not self.input_features:
+            return {}
+        return {k: ft for k, ft in self.input_features.items() if ft.type is FeatureType.TACTILE}
 
     @property
     def reward_delta_indices(self) -> None:
