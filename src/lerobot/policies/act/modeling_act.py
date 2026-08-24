@@ -257,6 +257,118 @@ class ACTTemporalEnsembler:
         return action
 
 
+class TactileCNN(nn.Module):
+    """Conv backbone for a tactile grid. Outputs (B, feature_dim).
+
+    Uses AdaptiveAvgPool2d before the FC head so it is valid for any grid size
+    (grabette sensors are as small as 6x6, which collapses fixed /2 pooling).
+    """
+
+    def __init__(
+        self,
+        input_shape: tuple[int, int],
+        feature_dim: int = 512,
+        dropout: float = 0.3,
+        pooled_size: tuple[int, int] = (2, 2),
+    ):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.pool = nn.AdaptiveAvgPool2d(pooled_size)
+        self.dropout = nn.Dropout(dropout)
+        conv_output_dim = 128 * pooled_size[0] * pooled_size[1]
+        self.fc1 = nn.Linear(conv_output_dim, 512)
+        self.fc2 = nn.Linear(512, feature_dim)
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(1)  # (B, H, W) -> (B, 1, H, W)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = self.pool(x)
+        x = x.flatten(1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
+
+
+class TactileAttentionCNN(nn.Module):
+    """Conv backbone with spatial attention and global pooling. Outputs (B, feature_dim)."""
+
+    def __init__(self, input_shape: tuple[int, int], feature_dim: int = 512, dropout: float = 0.4):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
+        self.attention = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=1),
+            nn.ReLU(),
+            nn.Conv2d(128, 1, kernel_size=1),
+            nn.Sigmoid(),
+        )
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.fc = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(512, feature_dim),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = x * self.attention(x)
+        avg_pool = self.global_avg_pool(x)
+        max_pool = self.global_max_pool(x)
+        x = torch.cat([avg_pool, max_pool], dim=1).flatten(1)
+        x = self.fc(x)
+        return x
+
+
+class TactileTokenEncoder(nn.Module):
+    """Encode a tactile grid (B, H, W) into (B, n_tokens, feature_dim)."""
+
+    def __init__(
+        self,
+        encoder_type: str,
+        input_shape: tuple[int, int],
+        feature_dim: int,
+        n_tokens: int = 1,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+        self.n_tokens = n_tokens
+        self.feature_dim = feature_dim
+        if encoder_type == "cnn":
+            self.backbone = TactileCNN(input_shape, feature_dim, dropout)
+        elif encoder_type == "attention":
+            self.backbone = TactileAttentionCNN(input_shape, feature_dim, dropout)
+        else:
+            raise ValueError(f"Unknown tactile encoder type: {encoder_type!r}. Choose 'cnn' or 'attention'.")
+        self.token_proj = nn.Linear(feature_dim, n_tokens * feature_dim) if n_tokens > 1 else None
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = x.to(dtype=next(self.backbone.parameters()).dtype)  # tactile is int16 in the dataset
+        feat = self.backbone(x)  # (B, feature_dim)
+        if self.n_tokens == 1:
+            return feat.unsqueeze(1)
+        feat = self.token_proj(feat)
+        return feat.view(feat.size(0), self.n_tokens, self.feature_dim)
+
+
 class ACT(nn.Module):
     """Action Chunking Transformer: The underlying neural network for ACTPolicy.
 
@@ -354,12 +466,27 @@ class ACT(nn.Module):
             self.encoder_img_feat_input_proj = nn.Conv2d(
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
+        # Per-sensor tactile encoders. Each sensor grid is encoded to n_tactile_tokens tokens.
+        self.tactile_encoder_keys: list[str] = []
+        if self.config.use_tactile:
+            self.tactile_encoders = nn.ModuleDict()
+            for key, ft in self.config.tactile_features.items():
+                self.tactile_encoder_keys.append(key)
+                self.tactile_encoders[key.replace(".", "_")] = TactileTokenEncoder(
+                    encoder_type=config.tactile_encoder_type,
+                    input_shape=ft.shape,
+                    feature_dim=config.dim_model,
+                    n_tokens=config.n_tactile_tokens,
+                    dropout=config.tactile_dropout,
+                )
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
         if self.config.robot_state_feature:
             n_1d_tokens += 1
         if self.config.env_state_feature:
             n_1d_tokens += 1
+        if self.config.use_tactile:
+            n_1d_tokens += len(self.config.tactile_features) * config.n_tactile_tokens
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
@@ -403,7 +530,14 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        batch_size = batch[OBS_IMAGES][0].shape[0] if OBS_IMAGES in batch else batch[OBS_ENV_STATE].shape[0]
+        if OBS_IMAGES in batch:
+            batch_size = batch[OBS_IMAGES][0].shape[0]
+        elif OBS_ENV_STATE in batch:
+            batch_size = batch[OBS_ENV_STATE].shape[0]
+        elif self.config.use_tactile and self.tactile_encoder_keys:
+            batch_size = batch[self.tactile_encoder_keys[0]].shape[0]
+        else:
+            batch_size = batch[OBS_STATE].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and ACTION in batch and self.training:
@@ -454,9 +588,17 @@ class ACT(nn.Module):
         else:
             # When not using the VAE encoder, we set the latent to be all zeros.
             mu = log_sigma_x2 = None
+            if self.config.robot_state_feature:
+                latent_device = batch[OBS_STATE].device
+            elif OBS_IMAGES in batch:
+                latent_device = batch[OBS_IMAGES][0].device
+            elif OBS_ENV_STATE in batch:
+                latent_device = batch[OBS_ENV_STATE].device
+            else:
+                latent_device = batch[self.tactile_encoder_keys[0]].device
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
             latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
-                batch[OBS_STATE].device
+                latent_device
             )
 
         # Prepare transformer encoder inputs.
@@ -468,6 +610,14 @@ class ACT(nn.Module):
         # Environment state token.
         if self.config.env_state_feature:
             encoder_in_tokens.append(self.encoder_env_state_input_proj(batch[OBS_ENV_STATE]))
+
+        # Tactile tokens. Each sensor is encoded to n_tactile_tokens tokens; appended in
+        # the same order as the trailing rows of encoder_1d_feature_pos_embed.
+        if self.config.use_tactile:
+            for key in self.tactile_encoder_keys:
+                tactile_tokens = self.tactile_encoders[key.replace(".", "_")](batch[key])  # (B, n_tokens, D)
+                for i in range(self.config.n_tactile_tokens):
+                    encoder_in_tokens.append(tactile_tokens[:, i])
 
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
