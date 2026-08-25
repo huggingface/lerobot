@@ -22,6 +22,7 @@ from .factory import (
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .soler1.configuration_soler1 import SOLER1Config as SOLER1Config
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "RobometerConfig",
     "SARMConfig",
     "TOPRewardConfig",
+    "SOLER1Config",
     # Base class
     "PreTrainedRewardModel",
     # Factory functions

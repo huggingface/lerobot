@@ -91,6 +91,8 @@
     title: ROBOMETER
   - local: topreward
     title: TOPReward
+  - local: soler1
+    title: SOLE-R1
   title: "Reward Models"
 - sections:
   - local: inference

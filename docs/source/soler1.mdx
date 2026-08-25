@@ -1,0 +1,199 @@
+# SOLE-R1
+
+SOLE-R1 is a video-language reward model that predicts robot
+task progress from visual observations and a natural-language goal. It reasons
+over the first, previous, and current observations and generates:
+
+```text
+<think>reasoning about task progress</think><answer>progress%</answer>
+```
+
+**Paper**: [SOLE-R1: Video-Language Reasoning as the Sole Reward for On-Robot Reinforcement Learning](https://arxiv.org/abs/2603.28730)
+
+**Project**: [philip-mit.github.io/sole-r1](https://philip-mit.github.io/sole-r1/)
+
+**Original code**: [github.com/Philip-MIT/sole-r1-model](https://github.com/Philip-MIT/sole-r1-model)
+
+**Checkpoint**: [Philip-MIT/SOLE-R1-8B](https://huggingface.co/Philip-MIT/SOLE-R1-8B)
+
+## Installation
+
+From a LeRobot source checkout:
+
+```bash
+pip install -e ".[soler1]"
+```
+
+or:
+
+```bash
+uv sync --extra soler1
+```
+
+GPU inference is strongly recommended.
+
+## Usage
+
+### Load the reward model directly
+
+```python
+from lerobot.rewards.soler1 import SOLER1Config, SOLER1RewardModel
+
+cfg = SOLER1Config(
+    device="cuda",
+    external_image_key="observation.images.top",
+    wrist_image_key="observation.images.wrist"
+)
+reward_model = SOLER1RewardModel(cfg).to(cfg.device).eval()
+```
+
+### Use the reward factory
+
+```python
+from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
+
+cfg = make_reward_model_config(
+    "sole-r1",
+    device="cuda",
+    external_image_key="observation.images.top",
+    wrist_image_key="observation.images.wrist",
+)
+reward_model = make_reward_model(cfg)
+preprocessor, _ = make_reward_pre_post_processors(cfg)
+```
+
+### Inputs
+
+SOLE-R1 supports an external camera, a wrist camera, or both. At least one camera key must be configured.
+
+Camera trajectories must use the explicit channels-first shape:
+
+```text
+(B, T, C, H, W)
+```
+
+Both the batch and time dimensions are required, including when either is one.
+SOLE-R1 does not perform temporal sampling. The caller or shared reward pipeline is responsible for selecting the sequence; every supplied timestep is processed.
+
+For every evaluated timestep, the preprocessor creates the composite expected by SOLE-R1:
+
+```text
+first | previous | current
+```
+
+With two cameras, the external-camera row is placed above the wrist-camera row. Each frame is resized with aspect-ratio-preserving padding to `384 × 384`.
+
+### Generation behavior
+
+`temperature=1.0` matches the public SOLE-R1 serving default and enables sampled generation.
+Use `temperature=0.0` for greedy decoding, which removes sampling variability (although exact cross-device reproducibility still depends on the PyTorch backend and hardware).
+
+### Compute rewards (sparse or dense)
+
+`compute_reward(batch)` returns reward per trajectory (the final predicted progress or binary final success). `compute_progress(batch)` returns progress for every trajectory timestep.
+
+```python
+import torch
+
+# One channels-first trajectory: (B, T, C, H, W).
+frames = torch.randint(
+    0,
+    256,
+    (1, 8, 3, 224, 224),
+    dtype=torch.uint8,
+)
+
+batch = preprocessor(
+    {
+        cfg.external_image_key: frames,
+        cfg.wrist_image_key: frames,
+        cfg.task_key: "pick up the red cube",
+    }
+)
+
+# Sparse reward taken from last timestep
+reward = reward_model.compute_reward(batch)
+print(reward.shape)  # (1,)
+
+# Dense reward for all timesteps
+progress = reward_model.compute_progress(batch)
+print(progress.shape)  # (1, 8)
+```
+
+The first supplied timestep is defined as `0%`. Later timesteps are evaluated sequentially because the prompt for the current timestep includes the previous predicted progress.
+
+With the default `reward_scale=0.01`, a generated progress value of `75%` produces a reward of `0.75`.
+
+### Success output
+
+SOLE-R1 will return a binary trajectory-level success value from `compute_reward` if the following configuration is set:
+
+```python
+cfg = make_reward_model_config(
+    "sole-r1",
+    device="cuda",
+    reward_output="success",
+    success_threshold=0.8,
+    external_image_key="observation.images.top",
+    wrist_image_key="observation.images.wrist",
+)
+```
+
+The predicted progress is scaled first, then compared with
+`success_threshold`.
+
+## Invalid generations
+
+By default, if a completion cannot be parsed, SOLE-R1 reuses the preceding
+progress value. To make malformed output an error:
+
+```python
+cfg = make_reward_model_config(
+    "sole-r1",
+    fallback_to_previous=False,
+)
+```
+
+## Serialization
+
+SOLE-R1 is inference-only. `save_pretrained()` stores the LeRobot
+`config.json`; the underlying model remains referenced by `model_name`.
+
+```python
+reward_model.save_pretrained("soler1_config")
+```
+
+Reload it with:
+
+```python
+from lerobot.rewards.soler1 import SOLER1RewardModel
+
+reward_model = SOLER1RewardModel.from_pretrained("soler1_config")
+```
+
+## Limitations
+
+- The integration implements inference only.
+- Predictions are autoregressive across trajectory timesteps, so a malformed or inaccurate prediction can affect later predictions.
+
+## References
+
+- [SOLE-R1 project page](https://philip-mit.github.io/sole-r1/)
+- [SOLE-R1 paper](https://arxiv.org/abs/2603.28730)
+- [Original SOLE-R1 code](https://github.com/Philip-MIT/sole-r1-model)
+- [Checkpoint](https://huggingface.co/Philip-MIT/SOLE-R1-8B)
+
+## Citation
+
+```bibtex
+@article{schroeder2026sole,
+  title={SOLE-R1: Video-Language Reasoning as the Sole Reward for On-Robot Reinforcement Learning},
+  author={Schroeder, Philip and Weng, Thomas and Schmeckpeper, Karl and Rosen, Eric and Hart, Stephen and Biza, Ondrej},
+  journal={arXiv preprint arXiv:2603.28730},
+  year={2026}
+}
+```
+
+## License
+
+The original SOLE-R1 codebase is MIT-licensed. The LeRobot port follows the LeRobot Apache 2.0 license.
