@@ -316,7 +316,7 @@ def merge_datasets(
 
 def modify_features(
     dataset: LeRobotDataset,
-    add_features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]] | None = None,
+    add_features: dict[str, tuple[np.ndarray | torch.Tensor | dict | Callable, dict]] | None = None,
     remove_features: str | list[str] | None = None,
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
@@ -329,6 +329,8 @@ def modify_features(
     Args:
         dataset: The source LeRobotDataset.
         add_features: Optional dict mapping feature names to (feature_values, feature_info) tuples.
+            Feature values may be a dataset-length array or tensor, a dict keyed by episode index,
+            or a callable evaluated for each frame.
         remove_features: Optional feature name(s) to remove. Can be a single string or list.
         output_dir: Root directory where the edited dataset will be stored. If not specified, defaults to $HF_LEROBOT_HOME/repo_id. Equivalent to new_root in EditDatasetConfig.
         repo_id: Edited dataset identifier. Equivalent to new_repo_id in EditDatasetConfig.
@@ -420,7 +422,7 @@ def modify_features(
 
 def add_features(
     dataset: LeRobotDataset,
-    features: dict[str, tuple[np.ndarray | torch.Tensor | Callable, dict]],
+    features: dict[str, tuple[np.ndarray | torch.Tensor | dict | Callable, dict]],
     output_dir: str | Path | None = None,
     repo_id: str | None = None,
 ) -> LeRobotDataset:
@@ -1062,6 +1064,14 @@ def _copy_data_with_feature_changes(
                         ep_idx = row["episode_index"]
                         frame_in_ep = row["frame_index"]
                         value = values(row.to_dict(), ep_idx, frame_in_ep)
+                        if isinstance(value, np.ndarray) and value.size == 1:
+                            value = value.item()
+                        feature_values.append(value)
+                    df[feature_name] = feature_values
+                elif isinstance(values, dict):
+                    feature_values = []
+                    for episode_idx in df["episode_index"]:
+                        value = values[episode_idx]
                         if isinstance(value, np.ndarray) and value.size == 1:
                             value = value.item()
                         feature_values.append(value)

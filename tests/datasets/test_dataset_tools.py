@@ -346,6 +346,31 @@ def test_add_features_with_values(sample_dataset, tmp_path, values, feature_shap
     assert tuple(sample_item["new_feature"].shape) == expected_item_shape
 
 
+def test_add_features_with_episode_keyed_values(sample_dataset, tmp_path):
+    """Test adding one constant feature value per episode."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+    values_by_episode = {
+        episode_idx: np.array([episode_idx], dtype=np.float32)
+        for episode_idx in range(sample_dataset.meta.total_episodes)
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_episode_values")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features={"episode_value": (values_by_episode, feature_info)},
+            output_dir=tmp_path / "with_episode_values",
+        )
+
+    for item in new_dataset:
+        assert float(item["episode_value"]) == float(item["episode_index"])
+
+
 def test_add_features_with_callable(sample_dataset, tmp_path):
     """Test adding a feature with a callable."""
 
