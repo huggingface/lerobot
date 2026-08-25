@@ -1,0 +1,349 @@
+# Distributed Datasets
+
+LeRobot Dataset v3.0 supports distributed **reading** and controlled distributed **writing**.
+
+## Supported Modes
+
+- Map-style multi-GPU training is already sharded by Accelerate after `accelerator.prepare()`.
+- `StreamingLeRobotDataset` assigns Hugging Face source shards to a unique combination of distributed rank and PyTorch `DataLoader` worker.
+- Distributed writes support a new empty dataset, one driver, and one or more workers that share the target storage.
+
+Distributed writes do not support concurrent append to an existing dataset, two drivers, or mixing `save_episode()` with distributed workers.
+
+## Distributed Writes
+
+The driver allocates every episode and output file before any worker writes data. A worker owns exactly one `DistributedEpisodeSpec`, writes its own Parquet and MP4 files, and returns a result. Only the driver publishes `meta/`.
+
+```python
+from lerobot.datasets.distributed import DistributedWritePlan
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+driver = LeRobotDataset.create(
+    repo_id="my-org/assembled-dataset",
+    fps=30,
+    features=features,
+    root="/shared/assembled-dataset",
+)
+
+plan = DistributedWritePlan.from_episode_lengths(
+    episode_lengths=[len(frames) for frames in all_episodes],
+    episode_tasks=[[frame["task"] for frame in frames] for frames in all_episodes],
+    chunks_size=driver.meta.chunks_size,
+    video_keys=list(driver.meta.video_keys),
+)
+
+def write_episode(spec, frames):
+    worker = LeRobotDataset.open_distributed_writer(
+        repo_id="my-org/assembled-dataset",
+        root="/shared/assembled-dataset",
+    )
+    worker.start_distributed_episode(spec)
+    for frame in frames:
+        worker.add_frame(frame)
+    result = worker.save_distributed_episode(spec)
+    worker.finalize()
+    return result
+
+results = [
+    write_episode(spec, frames)
+    for spec, frames in zip(plan.episodes, all_episodes, strict=True)
+]
+driver.commit_distributed_results(plan, results)
+driver.finalize()
+```
+
+`start_distributed_episode(spec)` is required before the first `add_frame()`. It assigns the worker's temporary camera directory to the planned episode, preventing video-frame staging collisions.
+
+Each distributed episode receives a unique data file and, for each video feature, a unique MP4 file. This avoids distributed file locks and makes an individual failed worker retryable.
+
+## Multiprocessing and Ray
+
+The scheduling layer only needs to pass a spec and its frames to each worker:
+
+```python
+from multiprocessing import get_context
+
+with get_context("spawn").Pool(processes=4) as pool:
+    results = pool.starmap(
+        write_episode,
+        zip(plan.episodes, all_episodes, strict=True),
+    )
+
+driver.commit_distributed_results(plan, results)
+```
+
+Ray can use the same protocol:
+
+```python
+import ray
+
+@ray.remote
+def write_episode_remote(spec, frames):
+    return write_episode(spec, frames)
+
+results = ray.get(
+    [
+        write_episode_remote.remote(spec, frames)
+        for spec, frames in zip(plan.episodes, all_episodes, strict=True)
+    ]
+)
+driver.commit_distributed_results(plan, results)
+```
+
+LeRobot does not import or require Ray; Ray is only one possible scheduler.
+
+### Complete Ray Write Example
+
+The following script creates a small dataset using two or more Ray workers. The
+driver creates the empty dataset and the plan, workers write only their assigned
+episodes, and the driver publishes the metadata after every worker succeeds.
+
+All Ray workers must be able to read and write the same `ROOT` directory. In a
+Kubernetes deployment, mount the same read-write-many PVC at that path in the
+driver and every worker pod.
+
+```python
+# distributed_write_ray.py
+from pathlib import Path
+
+import numpy as np
+import ray
+
+from lerobot.datasets.distributed import DistributedWritePlan
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+REPO_ID = "my-org/distributed-demo"
+ROOT = Path("/shared/lerobot-demo")
+
+FEATURES = {
+    "observation.state": {"dtype": "float32", "shape": (2,), "names": None},
+    "action": {"dtype": "float32", "shape": (2,), "names": None},
+}
+
+# Replace this with frames from collection or conversion jobs. Every frame must
+# contain the features declared above and a string-valued "task".
+EPISODES = [
+    [
+        {
+            "observation.state": np.array([frame_index, 1], dtype=np.float32),
+            "action": np.array([frame_index, 2], dtype=np.float32),
+            "task": "pick",
+        }
+        for frame_index in range(3)
+    ],
+    [
+        {
+            "observation.state": np.array([frame_index, 3], dtype=np.float32),
+            "action": np.array([frame_index, 4], dtype=np.float32),
+            "task": "place",
+        }
+        for frame_index in range(2)
+    ],
+]
+
+
+@ray.remote(num_cpus=1)
+def write_one_episode(spec, frames, session):
+    worker = LeRobotDataset.open_distributed_writer(REPO_ID, root=ROOT, session=session)
+    try:
+        # Required before add_frame(): it gives this worker a unique staging
+        # directory for the episode's images and videos.
+        worker.start_distributed_episode(spec)
+        for frame in frames:
+            worker.add_frame(frame)
+
+        # This writes only the files allocated by spec. It does not update meta/.
+        return worker.save_distributed_episode(spec)
+    finally:
+        worker.finalize()
+
+
+def main():
+    ray.init(address="auto")
+
+    # Only the driver creates the dataset. Distributed writes require it to be
+    # a newly created, empty dataset.
+    driver = LeRobotDataset.create(
+        REPO_ID,
+        root=ROOT,
+        fps=30,
+        features=FEATURES,
+        use_videos=False,
+    )
+
+    # Allocate global frame indexes, task indexes, and unique chunk/file paths
+    # before starting any worker.
+    plan = DistributedWritePlan.from_episode_lengths(
+        episode_lengths=[len(episode) for episode in EPISODES],
+        episode_tasks=[
+            [frame["task"] for frame in episode]
+            for episode in EPISODES
+        ],
+        chunks_size=driver.meta.chunks_size,
+        video_keys=list(driver.meta.video_keys),
+    )
+    session = driver.create_distributed_write_session(plan)
+
+    ray.get(
+        [
+            write_one_episode.remote(spec, frames, session)
+            for spec, frames in zip(plan.episodes, EPISODES, strict=True)
+        ]
+    )
+
+    # Only the driver commits: it validates all returned artifacts and atomically
+    # makes the global meta/ directory visible.
+    driver.commit_distributed_results(session.plan, session.load_results())
+    driver.finalize()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Start Ray first, then run the script in the driver environment:
+
+```bash
+ray start --head
+python distributed_write_ray.py
+```
+
+For a remote driver, use `ray.init(address="auto")` and submit the same script
+from a Ray Job or run it in the head pod. When the dataset includes video
+features, retain `video_keys=list(driver.meta.video_keys)` in the plan. Each
+worker then writes one independent MP4 for each video feature.
+
+## Failure Recovery
+
+`DistributedWriteSession` persists the plan and one atomic success record per
+worker below `<dataset-root>/.distributed-write-session/`. It does not retry
+workers itself. Instead, it lets a driver, Ray Job, or external orchestrator
+resume an interrupted run without repeating verified episodes.
+
+On the first run, create the session before dispatching any workers. Pass it to
+each worker writer so `save_distributed_episode()` records a result only after
+the worker has finished its planned artifacts:
+
+```python
+session = driver.create_distributed_write_session(plan)
+
+worker = LeRobotDataset.open_distributed_writer(
+    REPO_ID,
+    root=ROOT,
+    session=session,
+)
+```
+
+After a driver, worker, or cluster interruption, load the session from the same
+shared root. Only dispatch the returned `pending_specs()`; completed specs with
+a valid result record and valid artifacts are omitted:
+
+```python
+session = LeRobotDataset.resume_distributed_write_session(ROOT)
+
+# Do not automatically delete files. Call this explicit recovery operation if
+# an interrupted worker left an unrecorded, missing, or corrupt planned output.
+session.cleanup_orphaned_artifacts()
+
+for spec in session.pending_specs():
+    submit_to_your_scheduler(spec, session=session)
+
+# When no spec remains pending, load both old and newly persisted results.
+driver.commit_distributed_results(session.plan, session.load_results())
+driver.finalize()
+```
+
+`cleanup_orphaned_artifacts()` only removes output paths allocated to specs that
+do not have a valid persistent success record. It preserves artifacts referenced
+by a record whose data Parquet, frame range, episode index, and video outputs
+all validate. This makes an explicit retry safe after a process is killed
+between writing a file and recording success.
+
+Do not call `commit_distributed_results()` until the session has one valid
+result for every plan entry. A rejected commit leaves the existing public
+`meta/` directory unchanged. Always retry with the original
+`DistributedEpisodeSpec`; do not create a replacement plan.
+
+## Storage Requirements
+
+All workers and the driver need access to the same dataset root. This can be a shared filesystem or a shared object-store mount with atomic directory rename semantics for the final metadata publication.
+
+Do not enable batch video encoding or streaming video encoding for distributed workers. A distributed worker writes one complete planned episode at a time.
+
+## Streaming Reads
+
+For streaming training, LeRobot computes a global consumer id:
+
+```text
+consumer_id = rank * dataloader_num_workers + dataloader_worker_id
+consumer_count = world_size * dataloader_num_workers
+```
+
+A consumer reads only source shards where:
+
+```text
+source_shard_index % consumer_count == consumer_id
+```
+
+This prevents duplicated streamed samples across ranks and DataLoader workers. Consumers with no assigned source shard finish normally.
+
+### `torchrun` Streaming Read Example
+
+`StreamingLeRobotDataset` discovers the initialized PyTorch distributed rank and
+the current `DataLoader` worker automatically. Application code should create
+the dataset normally; it must not manually filter shards by rank.
+
+```python
+# distributed_stream_read.py
+import torch
+import torch.distributed as dist
+from torch.utils.data import DataLoader
+
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+
+REPO_ID = "my-org/distributed-demo"
+ROOT = "/shared/lerobot-demo"
+
+
+def main():
+    dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    rank = dist.get_rank()
+
+    dataset = StreamingLeRobotDataset(
+        REPO_ID,
+        root=ROOT,
+        max_num_shards=32,
+        buffer_size=256,
+        shuffle=True,
+    )
+    dataloader = DataLoader(
+        dataset,
+        batch_size=32,
+        num_workers=4,
+        persistent_workers=True,
+    )
+
+    try:
+        for batch in dataloader:
+            # Replace this with model forward/backward/optimizer work. Each rank
+            # receives only its own streaming source shards.
+            print(f"rank={rank}, frame_indexes={batch['index'].tolist()}")
+            break
+    finally:
+        dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Launch two processes on one node:
+
+```bash
+torchrun --standalone --nproc-per-node=2 distributed_stream_read.py
+```
+
+For multi-node training, use the regular `torchrun --nnodes`, `--node-rank`,
+and rendezvous options. With two ranks and four `DataLoader` workers per rank,
+LeRobot creates eight consumers and assigns every source shard to exactly one
+of them.

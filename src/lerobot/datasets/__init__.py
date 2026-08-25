@@ -35,6 +35,12 @@ from .dataset_tools import (
     remove_feature,
     split_dataset,
 )
+from .distributed import (
+    DistributedEpisodeResult,
+    DistributedEpisodeSpec,
+    DistributedWritePlan,
+    DistributedWriteSession,
+)
 from .factory import make_dataset, make_train_eval_datasets, resolve_delta_timestamps
 from .image_writer import safe_stop_image_writer
 from .io_utils import load_episodes, write_stats
@@ -63,6 +69,10 @@ __all__ = [
     "CODEBASE_VERSION",
     "DEFAULT_EPISODES_PATH",
     "DEFAULT_QUANTILES",
+    "DistributedEpisodeResult",
+    "DistributedEpisodeSpec",
+    "DistributedWritePlan",
+    "DistributedWriteSession",
     "EVENT_ONLY_STYLES",
     "EpisodeAwareSampler",
     "LANGUAGE_EVENTS",
