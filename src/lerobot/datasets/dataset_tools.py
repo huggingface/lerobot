@@ -1679,14 +1679,20 @@ def recompute_stats(
     for parquet_path in tqdm(parquet_files, desc="Computing stats from data files"):
         df = pd.read_parquet(parquet_path)
 
-        for ep_idx in sorted(df["episode_index"].unique()):
-            ep_df = df[df["episode_index"] == ep_idx]
+        ep_index_arr = df["episode_index"].to_numpy()
+        for ep_idx in sorted(np.unique(ep_index_arr)):
+            row_pos = np.nonzero(ep_index_arr == ep_idx)[0]
             episode_data = {}
             for key in numeric_keys:
-                if key in ep_df.columns:
-                    values = ep_df[key].values
+                if key in df.columns:
+                    # `.to_list()` yields plain Python objects (nested lists for
+                    # multi-dim int columns like tactile grids), avoiding the pandas
+                    # extension-array `.take` that fails with "cannot convert float
+                    # NaN to integer" when boolean-indexing HF `datasets` columns.
+                    col = df[key].to_list()
+                    values = [col[i] for i in row_pos]
                     if hasattr(values[0], "__len__"):
-                        episode_data[key] = np.stack(values)
+                        episode_data[key] = np.stack([np.asarray(v) for v in values])
                     else:
                         episode_data[key] = np.array(values)
 
