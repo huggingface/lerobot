@@ -371,6 +371,49 @@ def test_add_features_with_episode_keyed_values(sample_dataset, tmp_path):
         assert float(item["episode_value"]) == float(item["episode_index"])
 
 
+def test_add_features_with_multidimensional_episode_keyed_values(sample_dataset, tmp_path):
+    """Test repeating a vector feature value across each episode."""
+    feature_info = {"dtype": "float32", "shape": (2,), "names": None}
+    values_by_episode = {
+        episode_idx: np.array([episode_idx, episode_idx + 0.5], dtype=np.float32)
+        for episode_idx in range(sample_dataset.meta.total_episodes)
+    }
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_episode_vectors")
+
+        new_dataset = add_features(
+            dataset=sample_dataset,
+            features={"episode_vector": (values_by_episode, feature_info)},
+            output_dir=tmp_path / "with_episode_vectors",
+        )
+
+    for item in new_dataset:
+        episode_idx = int(item["episode_index"])
+        expected = torch.tensor([episode_idx, episode_idx + 0.5], dtype=torch.float32)
+        torch.testing.assert_close(item["episode_vector"], expected)
+
+
+def test_add_features_with_incomplete_episode_keyed_values(sample_dataset, tmp_path):
+    """Test that an incomplete episode mapping fails loudly."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+    values_by_episode = {
+        episode_idx: np.array([episode_idx], dtype=np.float32)
+        for episode_idx in range(sample_dataset.meta.total_episodes - 1)
+    }
+
+    with pytest.raises(KeyError, match=str(sample_dataset.meta.total_episodes - 1)):
+        add_features(
+            dataset=sample_dataset,
+            features={"episode_value": (values_by_episode, feature_info)},
+            output_dir=tmp_path / "with_incomplete_episode_values",
+        )
+
+
 def test_add_features_with_callable(sample_dataset, tmp_path):
     """Test adding a feature with a callable."""
 
