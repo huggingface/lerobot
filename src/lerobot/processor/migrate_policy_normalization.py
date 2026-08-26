@@ -50,6 +50,8 @@ with the new PolicyProcessorPipeline architecture.
 import argparse
 import json
 import os
+import types
+import typing
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +59,7 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.utils.constants import ACTION
 
@@ -395,28 +397,47 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
     return converted_features
 
 
-def coerce_list_fields_to_tuples(cleaned_config: dict[str, Any]) -> dict[str, Any]:
+def _is_tuple_annotation(annotation: Any) -> bool:
+    """True if `annotation` is `tuple[...]`, or a `Union`/`X | None` wrapping one."""
+    origin = typing.get_origin(annotation)
+    if origin is tuple:
+        return True
+    if origin is typing.Union or origin is types.UnionType:
+        return any(_is_tuple_annotation(arg) for arg in typing.get_args(annotation))
+    return False
+
+
+def coerce_list_fields_to_tuples(cleaned_config: dict[str, Any], policy_type: str) -> dict[str, Any]:
     """
-    Coerces JSON-list values back to tuples so they match their dataclass field types.
+    Coerces JSON-list values back to tuples for fields the policy's config dataclass
+    actually declares as tuple-typed.
 
     `config.json` round-trips tuple-typed fields (e.g. `crop_shape`, `down_dims`) as JSON
     lists, since JSON has no tuple type. Passing a list where a dataclass declares a tuple
     loads fine — Python doesn't check field types at construction — but `draccus.encode()`
     fails later when saving the migrated config, since it encodes based on the declared type
-    rather than the runtime type. `input_features`/`output_features` are excluded since they
-    have already been converted to `PolicyFeature` objects by this point.
+    rather than the runtime type.
+
+    Coercion is scoped to fields actually declared as tuples (via `typing.get_type_hints`),
+    rather than every list value: several policies declare genuinely list-typed fields (e.g.
+    pi0's `relative_exclude_joints`, molmoact2's `image_keys`, gaussian_actor's `hidden_dims`),
+    and blindly tupling those would silently break any downstream code that mutates them.
 
     Args:
         cleaned_config: The config dict about to be passed to `make_policy_config`.
+        policy_type: The registered policy type (e.g. "diffusion"), used to look up the
+            target config dataclass and its declared field types.
 
     Returns:
-        The same dict, with top-level list values (other than the excluded feature keys)
-        replaced by tuples.
+        The same dict, with list values replaced by tuples only for fields declared as
+        tuple-typed on the policy's config dataclass.
     """
+    config_cls = PreTrainedConfig.get_choice_class(policy_type)
+    type_hints = typing.get_type_hints(config_cls)
+    tuple_fields = {name for name, hint in type_hints.items() if _is_tuple_annotation(hint)}
+
     return {
-        key: tuple(value)
-        if isinstance(value, list) and key not in ("input_features", "output_features")
-        else value
+        key: tuple(value) if key in tuple_fields and isinstance(value, list) else value
         for key, value in cleaned_config.items()
     }
 
@@ -612,7 +633,7 @@ def main():
     # Add normalization mapping to config
     cleaned_config["normalization_mapping"] = norm_map
 
-    cleaned_config = coerce_list_fields_to_tuples(cleaned_config)
+    cleaned_config = coerce_list_fields_to_tuples(cleaned_config, policy_type)
 
     # Create policy configuration using the factory
     print(f"Creating {policy_type} policy configuration...")
