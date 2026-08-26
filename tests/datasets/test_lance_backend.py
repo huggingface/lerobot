@@ -27,7 +27,7 @@ import torch
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import lance_backend as lance_module
+from lerobot.datasets import lance_utils
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
@@ -358,11 +358,11 @@ def test_materialize_meta_rejects_escaping_paths(tmp_path):
     for i, bad in enumerate(["/etc/passwd", "../../etc/passwd"]):
         db = lancedb.connect(str(tmp_path / f"db_{i}"))
         db.create_table(
-            lance_module.META_TABLE,
+            lance_utils.META_TABLE,
             pa.table(
                 {"path": [bad], "data": [b"x"]},
                 schema=pa.schema([("path", pa.string()), ("data", pa.large_binary())]),
             ),
         )
         with pytest.raises(ValueError, match="escapes the cache directory"):
-            lance_module._materialize_meta(db, tmp_path / f"root_{i}")
+            lance_utils._materialize_meta(db, tmp_path / f"root_{i}")

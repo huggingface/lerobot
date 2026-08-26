@@ -14,21 +14,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Video byte-index and ranged-read helpers for the Lance dataset reader.
+"""Helpers for the Lance dataset reader.
 
-Utilities the ``"lance"`` storage format uses to fetch and decode mp4 video
-stored as blobs: byte-index construction at conversion time, sparse in-memory
-sources over prefetched ranges, and a bounded decoder cache.
+Everything the ``"lance"`` storage format needs outside the reader class:
+table naming, connection and remote-root resolution, ``meta/`` materialization,
+and the mp4 byte-range machinery (byte-index construction, sparse in-memory
+sources over prefetched ranges, a bounded decoder cache). The mp4 helpers only
+depend on ``av``/``io``/``bisect`` and are reusable outside Lance.
 """
 
 from __future__ import annotations
 
 import bisect
 import io
+import multiprocessing
+import os
+import re
+import shutil
 from collections import OrderedDict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import av
+import huggingface_hub
+
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.import_utils import _lancedb_available, require_package
+
+if TYPE_CHECKING or _lancedb_available:
+    import lancedb
+
+from .storage import is_remote_uri
 
 # Byte-index columns on the videos table: map a frame window to its byte ranges so a
 # batch's video fetch can be batched. Assume constant frame rate; mp4-only.
@@ -209,3 +225,127 @@ class _VideoDecoderLRU:
         ):
             _, (_, evicted_bytes) = self._items.popitem(last=False)
             self._total_bytes -= evicted_bytes
+
+
+FRAMES_TABLE = "frames"
+VIDEOS_TABLE = "videos"
+META_TABLE = "meta"
+VIDEO_BLOB_COLUMN = "video_bytes"
+
+
+def to_lance_column(key: str) -> str:
+    return key.replace(".", "_")
+
+
+def _storage_options(
+    db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
+) -> dict:
+    options = dict(storage_options or {})
+    if db_uri.startswith("hf://"):
+        if "token" not in options:
+            if isinstance(token, str):
+                options["token"] = token
+            elif token is not False:
+                stored_token = huggingface_hub.get_token()
+                if stored_token:
+                    options["token"] = stored_token
+        if revision and "revision" not in options:
+            options["revision"] = revision
+    return options
+
+
+def _connect(
+    db_uri: str,
+    storage_options: dict | None,
+    revision: str | None = None,
+    token: str | bool | None = None,
+):
+    require_package("lancedb", extra="lancedb")  # earliest common site: also reached via localize_root()
+    if is_remote_uri(db_uri):
+        os.environ.setdefault("LANCE_IO_THREADS", "256")
+    options = _storage_options(db_uri, storage_options, revision, token)
+    return lancedb.connect(db_uri, **({"storage_options": options} if options else {}))
+
+
+def _materialize_meta(db, local_root: Path) -> None:
+    """Write ``meta/`` from the meta table to a local cache, once."""
+    meta_dir = local_root / "meta"
+    if meta_dir.exists():
+        return
+    try:
+        table = db.open_table(META_TABLE)
+    except Exception as error:
+        raise FileNotFoundError(
+            f"Dataset has no '{META_TABLE}' table. Re-convert it with a converter that "
+            "ingests meta/, or create the table in place from an existing meta/ copy."
+        ) from error
+
+    tmp_dir = local_root / f"meta.tmp-{os.getpid()}"
+    try:
+        tmp_resolved = tmp_dir.resolve()
+        for batch in table.search().select(["path", "data"]).to_batches():
+            paths = batch.column("path").to_pylist()
+            for i, rel_path in enumerate(paths):
+                dst = (tmp_dir / rel_path).resolve()
+                if not dst.is_relative_to(tmp_resolved):
+                    raise ValueError(f"meta table entry escapes the cache directory: {rel_path!r}")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(batch.column("data")[i].as_py())
+        try:
+            tmp_dir.rename(meta_dir)
+        except OSError:
+            if not meta_dir.exists():
+                raise
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def lance_mp_context() -> str:
+    return "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+
+
+def localize_root(
+    repo_id: str | None,
+    root: str | Path,
+    revision: str | None = None,
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
+) -> Path:
+    """Materialize ``meta/`` for a remote Lance dataset and return the local dir holding it.
+
+    Hook used by :mod:`lerobot.datasets.storage` for object-store roots; data
+    tables are never downloaded.
+    """
+    _, local_root = resolve_lance_root(
+        repo_id, root, revision=revision, token=token, force_cache_sync=force_cache_sync
+    )
+    return local_root
+
+
+def resolve_lance_root(
+    repo_id: str | None,
+    root: str | Path | None,
+    storage_options: dict | None = None,
+    revision: str | None = None,
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
+) -> tuple[str, Path]:
+    """Resolve a Lance dataset to its connect URI and the local root holding ``meta/``"""
+    if root is not None and is_remote_uri(root):
+        db_uri = str(root).rstrip("/")
+        # Key the cache by revision too: an hf:// root at a non-default revision must not
+        # reuse (or overwrite) another revision's materialized meta.
+        cache_key = f"{db_uri}@{revision}" if revision else db_uri
+        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        if force_cache_sync:
+            shutil.rmtree(local_root / "meta", ignore_errors=True)
+        if not (local_root / "meta").exists():
+            _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
+        return db_uri, local_root
+    root_path = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+    if (root_path / f"{FRAMES_TABLE}.lance").exists():
+        return str(root_path), root_path
+    if repo_id is not None:
+        return f"hf://datasets/{repo_id}", root_path
+    raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")
