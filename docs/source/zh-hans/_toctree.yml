@@ -62,3 +62,7 @@
   - local: damiao
     title: 达妙
   title: "其他资源"
+- sections:
+  - local: writing_docstrings
+    title: 编写 docstring
+  title: "关于"
