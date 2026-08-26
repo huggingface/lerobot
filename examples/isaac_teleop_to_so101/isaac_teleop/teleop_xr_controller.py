@@ -173,43 +173,64 @@ def _invert_rigid(transform: np.ndarray) -> np.ndarray:
     return out
 
 
-def _rebase_pose(transform: np.ndarray, pose: np.ndarray) -> np.ndarray:
-    """Carry a 7-D ``[x, y, z, qx, qy, qz, qw]`` pose across a rigid transform."""
-    rotation = np.asarray(transform, dtype=np.float64)[:3, :3]
-    position = rotation @ np.asarray(pose[:3], dtype=np.float64) + np.asarray(transform)[:3, 3]
-    q = np.asarray(pose[3:7], dtype=np.float64)
-    # xyzw -> matrix -> xyzw, so there is one quaternion convention in this file and it is
-    # the tensor types': scalar-LAST.
-    x, y, z, w = q / max(float(np.linalg.norm(q)), 1e-12)
-    body = np.array(
+def _matrix_from_xyzw(q: np.ndarray) -> np.ndarray:
+    """A scalar-last quaternion as a 3x3. One quaternion convention here, and it is xyzw."""
+    x, y, z, w = np.asarray(q, dtype=np.float64) / max(float(np.linalg.norm(q)), 1e-12)
+    return np.array(
         [
             [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
             [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
             [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
         ]
     )
-    out = rotation @ body
-    trace = float(np.trace(out))
+
+
+def _xyzw_from_matrix(m: np.ndarray) -> np.ndarray:
+    """A 3x3 rotation as a scalar-last quaternion, via the largest-diagonal branch."""
+    trace = float(np.trace(m))
     if trace > 0.0:
         scale = 0.5 / np.sqrt(trace + 1.0)
-        quat = np.array(
+        q = np.array(
             [
-                (out[2, 1] - out[1, 2]) * scale,
-                (out[0, 2] - out[2, 0]) * scale,
-                (out[1, 0] - out[0, 1]) * scale,
+                (m[2, 1] - m[1, 2]) * scale,
+                (m[0, 2] - m[2, 0]) * scale,
+                (m[1, 0] - m[0, 1]) * scale,
                 0.25 / scale,
             ]
         )
     else:
-        i = int(np.argmax(np.diag(out)))
+        i = int(np.argmax(np.diag(m)))
         j, k = (i + 1) % 3, (i + 2) % 3
-        scale = np.sqrt(max(1e-30, 1.0 + out[i, i] - out[j, j] - out[k, k])) * 2.0
-        quat = np.zeros(4)
-        quat[i] = 0.25 * scale
-        quat[j] = (out[j, i] + out[i, j]) / scale
-        quat[k] = (out[k, i] + out[i, k]) / scale
-        quat[3] = (out[k, j] - out[j, k]) / scale
-    return np.concatenate([position, quat / np.linalg.norm(quat)])
+        scale = np.sqrt(max(1e-30, 1.0 + m[i, i] - m[j, j] - m[k, k])) * 2.0
+        q = np.zeros(4)
+        q[i] = 0.25 * scale
+        q[j] = (m[j, i] + m[i, j]) / scale
+        q[k] = (m[k, i] + m[i, k]) / scale
+        q[3] = (m[k, j] - m[j, k]) / scale
+    return q / np.linalg.norm(q)
+
+
+def _rebase_pose(transform: np.ndarray, pose: np.ndarray) -> np.ndarray:
+    """Carry a 7-D ``[x, y, z, qx, qy, qz, qw]`` pose across a rigid transform."""
+    matrix = np.asarray(transform, dtype=np.float64)
+    position = matrix[:3, :3] @ np.asarray(pose[:3], dtype=np.float64) + matrix[:3, 3]
+    return np.concatenate([position, _xyzw_from_matrix(matrix[:3, :3] @ _matrix_from_xyzw(pose[3:7]))])
+
+
+def _yaw_matrix(theta: float) -> np.ndarray:
+    """A 3x3 rotation about the robot base's vertical."""
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def _wrap_pi(angle: float) -> float:
+    """An angle folded into (-pi, pi]."""
+    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+# Below this a direction is too near vertical to carry a bearing and its azimuth is noise.
+# A gripper aimed straight down is a real posture, so this holds the last yaw, never raises.
+_MIN_HORIZONTAL = 1e-3
 
 
 def _require_clutch_retargeter() -> None:
@@ -311,8 +332,26 @@ class XRController(IsaacTeleopTeleoperator):
         # anchor_T_base and its inverse, from the config's static rebase. The graph runs in
         # the anchor frame; these carry the arm's measured pose in and the commanded pose
         # back out. See the module docstring on why that is equivalent.
-        self._base_T_anchor = np.asarray(config.base_T_anchor, dtype=np.float64)
-        self._anchor_T_base = _invert_rigid(self._base_T_anchor)
+        # The graph's frame, and it never moves. Only the AXIS CONVENTION part of
+        # base_T_anchor (XR y-up/-z-forward -> base z-up/+x-forward); its translation is
+        # unused, because an engage-relative clutch cancels a standoff exactly.
+        #
+        # The operator's yaw relative to the arm is deliberately NOT in here. Feeding it
+        # into the clutch's home makes the pose the GRAPH holds swing whenever the operator
+        # turns -- 0.69 m/s and 3.14 rad/s for a half-second 90 deg turn, past the harness's
+        # 0.50 / 2.50 clamps -- so the limiter falls behind a pose that is actually static
+        # in the robot's frame, and the arm is commanded to that lag on the engage frame.
+        # It is applied to the DELTA instead, in _to_robot_frame, outside the graph.
+        self._axis_map = np.asarray(config.base_T_anchor, dtype=np.float64)
+        self._anchor_T_base = _invert_rigid(self._axis_map)
+        # The XR-to-base yaw, re-measured while disengaged and frozen at the latch.
+        self._frame_yaw: float | None = None
+        self._engaged_yaw: float | None = None
+        # The arm's pose at the latch, in the graph's fixed frame. Every engaged frame is
+        # expressed as a delta from this, which is what makes "no jump on engage" hold for
+        # ANY yaw rather than by luck.
+        self._latch_pose: np.ndarray | None = None
+        self._was_engaged = False
         self._clock: float | None = None
 
     # ------------------------------------------------------------------
@@ -415,6 +454,10 @@ class XRController(IsaacTeleopTeleoperator):
         self._preview = None
         self._measured_base_T_ee = None
         self._home_seeded = False
+        self._frame_yaw = None
+        self._engaged_yaw = None
+        self._latch_pose = None
+        self._was_engaged = False
         self._clock = None
         super().disconnect()
 
@@ -471,6 +514,8 @@ class XRController(IsaacTeleopTeleoperator):
         # this rebase, so seeding here and rebasing the output back out is exactly the same
         # command as rebasing the controller on the way in.
         self._retargeter.set_home_base_T_ee(self._anchor_T_base @ np.asarray(base_T_ee, dtype=np.float64))
+        # Through the FIXED axis map only. Re-pushing this under a moving yaw is exactly the
+        # mistake described on _axis_map.
         self._home_seeded = True
 
     def set_measured_base_T_ee(self, base_T_ee: np.ndarray) -> None:  # noqa: N802, N803  (frameA_T_frameB convention)
@@ -494,6 +539,61 @@ class XRController(IsaacTeleopTeleoperator):
         recorded rather than mechanised.
         """
         self._measured_base_T_ee = self._anchor_T_base @ np.asarray(base_T_ee, dtype=np.float64)
+
+    # ------------------------------------------------------------------
+    # Frame alignment
+    # ------------------------------------------------------------------
+
+    def _align_frame(self) -> None:
+        """Re-measure the XR-to-base yaw from where the operator has aimed the preview arm.
+
+        Only the yaw is unknown: both frames are gravity-aligned, so the axis convention is
+        fixed and one scalar is left. It decides whether pushing the controller away from
+        you moves the jaw away from *you* or away from the *arm's own base*, and the error
+        is exactly the angle you stand off the arm's facing.
+
+        The correspondence is the **preview arm's base against the real arm's base**, which
+        is the one thing the operator can see both of. Turning the wrist turns the virtual
+        arm; hold it parallel to the real one and squeeze, and the two bases agree.
+
+        Not the aim ray against the jaw, which was the previous rule and is degenerate: the
+        engage gate rewards pointing straight ahead, an SO-101 with ``shoulder_pan`` near
+        zero has its jaw within a few degrees of base +X, so the measured yaw collapsed to
+        about -3.5 deg and nothing changed. And not the aim ray against the preview's base
+        either -- the base leads the aim by ``base_yaw_bias``, 92.79 deg, because the bias
+        exists to make the JAW face where the controller points.
+
+        Writes nothing but ``_frame_yaw``. Nothing here may touch the clutch or the graph.
+        """
+        if self._twin is None:
+            return
+        # The preview's base yaw is a rotation about XR up, so its bearing comes straight
+        # out of the quaternion; the direction it faces is that bearing off XR forward.
+        yaw = self._twin.arm.base_yaw_xr
+        bearing = 2.0 * float(np.arctan2(yaw[2], yaw[0]))
+        facing = self._axis_map[:3, :3] @ np.array([-np.sin(bearing), 0.0, -np.cos(bearing)])
+        if float(np.hypot(*facing[:2])) < _MIN_HORIZONTAL:
+            return
+        # The real base's own forward is +X, i.e. azimuth zero, by definition of its frame.
+        self._frame_yaw = -float(np.arctan2(facing[1], facing[0]))
+
+    def _to_robot_frame(self, governed: np.ndarray) -> np.ndarray:
+        """The commanded pose in the robot's own frame.
+
+        Disengaged, or with no yaw measured, this is the fixed axis map and nothing else.
+        Engaged, the frozen yaw is applied to the **delta from the latch** rather than to
+        the pose -- so the engage frame, where the delta is zero, returns the latched pose
+        exactly whatever the yaw is. That is what makes no-jump structural instead of
+        something that happens to hold.
+        """
+        pose = _rebase_pose(self._axis_map, governed)
+        if self._latch_pose is None or self._engaged_yaw is None:
+            return pose
+        yaw = _yaw_matrix(self._engaged_yaw)
+        position = self._latch_pose[:3] + yaw @ (pose[:3] - self._latch_pose[:3])
+        latched = _matrix_from_xyzw(self._latch_pose[3:7])
+        delta = _matrix_from_xyzw(pose[3:7]) @ latched.T
+        return np.concatenate([position, _xyzw_from_matrix(yaw @ delta @ yaw.T @ latched)])
 
     # ------------------------------------------------------------------
     # Engage gate (owned by ClutchPreview)
@@ -617,7 +717,6 @@ class XRController(IsaacTeleopTeleoperator):
 
         # The limiter's output, in the anchor frame, rebased into the robot's.
         governed = np.asarray(np.from_dlpack(result[EE_POSE_KEY][0]), dtype=np.float64)
-        ee_pose = _rebase_pose(self._base_T_anchor, governed).astype(np.float32)
 
         # HAND_POSE_KEY is the graph's only tracking-validity oracle -- it goes absent on an
         # invalid pose rather than holding the last one, which is exactly the gap a consumer
@@ -640,6 +739,29 @@ class XRController(IsaacTeleopTeleoperator):
             trigger = 0.0
 
         engaged = bool(self._retargeter.is_engaged) if self._retargeter is not None else False
+
+        if engaged and not self._was_engaged:
+            # The latch. Freeze the yaw and record the arm's pose in the graph's frame; every
+            # engaged frame is a delta from here.
+            self._engaged_yaw = self._frame_yaw if self.config.align_frame_to_preview else 0.0
+            self._latch_pose = _rebase_pose(self._axis_map, governed)
+            logger.info(
+                "Clutch engaged; XR frame %s.",
+                f"latched {np.degrees(self._engaged_yaw):+.0f} deg off base_T_anchor"
+                if self._engaged_yaw
+                else "as configured",
+            )
+        elif not engaged:
+            self._engaged_yaw = None
+            self._latch_pose = None
+            if self.config.align_frame_to_preview:
+                # Disengaged frames only, so the frame the operator engaged under holds for
+                # the whole engagement. The preview arm is only driven while disengaged, so
+                # its base yaw is stale after that anyway.
+                self._align_frame()
+        self._was_engaged = engaged
+
+        ee_pose = self._to_robot_frame(governed).astype(np.float32)
 
         return {
             "ee_pose": ee_pose,

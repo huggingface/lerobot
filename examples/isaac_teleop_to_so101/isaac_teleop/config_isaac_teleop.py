@@ -126,6 +126,28 @@ class XRControllerConfig(IsaacTeleopConfig):
     land on the card the compositor already picked, and nothing makes that happen by
     default: this indexes EGL devices and need not agree with CUDA's ordering."""
 
+    align_frame_to_preview: bool = True
+    """Measure the XR-to-robot yaw at each engage instead of trusting ``base_T_anchor``.
+
+    ``base_T_anchor`` is a static claim that the operator faces the same way the arm does.
+    Stand 90 deg off it and pushing the controller away from yourself moves the jaw 90 deg
+    off what you meant -- the error is exactly the angle you are standing off. Only that one
+    yaw is unknown: both frames are gravity-aligned, so the axis convention is fixed, and the
+    translation cancels through an engage-relative clutch.
+
+    The correspondence is the **preview arm's base against the real arm's base**, the one
+    pair the operator can see both of. Turn the wrist until the virtual arm is parallel to
+    the real one, then squeeze. Not the aim ray against the jaw: the preview's
+    ``base_yaw_bias`` exists precisely to keep its JAW pointing where the controller does,
+    so the aim ray carries no information about the arm's heading by construction.
+
+    Re-measured on disengaged frames and frozen through the engagement. It costs no motion,
+    because the yaw is applied to the DELTA from the latch rather than to the pose -- on the
+    engage frame that delta is zero, so the latched pose comes back exactly, for any yaw.
+
+    Needs the robot twin: without a preview there is nothing to align. ``False`` keeps
+    ``base_T_anchor`` exactly as configured."""
+
     base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
         # Fresh copy per instance: returning the module-level list itself would alias one
         # mutable matrix across every config.
