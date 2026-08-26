@@ -17,50 +17,24 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
+    from .dataset_reader import BaseDatasetReader
 
 DEFAULT_STORAGE_FORMAT = "parquet"
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
-# each must expose a ``STORAGE_BACKEND`` class implementing StorageBackend
-# (constructed with the keyword arguments listed on the protocol below) and a
-# ``localize_root`` hook for object-store roots.
-_STORAGE_BACKEND_MODULES = {"lance": "lerobot.datasets.lance_backend"}
-
-
-class StorageBackend(Protocol):
-    """Read-side data access for one storage format.
-
-    A backend owns row fetching and video decoding for its format and returns
-    fully assembled frame dicts — tabular features, delta-timestamp windows,
-    padding masks, decoded video frames — identical to the default parquet/mp4
-    pipeline's output. ``LeRobotDataset`` delegates ``__getitem__`` and
-    ``__getitems__`` to it and keeps everything else (metadata, episode
-    selection, the public API). Instances are constructed with the keyword
-    arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
-    ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
-    ``depth_output_unit`` and ``token``, and must be picklable so ``DataLoader`` workers can
-    reopen their own connections.
-    """
-
-    episodes: list[int] | None
-
-    def __len__(self) -> int: ...
-
-    def get_item(self, idx: int) -> dict: ...
-
-    def get_items(self, indices: list[int]) -> list[dict]: ...
-
-    def set_image_transforms(self, image_transforms: Callable | None) -> None: ...
-
-    @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None: ...
+# each must expose a ``DATASET_READER`` class implementing
+# :class:`~lerobot.datasets.dataset_reader.BaseDatasetReader` (constructed with
+# the keyword arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
+# ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
+# ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
+# object-store roots.
+_DATASET_READER_MODULES = {"lance": "lerobot.datasets.lance_backend"}
 
 
 def is_remote_uri(root: str | Path) -> bool:
@@ -68,19 +42,19 @@ def is_remote_uri(root: str | Path) -> bool:
     return "://" in str(root)
 
 
-def _backend_module(storage_format: str):
-    module_name = _STORAGE_BACKEND_MODULES.get(storage_format)
+def _reader_module(storage_format: str):
+    module_name = _DATASET_READER_MODULES.get(storage_format)
     if module_name is None:
         raise ValueError(
             f"Unknown storage_format {storage_format!r}. Supported formats: "
-            f"{[DEFAULT_STORAGE_FORMAT, *_STORAGE_BACKEND_MODULES]}."
+            f"{[DEFAULT_STORAGE_FORMAT, *_DATASET_READER_MODULES]}."
         )
     return importlib.import_module(module_name)
 
 
-def make_storage_backend(storage_format: str, **kwargs) -> StorageBackend:
-    """Instantiate the backend class serving ``storage_format``."""
-    return _backend_module(storage_format).STORAGE_BACKEND(**kwargs)
+def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
+    """Instantiate the reader class serving a non-default ``storage_format``."""
+    return _reader_module(storage_format).DATASET_READER(**kwargs)
 
 
 def localize_remote_root(
@@ -97,9 +71,9 @@ def localize_remote_root(
     root. Data files are never downloaded — backends read them in place.
     """
     errors = []
-    for storage_format in _STORAGE_BACKEND_MODULES:
+    for storage_format in _DATASET_READER_MODULES:
         try:
-            return _backend_module(storage_format).localize_root(
+            return _reader_module(storage_format).localize_root(
                 repo_id, root, revision, token=token, force_cache_sync=force_cache_sync
             )
         except FileNotFoundError as error:

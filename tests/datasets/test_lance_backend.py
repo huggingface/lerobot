@@ -28,8 +28,9 @@ import torch
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_backend as lance_module
+from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lance_backend import LanceBackend, lance_mp_context
+from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     LANGUAGE_EVENTS,
@@ -88,7 +89,7 @@ def test_tabular_parity(dataset_roots):
     src_root, lance_root = dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
     lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
-    assert isinstance(lance_ds._storage_backend, LanceBackend)
+    assert isinstance(lance_ds.reader, LanceDatasetReader)
     assert len(lance_ds) == len(upstream)
     for idx in [0, len(upstream) // 2, len(upstream) - 1]:
         assert_items_equal(lance_ds[idx], upstream[idx])
@@ -213,7 +214,7 @@ def test_storage_format_routing(video_dataset_roots):
     lance_ds = make(lance_root)
     assert isinstance(lance_ds, LeRobotDataset)
     assert lance_ds.meta.storage_format == "lance"
-    assert isinstance(lance_ds._storage_backend, LanceBackend)
+    assert isinstance(lance_ds.reader, LanceDatasetReader)
     # parquet-only surface reports absent instead of raising, so probes like
     # lerobot_train's hasattr(ds, "hf_dataset") skip it gracefully
     assert not hasattr(lance_ds, "hf_dataset")
@@ -223,11 +224,11 @@ def test_storage_format_routing(video_dataset_roots):
     parquet_ds = make(src_root)
     assert isinstance(parquet_ds, LeRobotDataset)
     assert parquet_ds.meta.storage_format == "parquet"
-    assert parquet_ds._storage_backend is None
+    assert isinstance(parquet_ds.reader, DatasetReader)
 
     # A file:// URI root must route to the same local lance dataset
     uri_ds = make(f"file://{lance_root}")
-    assert isinstance(uri_ds._storage_backend, LanceBackend)
+    assert isinstance(uri_ds.reader, LanceDatasetReader)
 
     # An unknown format fails with a clear error instead of the parquet path
     info_path = src_root / "meta" / "info.json"

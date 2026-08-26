@@ -54,6 +54,7 @@ if TYPE_CHECKING or _lancedb_available:
     from lancedb.permutation import Permutation
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .dataset_reader import BaseDatasetReader
 from .depth_utils import dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices
 from .storage import is_remote_uri
@@ -363,10 +364,10 @@ def resolve_lance_root(
     raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")
 
 
-class LanceBackend:
-    """Storage backend serving Lance-formatted LeRobot datasets.
+class LanceDatasetReader(BaseDatasetReader):
+    """Dataset reader serving Lance-formatted LeRobot datasets.
 
-    Instantiated by :class:`LeRobotDataset` through the storage-backend registry
+    Instantiated by :class:`LeRobotDataset` through the reader lookup table
     (see :mod:`lerobot.datasets.storage`); returns the same item dicts as the
     default parquet/mp4 pipeline.
 
@@ -575,14 +576,6 @@ class LanceBackend:
     def absolute_to_relative_idx(self) -> dict[int, int] | None:
         return self._absolute_to_relative_idx
 
-    def set_image_transforms(self, image_transforms: Callable | None) -> None:
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self.image_transforms = image_transforms
-
-    def __len__(self) -> int:
-        return self.num_frames
-
     def get_item(self, idx: int) -> dict:
         return self.get_items([idx])[0]
 
@@ -607,12 +600,12 @@ class LanceBackend:
             decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
             for item, frames in zip(items, decoded, strict=True):
                 item.update(frames)
-        if self.image_transforms is not None:
+        if self._image_transforms is not None:
             for item in items:
                 for cam_key in self.meta.camera_keys:
                     if cam_key in self.meta.depth_keys:
                         continue
-                    item[cam_key] = self.image_transforms(item[cam_key])
+                    item[cam_key] = self._image_transforms(item[cam_key])
         return items
 
     def _plan_file_windows(self, plans: list[dict]) -> dict[tuple, list[tuple[int, int]]]:
@@ -963,4 +956,4 @@ class LanceBackend:
 
 
 # The class lerobot.datasets.storage instantiates for storage_format "lance".
-STORAGE_BACKEND = LanceBackend
+DATASET_READER = LanceDatasetReader
