@@ -42,6 +42,16 @@ def test_coerce_list_fields_to_tuples_leaves_genuine_list_fields_as_lists():
     assert isinstance(result["relative_exclude_joints"], list)
 
 
+def test_coerce_list_fields_to_tuples_leaves_molmoact2_image_keys_as_a_list():
+    # Same shape of bug as above, on a different policy's top-level list field.
+    cleaned_config = {"image_keys": ["front", "wrist"]}
+
+    result = coerce_list_fields_to_tuples(cleaned_config, "molmoact2")
+
+    assert result["image_keys"] == ["front", "wrist"]
+    assert isinstance(result["image_keys"], list)
+
+
 def test_coerce_list_fields_to_tuples_skips_feature_dicts():
     # input_features/output_features are dicts of PolicyFeature by the time this runs, not
     # lists, so they're left alone regardless of their declared type.
