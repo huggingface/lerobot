@@ -2,11 +2,11 @@
 
 High-bandwidth multi-modal sensor telemetry (such as 4K RGB video frames at 60 FPS and high-frequency tactile array grids) often introduces major memory replication and Python GIL bottlenecking in robotics training and inference pipelines.
 
-LeRobot's `ZeroCopyDataset` and `ZeroCopyPublisher` transport components eliminate memory copies and GIL contention by mapping Linux POSIX shared memory pointers directly into PyTorch tensors ($O(1)$ memory passing).
+LeRobot's `ZeroCopyDataset` and `ZeroCopyPublisher` transport components eliminate memory copies and GIL contention by mapping Linux POSIX shared memory pointers directly into PyTorch tensors (O(1) memory passing).
 
 ---
 
-## ⚡ Performance Summary
+## Performance Summary
 
 - **Throughput**: **41,921 FPS** on 4K RGB video streams (**1,018.55 GB/s** memory bandwidth).
 - **Latency**: Sub-microsecond frame acquisition (**3.45 us** for 1080p, **11.5 us** for 4K).
@@ -14,7 +14,7 @@ LeRobot's `ZeroCopyDataset` and `ZeroCopyPublisher` transport components elimina
 
 ---
 
-## 📦 Installation
+## Installation
 
 Install the native C++20 shared memory extension:
 
@@ -32,7 +32,7 @@ cd lerobot-zerocopy-ipc
 
 ---
 
-## 💡 How to Use Zero-Copy Transport in LeRobot
+## How to Use Zero-Copy Transport in LeRobot
 
 ### 1. Hardware Producer (Bare-Metal Camera / Sensor Process)
 
@@ -106,7 +106,7 @@ for batch in multi_dataset:
 
 ---
 
-## 🏛️ Architecture & Crash Safety
+## Architecture & Crash Safety
 
 - **Cache-Line Alignment (`alignas(64)`)**: Eliminates false sharing across CPU cores.
 - **Atomic Ring Buffer**: SWMR architecture using C++20 `std::memory_order_release` / `acquire`.
