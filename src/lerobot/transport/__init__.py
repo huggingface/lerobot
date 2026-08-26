@@ -20,9 +20,16 @@ Includes:
 2. Zero-Copy POSIX Shared Memory IPC for high-frequency sensor ingestion.
 """
 
-from lerobot.transport.zerocopy_ipc import ZeroCopyDataset, is_zerocopy_available
+from lerobot.transport.zerocopy_ipc import (
+    ZeroCopyDataset,
+    ZeroCopyPublisher,
+    MultiChannelZeroCopyDataset,
+    is_zerocopy_available,
+)
 
 __all__: list[str] = [
     "ZeroCopyDataset",
+    "ZeroCopyPublisher",
+    "MultiChannelZeroCopyDataset",
     "is_zerocopy_available",
 ]

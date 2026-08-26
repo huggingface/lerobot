@@ -41,12 +41,69 @@ def is_zerocopy_available() -> bool:
     return lerobot_ipc is not None
 
 
-class ZeroCopyDataset(IterableDataset):
+class ZeroCopyPublisher:
     """
-    Zero-Copy PyTorch IterableDataset stream for high-frequency sensor ingestion.
+    Zero-Copy Shared Memory Publisher for raw hardware drivers streaming sensor data.
     """
 
-    def __init__(self, channel_name: str, timeout_ms: int = 1000, max_frames: Optional[int] = None):
+    def __init__(
+        self,
+        channel_name: str,
+        num_slots: int = 8,
+        overwrite_policy: str = "OVERWRITE_OLDEST",
+    ):
+        if not is_zerocopy_available():
+            raise ImportError(
+                "lerobot_ipc package is required for zero-copy shared memory transport. "
+                "Install it via `pip install lerobot_zerocopy_ipc`."
+            )
+        
+        policy_enum = lerobot_ipc.OverwritePolicy.OVERWRITE_OLDEST
+        if overwrite_policy == "BLOCK_PRODUCER":
+            policy_enum = lerobot_ipc.OverwritePolicy.BLOCK_PRODUCER
+        elif overwrite_policy == "REJECT_WRITE":
+            policy_enum = lerobot_ipc.OverwritePolicy.REJECT_WRITE
+
+        self.publisher = lerobot_ipc.Publisher(channel_name, num_slots=num_slots, policy=policy_enum)
+        self.channel_name = channel_name
+
+    def write_frame(
+        self,
+        frame_data: np.ndarray,
+        timestamp_ns: Optional[int] = None,
+        timeout_ms: int = 1000,
+    ) -> None:
+        """
+        Write numpy frame directly into shared memory slot with zero memory copy.
+        """
+        if timestamp_ns is None:
+            timestamp_ns = time.time_ns()
+
+        height, width = frame_data.shape[0], frame_data.shape[1]
+        channels = frame_data.shape[2] if frame_data.ndim == 3 else 1
+
+        buf = self.publisher.get_write_buffer(
+            width=width,
+            height=height,
+            channels=channels,
+            type=lerobot_ipc.SensorDataType.RGB_8U,
+            timeout_ms=timeout_ms,
+        )
+        buf[...] = frame_data
+        self.publisher.commit_write(buf.nbytes, timestamp_ns)
+
+
+class ZeroCopyDataset(IterableDataset):
+    """
+    Zero-Copy PyTorch IterableDataset stream for single-channel sensor ingestion.
+    """
+
+    def __init__(
+        self,
+        channel_name: str,
+        timeout_ms: int = 1000,
+        max_frames: Optional[int] = None,
+    ):
         if not is_zerocopy_available():
             raise ImportError(
                 "lerobot_ipc package is required for zero-copy shared memory transport. "
@@ -76,3 +133,51 @@ class ZeroCopyDataset(IterableDataset):
                 "sequence_id": meta.sequence_id,
                 "slot_index": meta.slot_index,
             }
+
+
+class MultiChannelZeroCopyDataset(IterableDataset):
+    """
+    Zero-Copy PyTorch IterableDataset stream for multi-modal sensor ingestion (e.g. multiple cameras + tactile grids).
+    """
+
+    def __init__(
+        self,
+        channels: List[str],
+        timeout_ms: int = 1000,
+        max_frames: Optional[int] = None,
+    ):
+        if not is_zerocopy_available():
+            raise ImportError(
+                "lerobot_ipc package is required for zero-copy shared memory transport. "
+                "Install it via `pip install lerobot_zerocopy_ipc`."
+            )
+        super().__init__()
+        self.channels = channels
+        self.timeout_ms = timeout_ms
+        self.max_frames = max_frames
+        self.subscribers = {ch: lerobot_ipc.Subscriber(ch, timeout_ms) for ch in channels}
+
+    def __iter__(self):
+        count = 0
+        while self.max_frames is None or count < self.max_frames:
+            batch = {}
+            all_ready = True
+            for ch in self.channels:
+                frame = self.subscribers[ch].acquire_frame(self.timeout_ms)
+                if frame is None:
+                    all_ready = False
+                    break
+                
+                np_arr = frame["data"]
+                tensor = lerobot_ipc.numpy_to_torch_zerocopy(np_arr)
+                meta = frame["metadata"]
+
+                batch[ch] = {
+                    "data": tensor,
+                    "timestamp_ns": meta.timestamp_ns,
+                    "sequence_id": meta.sequence_id,
+                }
+
+            if all_ready:
+                count += 1
+                yield batch
