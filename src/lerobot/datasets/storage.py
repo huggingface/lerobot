@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
     from .dataset_reader import BaseDatasetReader
 
-DEFAULT_STORAGE_FORMAT = "parquet"
+DEFAULT_STORAGE_FORMAT = "lerobot"
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
@@ -53,7 +53,11 @@ def _reader_module(storage_format: str):
 
 
 def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
-    """Instantiate the reader class serving a non-default ``storage_format``."""
+    """Instantiate the reader class serving ``storage_format``."""
+    if storage_format == DEFAULT_STORAGE_FORMAT:
+        from .dataset_reader import DatasetReader  # noqa: PLC0415  (import cycle)
+
+        return DatasetReader(**kwargs)
     return _reader_module(storage_format).DATASET_READER(**kwargs)
 
 

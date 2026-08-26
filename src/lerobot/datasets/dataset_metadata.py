@@ -360,7 +360,7 @@ class LeRobotDatasetMetadata:
 
     @property
     def storage_format(self) -> str:
-        """Format holding the underlying data files (``"parquet"`` by default)."""
+        """Format holding the underlying data files (``"lerobot"`` by default)."""
         return self.info.storage_format or DEFAULT_STORAGE_FORMAT
 
     @property

@@ -139,6 +139,17 @@ def test_tabular_parity(dataset_roots):
     for idx in [0, len(upstream_s) - 1]:
         assert_items_equal(lance_s[idx], upstream_s[idx])
 
+    # unordered episodes list: user order kept on .episodes, row order mirrors upstream
+    upstream_u = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1, 0])
+    lance_u = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1, 0])
+    assert lance_u.episodes == upstream_u.episodes == [1, 0]
+    for idx in [0, len(upstream_u) // 2, len(upstream_u) - 1]:
+        assert_items_equal(lance_u[idx], upstream_u[idx])
+
+    # close() releases pools/handles; the next read reopens
+    lance_ds.reader.close()
+    assert_items_equal(lance_ds[0], upstream[0])
+
 
 @pytest.fixture
 def video_dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
@@ -223,7 +234,7 @@ def test_storage_format_routing(video_dataset_roots):
 
     parquet_ds = make(src_root)
     assert isinstance(parquet_ds, LeRobotDataset)
-    assert parquet_ds.meta.storage_format == "parquet"
+    assert parquet_ds.meta.storage_format == "lerobot"
     assert isinstance(parquet_ds.reader, DatasetReader)
 
     # A file:// URI root must route to the same local lance dataset

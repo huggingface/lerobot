@@ -432,7 +432,7 @@ class LanceDatasetReader(BaseDatasetReader):
         episodes = resolve_episode_indices(episodes, meta.total_episodes)
         if episodes is not None and not episodes:
             raise ValueError("None of the requested episodes are in the dataset.")
-        self.episodes = sorted(episodes) if episodes is not None else None
+        self.episodes = episodes
         self.delta_indices = None
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, self.meta.fps, tolerance_s)
@@ -452,8 +452,10 @@ class LanceDatasetReader(BaseDatasetReader):
             )
 
         if self.episodes is not None:
+            # Rows are served in storage order regardless of the episodes list
+            # order, matching the default reader's parquet predicate pushdown.
             self._rel_to_abs = np.concatenate(
-                [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in self.episodes]
+                [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in sorted(self.episodes)]
             )
             self._absolute_to_relative_idx = {
                 int(abs_idx): rel_idx for rel_idx, abs_idx in enumerate(self._rel_to_abs)
@@ -563,6 +565,22 @@ class LanceDatasetReader(BaseDatasetReader):
             self._decoder_cache.capacity, byte_budget=self._decoder_cache.byte_budget
         )
         return state
+
+    def close(self) -> None:
+        """Shut down worker threads and drop table handles; reads reopen lazily."""
+        for name in ("_prefetch_pool", "_decode_pool"):
+            pool = getattr(self, name, None)
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+            setattr(self, name, None)
+        self._frames_perm = None
+        self._videos_table = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @property
     def num_frames(self) -> int:

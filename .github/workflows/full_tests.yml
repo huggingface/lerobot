@@ -90,7 +90,7 @@ jobs:
         run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
 
       - name: Install lerobot-lancedb (converts fixtures for the lance backend tests)
-        run: uv pip install --no-deps "lerobot-lancedb==0.3.1"
+        run: uv sync --locked --extra all --extra lancedb-convert
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''

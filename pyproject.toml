@@ -98,6 +98,10 @@ lancedb = [
     "lerobot[dataset]",
     "lancedb>=0.37.1",
 ]
+lancedb-convert = [
+    "lerobot[lancedb]",
+    "lerobot-lancedb>=0.3.1",
+]
 dataset = [
     "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
