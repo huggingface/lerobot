@@ -14,13 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleoperate an SO-101 follower arm from an NVIDIA Isaac Teleop XR (VR) controller.
+"""Teleoperate a follower arm from an NVIDIA Isaac Teleop XR (VR) controller.
 
 ``lerobot-teleoperate``-style CLI (draccus): ``--robot.*`` configures the follower,
-``--teleop.*`` the XR controller::
+``--teleop.*`` the XR controller. Any arm with a ``RobotProfile`` in
+``common.ROBOT_PROFILES`` can be driven::
 
     python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower \
         --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm
+
+    # reBot B601-RS (RobStride motors on SocketCAN), 6-DOF so IK tracks orientation fully
+    python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=rebot_b601_follower \
+        --robot.motor_family=rs --robot.port=can0 --robot.can_adapter=socketcan --robot.id=rebot_arm
 
 The pipeline, clutch/IK internals, and reset-pose behavior live in ``common.py``.
 
@@ -38,7 +43,6 @@ from dataclasses import dataclass, field
 
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
-from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
 from lerobot.utils.robot_utils import precise_sleep
 
 from .common import (
@@ -59,7 +63,8 @@ class TeleoperateConfig:
     ``--flag=false`` for booleans (draccus style).
     """
 
-    # SO-101 FOLLOWER arm (--robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=...).
+    # FOLLOWER arm (--robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=...).
+    # Must have a RobotProfile entry in common.ROBOT_PROFILES.
     robot: RobotConfig
     # XR controller knobs (--teleop.<field>=...); all defaulted, so --teleop.* is optional.
     teleop: XRControllerConfig = field(default_factory=XRControllerConfig)

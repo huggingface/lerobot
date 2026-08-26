@@ -44,11 +44,17 @@ class MapXRControllerActionToRobotAction(RobotActionProcessorStep):
     - ``ee.x/y/z`` = ``ee_pose[:3]`` (position [m]);
     - ``ee.wx/wy/wz`` = rotvec of ``ee_pose[3:7]`` (orientation; the IK tracks it softly at a
       small ``orientation_weight`` on the 5-DOF SO-101);
-    - ``ee.gripper_pos`` = ``(1 - closedness) * _GRIPPER_MOTOR_SCALE`` (jaw target [0, 100],
-      RANGE_0_100 where 100 = open, so closedness is inverted).
+    - ``ee.gripper_pos`` = ``gripper_open + closedness * (gripper_close - gripper_open)``.
+
+    The gripper endpoints are in the follower's own action units, so a robot whose jaw is
+    not the SO-101's RANGE_0_100 (the reBot B601-RS drives its gripper in degrees) only has
+    to state its two endpoints. Defaults reproduce the SO-101 mapping: 100 = fully open.
 
     Input keys: ``ee_pose`` ``(7,)`` ``[x,y,z,qx,qy,qz,qw]``, ``closedness`` float in [0, 1].
     """
+
+    gripper_open: float = _GRIPPER_MOTOR_SCALE
+    gripper_close: float = 0.0
 
     def action(self, action: RobotAction) -> RobotAction:
         ee_pose = action.pop("ee_pose")
@@ -63,8 +69,7 @@ class MapXRControllerActionToRobotAction(RobotActionProcessorStep):
         action["ee.wx"] = float(rotvec[0])
         action["ee.wy"] = float(rotvec[1])
         action["ee.wz"] = float(rotvec[2])
-        # Inverted: closedness c=1 (closed) -> 0, c=0 (open) -> 100 (SO-101 calibration).
-        action["ee.gripper_pos"] = (1.0 - closedness) * _GRIPPER_MOTOR_SCALE
+        action["ee.gripper_pos"] = self.gripper_open + closedness * (self.gripper_close - self.gripper_open)
         return action
 
     def transform_features(

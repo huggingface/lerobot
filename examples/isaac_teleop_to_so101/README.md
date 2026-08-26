@@ -74,11 +74,42 @@ bucket into the LeRobot cache on first run.
 To customize the reset pose: back-drive the arm to the pose you want, then
 
 ```bash
-python -m examples.isaac_teleop_to_so101.override_reset_pose --port /dev/ttyACM0 --id so101_follower_arm
+python -m examples.isaac_teleop_to_so101.override_reset_pose \
+    --robot.type=so101_follower --robot.port=/dev/ttyACM0 --robot.id=so101_follower_arm
 ```
 
 which writes it to `HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`; runs with the same
-`--robot.id` use it automatically.
+`--robot.id` use it automatically. It takes the same `--robot.*` arguments as `teleoperate.py`, so
+it works for any arm with a profile.
+
+### Teleoperate — XR controller on another arm
+
+The XR path is not SO-101-specific. Any follower with a `RobotProfile` entry in `common.py` can be
+driven from the same loop; the profile carries its URDF, IK frame, reach-derived bounds, reset pose,
+gripper endpoints and clutch gain. It assumes the follower reports joints in the same convention
+its URDF uses. The reBot B601-RS (RobStride motors, SocketCAN) ships as a profile:
+
+```bash
+python -m examples.isaac_teleop_to_so101.teleoperate \
+    --robot.type=rebot_b601_follower --robot.motor_family=rs \
+    --robot.port=can0 --robot.can_adapter=socketcan \
+    --robot.id=rebot_arm
+```
+
+Its URDF (plus ~64 MB of meshes) is fetched from
+[Seeed-Projects/reBot-Isaacsim](https://github.com/Seeed-Projects/reBot-Isaacsim) into the LeRobot
+cache on first run; `REBOT_RS_URDF` points at a local copy instead. Being 6-DOF it tracks commanded
+orientation fully (`orientation_weight=1.0`), unlike the 5-DOF SO-101's soft-orientation IK.
+
+A profile may also set `clutch_position_scale`, the controller-to-EE translation gain — the reBot
+reaches 0.911 m against the SO-101's 0.545 m, so it runs 1:1 where the device default halves hand
+motion. Retune it in the profile, and keep `max_ee_step_m` above the per-frame EE step the new
+gain produces — a larger gain means a hand sweep commands proportionally more EE travel per frame.
+
+Before driving a **new** arm under torque, check its profile against the hardware: the reset pose
+and bounds are derived from the URDF, and a follower whose joint signs disagree with its URDF
+commands a mirrored pose. `rebot_readback.py` checks that against the arm with torque disabled,
+and never calls `send_action`.
 
 ### Record a dataset
 
