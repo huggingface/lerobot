@@ -219,6 +219,13 @@ default.
   re‑homing the clutch there. Reposition your hand during the slew — each engage re‑captures the
   origin from the arm's measured pose, so it never jumps. `--reset_to_origin=false` keeps the arm
   where it is on release.
+- **Wrist alignment** — a **precondition on that squeeze**, by default. Because the clutch composes
+  orientation as a delta, latching at a misaligned wrist offsets the arm from the hand for the whole
+  engagement, so an **engage gate** holds the latch until the controller's rotation is within 20° of
+  the pose about to be latched (30° to fall back out, 100 ms dwell). The robot twin drawn in the
+  headset **turns green** when it will latch, which is what makes the requirement perceivable rather
+  than a squeeze that silently does nothing. A denied squeeze is _owed_, not lost: it fires on the
+  first aligned frame. `--teleop.engage_gate=false` restores the old behaviour.
 - **Trigger** — the **gripper**, controlled **analog**. The jaw tracks the trigger
   proportionally — a half‑pressed trigger leaves the jaw half‑closed — via a closedness in
   `[0, 1]` (0 = open, 1 = closed) that maps to an absolute gripper joint target.
@@ -226,6 +233,25 @@ default.
   (engage‑relative, base‑frame) into a soft IK orientation target the wrist tracks alongside
   position. On the 5‑DOF SO‑101 the wrist follows the hand only partially by design — see
   `orientation_weight` below.
+
+### The robot twin
+
+`--teleop.robot_twin` (on by default) runs Isaac Teleop's `ClutchPreview` — the same object
+`Teleop/examples/robot_viz` runs — stereoscopically in the same OpenXR session the controllers
+stream over. While disengaged you drag an SO-101 around by hand and it turns green when the clutch
+will latch; on engage it is replaced by a leader gripper locked to your hand, its jaw on your
+trigger, recolouring amber and red as the safety limiter clamps and refuses.
+
+It is anchored against the measured head pose and is **not registered to the physical arm** — a
+preview you aim with, not an overlay on your workspace. Its joints are frozen at the library's own
+home pose, so it is not a picture of your arm's state. Needs a Linux `isaacteleop` built with
+`-DBUILD_VIZ=ON`; without one it warns and the loop runs unchanged.
+
+Two deliberate differences from `robot_viz`: the **real arm owns the clutch's home** (a preview
+pushing its own would command the hardware to wherever you waved it), and the graph runs in the XR
+anchor frame with `base_T_anchor` applied to the output instead of the input — exactly equivalent,
+since the clutch is equivariant under a rigid rebase. See
+`examples/isaac_teleop_to_so101/README.md`.
 
 ## Get started
 

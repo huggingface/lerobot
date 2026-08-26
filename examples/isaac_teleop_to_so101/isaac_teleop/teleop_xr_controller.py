@@ -16,13 +16,24 @@
 
 """XR (VR) controller device for NVIDIA Isaac Teleop, exposed to LeRobot.
 
-A clutched device: the controller grip pose is rebased into the robot base frame by
-``ControllerTransform`` and then driven through an in-pipeline
-``SO101ClutchRetargeter``, so :meth:`XRController.get_action` returns an absolute
-base-frame EE pose rather than a raw controller pose. Unlike the other devices here this one
-**holds state across frames** — the clutch's latched home and origin live in the retargeter — so
-it must be stepped every frame with real ``ExecutionEvents``. The analog trigger is still passed
-through raw; the gripper mapping stays in the owning loop.
+A clutched device: the controller grip pose drives an in-pipeline ``SO101ClutchRetargeter``
+and a safety rate limiter, so :meth:`XRController.get_action` returns an absolute base-frame
+EE pose rather than a raw controller pose. Unlike the other devices here this one **holds
+state across frames** — the clutch's latched home and origin live in the retargeter — so it
+must be stepped every frame with real ``ExecutionEvents``. The gripper mapping stays in the
+owning loop.
+
+The **robot twin, the drag preview, the leader ghost, the safety harness and the engage
+gate** are all Isaac Teleop's ``viz.robot.ClutchPreview`` -- the same object
+``examples/robot_viz`` runs. This device builds that example's retargeting graph and drives
+the preview once per frame; nothing here reimplements any of it.
+
+**The graph runs in the XR anchor frame, and the rebase happens on the way out.** The
+preview places its arm and ghost through ``viz.robot.frames``, so it requires the clutch's
+own frame to be XR. Rebasing the output instead of the input is exactly equivalent -- the
+clutch's translation is affine in the operands and its rotation is a left-composed delta,
+so both are equivariant under a rigid change of frame (verified numerically to 2e-16 over
+2000 random SO(3) samples).
 
 ``isaacteleop`` imports are guarded behind the availability flag so this module imports
 without it (construction fails fast via the base class).
@@ -31,6 +42,8 @@ without it (construction fails fast via the base class).
 from __future__ import annotations
 
 import importlib.metadata
+import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -50,9 +63,15 @@ if TYPE_CHECKING or _isaacteleop_available:
         TensorGroup,
         ValueInput,
     )
-    from isaacteleop.retargeting_engine.interface.tensor_group_type import OptionalType
-    from isaacteleop.retargeting_engine.tensor_types import ControllerInput, TransformMatrix
-    from isaacteleop.retargeting_engine.tensor_types.indices import ControllerInputIndex
+    from isaacteleop.retargeting_engine.interface.tensor_group_type import (
+        OptionalType,
+        TensorGroupType,
+    )
+    from isaacteleop.retargeting_engine.tensor_types import (
+        BoolType,
+        ControllerInput,
+        TransformMatrix,
+    )
 else:
     ControllersSource = None
     ControllerInput = None
@@ -60,11 +79,12 @@ else:
     ExecutionState = None
     OptionalTensorGroup = None
     OptionalType = None
+    TensorGroupType = None
+    BoolType = None
     OutputCombiner = None
     TensorGroup = None
     ValueInput = None
     TransformMatrix = None
-    ControllerInputIndex = None
 
 # The engage-relative clutch retargeter landed in isaacteleop 1.5; the rest of this example works
 # against older releases. Resolve it tolerantly here and fail with an actionable message from
@@ -82,15 +102,114 @@ if _isaacteleop_available:
         # "upgrade isaacteleop".
         _CLUTCH_IMPORT_ERROR = exc
 
-# Source-node name for the static base_T_anchor rebase fed via
-# ``TeleopSession.step(external_inputs=...)`` each frame.
-#
-# There is deliberately no companion constant for the measured-EE key: the producer side reads
-# ``SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT`` directly, so the producer key here and the
-# consumer key there cannot drift apart. Re-declaring the literal would defeat that.
-_BASE_T_ANCHOR_INPUT = "base_T_anchor"
+# `isaacteleop.viz.robot`'s package __init__ reaches the compiled Televiz extension, so a
+# wheel built without -DBUILD_VIZ=ON has the clutch but no preview. Resolved tolerantly and
+# reported from connect() -- a hard import here would take the whole example down.
+ClutchPreview = None
+_PREVIEW_IMPORT_ERROR: Exception | None = None
+clutch_preview: Any = None
+if _isaacteleop_available:
+    try:
+        from isaacteleop.viz.robot import ClutchPreview, clutch_preview
+    except ImportError as exc:
+        _PREVIEW_IMPORT_ERROR = exc
+
+# The retargeters the preview's graph needs. These are plain numpy nodes and carry no viz
+# dependency, so they resolve on any build.
+ControllerPoseSource = None
+EE_POSE_KEY = None
+EePoseRateLimiter = None
+RateLimiterConfig = None
+SO101GripperRetargeter = None
+GRIPPER_COMMAND_KEY = None
+if _isaacteleop_available:
+    try:
+        from isaacteleop.retargeters.controller_pose import ControllerPoseSource
+        from isaacteleop.retargeters.rate_limiter import (
+            EE_POSE_KEY,
+            EePoseRateLimiter,
+            RateLimiterConfig,
+        )
+        from isaacteleop.retargeters.SO101.gripper_retargeter import (
+            GRIPPER_COMMAND_KEY,
+            SO101GripperRetargeter,
+        )
+    except (ImportError, AttributeError):
+        pass
+
+logger = logging.getLogger(__name__)
+
+# What the safety harness lets through, and what the leader ghost therefore renders.
+# robot_viz's own values, which its README is explicit are chosen for a demo rather than
+# measured against an SO-101 -- RateLimiterConfig's own default is the more conservative
+# 0.25 m/s. This bounds the pose that reaches LeRobot's IK, so raising it raises what the
+# arm will be commanded to follow.
+_HARNESS_DEFAULTS = {
+    "max_linear_velocity": 0.5,  # m/s
+    "max_angular_velocity": 2.5,  # rad/s, ~143 deg/s
+    "reject_linear_velocity": 2.0,  # m/s
+    "reject_angular_velocity": 10.0,  # rad/s
+}
+
+# There is deliberately no constant for the measured-EE leaf: the producer side reads
+# ``SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT`` directly, so the producer key here and
+# the consumer key there cannot drift apart. Re-declaring the literal would defeat that.
 
 _MIN_ISAACTELEOP_VERSION = "1.4.0"
+
+
+def _invert_rigid(transform: np.ndarray) -> np.ndarray:
+    """Inverse of a 4x4 rigid transform, by transpose rather than a general solve.
+
+    ``base_T_anchor`` is a proper rotation with a translation; inverting it numerically
+    would introduce error into a constant that appears once with each sign and must cancel
+    exactly.
+    """
+    matrix = np.asarray(transform, dtype=np.float64)
+    rotation = matrix[:3, :3]
+    out = np.eye(4)
+    out[:3, :3] = rotation.T
+    out[:3, 3] = -rotation.T @ matrix[:3, 3]
+    return out
+
+
+def _rebase_pose(transform: np.ndarray, pose: np.ndarray) -> np.ndarray:
+    """Carry a 7-D ``[x, y, z, qx, qy, qz, qw]`` pose across a rigid transform."""
+    rotation = np.asarray(transform, dtype=np.float64)[:3, :3]
+    position = rotation @ np.asarray(pose[:3], dtype=np.float64) + np.asarray(transform)[:3, 3]
+    q = np.asarray(pose[3:7], dtype=np.float64)
+    # xyzw -> matrix -> xyzw, so there is one quaternion convention in this file and it is
+    # the tensor types': scalar-LAST.
+    x, y, z, w = q / max(float(np.linalg.norm(q)), 1e-12)
+    body = np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+    out = rotation @ body
+    trace = float(np.trace(out))
+    if trace > 0.0:
+        scale = 0.5 / np.sqrt(trace + 1.0)
+        quat = np.array(
+            [
+                (out[2, 1] - out[1, 2]) * scale,
+                (out[0, 2] - out[2, 0]) * scale,
+                (out[1, 0] - out[0, 1]) * scale,
+                0.25 / scale,
+            ]
+        )
+    else:
+        i = int(np.argmax(np.diag(out)))
+        j, k = (i + 1) % 3, (i + 2) % 3
+        scale = np.sqrt(max(1e-30, 1.0 + out[i, i] - out[j, j] - out[k, k])) * 2.0
+        quat = np.zeros(4)
+        quat[i] = 0.25 * scale
+        quat[j] = (out[j, i] + out[i, j]) / scale
+        quat[k] = (out[k, i] + out[i, k]) / scale
+        quat[3] = (out[k, j] - out[j, k]) / scale
+    return np.concatenate([position, quat / np.linalg.norm(quat)])
 
 
 def _require_clutch_retargeter() -> None:
@@ -161,16 +280,13 @@ class XRController(IsaacTeleopTeleoperator):
     config_class = XRControllerConfig
     name = "isaac_teleop_controller"
 
-    def __init__(self, config: XRControllerConfig):
-        super().__init__(config)
+    def __init__(self, config: XRControllerConfig, *, twin: Any | None = None):
+        super().__init__(config, joint_publisher=None if twin is None else twin.twin)
         self.config: XRControllerConfig = config
         # Before connect(), so a static version mismatch is reported without first paying for the
         # CloudXR runtime launch (and a possible interactive EULA prompt).
         _require_clutch_retargeter()
 
-        # Constant base_T_anchor input, built once in connect() (a TensorGroup is heavy and
-        # isaacteleop-backed) and reused every step.
-        self._external_inputs: dict[str, Any] | None = None
         # Whether the last get_action() read a tracked controller; the owning loop polls this
         # to wait for the operator to connect before driving the arm.
         self._is_tracking = False
@@ -188,64 +304,105 @@ class XRController(IsaacTeleopTeleoperator):
         # is identity, and an unseeded ORIENTATION has no measured-input rescue path.
         self._home_seeded = False
 
+        # Isaac Teleop's own ClutchPreview, built in connect() once the graph exists (it
+        # binds to the clutch retargeter). None when there is no twin to drive.
+        self._twin = twin
+        self._preview: Any = None
+        # anchor_T_base and its inverse, from the config's static rebase. The graph runs in
+        # the anchor frame; these carry the arm's measured pose in and the commanded pose
+        # back out. See the module docstring on why that is equivalent.
+        self._base_T_anchor = np.asarray(config.base_T_anchor, dtype=np.float64)
+        self._anchor_T_base = _invert_rigid(self._base_T_anchor)
+        self._clock: float | None = None
+
     # ------------------------------------------------------------------
     # Pipeline construction
     # ------------------------------------------------------------------
 
     def _build_pipeline(self) -> OutputCombiner:
-        """Build the clutch pipeline: ``ControllersSource`` -> base-frame rebase -> clutch.
+        """``examples/robot_viz``'s graph, verbatim: jaw, hand pose, clutch, safety harness.
 
-        Publishes two outputs. ``ee_pose`` is the clutch-rebased absolute EE target. ``controller``
-        is the rebased controller group passed through verbatim — :meth:`get_action` derives both
-        ``is_tracking`` and the analog trigger from it, and both would be lost if only ``ee_pose``
-        were published.
+        Everything runs in the **XR anchor frame** -- there is no ``ControllerTransform``
+        rebase node, because ``ClutchPreview`` places its arm and ghost through
+        ``viz.robot.frames`` and so requires that frame. :meth:`get_action` rebases the one
+        pose LeRobot's IK consumes on the way out.
+
+        ``ControllerPoseSource`` is a parallel branch rather than a link in the clutch's
+        chain: its Optional output is the only tracking-validity oracle in the graph. The
+        jaw is ungoverned -- the trigger is one scalar the operator drives directly, not a
+        solved output that can diverge.
         """
-        side = self.config.hand_side
-        controller_key = f"controller_{side}"
-
+        hand_key = f"controller_{self.config.hand_side}"
         controllers = ControllersSource(name="controllers")
-        # Static base_T_anchor rebase fed via external_inputs each step.
-        xform = ValueInput(_BASE_T_ANCHOR_INPUT, TransformMatrix())
-        transformed = controllers.transformed(xform.output("value"))
-        ctrl = transformed.output(controller_key)
 
-        # OptionalType is load-bearing, but it is NOT permission to omit the key: a plain
-        # ValueInput leaf is a required GRAPH input, and OptionalType only makes its *contents*
-        # optional. TeleopSession.step separately requires every external leaf NAME on every step
-        # (see get_action, which therefore always sends this key). OptionalType is what lets that
-        # key carry an absent group, degrading to the retargeter's last-commanded home fallback
-        # instead of failing the graph.
-        measured = ValueInput(
-            SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT,
-            OptionalType(TransformMatrix()),
+        jaw = SO101GripperRetargeter(name="ghost_jaw", input_device=hand_key).connect(
+            {hand_key: controllers.output(hand_key)}
         )
+        hand = ControllerPoseSource(
+            name="hand_pose", pose=clutch_preview.HAND_POSE, input_device=hand_key
+        ).connect({hand_key: controllers.output(hand_key)})
+
+        # OptionalType is load-bearing but is NOT permission to omit the key: a ValueInput
+        # leaf is a required GRAPH input and TeleopSession validates every leaf NAME on
+        # every step. It is what lets the key carry an ABSENT group, degrading to the
+        # retargeter's last-commanded fallback instead of failing the graph.
+        measured = ValueInput(SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT, OptionalType(TransformMatrix()))
 
         self._retargeter = SO101ClutchRetargeter(
             "so101_clutch",
             _PLACEHOLDER_HOME_BASE_T_EE,
-            input_device=controller_key,
+            input_device=hand_key,
             position_scale=self.config.clutch_position_scale,
             squeeze_threshold=self.config.clutch_threshold,
+            # The frame the preview drives from. The orientation delta is invariant to the
+            # choice, so this decides the translation pivot only.
+            controller_pose=clutch_preview.HAND_POSE.value,
         )
-        clutched = self._retargeter.connect(
+        connections = {
+            hand_key: controllers.output(hand_key),
+            SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT: measured.output("value"),
+        }
+        # Wired only when a preview exists to fill it. The input fails OPEN, so leaving it
+        # unwired is exactly "every latch permitted" -- spelled by the absence of the edge
+        # rather than by sending True forever.
+        if self._twin is not None:
+            permitted = ValueInput(clutch_preview.ENGAGE_PERMITTED_LEAF, clutch_preview.PERMITTED_TYPE)
+            connections[SO101ClutchRetargeter.ENGAGE_PERMITTED_INPUT] = permitted.output("value")
+        commanded = self._retargeter.connect(connections)
+
+        governed = EePoseRateLimiter(name="harness", config=RateLimiterConfig(**_HARNESS_DEFAULTS)).connect(
+            {EE_POSE_KEY: commanded.output(EE_POSE_KEY)}
+        )
+
+        return OutputCombiner(
             {
-                controller_key: ctrl,
-                SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT: measured.output("value"),
+                ControllersSource.LEFT: controllers.output(ControllersSource.LEFT),
+                ControllersSource.RIGHT: controllers.output(ControllersSource.RIGHT),
+                GRIPPER_COMMAND_KEY: jaw.output(GRIPPER_COMMAND_KEY),
+                clutch_preview.HAND_POSE_KEY: hand.output(EE_POSE_KEY),
+                clutch_preview.COMMANDED_POSE_KEY: commanded.output(EE_POSE_KEY),
+                EE_POSE_KEY: governed.output(EE_POSE_KEY),
             }
         )
-
-        return OutputCombiner({"ee_pose": clutched.output("ee_pose"), "controller": ctrl})
-
-    def _build_external_inputs(self) -> dict[str, Any]:
-        """Materialize the constant ``base_T_anchor`` external input (once, in connect)."""
-        tg = TensorGroup(TransformMatrix())
-        tg[0] = np.asarray(self.config.base_T_anchor, dtype=np.float32)
-        return {_BASE_T_ANCHOR_INPUT: {"value": tg}}
 
     def connect(self, calibrate: bool = True) -> None:
         super().connect(calibrate=calibrate)
         try:
-            self._external_inputs = self._build_external_inputs()
+            if self._twin is not None:
+                # After _build_pipeline, which is where the clutch retargeter it binds to
+                # is created. owns_clutch_home=False: a real arm is on the other end of
+                # this clutch, so its home comes from measured FK, not from wherever the
+                # operator dragged the preview.
+                self._preview = ClutchPreview(
+                    self._twin.twin,
+                    self._twin.monitor,
+                    self._twin.arm,
+                    self._retargeter,
+                    self._twin.gate,
+                    owns_clutch_home=False,
+                )
+                self._twin.arm.log_placement()
+                clutch_preview.log_grip_posture(self._twin.arm)
         except Exception:
             # Roll the session/runtime back so a failed connect() leaves no half-state
             # (a live session behind a raised connect would leak the CloudXR runtime).
@@ -255,8 +412,10 @@ class XRController(IsaacTeleopTeleoperator):
     def disconnect(self) -> None:
         self._execution_state = ExecutionState.STOPPED
         self._retargeter = None
+        self._preview = None
         self._measured_base_T_ee = None
         self._home_seeded = False
+        self._clock = None
         super().disconnect()
 
     # ------------------------------------------------------------------
@@ -308,7 +467,10 @@ class XRController(IsaacTeleopTeleoperator):
         """
         if not self.is_connected or self._retargeter is None:
             raise RuntimeError("Not connected. Call connect() first.")
-        self._retargeter.set_home_base_T_ee(base_T_ee)
+        # Into the anchor frame the graph runs in. The clutch's algebra is equivariant under
+        # this rebase, so seeding here and rebasing the output back out is exactly the same
+        # command as rebasing the controller on the way in.
+        self._retargeter.set_home_base_T_ee(self._anchor_T_base @ np.asarray(base_T_ee, dtype=np.float64))
         self._home_seeded = True
 
     def set_measured_base_T_ee(self, base_T_ee: np.ndarray) -> None:  # noqa: N802, N803  (frameA_T_frameB convention)
@@ -331,7 +493,22 @@ class XRController(IsaacTeleopTeleoperator):
         that is a small position error on the engage frame, not a stability problem, so it is
         recorded rather than mechanised.
         """
-        self._measured_base_T_ee = np.asarray(base_T_ee, dtype=np.float64)
+        self._measured_base_T_ee = self._anchor_T_base @ np.asarray(base_T_ee, dtype=np.float64)
+
+    # ------------------------------------------------------------------
+    # Engage gate (owned by ClutchPreview)
+    # ------------------------------------------------------------------
+
+    @property
+    def engageable(self) -> bool:
+        """Whether the clutch would latch on a squeeze right now, as of the last frame.
+
+        ``True`` throughout an engagement as well -- it is the gate's own ``engaged or
+        aligned``, which is what an affordance should say: *the clutch is yours*. Always
+        ``True`` without a preview, so a caller needs no second branch. The preview already
+        paints this onto the arm; the property is for anything else that wants to know.
+        """
+        return True if self._twin is None else bool(self._twin.gate.permitted)
 
     # ------------------------------------------------------------------
     # Action features
@@ -382,89 +559,85 @@ class XRController(IsaacTeleopTeleoperator):
     # ------------------------------------------------------------------
 
     def get_action(self) -> RobotAction:
-        """Step the session and return the clutch-rebased EE target for this frame.
+        """Drive the preview and the graph one frame, and return the EE target.
 
-        Reads the pipeline's ``ee_pose`` (the clutch output) and its passthrough ``controller``
-        group (for tracking state and the analog trigger), and reads engagement back off the
-        clutch retargeter.
+        The frame order is ``robot_viz``'s, and the whole of it lives in ``ClutchPreview``:
+        ``before_step`` anchors the arm to the head and emits the engage-permission leaf,
+        ``step`` runs the graph, ``after_step`` advances the phase, drags the arm, writes
+        the ghost's mocap rows and re-judges the gate.
 
-        The session is stepped with an explicit ``ExecutionEvents`` every frame — never ``None``,
-        which would make ``TeleopSession.step`` auto-fire ``RUNNING`` and defeat the readiness
-        interlock. Any measured EE pose supplied via :meth:`set_measured_base_T_ee` is consumed
-        and cleared here.
+        Two things this device owns on top. The session's ``execution_state`` is the
+        readiness interlock and overrides the preview's own (which is always RUNNING -- it
+        has no arm to home). And the pose handed back is rebased out of the anchor frame
+        the graph runs in, into the robot base frame LeRobot's IK wants.
 
-        Note the two halves of the owning loop's safety gate come from different places:
-        ``is_tracking`` is derived from the **returned** frame, while ``engaged`` is read live off
-        the retargeter instance. Under ``RetargetingExecutionMode.SYNC`` (the default) those are
-        the same frame. Under ``PIPELINED`` the returned outputs can lag the retargeter's internal
-        state by a frame, so the two signals would describe different instants.
+        The returned pose is the **rate limiter's** output, not the clutch's raw one. That
+        is what the leader ghost renders, so commanding anything else would make the ghost
+        a lie -- an intervention the operator can see is the entire reason the harness is
+        in the graph.
 
         Returns:
-            ``{"ee_pose": (7,), "trigger": float, "engaged": bool, "is_tracking": bool}``.
-
-            - ``ee_pose`` -- ``[x, y, z, qx, qy, qz, qw]`` in the robot base frame.
-            - ``trigger`` -- analog trigger in ``[0, 1]``. On a partially-populated frame this is
-              ``0.0``, which is a **floor, not a reading**: the command gate below covers the
-              gripper path, but anything else consuming this value should treat it as unknown when
-              ``is_tracking`` is ``False``.
-            - ``engaged`` -- means **the clutch is latched**, nothing more. It deliberately does
-              **not** fold in tracking: forcing it ``False`` while the latch is still held would
-              make the loop see a spurious rising edge on recovery. Command gating is the
-              caller's.
-            - ``is_tracking`` -- whether this frame carried a live, fully-read controller.
-
-            **The command gate is the conjunction**:
-            ``if not (action["engaged"] and action["is_tracking"]): hold``. Both halves are
-            returned together so that omitting one is not possible; ``engaged`` alone would
-            release a live grasp on a partially-populated frame (see the ``except`` below).
+            ``{"ee_pose": (7,), "trigger": float, "engaged": bool, "is_tracking": bool}``,
+            with ``ee_pose`` in the robot base frame and ``trigger`` the in-graph gripper
+            closedness (the same scalar that swings the ghost's jaw). **The command gate is
+            the conjunction** ``engaged and is_tracking``; both are returned together so
+            omitting one is not possible.
         """
-        external_inputs = dict(self._external_inputs or {})
+        now = time.perf_counter()
+        dt = 1.0 / 30.0 if self._clock is None else max(1e-4, now - self._clock)
+        self._clock = now
+
+        if self._preview is not None:
+            external_inputs, events = self._preview.before_step(self.head_pose)
+            reset = bool(events.reset)
+        else:
+            external_inputs, reset = {}, False
+
         measured = self._measured_base_T_ee
         # Consume: the value is valid for exactly this frame (see set_measured_base_T_ee).
         self._measured_base_T_ee = None
-        measured_group = TensorGroup(TransformMatrix())
         if measured is not None:
+            measured_group = TensorGroup(TransformMatrix())
             measured_group[0] = measured.astype(np.float32)
         else:
-            # NOT redundant work -- do not "optimise" this branch away. The leaf key must be
-            # present on EVERY step even when there is no pose to send: TeleopSession.step
-            # validates that every external leaf NAME appears in external_inputs and raises
-            # otherwise, independently of the leaf's OptionalType. Dropping the key here fails the
-            # very first get_action() inside the connect-wait -- dead on arrival at startup. An
-            # absent OptionalTensorGroup satisfies the check and reaches the retargeter as
-            # is_none, landing on its documented last-commanded home fallback.
+            # NOT redundant -- do not "optimise" this branch away. TeleopSession.step
+            # validates that every external leaf NAME appears on every step, independently
+            # of the leaf's OptionalType. An absent OptionalTensorGroup satisfies that and
+            # reaches the retargeter as is_none, landing on its last-commanded fallback.
             measured_group = OptionalTensorGroup(TransformMatrix())
         external_inputs[SO101ClutchRetargeter.MEASURED_BASE_T_EE_INPUT] = {"value": measured_group}
 
         result = self._step(
-            execution_events=ExecutionEvents(execution_state=self._execution_state, reset=False),
+            execution_events=ExecutionEvents(execution_state=self._execution_state, reset=reset),
             external_inputs=external_inputs,
         )
 
-        ee_pose = np.asarray(np.from_dlpack(result["ee_pose"][0]), dtype=np.float32).copy()
+        if self._preview is not None:
+            self._preview.after_step(result, dt)
 
-        # Optional controller group is None until the headset is connected and its controllers
-        # are live; expose that as is_tracking so the loop can wait before driving the arm. This
-        # derivation MUST survive: the loop's connect-wait polls is_tracking and never returns if
-        # it is stuck False.
-        controller = result["controller"]
-        trigger = 0.0
-        # Attribute access, not getattr-with-default: ``is_none`` is part of the
-        # OptionalTensorGroup contract, and a default would silently turn a future rename into
-        # is_tracking stuck True -- the one derivation the connect-wait depends on.
-        self._is_tracking = not controller.is_none
+        # The limiter's output, in the anchor frame, rebased into the robot's.
+        governed = np.asarray(np.from_dlpack(result[EE_POSE_KEY][0]), dtype=np.float64)
+        ee_pose = _rebase_pose(self._base_T_anchor, governed).astype(np.float32)
+
+        # HAND_POSE_KEY is the graph's only tracking-validity oracle -- it goes absent on an
+        # invalid pose rather than holding the last one, which is exactly the gap a consumer
+        # needs to see. Derived here rather than from the controller group so the device and
+        # the preview agree on what "tracked" means.
+        hand = result[clutch_preview.HAND_POSE_KEY]
+        self._is_tracking = not hand.is_none
         if self._is_tracking:
             try:
-                trigger = float(controller[ControllerInputIndex.TRIGGER_VALUE])
-            except (IndexError, KeyError, TypeError, ValueError):
-                # A partially-populated frame yields trigger = 0.0 (jaw fully OPEN). Note this no
-                # longer disengages the clutch: ``squeeze`` is now read inside the retargeting
-                # graph, on a path this except cannot reach, so ``engaged`` stays true and a live
-                # grasp would be released if the loop acted on it. Reporting not-tracked is what
-                # covers it -- the owning loop must gate its command on ``is_tracking`` as well as
-                # ``engaged``. ``engaged`` itself is deliberately left as the pure retargeter
-                # signal so its rising edge stays exactly the clutch's latch frame.
+                hand[0]
+            except ValueError:
                 self._is_tracking = False
+
+        # The in-graph closedness rather than a raw trigger read: it is the same scalar that
+        # drives the ghost's jaw, so what the operator sees and what the arm is commanded
+        # cannot diverge.
+        try:
+            trigger = float(result[GRIPPER_COMMAND_KEY][0])
+        except (IndexError, KeyError, TypeError, ValueError):
+            trigger = 0.0
 
         engaged = bool(self._retargeter.is_engaged) if self._retargeter is not None else False
 

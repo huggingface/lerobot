@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
 from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.utils import init_logging
 
 from .common import (
     FPS,
@@ -79,6 +80,11 @@ class TeleoperateConfig:
 
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
+    # As record.py does. Without it the root logger sits at WARNING and every startup
+    # report this example makes -- which arm profile is live, whether the robot twin was
+    # built and where it anchored, the wrist the engage gate demands, and each
+    # engageable/blocked transition -- is computed and then dropped on the floor.
+    init_logging()
     robot, device, motor_names = build_device(cfg)
     hold = HoldLatch(motor_names)
     declutch = DeclutchLatch()

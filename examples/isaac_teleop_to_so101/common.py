@@ -71,6 +71,7 @@ from .isaac_teleop import (
     XRController,
     XRControllerConfig,
 )
+from .robot_twin import build_twin
 
 # Fixed rate [Hz] for the teleoperate loop and the pre-loop slews / connect-wait poll sleeps.
 FPS = 30
@@ -291,6 +292,11 @@ class RobotProfile:
     raise_on_ee_jump: bool = True
     """``False`` rate-limits an over-limit frame and warns instead of raising out of the loop."""
 
+    robot_twin: bool = False
+    """Whether this arm gets Isaac Teleop's SO-101 preview in the headset. The preview arm
+    and the leader ghost are SO-101 geometry with an SO-101 home pose, so an arm that is not
+    one would be shown a model of a different robot."""
+
     home_orientation_from_measured: bool = False
     """Re-seed the clutch home from the measured EE while disengaged, so a sagging arm does not
     kick on engage. Only the ORIENTATION half is new (the latch already takes position from the
@@ -335,6 +341,7 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         },
         gripper_open=100.0,
         gripper_close=0.0,
+        robot_twin=True,
     ),
     _robot_profile_key("rebot_b601_follower", motor_family="rs"): RobotProfile(
         urdf=_ensure_rebot_b601_rs_urdf,
@@ -476,6 +483,10 @@ def _print_xr_connect_help() -> None:
 def _wait_for_xr_controller(teleop_device: XRController) -> None:
     """Block until the XR controller is tracked, polling ``get_action()`` and re-printing a
     reminder every ``_XR_CONNECT_REMINDER_S``. User-paced; ``Ctrl-C`` aborts (no hard timeout).
+
+    Each poll steps the whole graph, which is also what anchors the robot twin: the preview
+    places its arm on the first frame carrying both a head pose and a tracked controller,
+    and that arrives during exactly this wait.
     """
     _print_xr_connect_help()
     print("Waiting for the headset controllers to start streaming…  (Ctrl-C to abort)")
@@ -536,7 +547,20 @@ def setup_xr(cfg: LoopConfig, robot, motor_names: list[str], profile: RobotProfi
     if profile.clutch_position_scale is not None:
         teleop_config.clutch_position_scale = profile.clutch_position_scale
         logging.info(f"{robot.name}: clutch_position_scale={teleop_config.clutch_position_scale}")
-    teleop_device = XRController(teleop_config)
+
+    # Built BEFORE the device: the twin creates the OpenXR session the trackers then share,
+    # so it has to exist by the time connect() assembles the TeleopSessionConfig. Everything
+    # it resolves in the scene -- joints, geom group, material -- is resolved here too, for
+    # the same reason: after connect() the scene belongs to the render thread.
+    twin = None
+    if teleop_config.robot_twin and profile.robot_twin:
+        twin = build_twin(teleop_config)
+    elif teleop_config.robot_twin:
+        logging.info(f"{robot.name}: not an SO-101; running without the robot twin preview.")
+    else:
+        logging.info(f"{robot.name}: robot twin disabled (--teleop.robot_twin=false).")
+
+    teleop_device = XRController(teleop_config, twin=twin)
 
     xr_to_robot_joints_processor = build_xr_joint_pipeline(profile, motor_names, kinematics_solver)
 

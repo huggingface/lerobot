@@ -88,6 +88,44 @@ class XRControllerConfig(IsaacTeleopConfig):
     inside reach (0.4 m of controller motion -> 0.2 m of EE motion). Translation only --
     orientation stays 1:1. See https://github.com/NVIDIA/IsaacTeleop/issues/733."""
 
+    engage_gate: bool = True
+    """Refuse the clutch's latch until the operator's wrist matches the pose it is about to
+    latch. The clutch composes orientation as a **delta**, so a latch taken 40 deg off
+    leaves the arm 40 deg off the hand for the whole engagement; this makes the alignment a
+    precondition instead. An enable precondition, not a safety-rated stop -- it gates the
+    latch only and can never drop a live engagement.
+
+    ``False`` widens the band to 180 deg rather than removing the gate: the preview still
+    holds the latch until the rate limiter is passing through, which is what stops an
+    engagement revealing a tool already hundreds of milliseconds behind the hand. Needs the
+    robot twin either way -- the gate is the twin's affordance, and green is how it speaks."""
+
+    engage_enter_deg: float = 20.0
+    """Wrist-alignment band below which the gate may open. Only the *relation* to
+    ``engage_exit_deg`` is pinned -- no absolute value here is defensible without a headset
+    on a real operator."""
+
+    engage_exit_deg: float = 30.0
+    """Band above which an open gate closes again. Must be >= ``engage_enter_deg``: the
+    angle is recomputed every frame off a noisy controller, and an affordance strobing at
+    display rate in a headset is worse than a wrong one."""
+
+    engage_dwell_s: float = 0.1
+    """How long alignment must hold before the gate goes green."""
+
+    robot_twin: bool = True
+    """Run Isaac Teleop's ``ClutchPreview`` in the headset: an SO-101 the operator drags by
+    hand while disengaged, swapped for a leader gripper locked to the hand once the clutch
+    engages, with the safety harness recolouring it and the engage gate holding the latch.
+    The same object ``examples/robot_viz`` runs. Needs a Linux ``isaacteleop`` built with
+    ``-DBUILD_VIZ=ON``; warns and runs without it otherwise."""
+
+    twin_gl_device: int = -1
+    """Which GPU to build the twin's OpenGL context on. ``-1`` takes the first that yields
+    one, which is right on a single-GPU machine. On a multi-GPU host the context has to
+    land on the card the compositor already picked, and nothing makes that happen by
+    default: this indexes EGL devices and need not agree with CUDA's ordering."""
+
     base_T_anchor: list[list[float]] = field(  # noqa: N815  (frameA_T_frameB transform-matrix convention)
         # Fresh copy per instance: returning the module-level list itself would alias one
         # mutable matrix across every config.
@@ -101,3 +139,8 @@ class XRControllerConfig(IsaacTeleopConfig):
     def __post_init__(self):
         if self.hand_side not in ("left", "right"):
             raise ValueError(f"hand_side must be 'left' or 'right', got {self.hand_side!r}")
+        if not 0.0 < self.engage_enter_deg <= self.engage_exit_deg:
+            raise ValueError(
+                "require 0 < engage_enter_deg <= engage_exit_deg, got "
+                f"{self.engage_enter_deg} and {self.engage_exit_deg}"
+            )

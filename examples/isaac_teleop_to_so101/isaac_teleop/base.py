@@ -87,12 +87,16 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
     config_class = IsaacTeleopConfig
 
-    def __init__(self, config: IsaacTeleopConfig):
+    def __init__(self, config: IsaacTeleopConfig, *, joint_publisher: Any | None = None):
         _require_isaacteleop()
         super().__init__(config)
         self.config: IsaacTeleopConfig = config
         self._session: TeleopSession | None = None
         self._cloudxr_launcher: CloudXRLauncher | None = None
+        # A robot twin to draw into this session, or None. The session owns its render
+        # thread and creates the OpenXR session the trackers then share, so this must be
+        # supplied before connect() -- it is not something a device can pick up later.
+        self._joint_publisher = joint_publisher
 
     # ------------------------------------------------------------------
     # Pipeline construction (device override point)
@@ -139,7 +143,14 @@ class IsaacTeleopTeleoperator(Teleoperator):
 
         try:
             pipeline = self._build_pipeline()
-            session_config = TeleopSessionConfig(app_name=self.config.app_name, pipeline=pipeline)
+            # TwinRenderConfig is left at its defaults: its near/far pair reaches the
+            # compositor AND the twin's projection from one place, and a twin projecting
+            # against a different pair renders geometry the runtime then reprojects wrongly.
+            session_config = TeleopSessionConfig(
+                app_name=self.config.app_name,
+                pipeline=pipeline,
+                joint_publisher=self._joint_publisher,
+            )
             self._session = TeleopSession(session_config)
             self._session.__enter__()
         except Exception:
@@ -151,7 +162,18 @@ class IsaacTeleopTeleoperator(Teleoperator):
             raise
         logger.info("Isaac Teleop session started: %s", self.config.app_name)
 
+    @property
+    def head_pose(self):
+        """The operator's last rendered head pose as a 7-D XR pose, or ``None``.
+
+        ``None`` without a twin and before its first rendered frame. Published by the
+        twin's render thread, which runs at display cadence rather than the loop's -- read
+        it as "where the operator was", never as a per-frame signal.
+        """
+        return None if self._session is None else self._session.twin_head_pose
+
     def disconnect(self) -> None:
+        twin_wedged = False
         try:
             if self._session is not None:
                 # Null the handle BEFORE __exit__: even a failed session teardown must not
@@ -160,12 +182,23 @@ class IsaacTeleopTeleoperator(Teleoperator):
                 self._session = None
                 session.__exit__(None, None, None)
                 logger.info("Isaac Teleop session ended")
+                twin_wedged = session.twin_teardown_clean is False
+                if twin_wedged:
+                    logger.error(
+                        "The robot twin's render thread did not exit; leaving the OpenXR "
+                        "session and the CloudXR runtime alive. This process will not exit "
+                        "until that thread completes."
+                    )
         finally:
             # Reap the CloudXR runtime even if session teardown raised, and even if no
             # session was ever established (e.g. the launcher came up but session creation
             # failed before this point); a no-op when we never launched CloudXR (opt-out /
             # externally-owned runtime), so we never stop a runtime we don't own.
-            self._stop_cloudxr_runtime()
+            #
+            # NOT when the twin's render thread is still inside that runtime: reaping it
+            # from under a live OpenXR caller is worse than leaking it.
+            if not twin_wedged:
+                self._stop_cloudxr_runtime()
 
     # ------------------------------------------------------------------
     # CloudXR runtime (shared)
