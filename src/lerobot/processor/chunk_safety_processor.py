@@ -93,8 +93,18 @@ def clamp_action_chunk(
                 clamped_delta = prev_delta + clamped_jerk
             if not torch.equal(clamped_delta, delta):
                 was_clamped = True
-            out[:, t, :] = out[:, t - 1, :] + clamped_delta
-            prev_delta = clamped_delta
+            new_value = out[:, t - 1, :] + clamped_delta
+            if lo is not None or hi is not None:
+                # Re-clamp to the absolute bounds: reconstructing this step from the previous
+                # (already-bounded) step plus a rel/jerk-limited delta can otherwise walk the
+                # trajectory back outside min_action/max_action over a long chunk, since that
+                # bound was only checked once, on the original tensor, before this loop ran.
+                bounded_value = new_value.clamp(min=clamp_lo, max=clamp_hi)
+                if not torch.equal(bounded_value, new_value):
+                    was_clamped = True
+                new_value = bounded_value
+            out[:, t, :] = new_value
+            prev_delta = out[:, t, :] - out[:, t - 1, :]
 
     return out, was_clamped
 
