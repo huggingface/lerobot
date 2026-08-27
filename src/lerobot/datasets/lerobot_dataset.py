@@ -72,6 +72,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         *,
+        repo_type: str = "dataset",
         token: str | bool | None = None,
     ):
         """
@@ -206,6 +207,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
+            repo_type (str, optional): "dataset" (default) or "bucket" for an HF
+                Storage Bucket. With "bucket" and no ``root``, the dataset is read
+                in place from ``hf://buckets/{repo_id}`` (map-style access requires
+                a non-default storage format; the default format is streaming-only
+                on buckets). An explicit ``root`` always wins over ``repo_type``.
             token: Authentication token used while downloading this dataset
                 from the Hub. Pass a string token, ``True`` to require the
                 locally stored token, ``False`` to disable authentication, or
@@ -219,6 +225,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+        if root is None and repo_type == "bucket":
+            root = f"hf://buckets/{repo_id}"
         # Datasets can live at an object-store root (e.g. ``hf://datasets/...``): a
         # non-default reader reads the data in place and only ``meta/`` is localized.
         self._storage_root = root if root is not None and is_remote_uri(root) else None
@@ -268,6 +278,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             logger.info(f"The episode filter matched {len(resolved)} episode(s).")
             episodes = resolved
         self.episodes = episodes
+
+        if self._storage_root is not None and self.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            raise ValueError(
+                f"The dataset at {self._storage_root!r} has the default {DEFAULT_STORAGE_FORMAT!r} "
+                "storage format, which cannot be read in place from an object store. For HF Storage "
+                "Buckets, use repo_type='bucket' with dataset.streaming=true."
+            )
 
         self.reader: BaseDatasetReader | None
         if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:

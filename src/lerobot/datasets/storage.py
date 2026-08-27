@@ -82,7 +82,11 @@ def localize_remote_root(
             )
         except FileNotFoundError as error:
             errors.append(f"{storage_format}: {error}")
-    raise FileNotFoundError(f"No storage backend found a dataset at {str(root)!r}. Tried {errors}.")
+    raise FileNotFoundError(
+        f"No dataset found at {str(root)!r}. Tried {errors}. "
+        f"For {DEFAULT_STORAGE_FORMAT!r} datasets on an HF Storage Bucket, use "
+        "repo_type='bucket' with dataset.streaming=true."
+    )
 
 
 def load_dataset_metadata(

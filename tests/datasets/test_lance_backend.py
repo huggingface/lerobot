@@ -28,6 +28,7 @@ import torch
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_utils
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
@@ -40,6 +41,7 @@ from lerobot.datasets.language import (
     language_persistent_arrow_type,
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.storage import localize_remote_root
 from lerobot.policies.factory import make_policy_config
 from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
@@ -248,6 +250,44 @@ def test_storage_format_routing(video_dataset_roots):
     info_path.write_text(json.dumps(info, indent=4))
     with pytest.raises(ValueError, match="storage_format 'warehouse13'"):
         LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+
+
+def test_repo_type_bucket_matrix(dataset_roots, monkeypatch):
+    src_root, _ = dataset_roots
+
+    # repo_type="bucket" without a root derives hf://buckets/{repo_id}
+    import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
+
+    seen = {}
+
+    def capture_root(repo_id, root, *args, **kwargs):
+        seen["root"] = str(root)
+        raise FileNotFoundError("stop before network")
+
+    monkeypatch.setattr(lerobot_dataset_module, "localize_remote_root", capture_root)
+    with pytest.raises(FileNotFoundError):
+        LeRobotDataset(DUMMY_REPO_ID, repo_type="bucket")
+    assert seen["root"] == f"hf://buckets/{DUMMY_REPO_ID}"
+    monkeypatch.undo()
+
+    # a default-format dataset at an object-store root points at streaming
+    with pytest.raises(FileNotFoundError, match="streaming"):
+        localize_remote_root(DUMMY_REPO_ID, f"file://{src_root}")
+
+    # factory: bucket + default format without streaming keeps the old error
+    import lerobot.datasets.factory as factory_module
+
+    monkeypatch.setattr(
+        factory_module,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: LeRobotDatasetMetadata(DUMMY_REPO_ID, root=src_root),
+    )
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(src_root), repo_type="bucket"),
+        policy=make_policy_config("act"),
+    )
+    with pytest.raises(ValueError, match="streaming-only"):
+        make_dataset(cfg)
 
 
 def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):

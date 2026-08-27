@@ -54,9 +54,10 @@ def test_dataset_config_invalid_repo_type():
         DatasetConfig(repo_id="user/repo", repo_type="model")
 
 
-def test_dataset_config_bucket_requires_streaming():
-    with pytest.raises(ValueError, match="streaming-only"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket")
+def test_dataset_config_bucket_without_streaming_ok():
+    # allowed at config level; the dataset factory raises for storage formats
+    # that only support streaming access on buckets
+    DatasetConfig(repo_id="user/repo", repo_type="bucket")
 
 
 def test_dataset_config_bucket_rejects_eval_split():

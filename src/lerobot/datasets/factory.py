@@ -139,6 +139,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 "support remote map-style access without streaming mode."
             )
         if not cfg.dataset.streaming:
+            if cfg.dataset.repo_type == "bucket" and ds_meta.storage_format == DEFAULT_STORAGE_FORMAT:
+                raise ValueError(
+                    f"repo_type='bucket' is streaming-only for the default {DEFAULT_STORAGE_FORMAT!r} "
+                    "storage format: set dataset.streaming=true to train from an HF Storage Bucket."
+                )
             dataset = LeRobotDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -150,6 +155,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 return_uint8=True,
                 depth_output_unit=cfg.dataset.depth_output_unit,
                 tolerance_s=cfg.tolerance_s,
+                repo_type=cfg.dataset.repo_type,
             )
         else:
             dataset = StreamingLeRobotDataset(
