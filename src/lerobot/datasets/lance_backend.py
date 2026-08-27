@@ -28,6 +28,7 @@ the public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
@@ -128,6 +129,15 @@ class LanceDatasetReader(BaseDatasetReader):
                 f"Image-backed features are not supported by the lance backend: {self.meta.image_keys}. "
                 "Re-encode them as video."
             )
+        if self.meta.video_keys:
+            try:
+                importlib.import_module("torchcodec")
+            except Exception as error:
+                raise ImportError(
+                    "The lance reader decodes RGB video with torchcodec, which is not available "
+                    "on this platform. Video lance datasets cannot be read here; the default "
+                    "storage format supports video_backend='pyav'."
+                ) from error
         # Depth videos decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
         self._depth_encoder_configs = {
