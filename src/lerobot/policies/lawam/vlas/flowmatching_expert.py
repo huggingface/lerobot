@@ -42,25 +42,14 @@ class ContinuousTimeEncoder(nn.Module):
 
 
 def build_time_grid(
-    horizon_sec: float,
     hz: torch.Tensor,
     seq_len: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Build per-sample natural-time grids t_i = i / hz and hz-derived token masks.
-
-    Returns:
-        t_grid: (B, T) float timestamps in seconds.
-        time_valid: (B, T) bool mask from floor(horizon_sec * hz).
-        n_tokens: (B,) long effective token count per sample.
-    """
+) -> torch.Tensor:
+    """Build per-sample natural-time grids ``t_i = i / hz``."""
     if hz.ndim != 1:
         raise ValueError(f"`hz` must have shape [B], got {tuple(hz.shape)}.")
     if seq_len <= 0:
         raise ValueError(f"`seq_len` must be > 0, got {seq_len}.")
-    if horizon_sec <= 0:
-        raise ValueError(f"`horizon_sec` must be > 0, got {horizon_sec}.")
-
     device = hz.device
     bsz = hz.shape[0]
     hz_f = hz.to(device=device, dtype=torch.float32)
@@ -68,19 +57,8 @@ def build_time_grid(
         bad_idx = int(torch.nonzero(hz_f <= 0, as_tuple=False)[0].item())
         raise ValueError(f"`hz` must be > 0 for all samples, got hz[{bad_idx}]={float(hz_f[bad_idx])}.")
 
-    n_tokens = torch.floor(float(horizon_sec) * hz_f).to(dtype=torch.long)
-    if torch.any(n_tokens < 1):
-        bad_idx = int(torch.nonzero(n_tokens < 1, as_tuple=False)[0].item())
-        raise ValueError(
-            f"Invalid effective token count from horizon_sec*hz: sample={bad_idx}, "
-            f"horizon_sec={horizon_sec}, hz={float(hz_f[bad_idx])}, floor={int(n_tokens[bad_idx])}. "
-            "Increase `horizon_sec` or ensure hz>=1."
-        )
-    n_tokens = torch.clamp(n_tokens, max=int(seq_len))
     token_idx = torch.arange(int(seq_len), dtype=torch.float32, device=device).unsqueeze(0).expand(bsz, -1)
-    t_grid = token_idx / hz_f.unsqueeze(1)
-    time_valid = token_idx.to(dtype=torch.long) < n_tokens.unsqueeze(1)
-    return t_grid, time_valid, n_tokens
+    return token_idx / hz_f.unsqueeze(1)
 
 
 def swish(x):
@@ -167,7 +145,6 @@ class ConditionalFlowMatchingConfig:
     vision_dim: int = 768
     num_vision_tokens: int = 256
     num_target_vision_tokens: int = -1
-    horizon_sec: float = 1.0
     use_state: bool = True
     state_dim: int = 8
     num_embodiments: int = 32
@@ -193,6 +170,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         super().__init__()
         self.config = config or ConditionalFlowMatchingConfig()
         self.action_horizon: int | None = None
+        self.effective_action_horizon: int | None = None
 
         # self.enc_h_t_t1 = LAMEncoder(
         #     context_dim=self.config.vision_dim,
@@ -413,21 +391,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         if not self.config.token_independent_noise:
             t_discretized = t_discretized[:, 0]
 
-        # The time grid determines which padded action tokens are valid for each action_hz.
-        t_grid, hz_token_valid, _ = build_time_grid(
-            horizon_sec=float(self.config.horizon_sec),
-            hz=action_hz_f,
-            seq_len=int(actions.shape[1]),
-        )
-        expected_total = int(hz_token_valid.sum().item())
-        actual_total = int(data_token_valid.sum().item())
-        if actual_total != expected_total:
-            raise ValueError(
-                "Action mask/time-grid mismatch in training (batch-level count): "
-                f"data_total={actual_total}, hz_total={expected_total}, "
-                f"horizon_sec={self.config.horizon_sec}. "
-                "Please ensure dataloader action padding matches floor(horizon_sec * action_hz)."
-            )
+        t_grid = build_time_grid(hz=action_hz_f, seq_len=int(actions.shape[1]))
         token_valid = data_token_valid
 
         # Encode the noisy trajectory x_t; this is the action-token input to DiT.
@@ -592,15 +556,6 @@ class ConditionalFlowMatchingHead(nn.Module):
             raise ValueError(
                 f"`action_hz` must have shape [B], got {tuple(action_hz_f.shape)} for batch_size={batch_size}."
             )
-        n_from_hz = torch.floor(float(self.config.horizon_sec) * action_hz_f).to(dtype=torch.long)
-        if torch.any(n_from_hz < 1):
-            bad_idx = int(torch.nonzero(n_from_hz < 1, as_tuple=False)[0].item())
-            raise ValueError(
-                f"Invalid effective token count from horizon_sec*hz: sample={bad_idx}, "
-                f"horizon_sec={self.config.horizon_sec}, hz={float(action_hz_f[bad_idx])}, "
-                f"floor={int(n_from_hz[bad_idx])}. Increase `horizon_sec` or ensure hz>=1."
-            )
-        base_horizon = int(n_from_hz.max().item())
         if self.action_horizon is None:
             raise ValueError(
                 "`ConditionalFlowMatchingHead.action_horizon` must be set from policy config before inference."
@@ -608,15 +563,20 @@ class ConditionalFlowMatchingHead(nn.Module):
         action_horizon = int(self.action_horizon)
         if action_horizon <= 0:
             raise ValueError(f"`action_horizon` must be > 0, got {action_horizon}.")
-        if base_horizon > action_horizon:
+        if self.effective_action_horizon is None:
             raise ValueError(
-                f"Required horizon from hz ({base_horizon}) exceeds configured action_horizon ({action_horizon})."
+                "`ConditionalFlowMatchingHead.effective_action_horizon` must be set from policy config "
+                "before inference."
             )
-        t_grid, time_valid, _ = build_time_grid(
-            horizon_sec=float(self.config.horizon_sec),
-            hz=action_hz_f,
-            seq_len=int(action_horizon),
-        )
+        effective_action_horizon = int(self.effective_action_horizon)
+        if not 1 <= effective_action_horizon <= action_horizon:
+            raise ValueError(
+                "`effective_action_horizon` must be in [1, action_horizon], got "
+                f"{effective_action_horizon} for action_horizon={action_horizon}."
+            )
+        t_grid = build_time_grid(hz=action_hz_f, seq_len=action_horizon)
+        token_idx = torch.arange(action_horizon, device=device)
+        time_valid = token_idx.unsqueeze(0).expand(batch_size, -1) < effective_action_horizon
         if num_inference_steps is None:
             num_inference_steps = int(getattr(self.config, "num_inference_steps", self.config.num_steps))
         if cfg_scale is None:
@@ -791,4 +751,4 @@ class ConditionalFlowMatchingHead(nn.Module):
             x_t = x_t + dt * pred_velocity
             x_t = x_t * time_valid.unsqueeze(-1).to(dtype=x_t.dtype)
 
-        return x_t[:, :base_horizon, :]
+        return x_t[:, :effective_action_horizon, :]

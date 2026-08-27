@@ -372,10 +372,14 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
         use_state: bool,
         action_hz: float,
         embodiment_id: int,
+        chunk_size: int | None = None,
     ) -> None:
         self.lam_image_feature = str(lam_image_feature)
         self.image_hw = (int(image_hw[0]), int(image_hw[1]))
         self.action_horizon = int(action_horizon)
+        self.chunk_size = self.action_horizon if chunk_size is None else int(chunk_size)
+        if not 1 <= self.action_horizon <= self.chunk_size:
+            raise ValueError("`action_horizon` must be in [1, chunk_size].")
         self.action_dim = int(action_dim)
         self.state_dim = int(state_dim)
         self.use_state = bool(use_state)
@@ -431,7 +435,7 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
             )
         if source_dim > self.action_dim:
             raise ValueError(f"Action width {source_dim} exceeds LaWAM padded width {self.action_dim}.")
-        actions = action_tensor.new_zeros((batch_size, self.action_horizon, self.action_dim))
+        actions = action_tensor.new_zeros((batch_size, self.chunk_size, self.action_dim))
         actions[:, :source_steps, :source_dim] = action_tensor
         mask = torch.zeros_like(actions, dtype=torch.bool)
         mask[:, :source_steps, :source_dim] = True
@@ -503,6 +507,7 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
             "lam_image_feature": self.lam_image_feature,
             "image_hw": list(self.image_hw),
             "action_horizon": self.action_horizon,
+            "chunk_size": self.chunk_size,
             "action_dim": self.action_dim,
             "state_dim": self.state_dim,
             "use_state": self.use_state,
@@ -511,7 +516,7 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
         }
 
 
-def _make_lawam_model_input_steps(config: LaWAMConfig) -> list[ProcessorStep]:
+def _make_lawam_model_input_steps(config: LaWAMConfig, *, action_hz: float) -> list[ProcessorStep]:
     return [
         LaWAMResizeImagesProcessorStep(
             image_features=config.primary_image_features + config.wrist_image_features,
@@ -530,11 +535,12 @@ def _make_lawam_model_input_steps(config: LaWAMConfig) -> list[ProcessorStep]:
         LaWAMPrepareBatchProcessorStep(
             lam_image_feature=config.lam_image_feature,
             image_hw=config.lam_image_hw,
-            action_horizon=config.effective_action_horizon,
+            action_horizon=config.action_horizon,
+            chunk_size=config.chunk_size,
             action_dim=config.flow_action_dim,
             state_dim=config.flow_state_dim,
             use_state=config.flow_use_state,
-            action_hz=config.action_hz,
+            action_hz=action_hz,
             embodiment_id=config.embodiment_id,
         ),
     ]
@@ -543,14 +549,20 @@ def _make_lawam_model_input_steps(config: LaWAMConfig) -> list[ProcessorStep]:
 def make_lawam_pre_post_processors(
     config: LaWAMConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta=None,
+    rename_map: dict[str, str] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
     """Build LaWAM input normalization and action postprocessing pipelines."""
     config.validate_features()
-    if config.action_hz is None:
-        raise ValueError("LaWAM processors require a resolved `action_hz`.")
+    if dataset_meta is None:
+        dataset_meta = getattr(config, "_runtime_dataset_meta", None)
+    dataset_fps = getattr(dataset_meta, "fps", None)
+    if dataset_fps is None or float(dataset_fps) <= 0:
+        raise ValueError("LaWAM training processors require dataset metadata with a valid `fps` value.")
+    action_hz = float(dataset_fps)
     features = {**config.input_features, **config.output_features}
     processor_stats = dataset_stats
     if not config.flow_use_state:
@@ -559,18 +571,25 @@ def make_lawam_pre_post_processors(
             processor_stats = {key: value for key, value in dataset_stats.items() if key != OBS_STATE}
 
     default_steps = make_default_policy_processor_steps(config, processor_stats)
-    input_steps = [default_steps.rename_observations, default_steps.add_batch_dim]
-    input_steps.extend(
-        [
-            default_steps.to_device,
-            NormalizerProcessorStep(
-                features=features,
-                norm_map=config.normalization_mapping,
-                stats=processor_stats,
-            ),
-            *_make_lawam_model_input_steps(config),
-        ]
-    )
+    default_steps.rename_observations.rename_map = dict(rename_map or {})
+    input_steps: list[ProcessorStep] = [
+        default_steps.rename_observations,
+        default_steps.add_batch_dim,
+        default_steps.to_device,
+        NormalizerProcessorStep(
+            features=features,
+            norm_map=config.normalization_mapping,
+            stats=processor_stats,
+        ),
+    ]
+    if config.pre_snap_gripper_action:
+        input_steps.append(
+            LaWAMPreSnapGripperProcessorStep(
+                gripper_dim=config.gripper_dim,
+                threshold=config.gripper_threshold,
+            )
+        )
+    input_steps.extend(_make_lawam_model_input_steps(config, action_hz=action_hz))
 
     output_steps: list[ProcessorStep] = []
     if config.clip_normalized_actions:
@@ -601,4 +620,39 @@ def make_lawam_pre_post_processors(
     return make_policy_processor_pipelines(
         input_steps=input_steps,
         output_steps=output_steps,
+    )
+
+
+def make_lawam_pre_post_processors_from_pretrained(
+    config: LaWAMConfig,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta=None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str | None = None,
+    postprocessor_config_filename: str | None = None,
+) -> (
+    tuple[
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+        PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    ]
+    | None
+):
+    """Rebuild LaWAM processors for fresh SFT and load serialized pipelines otherwise."""
+    del pretrained_path, revision, postprocessor_overrides
+    del preprocessor_config_filename, postprocessor_config_filename
+    if dataset_meta is None:
+        dataset_meta = getattr(config, "_runtime_dataset_meta", None)
+    if dataset_meta is None or dataset_stats is None:
+        return None
+
+    rename_map = (preprocessor_overrides or {}).get("rename_observations_processor", {}).get("rename_map", {})
+    return make_lawam_pre_post_processors(
+        config,
+        dataset_stats=dataset_stats,
+        dataset_meta=dataset_meta,
+        rename_map=rename_map,
     )

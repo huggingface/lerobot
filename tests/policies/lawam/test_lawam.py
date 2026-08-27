@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -29,7 +30,10 @@ pytest.importorskip("diffusers", reason="lawam requires the `lawam` extra (diffu
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
-from lerobot.policies.lawam.configuration_lawam import LaWAMConfig
+from lerobot.policies.lawam.configuration_lawam import (
+    LaWAMConfig,
+    LaWAMCosineWithMinLRSchedulerConfig,
+)
 from lerobot.policies.lawam.lam_core.core.lam_model import LatentLAMModel, build_latent_action_model
 from lerobot.policies.lawam.lam_core.core.utils.modules import build_modal_block_attention_mask
 from lerobot.policies.lawam.modeling_lawam import (
@@ -38,8 +42,17 @@ from lerobot.policies.lawam.modeling_lawam import (
     _build_native_policy_config,
 )
 from lerobot.policies.lawam.processor_lawam import (
+    LaWAMBinarizeGripperProcessorStep,
+    LaWAMClipActionsProcessorStep,
+    LaWAMPrepareBatchProcessorStep,
+    LaWAMPreSnapGripperProcessorStep,
     LaWAMQwenInputsProcessorStep,
     LaWAMResizeImagesProcessorStep,
+)
+from lerobot.policies.lawam.vlas.flowmatching_expert import (
+    ConditionalFlowMatchingConfig,
+    ConditionalFlowMatchingHead,
+    build_time_grid,
 )
 from lerobot.policies.lawam.vlas.qwen3vl import (
     freeze_qwen3vl,
@@ -48,7 +61,7 @@ from lerobot.policies.lawam.vlas.qwen3vl import (
     unfreeze_last_n_llm_layers,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import TransitionKey
+from lerobot.processor import NormalizerProcessorStep, TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -56,6 +69,7 @@ def make_config() -> LaWAMConfig:
     return LaWAMConfig(
         device="cpu",
         chunk_size=4,
+        action_horizon=4,
         n_action_steps=2,
         num_video_frames=2,
         input_features={
@@ -65,7 +79,6 @@ def make_config() -> LaWAMConfig:
         },
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
         base_vlm="dummy-qwen",
-        action_hz=20.0,
         embodiment_id=25,
         primary_image_features=["observation.images.front"],
         wrist_image_features=["observation.images.wrist"],
@@ -102,8 +115,10 @@ class _FakeNativeLaWAM(nn.Module):
             flow_cfg=SimpleNamespace(state_dim=7),
         )
         self.predict_calls = 0
+        self.last_batch = None
 
     def forward(self, batch):
+        self.last_batch = batch
         loss_flow = batch["actions"].mean() * self.weight
         loss_total = loss_flow + batch["state"].mean() * 0.0
         return {"total_loss": loss_total, "loss_flow": loss_flow}
@@ -111,6 +126,7 @@ class _FakeNativeLaWAM(nn.Module):
     def predict_action(self, batch, **kwargs):
         del kwargs
         self.predict_calls += 1
+        self.last_batch = batch
         batch_size = int(batch["input_ids"].shape[0])
         actions = torch.arange(
             batch_size * self.chunk_size * self.action_dim,
@@ -178,8 +194,53 @@ def test_factory_registers_lawam() -> None:
     assert isinstance(make_policy_config("lawam", device="cpu"), LaWAMConfig)
 
 
+def test_lawam_scheduler_matches_upstream_warmup_relative_cosine() -> None:
+    cfg = make_config()
+    scheduler_cfg = cfg.get_scheduler_preset()
+    parameter = nn.Parameter(torch.zeros(()))
+    optimizer = torch.optim.SGD([parameter], lr=cfg.optimizer_lr)
+    scheduler = scheduler_cfg.build(optimizer, num_training_steps=cfg.scheduler_decay_steps)
+
+    assert isinstance(scheduler_cfg, LaWAMCosineWithMinLRSchedulerConfig)
+    assert scheduler_cfg.type == "lawam_cosine_with_min_lr"
+
+    min_lr_ratio = cfg.scheduler_decay_lr / cfg.optimizer_lr
+    for step in (0, 1, 1_499, 1_500, 5_000, 10_000, 15_000, 20_000, 25_000, 30_000):
+        if step < cfg.scheduler_warmup_steps:
+            expected_factor = step / cfg.scheduler_warmup_steps
+        else:
+            progress = (step - cfg.scheduler_warmup_steps) / (
+                cfg.scheduler_decay_steps - cfg.scheduler_warmup_steps
+            )
+            progress = min(max(progress, 0.0), 1.0)
+            expected_factor = 0.5 * (1.0 + math.cos(math.pi * progress)) * (1.0 - min_lr_ratio) + min_lr_ratio
+        assert scheduler.lr_lambdas[0](step) == pytest.approx(expected_factor)
+
+
+def test_lawam_declares_real_fsdp_wrap_units() -> None:
+    from transformers.models.dinov3_vit import modeling_dinov3_vit
+    from transformers.models.qwen3_vl import modeling_qwen3_vl
+
+    from lerobot.policies.lawam.lam_core.core.utils import lam_decoder
+    from lerobot.policies.lawam.vlas import cross_attention_dit
+
+    wrap_classes = {
+        "Qwen3VLVisionBlock": modeling_qwen3_vl.Qwen3VLVisionBlock,
+        "Qwen3VLTextDecoderLayer": modeling_qwen3_vl.Qwen3VLTextDecoderLayer,
+        "DINOv3ViTLayer": modeling_dinov3_vit.DINOv3ViTLayer,
+        "TransformerEncoderLayer": nn.TransformerEncoderLayer,
+        "AdaLNBlock": lam_decoder.AdaLNBlock,
+        "BasicTransformerBlock": cross_attention_dit.BasicTransformerBlock,
+    }
+
+    assert set(LaWAMPolicy._fsdp_wrap_modules) == set(wrap_classes)
+    assert all(isinstance(cls, type) for cls in wrap_classes.values())
+
+
 def test_make_pre_post_processors_for_lawam() -> None:
-    preprocessor, postprocessor = make_pre_post_processors(make_config(), dataset_stats=None)
+    preprocessor, postprocessor = make_pre_post_processors(
+        make_config(), dataset_stats=None, dataset_meta=SimpleNamespace(fps=20)
+    )
     assert preprocessor.name == "policy_preprocessor"
     assert postprocessor.name == "policy_postprocessor"
 
@@ -206,7 +267,9 @@ def test_unused_state_stats_are_excluded_from_eval_processors() -> None:
     }
     cfg = make_config()
 
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=dataset_stats)
+    preprocessor, postprocessor = make_pre_post_processors(
+        cfg, dataset_stats=dataset_stats, dataset_meta=SimpleNamespace(fps=20)
+    )
     inject_fake_processor(preprocessor)
     batch = {
         "observation.images.front": torch.zeros(3, 8, 8),
@@ -242,7 +305,9 @@ def test_state_conditioned_flow_uses_standard_lerobot_state() -> None:
             "max": torch.full((7,), 2.0),
         }
     }
-    preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=dataset_stats)
+    preprocessor, _ = make_pre_post_processors(
+        cfg, dataset_stats=dataset_stats, dataset_meta=SimpleNamespace(fps=20)
+    )
     inject_fake_processor(preprocessor)
     batch = make_batch(batch_size=1)
     batch[OBS_STATE] = torch.ones(1, 7)
@@ -268,29 +333,73 @@ def test_native_checkpoint_freeze_config_is_loaded(tmp_path) -> None:
     assert freeze_config.unfreeze_lam_decoder is True
 
 
-def test_lawam_postprocessor_matches_libero_gripper_convention() -> None:
+@pytest.mark.parametrize(("dataset_open", "dataset_closed"), [(0.0, 1.0), (-1.0, 1.0)])
+def test_lawam_postprocessor_matches_libero_gripper_convention(
+    dataset_open: float, dataset_closed: float
+) -> None:
     cfg = make_config()
     cfg.clip_normalized_actions = True
     cfg.pre_snap_gripper_action = True
     cfg.binarize_gripper_action = True
-    _, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    action_min = torch.zeros(7)
+    action_min[cfg.gripper_dim] = dataset_open
+    action_max = torch.ones(7)
+    action_max[cfg.gripper_dim] = dataset_closed
+    dataset_stats = {
+        ACTION: {
+            "min": action_min,
+            "max": action_max,
+        }
+    }
+    _, postprocessor = make_pre_post_processors(
+        cfg, dataset_stats=dataset_stats, dataset_meta=SimpleNamespace(fps=20)
+    )
     action = torch.zeros(2, 7)
-    action[0, -1] = 0.0
-    action[1, -1] = 1.0
+    action[:, -1] = torch.tensor([0.0, 1.0])
 
     processed = postprocessor(action)
 
     assert processed[:, -1].tolist() == [-1.0, 1.0]
 
 
+@pytest.mark.parametrize(("dataset_open", "dataset_closed"), [(0.0, 1.0), (-1.0, 1.0)])
+def test_lawam_training_preprocessor_preserves_binary_gripper_targets(
+    dataset_open: float, dataset_closed: float
+) -> None:
+    cfg = make_config()
+    cfg.pre_snap_gripper_action = True
+    action_min = torch.zeros(7)
+    action_min[cfg.gripper_dim] = dataset_open
+    action_max = torch.ones(7)
+    action_max[cfg.gripper_dim] = dataset_closed
+    dataset_stats = {
+        ACTION: {
+            "min": action_min,
+            "max": action_max,
+        }
+    }
+    preprocessor, _ = make_pre_post_processors(
+        cfg, dataset_stats=dataset_stats, dataset_meta=SimpleNamespace(fps=20)
+    )
+    inject_fake_processor(preprocessor)
+    batch = make_batch()
+    batch[ACTION] = torch.zeros(2, 4, 7)
+    batch[ACTION][0, :, cfg.gripper_dim] = dataset_open
+    batch[ACTION][1, :, cfg.gripper_dim] = dataset_closed
+
+    processed = preprocessor(batch)
+
+    assert processed["actions"][:, :, cfg.gripper_dim].tolist() == [[0.0] * 4, [1.0] * 4]
+
+
 def test_lawam_gripper_processing_is_opt_in() -> None:
     cfg = make_config()
-    cfg.clip_normalized_actions = False
-    cfg.pre_snap_gripper_action = False
-    cfg.binarize_gripper_action = False
-    _, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    _, postprocessor = make_pre_post_processors(cfg, dataset_stats=None, dataset_meta=SimpleNamespace(fps=20))
     action = torch.tensor([[2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25]])
 
+    assert cfg.clip_normalized_actions is False
+    assert cfg.pre_snap_gripper_action is False
+    assert cfg.binarize_gripper_action is False
     assert torch.equal(postprocessor(action), action)
 
 
@@ -301,7 +410,9 @@ def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
     cfg.binarize_gripper_action = True
     cfg.gripper_dim = 3
     cfg.gripper_threshold = 0.25
-    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=None)
+    preprocessor, postprocessor = make_pre_post_processors(
+        cfg, dataset_stats=None, dataset_meta=SimpleNamespace(fps=20)
+    )
     preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
     postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
 
@@ -322,6 +433,124 @@ def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
     ]
 
 
+def test_sft_rebuilds_pretraining_processors_for_current_config(tmp_path) -> None:
+    pretrain_cfg = make_config()
+    pretrain_cfg.chunk_size = 50
+    pretrain_cfg.action_horizon = 24
+    pretrain_cfg.n_action_steps = 24
+    pretrain_preprocessor, pretrain_postprocessor = make_pre_post_processors(
+        pretrain_cfg,
+        dataset_stats=None,
+        dataset_meta=SimpleNamespace(fps=20),
+    )
+    pretrain_preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    pretrain_postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+
+    sft_cfg = make_config()
+    sft_cfg.chunk_size = 50
+    sft_cfg.action_horizon = 8
+    sft_cfg.n_action_steps = 8
+    sft_cfg.clip_normalized_actions = True
+    sft_cfg.pre_snap_gripper_action = True
+    sft_cfg.binarize_gripper_action = True
+    sft_cfg._runtime_dataset_meta = SimpleNamespace(fps=25)
+    sft_stats = {
+        ACTION: {
+            "min": torch.zeros(7),
+            "max": torch.ones(7),
+        }
+    }
+    preprocessor, postprocessor = make_pre_post_processors(
+        sft_cfg,
+        pretrained_path=str(tmp_path),
+        dataset_stats=sft_stats,
+        preprocessor_overrides={
+            "rename_observations_processor": {
+                "rename_map": {"observation.images.raw_wrist": "observation.images.wrist"}
+            }
+        },
+    )
+
+    prepare_step = next(
+        step for step in preprocessor.steps if isinstance(step, LaWAMPrepareBatchProcessorStep)
+    )
+    assert prepare_step.action_horizon == 8
+    assert prepare_step.chunk_size == 50
+    assert prepare_step.action_hz == 25.0
+    assert preprocessor.steps[0].get_config() == {
+        "rename_map": {"observation.images.raw_wrist": "observation.images.wrist"}
+    }
+    assert any(isinstance(step, LaWAMResizeImagesProcessorStep) for step in preprocessor.steps)
+    assert any(isinstance(step, LaWAMPreSnapGripperProcessorStep) for step in preprocessor.steps)
+    assert any(isinstance(step, LaWAMClipActionsProcessorStep) for step in postprocessor.steps)
+    assert any(isinstance(step, LaWAMBinarizeGripperProcessorStep) for step in postprocessor.steps)
+
+    inject_fake_processor(preprocessor)
+    batch = make_batch()
+    batch[ACTION] = torch.rand(2, 8, 7)
+    processed = preprocessor(batch)
+    policy, native_model = make_policy(sft_cfg)
+    policy(processed)
+
+    assert native_model.last_batch is not None
+    assert native_model.last_batch["actions"].shape == (2, 50, 32)
+    assert native_model.last_batch["actions_mask"][:, :8, :7].all()
+    assert not native_model.last_batch["actions_mask"][:, 8:].any()
+    assert torch.equal(native_model.last_batch["action_hz"], torch.full((2,), 25.0))
+
+
+def test_resume_loads_serialized_lawam_processors(tmp_path) -> None:
+    checkpoint_cfg = make_config()
+    checkpoint_stats = {
+        ACTION: {
+            "min": torch.zeros(7),
+            "max": torch.full((7,), 2.0),
+        }
+    }
+    checkpoint_preprocessor, checkpoint_postprocessor = make_pre_post_processors(
+        checkpoint_cfg,
+        dataset_stats=checkpoint_stats,
+        dataset_meta=SimpleNamespace(fps=20),
+    )
+    checkpoint_preprocessor.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    checkpoint_postprocessor.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+
+    resume_cfg = make_config()
+    resume_cfg.action_horizon = 2
+    resume_cfg._runtime_dataset_meta = SimpleNamespace(fps=25)
+    preprocessor, postprocessor = make_pre_post_processors(
+        resume_cfg,
+        pretrained_path=str(tmp_path),
+        dataset_stats=None,
+        preprocessor_overrides={
+            "rename_observations_processor": {
+                "rename_map": {"observation.images.raw_wrist": "observation.images.wrist"}
+            }
+        },
+    )
+
+    normalizer = next(step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep))
+    prepare_step = next(
+        step for step in preprocessor.steps if isinstance(step, LaWAMPrepareBatchProcessorStep)
+    )
+    assert torch.equal(torch.as_tensor(normalizer.stats[ACTION]["max"]), torch.full((7,), 2.0))
+    assert prepare_step.action_horizon == checkpoint_cfg.action_horizon
+    assert prepare_step.action_hz == 20.0
+    assert preprocessor.steps[0].get_config() == {
+        "rename_map": {"observation.images.raw_wrist": "observation.images.wrist"}
+    }
+    assert torch.equal(postprocessor(torch.zeros(1, 7)), torch.ones(1, 7))
+
+
+def test_processor_frequency_is_used_without_dataset_metadata() -> None:
+    policy, native_model = make_policy()
+
+    policy(make_prepared_batch())
+
+    assert native_model.last_batch is not None
+    assert torch.equal(native_model.last_batch["action_hz"], torch.full((2,), 20.0))
+
+
 def test_native_config_uses_padded_lawam_action_space() -> None:
     cfg = make_config()
     policy_cfg = _build_native_policy_config(cfg)
@@ -330,6 +559,7 @@ def test_native_config_uses_padded_lawam_action_space() -> None:
     assert policy_cfg.flow_cfg.action_dim == 32
     assert policy_cfg.flow_cfg.state_dim == 32
     assert policy_cfg.action_horizon == 4
+    assert policy_cfg.effective_action_horizon == 4
 
 
 def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
@@ -367,33 +597,65 @@ def test_lam_constructs_without_checkpoint_or_pretrained_dino() -> None:
     assert all(not parameter.requires_grad for parameter in loaded_model.parameters())
 
 
-def test_effective_action_horizon_respects_control_frequency() -> None:
+def test_action_horizon_is_independent_of_control_frequency() -> None:
     cfg = make_config()
     cfg.chunk_size = 50
-    cfg.flow_horizon_sec = 1.2
-    assert cfg.effective_action_horizon == 24
+    cfg.action_horizon = 8
+
+    assert cfg.action_delta_indices == list(range(8))
+    policy_cfg = _build_native_policy_config(cfg)
+    assert policy_cfg.action_horizon == 50
+    assert policy_cfg.effective_action_horizon == 8
 
 
-def test_action_hz_is_derived_from_dataset_metadata() -> None:
-    cfg = make_config()
-    cfg.action_hz = None
-    cfg.n_action_steps = None
+def test_sft_cli_overrides_pretraining_action_horizon(tmp_path) -> None:
+    pretrain_cfg = make_config()
+    pretrain_cfg.chunk_size = 50
+    pretrain_cfg.action_horizon = 24
+    pretrain_cfg.n_action_steps = 24
+    pretrain_cfg.save_pretrained(tmp_path)
 
-    policy = LaWAMPolicy(
-        cfg,
-        dataset_meta=SimpleNamespace(fps=25),
-        native_model=_FakeNativeLaWAM(),
+    sft_cfg = LaWAMConfig.from_pretrained(
+        tmp_path,
+        cli_overrides=[
+            "--action_horizon=8",
+            "--n_action_steps=8",
+            "--clip_normalized_actions=true",
+            "--pre_snap_gripper_action=true",
+            "--binarize_gripper_action=true",
+        ],
     )
 
-    assert policy.config.action_hz == 25.0
-    assert policy.config.n_action_steps == 4
+    assert sft_cfg.chunk_size == 50
+    assert sft_cfg.action_horizon == 8
+    assert sft_cfg.n_action_steps == 8
+    assert sft_cfg.clip_normalized_actions is True
+    assert sft_cfg.pre_snap_gripper_action is True
+    assert sft_cfg.binarize_gripper_action is True
 
 
-def test_dataset_sampling_uses_the_derived_action_horizon() -> None:
+def test_processor_action_hz_is_derived_from_dataset_metadata() -> None:
+    preprocessor, _ = make_pre_post_processors(
+        make_config(), dataset_stats=None, dataset_meta=SimpleNamespace(fps=25)
+    )
+    prepare_step = next(
+        step for step in preprocessor.steps if isinstance(step, LaWAMPrepareBatchProcessorStep)
+    )
+
+    assert prepare_step.action_hz == 25.0
+    assert not hasattr(make_config(), "action_hz")
+
+
+def test_natural_time_grid_uses_dataset_frequency() -> None:
+    grid = build_time_grid(hz=torch.tensor([20.0, 25.0]), seq_len=3)
+
+    assert torch.allclose(grid, torch.tensor([[0.0, 0.05, 0.1], [0.0, 0.04, 0.08]]))
+
+
+def test_dataset_sampling_uses_the_configured_action_horizon() -> None:
     cfg = make_config()
-    cfg.action_hz = None
     cfg.chunk_size = 50
-    cfg.n_action_steps = None
+    cfg.action_horizon = 10
     dataset_meta = SimpleNamespace(
         fps=25,
         features={ACTION: {}, "observation.images.front": {}},
@@ -401,16 +663,58 @@ def test_dataset_sampling_uses_the_derived_action_horizon() -> None:
 
     delta_timestamps = resolve_delta_timestamps(cfg, dataset_meta)
 
-    assert cfg.action_hz == 25.0
-    assert cfg.n_action_steps == 10
     assert delta_timestamps is not None
     assert len(delta_timestamps[ACTION]) == 10
     assert delta_timestamps[ACTION][-1] == pytest.approx(9 / 25)
-    assert delta_timestamps["observation.images.front"] == pytest.approx([0.0, 1 / 25])
+    assert delta_timestamps["observation.images.front"] == pytest.approx([0.0, 9 / 25])
+
+
+def test_flow_uses_padded_horizon_and_returns_only_effective_actions(monkeypatch) -> None:
+    flow = ConditionalFlowMatchingHead(
+        ConditionalFlowMatchingConfig(
+            action_dim=4,
+            hidden_dim=8,
+            num_layers=2,
+            attention_heads=2,
+            num_inference_steps=1,
+            vlm_dim=8,
+            vision_dim=8,
+            num_vision_tokens=2,
+            use_state=False,
+            num_embodiments=32,
+            interleave_self_attention=True,
+            use_alternate_vldit=False,
+        )
+    )
+    flow.action_horizon = 5
+    flow.effective_action_horizon = 2
+    sampled_shapes = []
+
+    def sample_noise(shape, device, dtype):
+        sampled_shapes.append(shape)
+        return torch.zeros(shape, device=device, dtype=dtype)
+
+    monkeypatch.setattr(flow, "sample_noise", sample_noise)
+    actions = flow.sample_actions_cfg(
+        h_t=torch.zeros(2, 2, 8),
+        h_t1_star=torch.zeros(2, 2, 8),
+        h_vlm=torch.zeros(2, 3, 8),
+        state=torch.zeros(2, 8),
+        state_mask=torch.zeros(2, 8, dtype=torch.bool),
+        action_hz=torch.full((2,), 20.0),
+        embodiment_id=torch.full((2,), 25, dtype=torch.long),
+        attention_mask=torch.ones(2, 3, dtype=torch.bool),
+    )
+
+    assert sampled_shapes == [(2, 5, 4)]
+    assert actions.shape == (2, 2, 4)
+    assert torch.isfinite(actions).all()
 
 
 def test_preprocessor_builds_complete_resized_training_batch() -> None:
-    preprocessor, _ = make_pre_post_processors(make_config(), dataset_stats=None)
+    preprocessor, _ = make_pre_post_processors(
+        make_config(), dataset_stats=None, dataset_meta=SimpleNamespace(fps=20)
+    )
     prepare_step = inject_fake_processor(preprocessor)
     raw_batch = {
         "observation.images.front": torch.rand(1, 2, 3, 480, 640),
@@ -445,13 +749,9 @@ def test_lawam_resize_processor_supports_current_and_temporal_images(shape: tupl
     assert torch.isfinite(output).all()
 
 
-def test_action_steps_cannot_exceed_flow_horizon() -> None:
-    cfg = make_config()
-    cfg.chunk_size = 50
-    cfg.n_action_steps = 9
-
-    with pytest.raises(ValueError, match="cannot exceed the flow horizon"):
-        make_policy(cfg)
+def test_action_steps_cannot_exceed_action_horizon() -> None:
+    with pytest.raises(ValueError, match="n_action_steps.*action_horizon"):
+        LaWAMConfig(chunk_size=50, action_horizon=8, n_action_steps=9)
 
 
 def test_lam_modal_mask_allows_query_and_same_modality_attention() -> None:
@@ -569,7 +869,7 @@ def test_primary_image_feature_override(primary_features: list[str] | None) -> N
     cfg.primary_image_features = primary_features
     if primary_features is not None:
         cfg.wrist_image_features = []
-    preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=None)
+    preprocessor, _ = make_pre_post_processors(cfg, dataset_stats=None, dataset_meta=SimpleNamespace(fps=20))
     prepare_step = inject_fake_processor(preprocessor)
     preprocessor(make_batch(batch_size=1))
 
@@ -593,7 +893,9 @@ def test_multiple_cameras_require_explicit_roles() -> None:
 
 
 def test_preprocessor_keeps_inference_inputs_as_tensors() -> None:
-    preprocessor, _ = make_pre_post_processors(make_config(), dataset_stats=None)
+    preprocessor, _ = make_pre_post_processors(
+        make_config(), dataset_stats=None, dataset_meta=SimpleNamespace(fps=20)
+    )
     prepare_step = inject_fake_processor(preprocessor)
     batch = make_batch(batch_size=1)
     batch.pop(ACTION)

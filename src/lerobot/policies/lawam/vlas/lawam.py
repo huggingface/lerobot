@@ -45,8 +45,9 @@ class LatentWorldPolicyConfig:
     # Flow head config
     flow_cfg: ConditionalFlowMatchingConfig = field(default_factory=ConditionalFlowMatchingConfig)
 
-    # Action chunk (Qwen-compatible schema)
-    action_horizon: int = 8
+    # Flow operates on the padded horizon and returns only the effective horizon.
+    action_horizon: int = 50
+    effective_action_horizon: int = 8
 
     # Model architecture
     lam_config: dict[str, Any] = field(default_factory=dict)
@@ -319,6 +320,7 @@ class LatentWorldPolicyBackend(nn.Module):
         # 5) Flow head.
         self.flow = ConditionalFlowMatchingHead(config=self.model_cfg.flow_cfg)
         self.flow.action_horizon = int(self.model_cfg.action_horizon)
+        self.flow.effective_action_horizon = int(self.model_cfg.effective_action_horizon)
         self.sync_training_modes(mode=self.training)
 
     def _inject_queries(

@@ -16,15 +16,49 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from huggingface_hub.errors import HFValidationError
 from huggingface_hub.utils import validate_repo_id
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.optim.schedulers import LRSchedulerConfig
+
+
+@LRSchedulerConfig.register_subclass("lawam_cosine_with_min_lr")
+@dataclass
+class LaWAMCosineWithMinLRSchedulerConfig(LRSchedulerConfig):
+    """Linear warmup followed by the cosine schedule used by upstream LaWAM."""
+
+    num_warmup_steps: int
+    num_decay_steps: int
+    peak_lr: float
+    decay_lr: float
+
+    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        del num_training_steps
+
+        def lr_lambda(current_step: int) -> float:
+            if current_step < self.num_warmup_steps:
+                return current_step / max(1, self.num_warmup_steps)
+
+            # LeRobot's shared PI-style scheduler uses the absolute
+            # `current_step / num_decay_steps` after warmup. Upstream LaWAM
+            # instead starts cosine progress at the end of warmup.
+            progress = (current_step - self.num_warmup_steps) / max(
+                1, self.num_decay_steps - self.num_warmup_steps
+            )
+            progress = min(max(progress, 0.0), 1.0)
+            min_lr_ratio = self.decay_lr / self.peak_lr
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return cosine * (1.0 - min_lr_ratio) + min_lr_ratio
+
+        return LambdaLR(optimizer, lr_lambda, -1)
 
 
 @PreTrainedConfig.register_subclass("lawam")
@@ -38,6 +72,7 @@ class LaWAMConfig(PreTrainedConfig):
 
     n_obs_steps: int = 1
     chunk_size: int = 50
+    action_horizon: int = 8
     n_action_steps: int | None = None
     num_video_frames: int = 2
 
@@ -79,7 +114,6 @@ class LaWAMConfig(PreTrainedConfig):
     wrist_image_features: list[str] | None = None
     lam_image_feature: str | None = None
     default_task: str = "Execute the robot action."
-    action_hz: float | None = None
     embodiment_id: int = 25
 
     latent_action_placeholder_token: str = "<ACT_PH>"
@@ -103,7 +137,6 @@ class LaWAMConfig(PreTrainedConfig):
     flow_num_target_vision_tokens: int = -1
     flow_use_state: bool = False
     flow_num_embodiments: int = 32
-    flow_horizon_sec: float = 0.4
     flow_cfg_drop_prob: float = 0.0
     flow_cfg_guidance_scale: float = 1.0
     flow_num_inference_steps: int = 10
@@ -137,7 +170,7 @@ class LaWAMConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1e-8
     optimizer_grad_clip_norm: float = 1.0
     scheduler_warmup_steps: int = 1_500
-    scheduler_decay_steps: int = 30_000
+    scheduler_decay_steps: int = 25_000
     scheduler_decay_lr: float = 5e-7
 
     def __post_init__(self) -> None:
@@ -147,57 +180,14 @@ class LaWAMConfig(PreTrainedConfig):
             validate_repo_id(self.base_vlm)
         except HFValidationError as exc:
             raise ValueError("`base_vlm` must be a portable Hugging Face model ID.") from exc
-        if self.n_action_steps is not None and self.n_action_steps > self.chunk_size:
-            raise ValueError("`n_action_steps` must be <= `chunk_size`.")
+        if not 1 <= self.action_horizon <= self.chunk_size:
+            raise ValueError("`action_horizon` must be in [1, chunk_size].")
+        if self.n_action_steps is None:
+            self.n_action_steps = self.action_horizon
+        elif not 1 <= self.n_action_steps <= self.action_horizon:
+            raise ValueError("`n_action_steps` must be in [1, action_horizon].")
         if self.num_video_frames < 1:
             raise ValueError("`num_video_frames` must be >= 1.")
-        if self.action_hz is not None and self.action_hz <= 0:
-            raise ValueError("`action_hz` must be > 0.")
-        if self.flow_horizon_sec <= 0:
-            raise ValueError("`flow_horizon_sec` must be > 0.")
-
-    def resolve_dataset_metadata(self, dataset_meta) -> None:
-        """Resolve action frequency and horizon from dataset metadata."""
-        if self.action_hz is None:
-            dataset_fps = getattr(dataset_meta, "fps", None)
-            if dataset_fps is None:
-                raise ValueError(
-                    "LaWAM requires `policy.action_hz` when dataset metadata is unavailable. "
-                    "Training resolves it automatically from the dataset FPS."
-                )
-            self.action_hz = float(dataset_fps)
-
-        effective_horizon = self.effective_action_horizon
-        if self.n_action_steps is None:
-            self.n_action_steps = effective_horizon
-        elif self.n_action_steps > effective_horizon:
-            raise ValueError(
-                "`n_action_steps` cannot exceed the flow horizon: "
-                f"got {self.n_action_steps}, but floor(flow_horizon_sec * action_hz) "
-                f"limits this policy to {effective_horizon} steps."
-            )
-
-    def resolve_runtime_config(self, dataset_meta=None) -> None:
-        """Resolve settings required before constructing the policy runtime."""
-        if self.action_hz is None and dataset_meta is None:
-            raise ValueError(
-                "LaWAM requires `policy.action_hz` when dataset metadata is unavailable. "
-                "Training resolves it automatically from the dataset FPS."
-            )
-        self.resolve_dataset_metadata(dataset_meta)
-
-    @property
-    def effective_action_horizon(self) -> int:
-        """Return the action count supported by the configured time horizon."""
-        if self.action_hz is None:
-            raise ValueError("`action_hz` must be resolved before computing the action horizon.")
-        horizon = min(self.chunk_size, int(self.flow_horizon_sec * self.action_hz))
-        if horizon < 1:
-            raise ValueError(
-                "`flow_horizon_sec * action_hz` must cover at least one action step, "
-                f"got {self.flow_horizon_sec} * {self.action_hz}."
-            )
-        return horizon
 
     def validate_features(self) -> None:
         """Ensure the policy has the visual inputs and action output it requires."""
@@ -260,9 +250,9 @@ class LaWAMConfig(PreTrainedConfig):
             grad_clip_norm=self.optimizer_grad_clip_norm,
         )
 
-    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
-        """Build the default cosine decay scheduler configuration for LaWAM."""
-        return CosineDecayWithWarmupSchedulerConfig(
+    def get_scheduler_preset(self) -> LaWAMCosineWithMinLRSchedulerConfig:
+        """Build the upstream-compatible LaWAM learning-rate schedule."""
+        return LaWAMCosineWithMinLRSchedulerConfig(
             peak_lr=self.optimizer_lr,
             decay_lr=self.scheduler_decay_lr,
             num_warmup_steps=self.scheduler_warmup_steps,
@@ -277,7 +267,13 @@ class LaWAMConfig(PreTrainedConfig):
     @property
     def image_observation_delta_indices(self) -> list[int]:
         """Return current and future frames required by the LAM teacher."""
-        return list(range(self.num_video_frames))
+        if self.num_video_frames == 1:
+            return [0]
+        last_action_index = self.action_horizon - 1
+        return [
+            round(frame_idx * last_action_index / (self.num_video_frames - 1))
+            for frame_idx in range(self.num_video_frames)
+        ]
 
     @property
     def state_observation_delta_indices(self) -> list[int]:
@@ -286,9 +282,8 @@ class LaWAMConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list[int]:
-        """Return action indices covering the effective prediction horizon."""
-        horizon = self.chunk_size if self.action_hz is None else self.effective_action_horizon
-        return list(range(horizon))
+        """Return action indices covering the configured prediction horizon."""
+        return list(range(self.action_horizon))
 
     @property
     def reward_delta_indices(self) -> None:

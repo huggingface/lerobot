@@ -116,7 +116,6 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
         vision_dim=int(config.flow_vision_dim),
         num_vision_tokens=int(config.flow_num_vision_tokens),
         num_target_vision_tokens=int(config.flow_num_target_vision_tokens),
-        horizon_sec=float(config.flow_horizon_sec),
         use_state=bool(config.flow_use_state),
         state_dim=int(config.flow_state_dim),
         num_embodiments=int(config.flow_num_embodiments),
@@ -134,7 +133,8 @@ def _build_native_policy_config(config: LaWAMConfig) -> LatentWorldPolicyConfig:
         use_action_positional_embeddings=bool(config.flow_use_action_positional_embeddings),
     )
     policy_cfg = LatentWorldPolicyConfig(flow_cfg=flow_cfg)
-    policy_cfg.action_horizon = config.effective_action_horizon
+    policy_cfg.action_horizon = config.chunk_size
+    policy_cfg.effective_action_horizon = config.action_horizon
     policy_cfg.lam_config = _build_lam_config(config)
     policy_cfg.latent_action_placeholder_token = str(config.latent_action_placeholder_token)
     policy_cfg.perceptual_weight = float(config.perceptual_weight)
@@ -177,11 +177,19 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     config_class = LaWAMConfig
     name = "lawam"
+    _fsdp_wrap_modules = [
+        "Qwen3VLVisionBlock",
+        "Qwen3VLTextDecoderLayer",
+        "DINOv3ViTLayer",
+        "TransformerEncoderLayer",
+        "AdaLNBlock",
+        "BasicTransformerBlock",
+    ]
 
     def __init__(self, config: LaWAMConfig, **kwargs) -> None:
         _require_lawam_packages()
         super().__init__(config)
-        config.resolve_runtime_config(kwargs.pop("dataset_meta", None))
+        kwargs.pop("dataset_meta", None)
         config.validate_features()
         self.config = config
 
@@ -255,7 +263,7 @@ class LaWAMPolicy(PreTrainedPolicy):
                 f"LaWAM produced {actions_tensor.shape[-1]} action dims, but LeRobot expects {action_dim}."
             )
         actions_tensor = actions_tensor[..., :action_dim]
-        return actions_tensor[:, : self.config.effective_action_horizon]
+        return actions_tensor[:, : self.config.action_horizon]
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
