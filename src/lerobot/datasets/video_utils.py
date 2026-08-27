@@ -281,9 +281,27 @@ class VideoDecoderCache:
         self.max_size: int | None = max_size  # type: ignore[assignment]
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = Lock()
+        self._owner_pid = os.getpid()
+
+    def _drop_inherited_entries(self) -> None:
+        """Drop entries inherited across a ``fork``.
+
+        ``DataLoader`` workers fork the parent, so a decoder built in the parent
+        reaches the child sharing the parent's file offset. Both processes then
+        seek the same handle and torchcodec fails with "Could not push packet to
+        decoder". The entries are dropped rather than closed: the handles still
+        belong to the parent, which keeps using them.
+
+        Callers must hold ``self._lock``.
+        """
+        pid = os.getpid()
+        if pid != self._owner_pid:
+            self._cache = OrderedDict()
+            self._owner_pid = pid
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
+            self._drop_inherited_entries()
             return str(video_path) in self._cache
 
     def get_decoder(self, video_path: str):
@@ -299,6 +317,7 @@ class VideoDecoderCache:
         video_path = str(video_path)
 
         with self._lock:
+            self._drop_inherited_entries()
             entry = self._cache.get(video_path)
             if entry is not None:
                 self._cache.move_to_end(video_path)
@@ -334,6 +353,7 @@ class VideoDecoderCache:
     def size(self) -> int:
         """Return the number of cached decoders."""
         with self._lock:
+            self._drop_inherited_entries()
             return len(self._cache)
 
 
