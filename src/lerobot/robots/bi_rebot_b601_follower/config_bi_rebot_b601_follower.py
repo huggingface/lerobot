@@ -25,7 +25,11 @@ from ..rebot_b601_follower import RebotB601FollowerConfig
 @RobotConfig.register_subclass("bi_rebot_b601_follower")
 @dataclass
 class BiRebotB601FollowerConfig(RobotConfig):
-    """Configuration class for the bimanual reBot B601-DM follower robot."""
+    """Configuration class for the bimanual reBot B601 follower robot.
+
+    Both arms must use the same motor family. Mixed DM/RS pairs are intentionally
+    rejected until there is a concrete hardware use case and validation matrix.
+    """
 
     left_arm_config: RebotB601FollowerConfig
     right_arm_config: RebotB601FollowerConfig
@@ -34,3 +38,21 @@ class BiRebotB601FollowerConfig(RobotConfig):
     # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
     # `{left,right}_arm_config.cameras`) are prefixed.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        left = self.left_arm_config
+        right = self.right_arm_config
+        if left.motor_family is not right.motor_family:
+            raise ValueError("Mixed DM/RS bimanual reBot configurations are not supported.")
+
+        same_channel = left.can_adapter == right.can_adapter and left.port == right.port
+        if same_channel:
+            left_send_ids = {send_id for send_id, _ in left.motor_can_ids.values()}
+            right_send_ids = {send_id for send_id, _ in right.motor_can_ids.values()}
+            overlap = sorted(left_send_ids & right_send_ids)
+            if overlap:
+                rendered = ", ".join(f"0x{can_id:X}" for can_id in overlap)
+                raise ValueError(
+                    f"Bimanual reBot arms on the same CAN channel have overlapping send IDs: {rendered}."
+                )
