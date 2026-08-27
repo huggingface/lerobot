@@ -303,6 +303,66 @@ def test_iter_raises_on_nested_generator_error(tmp_path, lerobot_dataset_factory
 
 
 @pytest.mark.parametrize(
+    ("delta_indices", "expected_timestamps"),
+    [
+        ({"action": [0, 1]}, {"camera_a": [5.2], "camera_b": [1.2]}),
+        (
+            {"camera_a": [-1, 0, 1], "camera_b": [-1, 0, 1]},
+            {"camera_a": [5.1, 5.2, 5.3], "camera_b": [1.1, 1.2, 1.3]},
+        ),
+    ],
+)
+def test_make_frame_uses_timestamps_relative_to_each_video_file(delta_indices, expected_timestamps):
+    """Video timestamps restart for every file and can differ between camera keys."""
+    streaming_ds = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
+    streaming_ds.meta = SimpleNamespace(
+        fps=10,
+        video_keys=["camera_a", "camera_b"],
+        episodes={
+            7: {
+                "videos/camera_a/from_timestamp": 5.0,
+                "videos/camera_a/to_timestamp": 6.0,
+                "videos/camera_b/from_timestamp": 1.0,
+                "videos/camera_b/to_timestamp": 2.0,
+            }
+        },
+        tasks=SimpleNamespace(iloc=[SimpleNamespace(name="Dummy task")]),
+    )
+    streaming_ds.delta_indices = delta_indices
+    streaming_ds.delta_timestamps = {
+        key: [index / streaming_ds.fps for index in indices] for key, indices in delta_indices.items()
+    }
+    streaming_ds.image_transforms = None
+    streaming_ds._image_depth_units = {}
+    streaming_ds._depth_output_unit = "m"
+    streaming_ds._get_delta_frames = Mock(return_value=({}, {}))
+    streaming_ds._get_video_frame_padding_mask = Mock(return_value={})
+    streaming_ds._query_videos = Mock(return_value={"camera_a": torch.zeros(1), "camera_b": torch.zeros(1)})
+
+    item = {
+        "episode_index": 7,
+        "frame_index": 2,
+        "index": 1000,
+        "timestamp": 0.2,
+        "task_index": 0,
+    }
+    iterator = streaming_dataset_module.Backtrackable([item], history=3, lookahead=3)
+
+    next(streaming_ds.make_frame(iterator))
+
+    query_timestamps = streaming_ds._query_videos.call_args.args[0]
+    for key, expected in expected_timestamps.items():
+        assert query_timestamps[key] == pytest.approx(expected)
+
+    original_timestamps = streaming_ds._get_video_frame_padding_mask.call_args.args[2]
+    for key in streaming_ds.meta.video_keys:
+        if key in delta_indices:
+            assert original_timestamps[key] == pytest.approx(expected_timestamps[key])
+        else:
+            assert key not in original_timestamps
+
+
+@pytest.mark.parametrize(
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
