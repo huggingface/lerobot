@@ -299,10 +299,17 @@ def test_dm_does_not_flip_joint_direction():
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-def test_missing_wrist_yaw_is_held_at_zero(family):
-    with _connected(family) as robot:
-        returned = robot.send_action({"shoulder_pan.pos": 0.0})
-        assert returned["wrist_yaw.pos"] == 0.0
+def test_partial_action_does_not_command_unspecified_joints(family):
+    positions = [0.0, 0.0, 0.0, 0.0, -2.393, 0.0, 0.0]
+    with _connected(family, positions_deg=positions, max_relative_target=2.0) as robot:
+        returned = robot.send_action({"shoulder_pan.pos": 1.0})
+
+        assert returned == {"shoulder_pan.pos": 1.0}
+        robot.motors["shoulder_pan"].send_mit.assert_called_once()
+        for motor_name in set(robot.motor_names) - {"shoulder_pan"}:
+            robot.motors[motor_name].send_mit.assert_not_called()
+            robot.motors[motor_name].send_pos_vel.assert_not_called()
+            robot.motors[motor_name].send_force_pos.assert_not_called()
 
 
 def test_dm_gripper_defaults_to_force_pos():
