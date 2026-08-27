@@ -304,6 +304,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.reader: BaseDatasetReader | None = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
         self.image_transforms = image_transforms
         if not is_default_format:
+            if video_backend is not None:
+                logger.warning(
+                    f"video_backend={video_backend!r} is ignored for storage_format="
+                    f"{self.meta.storage_format!r}: its reader uses its own video decoding."
+                )
             self.episodes = self.reader.episodes
             self.writer = None
             self._is_finalized = False

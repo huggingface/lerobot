@@ -402,15 +402,15 @@ class LanceDatasetReader(BaseDatasetReader):
             if hasattr(array, "combine_chunks"):
                 array = array.combine_chunks()
             if key in self._language_keys:
-                rows = array.to_pylist()
-                for row in rows:
+                language_rows = array.to_pylist()
+                for row in language_rows:
                     for msg in row or ():
                         if msg.get("tool_calls"):
                             msg["tool_calls"] = [
                                 json.loads(call) if isinstance(call, str) else call
                                 for call in msg["tool_calls"]
                             ]
-                columns[key] = rows
+                columns[key] = language_rows
             elif hasattr(array, "flatten") and hasattr(array.type, "value_type"):
                 values = array.flatten().to_numpy(zero_copy_only=False)
                 columns[key] = values.reshape(len(array), -1)

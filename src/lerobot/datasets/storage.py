@@ -94,6 +94,8 @@ def load_dataset_metadata(
     root: str | Path | None = None,
     revision: str | None = None,
     repo_type: str = "dataset",
+    token: str | bool | None = None,
+    force_cache_sync: bool = False,
 ) -> LeRobotDatasetMetadata:
     """Load dataset metadata wherever the dataset lives.
 
@@ -103,5 +105,13 @@ def load_dataset_metadata(
     from .dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415  (import cycle)
 
     if root is not None and is_remote_uri(root):
-        root = localize_remote_root(repo_id, root, revision)
-    return LeRobotDatasetMetadata(repo_id, root=root, revision=revision, repo_type=repo_type)
+        root = localize_remote_root(repo_id, root, revision, token=token, force_cache_sync=force_cache_sync)
+        force_cache_sync = False  # the localized meta/ is already fresh
+    return LeRobotDatasetMetadata(
+        repo_id,
+        root=root,
+        revision=revision,
+        repo_type=repo_type,
+        token=token,
+        force_cache_sync=force_cache_sync,
+    )
