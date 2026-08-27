@@ -286,42 +286,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "Buckets, use repo_type='bucket' with dataset.streaming=true."
             )
 
-        self.reader: BaseDatasetReader | None
-        if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
-            # Non-default formats delegate all data access to their own
-            # reader; the parquet/mp4 DatasetReader below does not apply.
-            self.reader = make_dataset_reader(
-                self.meta.storage_format,
-                meta=self.meta,
-                root=self._storage_root or root,
-                episodes=episodes,
-                delta_timestamps=delta_timestamps,
-                image_transforms=image_transforms,
-                tolerance_s=tolerance_s,
-                revision=revision,
-                return_uint8=return_uint8,
-                depth_output_unit=depth_output_unit,
-                token=token,
-            )
-            self.image_transforms = image_transforms
+        is_default_format = self.meta.storage_format == DEFAULT_STORAGE_FORMAT
+        reader_kwargs = {
+            "meta": self.meta,
+            "episodes": episodes,
+            "delta_timestamps": delta_timestamps,
+            "image_transforms": image_transforms,
+            "tolerance_s": tolerance_s,
+            "return_uint8": return_uint8,
+            "depth_output_unit": depth_output_unit,
+        }
+        if is_default_format:
+            reader_kwargs.update(root=self.root, video_backend=self._video_backend)
+        else:
+            # non-default formats read the data in place at its root
+            reader_kwargs.update(root=self._storage_root or root, revision=revision, token=token)
+        self.reader: BaseDatasetReader | None = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
+        self.image_transforms = image_transforms
+        if not is_default_format:
             self.episodes = self.reader.episodes
             self.writer = None
             self._is_finalized = False
             return
-
-        # Create reader (hf_dataset loaded below)
-        self.reader = DatasetReader(
-            meta=self.meta,
-            root=self.root,
-            episodes=episodes,
-            tolerance_s=tolerance_s,
-            video_backend=self._video_backend,
-            delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            return_uint8=self._return_uint8,
-            depth_output_unit=self._depth_output_unit,
-        )
-        self.image_transforms = image_transforms
 
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
@@ -377,6 +363,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"Use LeRobotDataset.create() for new recording or "
                 f"LeRobotDataset.resume() for resume recording."
             )
+        if self._is_finalized:
+            raise RuntimeError(
+                f"Cannot call '{method_name}()' after finalize(). "
+                f"Use LeRobotDataset.resume() to append more episodes."
+            )
 
     # ── Reader guard ──────────────────────────────────────────────────
 
@@ -387,6 +378,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         exists for the default format only — non-default formats construct
         their reader in ``__init__``.
         """
+        if self.writer is not None and not self._is_finalized:
+            raise RuntimeError(
+                "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
+            )
         if self.reader is None:
             self.meta.ensure_readable()
             self.reader = DatasetReader(
@@ -573,20 +568,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
             RuntimeError: If the dataset is currently being recorded and
                 :meth:`finalize` has not been called yet.
         """
-        if self.writer is not None and not self._is_finalized:
-            raise RuntimeError(
-                "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
-            )
         if isinstance(idx, slice):
             return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
 
         return self._ensure_reader().get_item(idx)
 
     def __getitems__(self, indices: list[int]) -> list[dict]:
-        if self.writer is not None and not self._is_finalized:
-            raise RuntimeError(
-                "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
-            )
         return self._ensure_reader().get_items(list(indices))
 
     def select_columns(self, column_names: str | list[str]):

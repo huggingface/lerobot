@@ -20,10 +20,17 @@ import json
 import pickle
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("lancedb")
+pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test fixtures")
+
+import lancedb
+import pyarrow as pa
+import pyarrow.parquet as pq
+from lerobot_lancedb.convert import convert
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
@@ -47,9 +54,6 @@ from tests.fixtures.constants import (
     DUMMY_CAMERA_FEATURES_WITH_DEPTH,
     DUMMY_REPO_ID,
 )
-
-lancedb = pytest.importorskip("lancedb")
-convert = pytest.importorskip("lerobot_lancedb.convert").convert
 
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
