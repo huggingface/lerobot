@@ -234,7 +234,7 @@ def is_calibrated(self) -> bool:
 The goal of the calibration is twofold:
 
 - Know the physical range of motion of each motors in order to only send commands within this range.
-- Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
+- Normalize raw motor positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete values dependent on the specific motor used that will not replicate elsewhere.
 
 It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
 
