@@ -19,10 +19,15 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
+from pathlib import Path
 from queue import Queue
+from types import SimpleNamespace
 
+import draccus
+import numpy as np
 import pytest
 import torch
 
@@ -317,6 +322,167 @@ def test_threshold_observation_is_forced_through_server_filter(monkeypatch, robo
     assert len(queued_observations) == 1
     assert queued_observations[0].must_go is True
     assert robot_client.must_go.is_set() is False
+
+
+def test_recording_config_is_cli_configurable(tmp_path):
+    import tests.mocks.mock_robot  # noqa: F401 - registers the mock robot config
+    from lerobot.async_inference.configs import RobotClientConfig
+
+    config = draccus.parse(
+        RobotClientConfig,
+        args=[
+            "--robot.type=mock_robot",
+            "--policy_type=test",
+            "--pretrained_name_or_path=test",
+            "--actions_per_chunk=20",
+            "--recording.enabled=true",
+            "--recording.repo_id=user/async_camera_recording",
+            f"--recording.root={tmp_path}",
+            "--recording.streaming_encoding=true",
+            "--recording.rgb_encoder.vcodec=libsvtav1",
+        ],
+    )
+
+    assert config.recording is not None
+    assert config.recording.enabled is True
+    assert config.recording.repo_id == "user/async_camera_recording"
+    assert Path(config.recording.root) == tmp_path
+    assert config.recording.streaming_encoding is True
+    assert config.recording.rgb_encoder.vcodec == "libsvtav1"
+
+
+def test_async_client_cli_help_builds_draccus_parser(monkeypatch, capsys):
+    from lerobot.async_inference.robot_client import async_client
+
+    monkeypatch.setattr(sys, "argv", ["robot_client", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        async_client()
+
+    assert exc_info.value.code == 0
+    assert "--recording.enabled" in capsys.readouterr().out
+
+
+def test_recording_config_requires_repo_id_and_resume_root():
+    from lerobot.async_inference.configs import ObservationRecordingConfig
+
+    with pytest.raises(ValueError, match="recording.repo_id"):
+        ObservationRecordingConfig(enabled=True)
+
+    with pytest.raises(ValueError, match="recording.root"):
+        ObservationRecordingConfig(enabled=True, repo_id="user/dataset", resume=True)
+
+
+def test_camera_recording_create_add_frame_and_finalize(monkeypatch, tmp_path, robot_client):
+    from lerobot.async_inference.configs import RecordingRGBEncoderConfig
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    created_kwargs = {}
+
+    class FakeDataset:
+        root = tmp_path
+
+        def __init__(self):
+            self.frames = []
+            self.saved = False
+            self.finalized = False
+
+        def add_frame(self, frame):
+            self.frames.append(frame.copy())
+
+        def has_pending_frames(self):
+            return bool(self.frames)
+
+        def save_episode(self):
+            self.saved = True
+
+        def finalize(self):
+            self.finalized = True
+
+    fake_dataset = FakeDataset()
+
+    def fake_create(**kwargs):
+        created_kwargs.update(kwargs)
+        return fake_dataset
+
+    monkeypatch.setattr(LeRobotDataset, "create", staticmethod(fake_create))
+    robot_client.robot.observation_features = {
+        **robot_client.robot.observation_features,
+        "top": (8, 12, 3),
+    }
+    robot_client.config.recording = SimpleNamespace(
+        enabled=True,
+        repo_id="user/async_camera_recording",
+        root=tmp_path,
+        resume=False,
+        streaming_encoding=True,
+        encoder_queue_maxsize=30,
+        encoder_threads=None,
+        num_image_writer_processes=0,
+        num_image_writer_threads_per_camera=4,
+        rgb_encoder=RecordingRGBEncoderConfig(vcodec="libsvtav1"),
+    )
+
+    robot_client._start_observation_recording()
+    image = np.zeros((8, 12, 3), dtype=np.uint8)
+    robot_client._record_observation({"top": image}, task="test task")
+    robot_client._finalize_observation_recording()
+
+    assert created_kwargs["fps"] == robot_client.config.fps
+    assert created_kwargs["streaming_encoding"] is True
+    assert created_kwargs["image_writer_processes"] == 0
+    assert created_kwargs["image_writer_threads"] == 0
+    assert created_kwargs["features"]["observation.images.top"] == {
+        "dtype": "video",
+        "shape": (8, 12, 3),
+        "names": ["height", "width", "channels"],
+        "info": {"is_depth_map": False},
+    }
+    assert fake_dataset.frames == [{"observation.images.top": image, "task": "test task"}]
+    assert fake_dataset.saved is True
+    assert fake_dataset.finalized is True
+    assert robot_client.recording_dataset is None
+
+
+def test_control_loop_records_when_no_observation_is_sent(monkeypatch, robot_client):
+    raw_observation = {"top": np.zeros((4, 6, 3), dtype=np.uint8)}
+    recorded = []
+
+    monkeypatch.setattr(robot_client.start_barrier, "wait", lambda: 0)
+    monkeypatch.setattr(robot_client.robot, "get_observation", lambda: raw_observation)
+    monkeypatch.setattr(robot_client, "_ready_to_send_observation", lambda: False)
+
+    def record_one_tick(observation, task):
+        recorded.append((observation, task))
+        robot_client.shutdown_event.set()
+
+    monkeypatch.setattr(robot_client, "_record_observation", record_one_tick)
+    robot_client.recording_dataset = object()
+    robot_client.shutdown_event.clear()
+
+    robot_client.control_loop(task="continuous recording")
+    robot_client.recording_dataset = None
+
+    assert recorded == [(raw_observation, "continuous recording")]
+
+
+def test_server_send_reuses_frame_captured_for_recording(monkeypatch, robot_client):
+    queued_observations = []
+    monkeypatch.setattr(robot_client, "_queue_observation", queued_observations.append)
+
+    def unexpected_second_capture():
+        raise AssertionError("camera observation was captured twice in one control tick")
+
+    monkeypatch.setattr(robot_client.robot, "get_observation", unexpected_second_capture)
+    raw_observation = {"top": np.zeros((4, 6, 3), dtype=np.uint8)}
+
+    returned = robot_client.control_loop_observation(
+        task="reuse recording frame",
+        raw_observation=raw_observation,
+    )
+
+    assert returned == {**raw_observation, "task": "reuse recording frame"}
+    assert queued_observations[0].get_observation() == returned
 
 
 def test_rtc_client_config_reuses_rollout_hierarchy():

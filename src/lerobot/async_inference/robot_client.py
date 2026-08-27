@@ -34,6 +34,11 @@ python src/lerobot/async_inference/robot_client.py \
     --inference.queue_threshold=30 \
     --observation_image_compression=jpeg \
     --jpeg_quality=85 \
+    --recording.enabled=true \
+    --recording.repo_id=user/async_camera_recording \
+    --recording.root=/path/to/async_camera_recording \
+    --recording.streaming_encoding=true \
+    --recording.rgb_encoder.vcodec=auto \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
 ```
@@ -72,6 +77,8 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
+from lerobot.utils.constants import DEFAULT_FEATURES
+from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.utils.import_utils import register_third_party_plugins
 
 from .configs import RobotClientConfig
@@ -157,6 +164,12 @@ class RobotClient:
             if isinstance(feature, tuple) and len(feature) == 3 and feature[-1] == 3
         }
 
+        # The dataset dependency is loaded lazily only when recording is enabled.
+        self.recording_dataset: Any | None = None
+        self.recording_features: dict[str, dict] = {}
+        self.recorded_observation_frames = 0
+        self._recording_lock = threading.Lock()
+
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
@@ -192,6 +205,8 @@ class RobotClient:
 
             self.stub.SendPolicyInstructions(policy_setup)
 
+            self._start_observation_recording()
+
             self.shutdown_event.clear()
             with self._rtc_latency_lock:
                 self._rtc_latency_tracker.reset()
@@ -215,8 +230,151 @@ class RobotClient:
             if self.observation_sender_thread.is_alive():
                 self.logger.warning("Observation sender thread did not stop within 2 seconds")
 
-        self.robot.disconnect()
-        self.logger.debug("Robot disconnected")
+        try:
+            self._finalize_observation_recording()
+        finally:
+            if self.robot.is_connected:
+                self.robot.disconnect()
+                self.logger.debug("Robot disconnected")
+
+    def _start_observation_recording(self) -> None:
+        """Create or resume a local camera-only LeRobotDataset."""
+        recording = self.config.recording
+        if recording is None or not recording.enabled or self.recording_dataset is not None:
+            return
+
+        camera_features = {
+            key: feature
+            for key, feature in self.robot.observation_features.items()
+            if isinstance(feature, tuple) and len(feature) == 3 and feature[-1] == 3
+        }
+        if not camera_features:
+            raise ValueError(
+                "Camera recording is enabled, but the robot exposes no RGB camera observations "
+                "with shape (height, width, 3)."
+            )
+
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ImportError as e:
+            raise ImportError(
+                "Client camera recording requires the dataset dependencies. "
+                "Install LeRobot with both the 'async' and 'dataset' extras."
+            ) from e
+
+        from lerobot.configs.video import RGBEncoderConfig
+
+        rgb_encoder = RGBEncoderConfig(**asdict(recording.rgb_encoder))
+
+        self.recording_features = hw_to_dataset_features(
+            camera_features,
+            prefix="observation",
+            use_video=True,
+        )
+        image_writer_threads = (
+            0
+            if recording.streaming_encoding
+            else recording.num_image_writer_threads_per_camera * len(camera_features)
+        )
+        image_writer_processes = 0 if recording.streaming_encoding else recording.num_image_writer_processes
+
+        if recording.resume:
+            dataset = LeRobotDataset.resume(
+                recording.repo_id,
+                root=recording.root,
+                rgb_encoder=rgb_encoder,
+                streaming_encoding=recording.streaming_encoding,
+                encoder_queue_maxsize=recording.encoder_queue_maxsize,
+                encoder_threads=recording.encoder_threads,
+                image_writer_processes=image_writer_processes,
+                image_writer_threads=image_writer_threads,
+            )
+            try:
+                self._validate_resumed_recording_dataset(dataset)
+            except Exception:
+                dataset.finalize()
+                raise
+        else:
+            dataset = LeRobotDataset.create(
+                repo_id=recording.repo_id,
+                fps=self.config.fps,
+                features=self.recording_features,
+                root=recording.root,
+                robot_type=self.robot.name,
+                use_videos=True,
+                rgb_encoder=rgb_encoder,
+                streaming_encoding=recording.streaming_encoding,
+                encoder_queue_maxsize=recording.encoder_queue_maxsize,
+                encoder_threads=recording.encoder_threads,
+                image_writer_processes=image_writer_processes,
+                image_writer_threads=image_writer_threads,
+            )
+
+        self.recording_dataset = dataset
+        self.recorded_observation_frames = 0
+        self.logger.info(
+            "Recording client camera observations to %s (cameras: %s)",
+            dataset.root,
+            ", ".join(sorted(camera_features)),
+        )
+
+    def _validate_resumed_recording_dataset(self, dataset: Any) -> None:
+        """Reject an existing dataset that cannot accept camera-only frames."""
+        expected_keys = set(self.recording_features)
+        actual_keys = set(dataset.meta.features) - set(DEFAULT_FEATURES)
+        if actual_keys != expected_keys:
+            raise ValueError(
+                "The resumed recording dataset has incompatible features. "
+                f"Expected {sorted(expected_keys)}, got {sorted(actual_keys)}."
+            )
+        if dataset.meta.fps != self.config.fps:
+            raise ValueError(
+                "The resumed recording dataset FPS does not match the async client: "
+                f"{dataset.meta.fps} != {self.config.fps}."
+            )
+
+        for key, expected in self.recording_features.items():
+            actual = dataset.meta.features[key]
+            if actual["dtype"] != "video" or tuple(actual["shape"]) != tuple(expected["shape"]):
+                raise ValueError(
+                    f"The resumed recording feature {key!r} is incompatible: "
+                    f"expected video shape {tuple(expected['shape'])}, got "
+                    f"{actual['dtype']} shape {tuple(actual['shape'])}."
+                )
+
+    def _record_observation(self, raw_observation: RawObservation, task: str) -> None:
+        """Append one raw camera observation to the active recording episode."""
+        with self._recording_lock:
+            if self.recording_dataset is None:
+                return
+
+            frame = build_dataset_frame(self.recording_features, raw_observation, prefix="observation")
+            frame["task"] = task
+            self.recording_dataset.add_frame(frame)
+            self.recorded_observation_frames += 1
+
+    def _finalize_observation_recording(self) -> None:
+        """Save the current client session as one episode and close video writers."""
+        with self._recording_lock:
+            dataset = self.recording_dataset
+            if dataset is None:
+                return
+
+            self.recording_dataset = None
+            saved_episode = False
+            try:
+                if dataset.has_pending_frames():
+                    dataset.save_episode()
+                    saved_episode = True
+            finally:
+                dataset.finalize()
+
+        self.logger.info(
+            "Camera recording finalized at %s (%d frames%s)",
+            dataset.root,
+            self.recorded_observation_frames,
+            ", 1 episode" if saved_episode else "",
+        )
 
     def _start_observation_sender(self) -> None:
         if self.observation_sender_thread is not None and self.observation_sender_thread.is_alive():
@@ -585,13 +743,19 @@ class RobotClient:
             threshold_reached = queue_ratio <= self._chunk_size_threshold
         return must_go_required or (threshold_reached and not self.observation_request_pending.is_set())
 
-    def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
+    def control_loop_observation(
+        self,
+        task: str,
+        verbose: bool = False,
+        raw_observation: RawObservation | None = None,
+    ) -> RawObservation:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
 
-            raw_observation: RawObservation = self.robot.get_observation()
-            raw_observation["task"] = task
+            if raw_observation is None:
+                raw_observation = self.robot.get_observation()
+            observation_for_server = {**raw_observation, "task": task}
 
             with self.latest_action_lock:
                 latest_action = self.latest_action
@@ -601,7 +765,7 @@ class RobotClient:
 
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=raw_observation,
+                observation=observation_for_server,
                 # RTC prefixes start at the next action that has not yet been executed.
                 # Keep the legacy timestamp convention for non-RTC clients.
                 timestep=max(latest_action + 1, 0) if self._rtc_enabled else max(latest_action, 0),
@@ -639,7 +803,7 @@ class RobotClient:
                     f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
                 )
 
-            return raw_observation
+            return observation_for_server
 
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
@@ -659,9 +823,21 @@ class RobotClient:
             if self.actions_available():
                 _performed_action = self.control_loop_action(verbose)
 
+            # Record every client control tick. Server-bound observations are
+            # intentionally sparse and use a size-one latest-frame queue, so
+            # recording only those would produce a discontinuous video.
+            raw_observation = None
+            if self.recording_dataset is not None:
+                raw_observation = self.robot.get_observation()
+                self._record_observation(raw_observation, task)
+
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(task, verbose)
+                _captured_observation = self.control_loop_observation(
+                    task,
+                    verbose,
+                    raw_observation=raw_observation,
+                )
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
@@ -680,7 +856,11 @@ def async_client(cfg: RobotClientConfig):
 
     client = RobotClient(cfg)
 
-    if client.start():
+    action_receiver_thread = None
+    try:
+        if not client.start():
+            return
+
         client.logger.info("Starting action receiver thread...")
 
         # Create and start action receiver thread
@@ -689,13 +869,16 @@ def async_client(cfg: RobotClientConfig):
         # Start action receiver thread
         action_receiver_thread.start()
 
+        # The main thread runs the control loop
+        client.control_loop(task=cfg.task)
+    finally:
         try:
-            # The main thread runs the control loop
-            client.control_loop(task=cfg.task)
-
-        finally:
             client.stop()
-            action_receiver_thread.join()
+        finally:
+            if action_receiver_thread is not None:
+                action_receiver_thread.join()
+
+        if action_receiver_thread is not None:
             if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
             client.logger.info("Client stopped")

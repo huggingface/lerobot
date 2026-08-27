@@ -9,6 +9,7 @@ In this tutorial, we'll show how to use asynchronous inference (_async inference
 1. Why asynchronous inference matters and how it compares to, more traditional, sequential inference.
 2. How to spin-up a `PolicyServer` and connect a `RobotClient` from the same machine, and even over the network.
 3. How to tune key parameters (`actions_per_chunk`, `chunk_size_threshold`) for your robot and policy.
+4. How to record continuous client-side camera observations while asynchronous inference is running.
 
 If you get stuck, hop into our [Discord community](https://discord.gg/s3KuuzsPFb)!
 
@@ -25,6 +26,12 @@ First, install `lerobot` with the `async` tag, to install the extra dependencies
 
 ```shell
 pip install -e ".[async]"
+```
+
+Client-side camera recording additionally requires the dataset dependencies:
+
+```shell
+pip install -e ".[async,dataset]"
 ```
 
 Then, spin up a policy server (in one terminal, or in a separate machine) specifying the host address and port for the client to connect to.
@@ -226,6 +233,39 @@ if client.start():
 
 </hfoption>
 </hfoptions>
+
+### Record client camera observations
+
+The async client can record its RGB camera observations to a local LeRobotDataset while it controls the robot. Recording is disabled by default. Enable it with `--recording.enabled=true` and provide a dataset identifier:
+
+```bash
+python -m lerobot.async_inference.robot_client \
+    ... \
+    --recording.enabled=true \
+    --recording.repo_id=<user>/async_camera_recording \
+    --recording.root=/absolute/path/to/async_camera_recording \
+    --recording.streaming_encoding=true \
+    --recording.rgb_encoder.vcodec=auto
+```
+
+For a new recording, `recording.root` must not already exist. One client run is saved as one episode when the client stops. To append a later run as another episode, point to the same local dataset and add:
+
+```bash
+--recording.resume=true
+```
+
+Resume requires an explicit `--recording.root`; its camera names, image shapes, and FPS must match the current client. The recording remains local and is not uploaded to the Hub automatically.
+
+Recording samples the raw HWC camera observations on every client control tick, independently of the sparse observation requests sent to the policy server. Therefore network backpressure and `--observation_image_compression=jpeg` do not drop recording frames or JPEG-compress the local source frames. Streaming video encoding is enabled by default; `--recording.rgb_encoder.vcodec=auto` prefers an available hardware encoder and falls back to the software encoder.
+
+After stopping the client, install the `dataset_viz` extra if needed (`pip install -e ".[dataset_viz]"`) and replay the saved episode locally with:
+
+```bash
+lerobot-dataset-viz \
+    --repo-id <user>/async_camera_recording \
+    --root /absolute/path/to/async_camera_recording \
+    --episode-index 0
+```
 
 The following two parameters are key in every setup:
 
