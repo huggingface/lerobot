@@ -124,14 +124,18 @@ class DatasetReader:
         """Remove the transform applied to visual observations."""
         self._image_transforms = None
 
-    def try_load(self) -> bool:
-        """Attempt to load from local cache. Returns True if data is sufficient."""
+    def try_load(self, require_videos: bool = True) -> bool:
+        """Attempt to load from local cache. Returns True if the requested data is sufficient.
+
+        Args:
+            require_videos: Whether cached video files are required in addition to Parquet data.
+        """
         try:
             self.hf_dataset = self._load_hf_dataset()
         except (FileNotFoundError, NotADirectoryError):
             self.hf_dataset = None
             return False
-        if not self._check_cached_episodes_sufficient():
+        if not self._check_cached_episodes_sufficient(require_videos=require_videos):
             self.hf_dataset = None
             return False
         self._build_index_mapping()
@@ -192,8 +196,8 @@ class DatasetReader:
                 "or rerun the annotation pipeline's metadata synchronization."
             )
 
-    def _check_cached_episodes_sufficient(self) -> bool:
-        """Check if the cached dataset contains all requested episodes and their video files."""
+    def _check_cached_episodes_sufficient(self, require_videos: bool = True) -> bool:
+        """Check if the cache contains all requested episodes and, when required, their videos."""
         if self.hf_dataset is None or len(self.hf_dataset) == 0:
             return False
 
@@ -210,7 +214,7 @@ class DatasetReader:
         if not requested_episodes.issubset(available_episodes):
             return False
 
-        if len(self._meta.video_keys) > 0:
+        if require_videos and len(self._meta.video_keys) > 0:
             for ep_idx in requested_episodes:
                 for vid_key in self._meta.video_keys:
                     video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)

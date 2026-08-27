@@ -122,6 +122,32 @@ def test_init_loads_data(tmp_path, lerobot_dataset_factory):
     assert len(dataset) > 0
 
 
+def test_init_data_only_uses_cached_parquet_without_videos(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """download_videos=False accepts a complete data cache without video files."""
+    cached = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=1,
+        total_frames=10,
+        use_videos=True,
+        download_videos=False,
+    )
+    assert cached.meta.video_keys
+    assert not (cached.root / "videos").exists()
+
+    snapshot_download = Mock(side_effect=AssertionError("cached data should not trigger a Hub download"))
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
+    monkeypatch.setattr(lerobot_dataset_module, "get_safe_version", lambda repo_id, revision: revision)
+
+    reloaded = LeRobotDataset(
+        repo_id=cached.repo_id,
+        root=cached.root,
+        download_videos=False,
+    )
+
+    assert len(reloaded) == len(cached)
+    snapshot_download.assert_not_called()
+
+
 def test_getitem_works_in_read_mode(tmp_path, lerobot_dataset_factory):
     """dataset[0] returns a dict with expected keys in read-only mode."""
     dataset = lerobot_dataset_factory(

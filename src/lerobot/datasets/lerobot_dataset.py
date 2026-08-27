@@ -180,9 +180,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 are already present in the local cache, this will be faster. However, files loaded might not
                 be in sync with the version on the hub, especially if you specified 'revision'. Defaults to
                 False.
-            download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
-                video files are already present on local disk, they won't be downloaded again. Defaults to
-                True.
+            download_videos (bool, optional): Flag to download the videos. When set to ``False``, a cache
+                containing all requested Parquet data is considered sufficient even if its video files are
+                absent. When set to ``True`` but the videos are already present on local disk, they won't be
+                downloaded again. Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
@@ -269,7 +270,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_transforms = image_transforms
 
         # Load actual data
-        if force_cache_sync or not self.reader.try_load():
+        if force_cache_sync or not self.reader.try_load(require_videos=download_videos):
             if is_valid_version(self.revision):
                 if token is None:
                     self.revision = get_safe_version(self.repo_id, self.revision)
