@@ -26,6 +26,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
+    _fractions_to_episode_indices,
     add_features,
     convert_image_to_video_dataset,
     delete_episodes,
@@ -739,6 +740,39 @@ def test_split_three_ways(sample_dataset, tmp_path):
 
     total_frames = sum(ds.meta.total_frames for ds in result.values())
     assert total_frames == sample_dataset.meta.total_frames
+
+
+@pytest.mark.parametrize(
+    "total_episodes, fractions",
+    [
+        (5, {"train": 0.9, "val": 0.1}),  # last split rounds down to 0
+        (5, {"tiny": 0.1, "train": 0.9}),  # first split rounds down to 0
+        (7, {"a": 0.5, "b": 0.3, "c": 0.2}),
+        (3, {"train": 0.34, "val": 0.33, "test": 0.33}),
+    ],
+)
+def test_fractions_to_episode_indices_lossless(total_episodes, fractions):
+    """Fractions that sum to 1.0 must assign every episode exactly once and keep every requested split."""
+    result = _fractions_to_episode_indices(total_episodes, fractions)
+
+    assert set(result.keys()) == set(fractions.keys())
+    all_indices = [idx for indices in result.values() for idx in indices]
+    assert sorted(all_indices) == list(range(total_episodes))
+    assert all(len(indices) > 0 for indices in result.values())
+
+
+@pytest.mark.parametrize(
+    "total_episodes, fractions, match",
+    [
+        (2, {"train": 0.4, "val": 0.4, "test": 0.2}, "Cannot split"),
+        (5, {"train": 0.0}, "positive fraction"),
+        (5, {"a": -0.5, "b": 0.5}, "non-negative"),
+    ],
+)
+def test_fractions_to_episode_indices_invalid(total_episodes, fractions, match):
+    """Inputs that cannot produce a valid split fail loudly instead of dropping splits."""
+    with pytest.raises(ValueError, match=match):
+        _fractions_to_episode_indices(total_episodes, fractions)
 
 
 def test_split_preserves_stats(sample_dataset, tmp_path):
