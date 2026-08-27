@@ -400,13 +400,10 @@ class RebotB601Follower(Robot):
         Positions are expressed in degrees. The relative action magnitude may be
         clipped depending on `max_relative_target`, so the action actually sent is
         always returned in the same public robot coordinate frame as observations.
+        Joints omitted from a partial action are not sent a new command.
         """
         try:
             goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-
-            # Tolerate 6-DOF leaders that have no wrist_yaw joint by holding it at zero.
-            if "wrist_yaw" in self.motor_names and "wrist_yaw" not in goal_pos:
-                goal_pos["wrist_yaw"] = 0.0
 
             if self.config.max_relative_target is not None:
                 present_pos = self._present_pos()
