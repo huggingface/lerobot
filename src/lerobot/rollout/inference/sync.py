@@ -24,7 +24,7 @@ import torch
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import make_robot_action, prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline, RelativeActionsProcessorStep
+from lerobot.processor import PolicyProcessorPipeline, find_relative_action_step, pinned_relative_anchor
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -73,14 +73,7 @@ class SyncInferenceEngine(InferenceEngine):
 
         # Find an enabled RelativeActionsProcessorStep to pin its anchor per chunk
         # (see module comment), mirroring the RTC engine.
-        self._relative_step = next(
-            (
-                s
-                for s in getattr(preprocessor, "steps", ())
-                if isinstance(s, RelativeActionsProcessorStep) and s.enabled
-            ),
-            None,
-        )
+        self._relative_step = find_relative_action_step(preprocessor)
         if self._relative_step is not None:
             # ``action_names`` is optional on the step; fill it lazily from the
             # policy/dataset so the relative<->absolute mask is built correctly. This is
@@ -134,20 +127,14 @@ class SyncInferenceEngine(InferenceEngine):
                 # than ``policy.reset``: observation history and other episode state stay.
                 logger.info("Task changed to '%s' — dropping precomputed actions", task)
                 self._policy.drop_queued_actions()
-            # A non-empty queue means this tick will serve an already-computed action, so
-            # the anchor must hold; snapshot it before the preprocessor overwrites it below.
-            # ``clone`` so the snapshot survives even if the cached tensor is ever mutated
-            # in place (today it is only rebound, but the copy is cheap for a state vector).
-            will_drain_cached = self._relative_step is not None and self._policy.queued_action_count() > 0
-            anchor_before = None
-            if will_drain_cached:
-                cached = self._relative_step.get_cached_state()
-                anchor_before = cached.clone() if cached is not None else None
-            observation = prepare_observation_for_inference(observation, self._device, task, self._robot_type)
-            observation = self._preprocessor(observation)
-            action = self._policy.select_action(observation)
-            if will_drain_cached:
-                self._relative_step.set_cached_state(anchor_before)
+            # Hold the chunk anchor across ticks that serve an already-queued action; the
+            # postprocessor runs outside the block so it reads the restored anchor.
+            with pinned_relative_anchor(self._relative_step, self._policy):
+                observation = prepare_observation_for_inference(
+                    observation, self._device, task, self._robot_type
+                )
+                observation = self._preprocessor(observation)
+                action = self._policy.select_action(observation)
             action = self._postprocessor(action)
         action_tensor = action.squeeze(0).cpu()
 
