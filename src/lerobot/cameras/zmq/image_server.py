@@ -37,6 +37,11 @@ from ..utils import make_cameras_from_configs
 
 logger = logging.getLogger(__name__)
 
+# How long an encoder waits on its camera before complaining. Long enough that a camera
+# running below its configured fps stays quiet, short enough that an unplugged one is
+# reported while the publish loop is still sending its last frame.
+ENCODE_READ_TIMEOUT_MS = 1000
+
 
 def encode_image(image: np.ndarray, quality: int = 80, is_rgb: bool = False) -> str:
     """Encode an image to a base64 JPEG string.
@@ -50,8 +55,14 @@ def encode_image(image: np.ndarray, quality: int = 80, is_rgb: bool = False) -> 
     return base64.b64encode(buffer).decode("utf-8")
 
 
-class CameraCaptureThread:
-    """Background thread that continuously captures and encodes frames from a camera."""
+class FrameEncoder:
+    """Keeps one camera's latest frame ready to publish, JPEG-encoded.
+
+    Acquisition is the camera's own job: every ``Camera`` runs an internal read thread and
+    ``async_read`` hands back whatever it last decoded, so this thread never touches the
+    device. It exists for the encode, which is the expensive step and would otherwise run
+    once per camera inside the publish loop and hold up every other stream.
+    """
 
     def __init__(
         self,
@@ -74,22 +85,28 @@ class CameraCaptureThread:
         self.thread: threading.Thread | None = None
 
     def start(self):
-        """Start the capture thread."""
+        """Start the encode thread."""
         self.running = True
-        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread = threading.Thread(target=self._encode_loop, daemon=True)
         self.thread.start()
 
     def stop(self):
-        """Stop the capture thread."""
+        """Stop the encode thread."""
         self.running = False
         if self.thread:
             self.thread.join(timeout=1.0)
 
-    def _capture_loop(self):
-        """Continuously capture and encode frames at the camera's native rate."""
+    def _encode_loop(self):
+        """Encode each new frame the camera produces, at the camera's own rate.
+
+        ``async_read`` blocks until the camera's read thread publishes a frame we haven't
+        taken yet, so a slow encode skips ahead to the newest frame rather than working
+        through a backlog, and a stalled camera surfaces as a warning per timeout instead
+        of a silently frozen stream.
+        """
         while self.running:
             try:
-                frame = self.camera.read()  # Blocks at camera's native rate
+                frame = self.camera.async_read(timeout_ms=ENCODE_READ_TIMEOUT_MS)
                 timestamp = time.time()
                 if self.publish_size is not None and frame.shape[1::-1] != self.publish_size:
                     frame = cv2.resize(frame, self.publish_size, interpolation=cv2.INTER_AREA)
@@ -99,7 +116,7 @@ class CameraCaptureThread:
                     self.latest_encoded = encoded
                     self.latest_timestamp = timestamp
             except Exception as e:
-                logger.warning(f"Camera {self.name} capture error: {e}")
+                logger.warning(f"Camera {self.name} encode error: {e}")
                 time.sleep(0.01)
 
     def get_latest(self) -> tuple[str | None, float]:
@@ -125,7 +142,7 @@ class ImageServer:
         self.open_attempts = open_attempts
         self.open_retry_delay_s = open_retry_delay_s
         self.cameras: dict[str, Camera] = make_cameras_from_configs(cameras)
-        self.capture_threads: dict[str, CameraCaptureThread] = {}
+        self.encoders: dict[str, FrameEncoder] = {}
         self._stop = threading.Event()
 
         # If any camera fails to open, release the ones we already opened so the V4L2
@@ -164,7 +181,7 @@ class ImageServer:
                 # Only some camera types expose a color mode; anything else is assumed to
                 # hand us BGR already, which is what the JPEG encoder wants.
                 is_rgb = getattr(cameras[name], "color_mode", None) == ColorMode.RGB
-                self.capture_threads[name] = CameraCaptureThread(camera, name, publish_size, is_rgb)
+                self.encoders[name] = FrameEncoder(camera, name, publish_size, is_rgb)
         except Exception:
             logger.exception("Failed to open cameras; releasing any already-opened devices.")
             self._release_cameras()
@@ -189,14 +206,14 @@ class ImageServer:
         self._stop.set()
 
     def _release_cameras(self) -> None:
-        """Stop capture threads and disconnect all cameras (safe to call twice).
+        """Stop the encoders and disconnect all cameras (safe to call twice).
 
         Ensures each V4L2 device gets a clean STREAMOFF/release so a failed or
         interrupted run doesn't leave devices busy until the next reboot.
         """
-        for capture_thread in self.capture_threads.values():
+        for encoder in self.encoders.values():
             with contextlib.suppress(Exception):
-                capture_thread.stop()
+                encoder.stop()
         for cam in self.cameras.values():
             with contextlib.suppress(Exception):
                 cam.disconnect()
@@ -205,16 +222,14 @@ class ImageServer:
         frame_count = 0
         frame_times = deque(maxlen=60)
 
-        # Start all capture threads
-        for capture_thread in self.capture_threads.values():
-            capture_thread.start()
+        for encoder in self.encoders.values():
+            encoder.start()
 
-        # Wait for first frames to be captured and encoded
         logger.info("Waiting for cameras to start capturing...")
-        for name, capture_thread in self.capture_threads.items():
-            while capture_thread.get_latest()[0] is None and not self._stop.is_set():
+        for name, encoder in self.encoders.items():
+            while encoder.get_latest()[0] is None and not self._stop.is_set():
                 time.sleep(0.01)
-            logger.info(f"Camera {name} ready (capture + encode in background)")
+            logger.info(f"Camera {name} ready (encoding in background)")
 
         try:
             while not self._stop.is_set():
@@ -224,8 +239,8 @@ class ImageServer:
                 # is complete: clients pick their own stream by name, and a partial message
                 # makes them fall back to another camera's image (cross-feed flicker).
                 message = {"timestamps": {}, "images": {}}
-                for name, capture_thread in self.capture_threads.items():
-                    encoded, timestamp = capture_thread.get_latest()
+                for name, encoder in self.encoders.items():
+                    encoded, timestamp = encoder.get_latest()
                     if encoded is not None:
                         message["timestamps"][name] = timestamp
                         message["images"][name] = encoded
