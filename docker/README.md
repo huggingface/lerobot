@@ -72,7 +72,7 @@ docker run -it --rm --ipc=host --shm-size 16gb --device=/dev/kfd --device=/dev/d
 
 ### Multi-GPU training
 
-To select specific GPUs, set `CUDA_VISIBLE_DEVICES` when launching the container:
+To select specific GPUs, set `CUDA_VISIBLE_DEVICES` when launching the container (for AMD GPUs, `HIP_VISIBLE_DEVICES` is recommended):
 
 ```bash
 # Use 4 GPUs
