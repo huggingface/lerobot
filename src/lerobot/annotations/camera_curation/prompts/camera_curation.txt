@@ -288,8 +288,15 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   - rear_side: the camera is behind the robot, facing its back.
   - left_side / right_side: the camera is off to the robot's left / right.
 
-A confident directional label is fine — you do not need certainty, only
-reasonable visual support. Use plain "side" when you genuinely cannot tell.
+REQUIRED for any direction: you must actually SEE the robot's body/base and be
+able to read which way it faces. If the robot's base is out of frame and only the
+arm or gripper enters the view (e.g. descending from a frame edge into the
+workspace), you CANNOT tell front from rear from left/right — use plain "side".
+Seeing only the workspace and objects (a bowl, a table) is never enough for a
+direction, no matter how "frontal" the workspace looks.
+
+When the robot's facing IS visible, a confident directional label is fine — you
+do not need certainty, only reasonable visual support. Otherwise use plain "side".
 
 Do not, however, force a direction from weak cues alone — where the robot or
 objects happen to appear in the image, which way the gripper points, or image

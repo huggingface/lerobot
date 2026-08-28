@@ -191,10 +191,13 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   - front_side: in front of the robot; rear_side: behind it;
   - left_side / right_side: off to the robot's left / right.
 
-You do not need certainty, only reasonable visual support; use plain "side" only
-when you genuinely cannot tell. Do not force a direction from weak cues alone —
-where the robot or objects appear in the image, gripper direction, or image
-orientation/tilt/mirroring are not reliable on their own.
+REQUIRED for any direction: you must actually SEE the robot's body/base and read
+which way it faces. If the base is out of frame and only the arm/gripper enters
+(e.g. descending from a frame edge), or you only see the workspace and objects,
+you CANNOT tell front/rear/left/right — use plain "side". When the robot's facing
+IS visible you do not need certainty, only reasonable visual support. Do not force
+a direction from weak cues alone — where the robot or objects appear in the image,
+gripper direction, or image orientation/tilt/mirroring are not reliable on their own.
 
 4. DUPLICATE TOP CANDIDATES
 
