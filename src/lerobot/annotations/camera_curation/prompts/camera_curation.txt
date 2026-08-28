@@ -10,7 +10,7 @@ Perform THREE tasks:
 
 Return one JSON object.
 
-1. QUALITY
+{task_context}1. QUALITY
 
 Decide whether this camera view is usable for training a robot policy.
 
@@ -52,8 +52,10 @@ area is SUSPECT and should be flagged; it is the telltale sign of an operator.
 
 EXCEPTION — the task itself involves a person. Some tasks are human-interactive
 (e.g. a handshake, or a person handing/holding an object for the robot to
-manipulate). If the human is clearly a PARTICIPANT in the manipulation task, that
-is expected and the view stays USABLE — do not flag the human in that case.
+manipulate). Use the TASK CONTEXT above: if the stated task inherently involves a
+person, OR the human is clearly a PARTICIPANT in the manipulation (interacting
+with the robot/objects, not reaching in to operate it), that is expected and the
+view stays USABLE — do not flag the human in that case.
 
 A small or brief partial intrusion at the very edge of the frame is still
 tolerable, but a full hand/arm resting in the workspace is not (unless it is part

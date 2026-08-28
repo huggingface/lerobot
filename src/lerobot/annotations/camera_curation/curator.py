@@ -161,10 +161,30 @@ def _combo_rule(cfg: CameraCurationConfig) -> str:
     return "Use exactly one of these words (no combinations). "
 
 
-def _build_messages(frames: list[Any], cfg: CameraCurationConfig) -> list[dict[str, Any]]:
+def _task_context(task: str | None) -> str:
+    """A short TASK CONTEXT block for the prompt (empty when no task is known).
+
+    Lets the model tell a task-participant human (handshake, someone handing the
+    robot an object) from an intruding operator, per the quality rules.
+    """
+    task = (task or "").strip()
+    if not task:
+        return ""
+    return (
+        f'TASK CONTEXT — the task performed in this dataset is: "{task}".\n'
+        "Use this when judging humans below: if the task inherently involves a "
+        "person, a human in frame is an expected PARTICIPANT; otherwise a "
+        "prominent/persistent human is an operator and the view is unusable.\n\n"
+    )
+
+
+def _build_messages(
+    frames: list[Any], cfg: CameraCurationConfig, task: str | None = None
+) -> list[dict[str, Any]]:
     prompt = _load_prompt().format(
         vocabulary=", ".join(cfg.view_vocabulary),
         combo_rule=_combo_rule(cfg),
+        task_context=_task_context(task),
     )
     content = [*to_image_blocks(frames), {"type": "text", "text": prompt}]
     return [{"role": "user", "content": content}]
@@ -224,12 +244,15 @@ def curate_cameras(
     frames_by_camera: dict[str, list[Any]],
     cfg: CameraCurationConfig,
     vlm: Any,
+    task: str | None = None,
 ) -> list[CameraVerdict]:
     """Judge each camera's quality + view label from a few sampled frames.
 
     ``frames_by_camera`` maps a camera key to a list of decoded frames (torch
-    tensors or PIL images). Pass 1 judges each camera on its own (quality + mount
-    type + an initial label, the label reconciled against the mount type). With
+    tensors or PIL images). ``task`` is the dataset's natural-language task, shown
+    as context so the quality pass can tell a task-participant human from an
+    operator. Pass 1 judges each camera on its own (quality + mount type + an
+    initial label, the label reconciled against the mount type). With
     ``cfg.joint_labeling`` a second mount-type+label pass shows all cameras
     together and re-decides by comparison. Quality is always the per-camera
     verdict. Any remaining label collisions are resolved deterministically later
@@ -244,7 +267,7 @@ def curate_cameras(
 
     if callable_keys:
         # Pass 1: per-camera (quality + mount type + initial label).
-        messages_batch = [_build_messages(frames_by_camera[k], cfg) for k in callable_keys]
+        messages_batch = [_build_messages(frames_by_camera[k], cfg, task) for k in callable_keys]
         results = vlm.generate_json(messages_batch)
         for key, result in zip(callable_keys, results, strict=True):
             verdicts[key] = _parse_verdict(key, result, cfg)

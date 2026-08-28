@@ -245,6 +245,32 @@ def _apply_rename(
         renamed.push_to_hub()
 
 
+def _episode_task(root: Path, cfg: CameraCurationConfig) -> str | None:
+    """The inspected episode's natural-language task (context for the quality pass).
+
+    Prefers the episode's own task from the reader; falls back to the dataset's
+    unique task(s) in ``meta/tasks``. Best-effort — returns None when unavailable.
+    """
+    try:
+        for record in iter_episodes(root, only_episodes=(cfg.episode_index,)):
+            task = (getattr(record, "episode_task", None) or "").strip()
+            if task:
+                return task
+            break
+    except Exception:  # noqa: BLE001 - task context is optional; never fail curation on it
+        pass
+    try:
+        from lerobot.datasets.io_utils import load_tasks
+
+        tasks = load_tasks(root)
+        names = [str(t).strip() for t in list(getattr(tasks, "index", [])) if str(t).strip()]
+        if names:
+            return "; ".join(dict.fromkeys(names))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def _decide(
     root: Path,
     meta: Any,
@@ -266,7 +292,10 @@ def _decide(
     frames = _sample_frames(root, meta, cfg, dataset=dataset)
     n_with_frames = sum(1 for v in frames.values() if v)
     logger.info("curate-cameras[%s]: %d camera(s), %d with sampled frames", label, len(frames), n_with_frames)
-    verdicts = curator.curate_cameras(frames, cfg, vlm)
+    task = _episode_task(root, cfg)
+    if task:
+        logger.info("  [%s] task context: %r", label, task)
+    verdicts = curator.curate_cameras(frames, cfg, vlm, task=task)
     for v in verdicts:
         logger.info(
             "  [%s] %s -> label=%s usable=%s%s",

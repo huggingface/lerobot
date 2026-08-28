@@ -436,6 +436,18 @@ def test_build_name_mapping_disambiguates_two_wrists_from_source_names():
     assert skipped == {}
 
 
+def test_build_messages_injects_task_context():
+    from lerobot.annotations.camera_curation.curator import _build_messages, _task_context
+
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    marker = "the task performed in this dataset is"
+    with_task = _build_messages([], cfg, task="shake hands with the person")[0]["content"][-1]["text"]
+    assert marker in with_task and "shake hands with the person" in with_task
+    # No/blank task -> no injected TASK CONTEXT block.
+    assert marker not in _build_messages([], cfg, task=None)[0]["content"][-1]["text"]
+    assert _task_context("") == "" and _task_context(None) == ""
+
+
 def test_build_report_flags_unusable_and_collision():
     from lerobot.annotations.camera_curation.curator import build_report
 
