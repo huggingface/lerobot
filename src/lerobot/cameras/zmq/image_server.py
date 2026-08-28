@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -55,6 +56,7 @@ def encode_image(image: np.ndarray, quality: int = 80, is_rgb: bool = False) -> 
     return base64.b64encode(buffer).decode("utf-8")
 
 
+@dataclass
 class FrameEncoder:
     """Keeps one camera's latest frame ready to publish, JPEG-encoded.
 
@@ -64,25 +66,19 @@ class FrameEncoder:
     once per camera inside the publish loop and hold up every other stream.
     """
 
-    def __init__(
-        self,
-        camera: Camera,
-        name: str,
-        publish_size: tuple[int, int] | None = None,
-        is_rgb: bool = False,
-    ):
-        self.camera = camera
-        self.name = name
-        # Optional (width, height) to shrink frames to before encoding. Capture resolution
-        # is dictated by what the camera will negotiate, which can be far more than a
-        # policy needs; publishing it unchanged just spends link bandwidth.
-        self.publish_size = publish_size
-        self.is_rgb = is_rgb
-        self.latest_encoded: str | None = None  # Pre-encoded JPEG as base64
-        self.latest_timestamp: float = 0.0
-        self.frame_lock = threading.Lock()
-        self.running = False
-        self.thread: threading.Thread | None = None
+    camera: Camera
+    name: str
+    # Optional (width, height) to shrink frames to before encoding. Capture resolution is
+    # dictated by what the camera will negotiate, which can be far more than a policy
+    # needs; publishing it unchanged just spends link bandwidth.
+    publish_size: tuple[int, int] | None = None
+    is_rgb: bool = False
+
+    latest_encoded: str | None = field(default=None, init=False)  # base64 JPEG
+    latest_timestamp: float = field(default=0.0, init=False)
+    frame_lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    running: bool = field(default=False, init=False)
+    thread: threading.Thread | None = field(default=None, init=False)
 
     def start(self):
         """Start the encode thread."""
@@ -125,76 +121,76 @@ class FrameEncoder:
             return self.latest_encoded, self.latest_timestamp
 
 
+@dataclass
 class ImageServer:
-    def __init__(
-        self,
-        cameras: dict[str, CameraConfig],
-        fps: int = 30,
-        port: int = 5555,
-        publish_size: tuple[int, int] | None = None,
-        open_attempts: int = 5,
-        open_retry_delay_s: float = 2.0,
-    ):
-        # fps controls the publish loop rate (how often frames are sent over ZMQ), not the camera capture rate
-        self.fps = fps
-        # Flaky USB cameras intermittently fail the first open or first-frame read;
-        # retry a few times before giving up.
-        self.open_attempts = open_attempts
-        self.open_retry_delay_s = open_retry_delay_s
-        self.cameras: dict[str, Camera] = make_cameras_from_configs(cameras)
-        self.encoders: dict[str, FrameEncoder] = {}
-        self._stop = threading.Event()
+    """Publishes every camera's latest JPEG frame on a single ZMQ PUB socket."""
 
-        # If any camera fails to open, release the ones we already opened so the V4L2
-        # devices get a clean STREAMOFF instead of staying busy until the next reboot.
+    camera_configs: dict[str, CameraConfig]
+    # Rate of the publish loop (how often frames go out over ZMQ), not of capture: each
+    # camera reads at whatever rate it negotiated with the driver.
+    fps: int = 30
+    port: int = 5555
+    publish_size: tuple[int, int] | None = None
+    # Flaky USB cameras intermittently fail the first open or first-frame read;
+    # retry a few times before giving up.
+    open_attempts: int = 5
+    open_retry_delay_s: float = 2.0
+
+    cameras: dict[str, Camera] = field(default_factory=dict, init=False)
+    encoders: dict[str, FrameEncoder] = field(default_factory=dict, init=False)
+    _stop: threading.Event = field(default_factory=threading.Event, init=False)
+
+    def __post_init__(self) -> None:
+        self.cameras = make_cameras_from_configs(self.camera_configs)
         try:
-            for name, camera in self.cameras.items():
-                last_err: Exception | None = None
-                for attempt in range(1, self.open_attempts + 1):
-                    try:
-                        camera.connect()
-                        last_err = None
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        last_err = e
-                        logger.warning(
-                            "Camera %s open attempt %d/%d failed: %s",
-                            name,
-                            attempt,
-                            self.open_attempts,
-                            e,
-                        )
-                        with contextlib.suppress(Exception):
-                            camera.disconnect()
-                        if attempt < self.open_attempts:
-                            time.sleep(self.open_retry_delay_s)
-                if last_err is not None:
-                    raise RuntimeError(
-                        f"Camera {name} failed to open after {self.open_attempts} attempts"
-                    ) from last_err
-
-                published = publish_size or (cameras[name].width, cameras[name].height)
-                logger.info(
-                    f"Camera {name}: capture {cameras[name].width}x{cameras[name].height}, "
-                    f"publish {published[0]}x{published[1]}"
-                )
-                # Only some camera types expose a color mode; anything else is assumed to
-                # hand us BGR already, which is what the JPEG encoder wants.
-                is_rgb = getattr(cameras[name], "color_mode", None) == ColorMode.RGB
-                self.encoders[name] = FrameEncoder(camera, name, publish_size, is_rgb)
+            self._open_cameras()
         except Exception:
+            # Release the devices we did open, so they get a clean STREAMOFF instead of
+            # staying busy until the next reboot.
             logger.exception("Failed to open cameras; releasing any already-opened devices.")
             self._release_cameras()
             raise
+        self._bind_publisher()
 
-        # ZMQ PUB socket
+    def _open_cameras(self) -> None:
+        for name, camera in self.cameras.items():
+            self._connect_with_retries(name, camera)
+
+            config = self.camera_configs[name]
+            published = self.publish_size or (config.width, config.height)
+            logger.info(
+                f"Camera {name}: capture {config.width}x{config.height}, "
+                f"publish {published[0]}x{published[1]}"
+            )
+            # Only some camera types expose a color mode; anything else is assumed to
+            # hand us BGR already, which is what the JPEG encoder wants.
+            is_rgb = getattr(config, "color_mode", None) == ColorMode.RGB
+            self.encoders[name] = FrameEncoder(camera, name, self.publish_size, is_rgb)
+
+    def _connect_with_retries(self, name: str, camera: Camera) -> None:
+        last_err: Exception | None = None
+        for attempt in range(1, self.open_attempts + 1):
+            try:
+                camera.connect()
+                return
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                logger.warning(
+                    "Camera %s open attempt %d/%d failed: %s", name, attempt, self.open_attempts, e
+                )
+                with contextlib.suppress(Exception):
+                    camera.disconnect()
+                if attempt < self.open_attempts:
+                    time.sleep(self.open_retry_delay_s)
+        raise RuntimeError(f"Camera {name} failed to open after {self.open_attempts} attempts") from last_err
+
+    def _bind_publisher(self) -> None:
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
         self.socket.setsockopt(zmq.SNDHWM, 20)
         self.socket.setsockopt(zmq.LINGER, 0)
-        self.socket.bind(f"tcp://*:{port}")
-
-        logger.info(f"ImageServer running on port {port}")
+        self.socket.bind(f"tcp://*:{self.port}")
+        logger.info(f"ImageServer running on port {self.port}")
 
     def stop(self) -> None:
         """Signal the publish loop to exit so ``run()`` reaches its cleanup.
