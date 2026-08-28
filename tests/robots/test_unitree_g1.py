@@ -20,6 +20,7 @@ The Unitree SDK, the cameras and the arm IK are all mocked, so these run without
 or the SDK installed. Pure helper/config tests live in ``test_unitree_g1_utils.py``.
 """
 
+import importlib.util
 import json
 import logging
 import threading
@@ -594,6 +595,10 @@ class TestSendAction:
         assert all(q == pytest.approx(0.2) for q in published_targets(robot).values())
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("zmq") is None,
+    reason="pyzmq ships with the optional lerobot[unitree_g1] extra",
+)
 class TestGripperCommands:
     """The hands sit on the bridge's CAN bus rather than among the 29 motors, so their
     commands take a ZMQ side channel instead of riding lowcmd."""
