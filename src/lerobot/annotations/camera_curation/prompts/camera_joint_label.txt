@@ -200,8 +200,12 @@ camera's position relative to the robot is reasonably clear; fall back to plain
 
   - judge direction from where the camera sits relative to the ROBOT'S OWN facing
     (its front / base / working direction) whenever that can be read from the scene;
-  - front_side: in front of the robot; rear_side: behind it;
+  - front_side: in FRONT — the working face, gripper/arm reaching TOWARD the camera;
+  - rear_side: BEHIND — you see the motor-backs and CABLING, arm reaching AWAY;
   - left_side / right_side: off to the robot's left / right.
+  FRONT vs REAR tell: the robot's back is the side with the visible motors and
+  cable bundle. Do not default to "front" just because the arm is prominent or an
+  object faces the camera.
 
 REQUIRED for any direction: you must actually SEE the robot's body/base and read
 which way it faces. If the base is out of frame and only the arm/gripper enters
