@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 from torch import Tensor
@@ -32,6 +32,8 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
+    "find_relative_action_step",
+    "pinned_relative_anchor",
     "to_relative_actions",
     "to_absolute_actions",
 ]
@@ -214,3 +216,46 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+class _ChunkingPolicy(Protocol):
+    """The slice of :class:`~lerobot.policies.pretrained.PreTrainedPolicy` anchor pinning needs.
+
+    Declared structurally to keep this module free of a ``lerobot.policies`` import
+    (``pretrained`` already imports from ``lerobot.processor``).
+    """
+
+    def queued_action_count(self) -> int: ...
+
+
+def find_relative_action_step(pipeline: Any) -> RelativeActionsProcessorStep | None:
+    """Return the enabled :class:`RelativeActionsProcessorStep` in ``pipeline``, if any.
+
+    ``pipeline`` is a preprocessor pipeline (anything exposing ``steps``); a disabled step
+    is treated as absent because it neither converts actions nor needs its anchor pinned.
+    """
+    return next(
+        (
+            s
+            for s in getattr(pipeline, "steps", ())
+            if isinstance(s, RelativeActionsProcessorStep) and s.enabled
+        ),
+        None,
+    )
+
+
+def pinned_relative_anchor(
+    relative_step: RelativeActionsProcessorStep | None,
+    policy: _ChunkingPolicy,
+) -> Generator[None]:
+    """Hold the chunk's anchor across ticks that serve an already-queued action."""
+    hold = relative_step is not None and relative_step.enabled and policy.queued_action_count() > 0
+    # ``clone`` so the snapshot survives even if the cached tensor is ever mutated in place
+    # (today it is only rebound, but the copy is cheap for a state vector).
+    anchor = relative_step.get_cached_state() if hold else None
+    anchor = anchor.clone() if anchor is not None else None
+    try:
+        yield
+    finally:
+        if hold:
+            relative_step.set_cached_state(anchor)
