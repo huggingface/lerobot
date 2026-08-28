@@ -184,15 +184,22 @@ evidence that:
   1. the robot has distinct left and right manipulators; AND
   2. this camera can reliably be associated with one of them.
 
-Do NOT infer handedness from:
+A VALID anatomical cue: for a multi-fingered / anthropomorphic hand (e.g. a
+humanoid hand), the THUMB position relative to the fingers reveals which hand it
+is, exactly like telling a human left hand from a right hand. When you can
+clearly see the hand's fingers and thumb (and thus read its palm/back
+orientation), use that to assign left_wrist / right_wrist.
+
+Do NOT infer handedness from SUPERFICIAL cues instead:
 
   - which side of the image the arm appears on;
-  - gripper orientation;
+  - the direction the gripper happens to point;
   - apparent image direction;
   - mirroring;
   - camera rotation.
 
-If handedness is uncertain, use "wrist".
+If the hand's structure is not clearly readable and no reliable cue is available,
+use plain "wrist".
 
 If mount_type == "fixed"
 

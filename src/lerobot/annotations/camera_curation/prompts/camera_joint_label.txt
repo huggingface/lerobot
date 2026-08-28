@@ -115,12 +115,16 @@ Do not change "fixed" to "robot_mounted" based only on ambiguity.
 If mount_type == "robot_mounted", use "wrist".
 
 Use "left_wrist" or "right_wrist" ONLY when explicit and reliable evidence ties
-the camera to a distinct left or right manipulator.
+the camera to a distinct left or right manipulator. A VALID cue: for a
+multi-fingered / anthropomorphic hand, the THUMB position relative to the fingers
+reveals which hand it is (like telling a human left hand from a right); use it
+when the hand's fingers and thumb are clearly visible.
 
-Do NOT infer handedness from apparent image direction, gripper orientation,
-mirroring, or which side of the image contains the robot.
+Do NOT infer handedness from SUPERFICIAL cues instead — apparent image direction,
+the direction the gripper points, mirroring, or which side of the image contains
+the robot.
 
-When uncertain, use plain "wrist".
+When the hand's structure is not clearly readable, use plain "wrist".
 
 3. FIXED CAMERAS
 
