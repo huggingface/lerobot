@@ -27,9 +27,11 @@ Uses JSON for secure serialization instead of pickle.
 import argparse
 import base64
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import zmq
@@ -123,6 +125,21 @@ def build_gripper(
     return Gripper(name, bus, open_deg, close_deg, _last_cmd="open")
 
 
+def resolve_v4l2_device(device: str) -> int | str:
+    """Resolve a V4L2 device to the index OpenCV can open, leaving anything else alone.
+
+    ``by-path`` names are the right way to name a camera, but OpenCV's V4L2 backend
+    captures by index only -- handed a filename it reports "backend is generally
+    available but can't be used to capture by name" and fails to open. Following the
+    symlink to ``/dev/videoN`` and passing ``N`` keeps the stable name in configs and
+    still opens the device.
+    """
+    if device.lstrip("-").isdigit():
+        return int(device)
+    node = re.fullmatch(r"video(\d+)", Path(device).resolve().name)
+    return int(node.group(1)) if node else device
+
+
 def parse_camera_specs(spec: str, fps: int, width: int, height: int) -> dict[str, OpenCVCameraConfig]:
     """Parse a multi-camera spec string into camera configs.
 
@@ -152,7 +169,7 @@ def parse_camera_specs(spec: str, fps: int, width: int, height: int) -> dict[str
         if name in cameras:
             raise ValueError(f"Duplicate camera name '{name}' in --cameras")
         cameras[name] = OpenCVCameraConfig(
-            index_or_path=int(device) if device.lstrip("-").isdigit() else device,
+            index_or_path=resolve_v4l2_device(device),
             fps=fps,
             width=cam_width,
             height=cam_height,
