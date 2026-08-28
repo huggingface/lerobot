@@ -74,13 +74,15 @@ def _make_bus_mock(positions_deg: list[float | None] | None = None) -> MagicMock
     bus = MagicMock(name="MotorBridgeControllerMock")
     bus._motor_count = 0
 
-    def _add_motor(_send_id, _recv_id, model):
+    def _add_motor(send_id, recv_id, model):
         index = bus._motor_count
         bus._motor_count += 1
         # Default seeds each motor with its 1-indexed creation order, in degrees.
         position = index + 1 if positions_deg is None else positions_deg[index]
         motor = _make_motor_mock(position_rad=None if position is None else math.radians(position))
         motor.model = model
+        motor.damiao_get_param_u32.return_value = send_id
+        motor.robstride_ping.return_value = (send_id, recv_id)
         return motor
 
     bus.add_damiao_motor.side_effect = _add_motor
@@ -470,6 +472,43 @@ def test_failed_startup_disables_and_closes_the_bus():
 
 
 @pytest.mark.parametrize("family", FAMILIES)
+def test_startup_requires_a_synchronous_response_from_every_motor(family):
+    bus_mock = _make_bus_mock()
+    add_motor = bus_mock.add_damiao_motor if family is MotorFamily.DM else bus_mock.add_robstride_motor
+    original_add_motor = add_motor.side_effect
+
+    def _add_motor_with_unreachable_gripper(send_id, recv_id, model):
+        motor = original_add_motor(send_id, recv_id, model)
+        if send_id == 0x07:
+            connectivity_method = (
+                motor.damiao_get_param_u32 if family is MotorFamily.DM else motor.robstride_ping
+            )
+            connectivity_method.side_effect = RuntimeError("motor powered off")
+        return motor
+
+    add_motor.side_effect = _add_motor_with_unreachable_gripper
+
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus_mock
+        controller_cls.return_value = bus_mock
+        config = RebotB601FollowerRobotConfig(motor_family=family, port="/dev/null")
+        if family is MotorFamily.RS:
+            config = RebotB601FollowerRobotConfig(motor_family=family, port="can0")
+        robot = RebotB601Follower(config)
+
+        with pytest.raises(MotorFeedbackError, match="valid synchronous startup response"):
+            robot.connect(calibrate=False)
+
+    assert robot.bus is None
+    assert robot.motors == {}
+    bus_mock.close.assert_called_once()
+
+
+@pytest.mark.parametrize("family", FAMILIES)
 def test_wrap_guard_can_be_disabled(family):
     positions = [0.0] * 6 + [400.0]
     with _connected(family, positions_deg=positions, check_position_plausibility=False) as robot:
@@ -522,6 +561,17 @@ def test_disconnect_is_idempotent_and_continues_after_cleanup_failure():
     assert robot.bus is None
     assert robot.motors == {}
     motors[-1].close.assert_called_once()
+
+
+def test_disconnect_skips_cameras_that_are_already_disconnected():
+    robot = _build(MotorFamily.DM)
+    camera = MagicMock()
+    camera.is_connected = False
+    robot.cameras = {"base": camera}
+
+    robot.disconnect()
+
+    camera.disconnect.assert_not_called()
 
 
 def test_rs_rejects_damiao_serial_transport():
@@ -667,9 +717,73 @@ def test_bimanual_connect_rolls_back_left_when_right_fails():
     robot.left_arm.connect = MagicMock()
     robot.left_arm._disconnect = MagicMock()
     robot.right_arm.connect = MagicMock(side_effect=RuntimeError("right failed"))
+    robot.right_arm._disconnect = MagicMock()
     with pytest.raises(RuntimeError, match="right failed"):
         robot.connect()
     robot.left_arm._disconnect.assert_called_once_with(force_disable=True)
+    robot.right_arm._disconnect.assert_called_once_with(force_disable=True)
+
+
+def test_bimanual_connect_cleans_both_arms_when_left_fails():
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        robot = BiRebotB601Follower(
+            BiRebotB601FollowerConfig(
+                left_arm_config=RebotB601FollowerConfig(port="/dev/null0"),
+                right_arm_config=RebotB601FollowerConfig(port="/dev/null1"),
+            )
+        )
+    robot.left_arm.connect = MagicMock(side_effect=RuntimeError("left failed"))
+    robot.left_arm._disconnect = MagicMock()
+    robot.right_arm._disconnect = MagicMock()
+
+    with pytest.raises(RuntimeError, match="left failed"):
+        robot.connect()
+
+    robot.left_arm._disconnect.assert_called_once_with(force_disable=True)
+    robot.right_arm._disconnect.assert_called_once_with(force_disable=True)
+
+
+def test_bimanual_observation_failure_force_disconnects_both_arms():
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        robot = BiRebotB601Follower(
+            BiRebotB601FollowerConfig(
+                left_arm_config=RebotB601FollowerConfig(port="/dev/null0"),
+                right_arm_config=RebotB601FollowerConfig(port="/dev/null1"),
+            )
+        )
+    robot.left_arm.get_observation = MagicMock(side_effect=RuntimeError("camera failed"))
+    robot.left_arm._disconnect = MagicMock()
+    robot.right_arm._disconnect = MagicMock()
+    robot.left_arm.bus = MagicMock()
+    robot.right_arm.bus = MagicMock()
+
+    with pytest.raises(RuntimeError, match="camera failed"):
+        robot.get_observation()
+
+    robot.left_arm._disconnect.assert_called_once_with(force_disable=True)
+    robot.right_arm._disconnect.assert_called_once_with(force_disable=True)
+
+
+def test_bimanual_action_failure_force_disconnects_both_arms():
+    with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
+        robot = BiRebotB601Follower(
+            BiRebotB601FollowerConfig(
+                left_arm_config=RebotB601FollowerConfig(port="/dev/null0"),
+                right_arm_config=RebotB601FollowerConfig(port="/dev/null1"),
+            )
+        )
+    robot.left_arm.send_action = MagicMock(return_value={})
+    robot.right_arm.send_action = MagicMock(side_effect=RuntimeError("right command failed"))
+    robot.left_arm._disconnect = MagicMock()
+    robot.right_arm._disconnect = MagicMock()
+    robot.left_arm.bus = MagicMock()
+    robot.right_arm.bus = MagicMock()
+
+    with pytest.raises(RuntimeError, match="right command failed"):
+        robot.send_action({})
+
+    robot.left_arm._disconnect.assert_called_once_with(force_disable=True)
+    robot.right_arm._disconnect.assert_called_once_with(force_disable=True)
 
 
 def test_bimanual_disconnect_always_attempts_both_arms():

@@ -72,15 +72,21 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        """Connect atomically, rolling the left arm back if the right fails."""
-        self.left_arm.connect(calibrate)
+        """Connect atomically, force-disabling both arms after any failure."""
         try:
+            self.left_arm.connect(calibrate)
             self.right_arm.connect(calibrate)
         except Exception:
-            # Rollback is a safety path, so it must disable torque regardless of
-            # the user's normal disconnect preference.
-            self.left_arm._disconnect(force_disable=True)
+            self._force_disconnect_after_failure()
             raise
+
+    def _force_disconnect_after_failure(self) -> None:
+        """Best-effort emergency cleanup that preserves the active exception."""
+        for arm_name, arm in (("left", self.left_arm), ("right", self.right_arm)):
+            try:
+                arm._disconnect(force_disable=True)
+            except Exception:
+                logger.exception("Failed to force-disconnect %s reBot arm.", arm_name)
 
     def disconnect(self) -> None:
         """Best-effort, idempotent cleanup of both arms."""
@@ -116,26 +122,34 @@ class BiRebotB601Follower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict: RobotObservation = {}
-        for k, v in self.left_arm.get_observation().items():
-            obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
-        for k, v in self.right_arm.get_observation().items():
-            obs_dict[f"right_{k}"] = v
-        return obs_dict
+        try:
+            obs_dict: RobotObservation = {}
+            for k, v in self.left_arm.get_observation().items():
+                obs_dict[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+            for k, v in self.right_arm.get_observation().items():
+                obs_dict[f"right_{k}"] = v
+            return obs_dict
+        except Exception:
+            self._force_disconnect_after_failure()
+            raise
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        left_action = {
-            key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
-        }
-        right_action = {
-            key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
-        }
+        try:
+            left_action = {
+                key.removeprefix("left_"): value for key, value in action.items() if key.startswith("left_")
+            }
+            right_action = {
+                key.removeprefix("right_"): value for key, value in action.items() if key.startswith("right_")
+            }
 
-        sent_action_left = self.left_arm.send_action(left_action)
-        sent_action_right = self.right_arm.send_action(right_action)
+            sent_action_left = self.left_arm.send_action(left_action)
+            sent_action_right = self.right_arm.send_action(right_action)
 
-        return {
-            **{f"left_{k}": v for k, v in sent_action_left.items()},
-            **{f"right_{k}": v for k, v in sent_action_right.items()},
-        }
+            return {
+                **{f"left_{k}": v for k, v in sent_action_left.items()},
+                **{f"right_{k}": v for k, v in sent_action_right.items()},
+            }
+        except Exception:
+            self._force_disconnect_after_failure()
+            raise

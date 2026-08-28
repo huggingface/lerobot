@@ -40,16 +40,24 @@ from .motor_family import (
 )
 
 if TYPE_CHECKING or _motorbridge_available:
-    from motorbridge import Controller as MotorBridgeController, Mode as MotorBridgeMode
+    from motorbridge import (
+        RID_ESC_ID as MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER,
+        Controller as MotorBridgeController,
+        Mode as MotorBridgeMode,
+    )
 else:
     MotorBridgeController = None
     MotorBridgeMode = None
+    # Damiao protocol register 8 stores the motor's command CAN ID. Keep tests
+    # importable without the optional MotorBridge package.
+    MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER = 8
 
 logger = logging.getLogger(__name__)
 
 _ENSURE_MODE_RETRIES = 9
 _SETTLE_SEC = 0.01
 _ZERO_SETTLE_SEC = 0.1
+_CONNECTIVITY_TIMEOUT_MS = 100
 
 # --- Impedance gripper tuning (shared by any family that offers the mode) ---
 # Motor-side velocity damping. The position setpoint and kp are both zero, so the
@@ -218,6 +226,7 @@ class RebotB601Follower(Robot):
         """Validate fresh state and configure every motor while torque is off."""
         self.bus.disable_all()
         try:
+            self._assert_motors_reachable()
             states = self._read_feedback(strict=True)
             if self.config.check_position_plausibility:
                 self._assert_positions_plausible(states)
@@ -231,6 +240,34 @@ class RebotB601Follower(Robot):
             raise
         else:
             self.bus.enable_all()
+
+    def _assert_motors_reachable(self) -> None:
+        """Require a synchronous response from every motor before enabling torque.
+
+        ``get_state()`` can retain a previous/default value, so a non-``None``
+        state after polling does not prove that a powered motor answered this
+        startup attempt. Use each vendor's request/response operation instead.
+        """
+        for motor_name, motor in self.motors.items():
+            send_id, recv_id = self.config.motor_can_ids[motor_name]
+            try:
+                if self.config.motor_family is MotorFamily.DM:
+                    reported_id = motor.damiao_get_param_u32(
+                        MOTOR_BRIDGE_DAMIAO_ESC_ID_REGISTER,
+                        timeout_ms=_CONNECTIVITY_TIMEOUT_MS,
+                    )
+                    if reported_id != send_id:
+                        raise RuntimeError(
+                            f"reported command CAN ID 0x{reported_id:X}, expected 0x{send_id:X}"
+                        )
+                else:
+                    reported_ids = tuple(motor.robstride_ping())
+                    if reported_ids != (send_id, recv_id):
+                        raise RuntimeError(f"reported IDs {reported_ids}, expected {(send_id, recv_id)}")
+            except Exception as exc:
+                raise MotorFeedbackError(
+                    f"Motor '{motor_name}' did not provide a valid synchronous startup response."
+                ) from exc
 
     def _cleanup_failed_connection(self) -> None:
         """Best-effort cleanup that preserves the original connection error."""
@@ -586,7 +623,8 @@ class RebotB601Follower(Robot):
                     logger.exception("Failed to close the reBot controller during cleanup.")
             for camera in self.cameras.values():
                 try:
-                    camera.disconnect()
+                    if camera.is_connected:
+                        camera.disconnect()
                 except Exception:
                     logger.exception("Failed to disconnect a reBot camera during cleanup.")
         finally:
