@@ -94,9 +94,17 @@ Strong evidence includes:
   - global background motion correlated with robot-arm motion;
   - the workspace appearing to move around the camera.
 
+COMMONLY MISSED WRIST: a wrist camera often looks like a close-up, roughly
+top-down view of the workspace and is mistaken for a fixed "top"/"side". The
+giveaway is DRIFT — a STATIONARY object (cup, bin, paper, tape marks, table edge)
+that translates across the frame or grows/shrinks between the first and last
+frame. Fixed objects can't move on their own, so that drift means the CAMERA
+moved -> robot_mounted (wrist), even when the view looks overhead.
+
 Robot motion alone is NOT sufficient.
 
-Object motion alone is NOT sufficient.
+Object motion alone is NOT sufficient (track a STATIONARY object for the drift
+check above).
 
 A close-up view alone is NOT sufficient.
 
