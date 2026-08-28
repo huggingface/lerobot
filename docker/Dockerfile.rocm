@@ -48,10 +48,12 @@ ENV UV_OVERRIDE=${ROCM_OVERRIDES} \
 WORKDIR /lerobot
 COPY . .
 
-# [pi] pulls transformers/scipy, [training] pulls the dataset, wandb and accelerate
-# extras. Everything except the overridden packages resolves from pyproject as usual,
-# so this image does not carry a second copy of the dependency list.
-RUN uv pip install --no-cache --python "$(which python)" -e ".[pi,training]"
+# `all` matches Dockerfile.internal and Dockerfile.user, so the ROCm image is not a
+# reduced-capability variant. Everything except the overridden packages resolves from
+# pyproject as usual, so this image carries no second copy of the dependency list.
+# Narrow it when a smaller image matters, e.g. --build-arg LEROBOT_EXTRAS=pi,training.
+ARG LEROBOT_EXTRAS=all
+RUN uv pip install --no-cache --python "$(which python)" -e ".[${LEROBOT_EXTRAS}]"
 
 # Fail the build rather than ship an image whose GPUs are unusable. Runs without a GPU,
 # so it only checks that the ROCm build survived resolution; torch.cuda.is_available()
