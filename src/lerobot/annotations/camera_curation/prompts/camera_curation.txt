@@ -335,12 +335,19 @@ workspace), you CANNOT tell front from rear from left/right — use plain "side"
 Seeing only the workspace and objects (a bowl, a table) is never enough for a
 direction, no matter how "frontal" the workspace looks.
 
+LEFT vs RIGHT tell: on an upright, non-mirrored view, look at where the robot's
+BASE/BODY sits and which way the arm REACHES:
+  - base/body on the RIGHT of the frame, arm reaching toward the LEFT -> left_side;
+  - base/body on the LEFT of the frame, arm reaching toward the RIGHT -> right_side.
+Mentally LEVEL the image first; a rolled (tilted/upside-down) or mirrored view
+flips left and right, so correct for that before applying this.
+
 When the robot's facing IS visible, a confident directional label is fine — you
 do not need certainty, only reasonable visual support. Otherwise use plain "side".
 
-Do not, however, force a direction from weak cues alone — where the robot or
-objects happen to appear in the image, which way the gripper points, or image
-orientation/tilt/mirroring are not reliable on their own.
+Do not force a direction from weak cues — the raw image side ALONE (without the
+base-vs-reach reading above), or a view whose roll/mirror you cannot resolve, is
+not reliable.
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 

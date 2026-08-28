@@ -206,6 +206,9 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   FRONT vs REAR tell: the robot's back is the side with the visible motors and
   cable bundle. Do not default to "front" just because the arm is prominent or an
   object faces the camera.
+  LEFT vs RIGHT tell (upright, non-mirrored view; level the image first): base/body
+  on the RIGHT with the arm reaching LEFT -> left_side; base/body on the LEFT with
+  the arm reaching RIGHT -> right_side. A rolled or mirrored view flips this.
 
 REQUIRED for any direction: you must actually SEE the robot's body/base and read
 which way it faces. If the base is out of frame and only the arm/gripper enters
