@@ -187,12 +187,18 @@ python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 
 ```bash
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera-fps 30 \
-  --cameras "head_camera=/dev/video4,left_wrist=/dev/v4l/by-path/<PATH>-video-index0@1280x720,right_wrist=/dev/v4l/by-path/<PATH>-video-index0@1280x720"
+  --cameras "{
+    head_camera: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5},
+    left_wrist: {type: opencv, index_or_path: /dev/v4l/by-path/<PATH>-video-index0, width: 1280, height: 720, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5},
+    right_wrist: {type: opencv, index_or_path: /dev/v4l/by-path/<PATH>-video-index0, width: 1280, height: 720, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5}
+  }"
 ```
 
-Each entry is `name=device[@WxH]`. The device is an index or a path, and `@WxH` sets that camera's resolution when it can't do the default `--camera-width`/`--camera-height` — cameras on the same robot rarely agree on one. List them with `ls /dev/v4l/by-path/*-video-index0` and identify them with `udevadm info -q property -n /dev/videoN | grep ID_MODEL`.
+This is the same `CameraConfig` syntax as `--robot.cameras` in every other `lerobot-` script, so a camera block that works on the laptop can be pasted here unchanged. Each camera carries its own resolution, since cameras on the same robot rarely agree on one. List the devices with `ls /dev/v4l/by-path/*-video-index0` and identify them with `udevadm info -q property -n /dev/videoN | grep ID_MODEL`.
 
-Prefer the `by-path` names: bare `/dev/videoN` indices reshuffle when a camera re-enumerates, and `by-id` names collide when two cameras share a serial number. `=` and `@` are the separators precisely because those paths contain colons.
+Set `fourcc: MJPG` and `backend: V4L2` for USB cameras. MJPG is what lets a UVC camera negotiate its full rate, and the default backend is read-only for capture properties, so without V4L2 it cannot apply the format or resolution at all and the camera fails to connect. `warmup_s` is worth raising when several cameras share a USB bus, where the first frame can take seconds.
+
+Prefer the `by-path` names: bare `/dev/videoN` indices reshuffle when a camera re-enumerates, and `by-id` names collide when two cameras share a serial number. The bridge resolves a `by-path` name to the index OpenCV needs, because its V4L2 backend can only capture by index.
 
 Ask for the resolution you actually want to publish, since a camera that can capture it costs nothing and a camera that can't fails to connect rather than quietly returning another size. `--camera-publish-size` is for the cameras that refuse: it downscales each frame before encoding, which spends CPU on the robot but keeps the link from carrying 1280x720 frames a policy will resize to 224x224 anyway. The bridge warns at startup for every camera where this is in play.
 

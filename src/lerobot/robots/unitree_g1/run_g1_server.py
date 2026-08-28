@@ -26,28 +26,32 @@ Uses JSON for secure serialization instead of pickle.
 
 import argparse
 import base64
+import contextlib
 import json
 import re
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+import draccus
 import zmq
+from draccus.cfgparsing import parse_string
 from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_ as hg_LowCmd, LowState_ as hg_LowState
 from unitree_sdk2py.utils.crc import CRC
 
-from lerobot.cameras.configs import ColorMode, Cv2Backends
+from lerobot.cameras.configs import CameraConfig, ColorMode, Cv2Backends
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.cameras.zmq.image_server import ImageServer
-from lerobot.robots.openarm_follower.config_openarm_follower import LEFT_DEFAULT_JOINTS_LIMITS
-
-if TYPE_CHECKING:
-    from lerobot.motors.damiao.damiao import DamiaoMotorsBus
+from lerobot.motors.damiao.damiao import DamiaoMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorNormMode
+from lerobot.robots.openarm_follower.config_openarm_follower import (
+    DEFAULT_MOTOR_CONFIG,
+    LEFT_DEFAULT_JOINTS_LIMITS,
+)
 
 # DDS topic names follow Unitree SDK naming conventions
 # ruff: noqa: N816
@@ -66,29 +70,66 @@ NUM_MOTORS = 35
 # The hands on this G1 are OpenArm grippers, so their CAN identity and travel come from
 # the OpenArm follower's config rather than being restated here: J8 on that bus, and the
 # same open/close range. Only stiffness and which CAN port each side sits on vary per run.
-GRIPPER_SEND_ID = 0x08
-GRIPPER_RECV_ID = 0x18
-GRIPPER_MOTOR_TYPE = "dm4310"
-GRIPPER_OPEN_DEG, GRIPPER_CLOSE_DEG = LEFT_DEFAULT_JOINTS_LIMITS["gripper"]
+GRIPPER_MOTOR = "gripper"
+GRIPPER_SEND_ID, GRIPPER_RECV_ID, GRIPPER_MOTOR_TYPE = DEFAULT_MOTOR_CONFIG[GRIPPER_MOTOR]
+GRIPPER_OPEN_DEG, GRIPPER_CLOSE_DEG = LEFT_DEFAULT_JOINTS_LIMITS[GRIPPER_MOTOR]
 
 # Ignore command changes smaller than this so a policy streaming at 30 Hz does not flood the
 # CAN bus with sub-degree corrections the gripper cannot resolve anyway.
 GRIPPER_DEADBAND = 0.02
 
 
-@dataclass
-class Gripper:
-    """A single Damiao gripper, positioned anywhere between fully open and fully closed.
+class Gripper(DamiaoMotorsBus):
+    """One OpenArm gripper, positioned anywhere between fully open and fully closed.
 
-    The motor takes a continuous ``Goal_Position``, so partial grips cost nothing extra; the
-    binary open/close of the teleop path is just the two endpoints of the same command.
+    It *is* the bus rather than owning one: each hand is the only motor on its CAN
+    interface, so there is nothing else for a wrapper to hold. What it adds on top is the
+    closedness command. The motor takes a continuous ``Goal_Position``, so partial grips
+    cost nothing extra and the binary open/close of the teleop path is just the two
+    endpoints of the same command.
+
+    Gains are keyword-only: they are easy to swap by accident, and a wrong ``kp`` is the
+    difference between a grip and a crushed object.
     """
 
-    name: str
-    bus: "DamiaoMotorsBus"
-    open_deg: float
-    close_deg: float
-    _last_closedness: float | None = None
+    def __init__(
+        self,
+        name: str,
+        port: str,
+        *,
+        kp: float,
+        kd: float,
+        open_deg: float = GRIPPER_OPEN_DEG,
+        close_deg: float = GRIPPER_CLOSE_DEG,
+    ):
+        super().__init__(
+            port=port,
+            motors={
+                GRIPPER_MOTOR: Motor(
+                    id=GRIPPER_SEND_ID,
+                    model=GRIPPER_MOTOR_TYPE,
+                    norm_mode=MotorNormMode.DEGREES,
+                    motor_type_str=GRIPPER_MOTOR_TYPE,
+                    recv_id=GRIPPER_RECV_ID,
+                )
+            },
+            use_can_fd=True,
+        )
+        self.name = name
+        self.kp = kp
+        self.kd = kd
+        self.open_deg = open_deg
+        self.close_deg = close_deg
+        self._last_closedness: float | None = None
+
+    def connect(self, handshake: bool = True) -> None:
+        """Connect the bus, apply the gains, and open the jaw before anything commands it."""
+        print(f"Connecting {self.name} gripper on {self.port}...")
+        super().connect(handshake=handshake)
+        self.write("Kp", GRIPPER_MOTOR, self.kp)
+        self.write("Kd", GRIPPER_MOTOR, self.kd)
+        self.apply(0.0)
+        print(f"  {self.name}: connected, torque enabled, opened (kp={self.kp}, kd={self.kd}).")
 
     def apply(self, closedness: float) -> None:
         """Drive the gripper to ``closedness``, 0 fully open .. 1 fully closed."""
@@ -96,46 +137,12 @@ class Gripper:
         if self._last_closedness is not None and abs(closedness - self._last_closedness) < GRIPPER_DEADBAND:
             return
         target = self.open_deg + closedness * (self.close_deg - self.open_deg)
-        self.bus.write("Goal_Position", "gripper", target)
+        self.write("Goal_Position", GRIPPER_MOTOR, target)
         self._last_closedness = closedness
         print(f"[gripper] {self.name} -> {closedness:.2f} ({target:.1f} deg)")
 
 
-def build_gripper(
-    name: str,
-    port: str,
-    *,
-    kp: float,
-    kd: float,
-    open_deg: float = GRIPPER_OPEN_DEG,
-    close_deg: float = GRIPPER_CLOSE_DEG,
-) -> Gripper:
-    """Connect one Damiao gripper. Gains are keyword-only: they are easy to swap by
-    accident, and a wrong ``kp`` is the difference between a grip and a crushed object.
-    """
-    from lerobot.motors.damiao.damiao import DamiaoMotorsBus
-    from lerobot.motors.motors_bus import Motor, MotorNormMode
-
-    motors = {
-        "gripper": Motor(
-            id=GRIPPER_SEND_ID,
-            model=GRIPPER_MOTOR_TYPE,
-            norm_mode=MotorNormMode.DEGREES,
-            motor_type_str=GRIPPER_MOTOR_TYPE,
-            recv_id=GRIPPER_RECV_ID,
-        )
-    }
-    bus = DamiaoMotorsBus(port=port, motors=motors, use_can_fd=True)
-    print(f"Connecting {name} gripper on {port}...")
-    bus.connect(handshake=True)
-    bus.write("Kp", "gripper", kp)
-    bus.write("Kd", "gripper", kd)
-    bus.write("Goal_Position", "gripper", open_deg)  # start open
-    print(f"  {name}: connected, torque enabled, opened (kp={kp}, kd={kd}).")
-    return Gripper(name, bus, open_deg, close_deg, _last_closedness=0.0)
-
-
-def resolve_v4l2_device(device: str) -> int | str:
+def resolve_v4l2_device(device: int | str | Path) -> int | Path:
     """Resolve a V4L2 device to the index OpenCV can open, leaving anything else alone.
 
     ``by-path`` names are the right way to name a camera, but OpenCV's V4L2 backend
@@ -144,57 +151,52 @@ def resolve_v4l2_device(device: str) -> int | str:
     symlink to ``/dev/videoN`` and passing ``N`` keeps the stable name in configs and
     still opens the device.
     """
-    if device.lstrip("-").isdigit():
-        return int(device)
-    node = re.fullmatch(r"video(\d+)", Path(device).resolve().name)
-    return int(node.group(1)) if node else device
+    if isinstance(device, int):
+        return device
+    text = str(device)
+    if text.lstrip("-").isdigit():
+        return int(text)
+    node = re.fullmatch(r"video(\d+)", Path(text).resolve().name)
+    return int(node.group(1)) if node else Path(text)
 
 
-def parse_camera_specs(spec: str, fps: int, width: int, height: int) -> dict[str, OpenCVCameraConfig]:
-    """Parse a multi-camera spec string into camera configs.
+def parse_camera_configs(spec: str) -> dict[str, CameraConfig]:
+    """Parse ``--cameras`` into camera configs, in the syntax the ``lerobot-`` scripts use.
 
-    Format: comma-separated ``name=device[@WxH]`` entries, e.g.
-    ``head_camera=/dev/video4,left_wrist=/dev/v4l/by-path/…-video-index0@1280x720``.
-    ``device`` is an integer index or a device path, and ``@WxH`` overrides the
-    default resolution for that camera alone (cameras on this robot don't agree on a
-    common one). ``=`` and ``@`` are used as separators rather than ``:`` because
-    stable ``by-path`` device names contain colons themselves, and those are the
-    names worth using: bare ``/dev/videoN`` indices reshuffle on USB re-enumeration
-    and ``by-id`` names collide when two cameras share a serial.
+    Same shape as ``--robot.cameras`` everywhere else, so a working laptop-side camera
+    block can be pasted here unchanged::
+
+        "{ego_view: {type: opencv, index_or_path: /dev/v4l/by-path/…-video-index0,
+          width: 640, height: 480, fps: 30, fourcc: MJPG, backend: V4L2, warmup_s: 5}}"
+
+    ``by-path`` names are resolved to the ``/dev/videoN`` index here rather than in the
+    config, so a config stays readable and survives USB re-enumeration.
     """
-    cameras: dict[str, OpenCVCameraConfig] = {}
-    for entry in spec.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        if "=" not in entry:
-            raise ValueError(f"Invalid camera spec '{entry}', expected 'name=device[@WxH]'")
-        name, device = (part.strip() for part in entry.split("=", 1))
-        cam_width, cam_height = width, height
-        if "@" in device:
-            device, resolution = (part.strip() for part in device.rsplit("@", 1))
-            cam_width, cam_height = (int(v) for v in resolution.lower().split("x"))
-        if not device:
-            raise ValueError(f"Invalid camera spec '{entry}', missing device")
-        if name in cameras:
-            raise ValueError(f"Duplicate camera name '{name}' in --cameras")
-        cameras[name] = OpenCVCameraConfig(
-            index_or_path=resolve_v4l2_device(device),
-            fps=fps,
-            width=cam_width,
-            height=cam_height,
-            color_mode=ColorMode.RGB,
-            # MJPG lets these UVC cameras negotiate their full rate, and V4L2 because
-            # the default FFMPEG backend is read-only for capture properties, so it
-            # can't apply the format or resolution at all.
-            fourcc="MJPG",
-            backend=Cv2Backends.V4L2,
-            # Several cameras sharing a USB bus can take seconds to yield a first frame.
-            warmup_s=5,
-        )
+    cameras = draccus.decode(dict[str, CameraConfig], parse_string(spec))
     if not cameras:
-        raise ValueError("No cameras parsed from --cameras spec")
+        raise ValueError("No cameras parsed from --cameras")
+    for config in cameras.values():
+        if isinstance(config, OpenCVCameraConfig):
+            config.index_or_path = resolve_v4l2_device(config.index_or_path)
     return cameras
+
+
+def head_camera_config(device: int, fps: int, width: int, height: int) -> OpenCVCameraConfig:
+    """Config for the camera the G1 ships with, for the ``--camera`` shorthand."""
+    return OpenCVCameraConfig(
+        index_or_path=device,
+        fps=fps,
+        width=width,
+        height=height,
+        color_mode=ColorMode.RGB,
+        # MJPG lets these UVC cameras negotiate their full rate, and V4L2 because the
+        # default FFMPEG backend is read-only for capture properties, so it can't apply
+        # the format or resolution at all.
+        fourcc="MJPG",
+        backend=Cv2Backends.V4L2,
+        # Several cameras sharing a USB bus can take seconds to yield a first frame.
+        warmup_s=5,
+    )
 
 
 def lowstate_to_dict(msg: hg_LowState) -> dict[str, Any]:
@@ -339,14 +341,17 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Multi-camera spec: comma-separated 'name=device[@WxH]', e.g. "
-            "'head_camera=/dev/video4,left_wrist=/dev/v4l/by-path/…-video-index0@1280x720'. "
-            "Implies --camera and overrides --camera-device."
+            "Cameras to publish, in the same syntax as --robot.cameras elsewhere, e.g. "
+            "'{ego_view: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, "
+            "fps: 30, fourcc: MJPG, backend: V4L2}}'. Implies --camera and overrides "
+            "--camera-device."
         ),
     )
-    parser.add_argument("--camera-fps", type=int, default=30, help="Camera FPS (default: 30)")
-    parser.add_argument("--camera-width", type=int, default=640, help="Camera width (default: 640)")
-    parser.add_argument("--camera-height", type=int, default=480, help="Camera height (default: 480)")
+    parser.add_argument(
+        "--camera-fps", type=int, default=30, help="Publish rate, and --camera's capture rate"
+    )
+    parser.add_argument("--camera-width", type=int, default=640, help="Width for --camera")
+    parser.add_argument("--camera-height", type=int, default=480, help="Height for --camera")
     parser.add_argument("--camera-port", type=int, default=5555, help="Camera ZMQ port (default: 5555)")
     parser.add_argument(
         "--camera-publish-size",
@@ -378,8 +383,15 @@ def main() -> None:
     camera_thread = None
     camera_server = None
     if args.camera or args.cameras:
-        spec = args.cameras or f"head_camera={args.camera_device}"
-        cameras = parse_camera_specs(spec, args.camera_fps, args.camera_width, args.camera_height)
+        cameras = (
+            parse_camera_configs(args.cameras)
+            if args.cameras
+            else {
+                "head_camera": head_camera_config(
+                    args.camera_device, args.camera_fps, args.camera_width, args.camera_height
+                )
+            }
+        )
         publish_size = None
         if args.camera_publish_size:
             w, h = (int(v) for v in args.camera_publish_size.lower().split("x"))
@@ -390,7 +402,8 @@ def main() -> None:
         camera_thread = threading.Thread(target=camera_server.run, daemon=True)
         camera_thread.start()
         cam_summary = ", ".join(
-            f"{name}({cfg.index_or_path} {cfg.width}x{cfg.height})" for name, cfg in cameras.items()
+            f"{name}({getattr(cfg, 'index_or_path', type(cfg).__name__)} {cfg.width}x{cfg.height})"
+            for name, cfg in cameras.items()
         )
         print(f"Camera server started on port {args.camera_port}: {cam_summary}")
 
@@ -435,7 +448,7 @@ def main() -> None:
     if args.grippers:
         try:
             for side, port in (("L", args.gripper_port_left), ("R", args.gripper_port_right)):
-                grippers[side] = build_gripper(
+                gripper = Gripper(
                     side,
                     port,
                     kp=args.gripper_kp,
@@ -443,8 +456,14 @@ def main() -> None:
                     open_deg=args.gripper_open_deg,
                     close_deg=args.gripper_close_deg,
                 )
+                gripper.connect()
+                grippers[side] = gripper
         except Exception as e:  # noqa: BLE001
             print(f"WARNING: gripper setup failed ({e}); continuing without grippers.")
+            # Release the side that did come up, or it holds torque with nothing driving it.
+            for connected in grippers.values():
+                with contextlib.suppress(Exception):
+                    connected.disconnect(disable_torque=True)
             grippers = {}
 
     state_period = 0.002  # ~500 hz
@@ -490,7 +509,7 @@ def main() -> None:
             camera_thread.join(timeout=3.0)
         for g in grippers.values():
             try:
-                g.bus.disconnect(disable_torque=True)
+                g.disconnect(disable_torque=True)
             except Exception as exc:  # noqa: BLE001
                 print(f"  {g.name} gripper disconnect error: {exc}")
 
