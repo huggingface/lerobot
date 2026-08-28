@@ -14,18 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from functools import cached_property
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_not_connected
 
 from ..rebot_b601_follower import RebotB601Follower
 from ..robot import Robot
 from .config_bi_rebot_b601_follower import BiRebotB601FollowerConfig
-
-logger = logging.getLogger(__name__)
 
 
 class BiRebotB601Follower(BimanualMixin, Robot):
@@ -70,31 +67,9 @@ class BiRebotB601Follower(BimanualMixin, Robot):
         # Only for compatibility with parts of the codebase that expect `robot.cameras`.
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        """Connect atomically, force-disabling both arms after any failure."""
-        try:
-            self.left_arm.connect(calibrate)
-            self.right_arm.connect(calibrate)
-        except Exception:
-            self._force_disconnect_after_failure()
-            raise
-
-    def _force_disconnect_after_failure(self) -> None:
-        """Best-effort emergency cleanup that preserves the active exception."""
-        for arm_name, arm in (("left", self.left_arm), ("right", self.right_arm)):
-            try:
-                arm._disconnect(force_disable=True)
-            except Exception:
-                logger.exception("Failed to force-disconnect %s reBot arm.", arm_name)
-
-    def disconnect(self) -> None:
-        """Best-effort, idempotent cleanup of both arms."""
-        for arm_name, arm in (("left", self.left_arm), ("right", self.right_arm)):
-            try:
-                arm.disconnect()
-            except Exception:
-                logger.exception("Failed to disconnect %s reBot arm.", arm_name)
+    def _disconnect_arm_for_cleanup(self, arm: RebotB601Follower) -> None:
+        """Force-disable an arm while recovering from a bimanual failure."""
+        arm._disconnect(force_disable=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -130,7 +105,7 @@ class BiRebotB601Follower(BimanualMixin, Robot):
                 obs_dict[f"right_{k}"] = v
             return obs_dict
         except Exception:
-            self._force_disconnect_after_failure()
+            self._rollback_failed_connect()
             raise
 
     @check_if_not_connected
@@ -151,5 +126,5 @@ class BiRebotB601Follower(BimanualMixin, Robot):
                 **{f"right_{k}": v for k, v in sent_action_right.items()},
             }
         except Exception:
-            self._force_disconnect_after_failure()
+            self._rollback_failed_connect()
             raise
