@@ -19,7 +19,8 @@ clearly enough to learn from.
 
 Mark it UNUSABLE if the frames do not clearly show the real scene because of:
 
-  - severe blur or being out of focus;
+  - blur so EXTREME that the frame is unintelligible — you genuinely cannot tell
+    what is in it (not merely soft focus or motion blur);
   - severe over- or under-exposure;
   - corrupted frames;
   - a static/frozen camera feed;
@@ -37,12 +38,27 @@ genuine camera view and may be usable.
 The robot's own arm, gripper, or end effector may partially block the workspace.
 This is expected and MUST NOT make the camera unusable.
 
-Also mark the camera UNUSABLE if a human operator, human hand, or human arm is
-PROMINENTLY or PERSISTENTLY visible in the working area.
+Some blur is NORMAL and stays USABLE. Wrist cameras especially are often a bit
+blurry from motion. Mild or moderate blur, soft focus, or occasional motion blur
+is FINE as long as you can still make out the scene, the robot, and the objects.
+Do not flag a view just because it is not perfectly sharp — only when the blur is
+so extreme the frame is unintelligible.
 
-A small or brief partial human intrusion at the edge of the image is tolerable.
+HUMANS. These are teleoperated recordings, so an operator or bystander should not
+be in the working area. Mark the camera UNUSABLE when a human is present as an
+OPERATOR/BYSTANDER rather than as part of the task. Do NOT be too lenient here: a
+FULL human hand or arm — or a person — PROMINENTLY or PERSISTENTLY in the working
+area is SUSPECT and should be flagged; it is the telltale sign of an operator.
 
-Carefully distinguish human limbs from the robot's own manipulator.
+EXCEPTION — the task itself involves a person. Some tasks are human-interactive
+(e.g. a handshake, or a person handing/holding an object for the robot to
+manipulate). If the human is clearly a PARTICIPANT in the manipulation task, that
+is expected and the view stays USABLE — do not flag the human in that case.
+
+A small or brief partial intrusion at the very edge of the frame is still
+tolerable, but a full hand/arm resting in the workspace is not (unless it is part
+of the task above). Carefully distinguish human limbs from the robot's own
+manipulator.
 
 Set "blur_reason" to a short reason for an unusable verdict, otherwise null.
 
