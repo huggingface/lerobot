@@ -68,9 +68,11 @@ class FrameEncoder:
 
     camera: Camera
     name: str
-    # Optional (width, height) to shrink frames to before encoding. Capture resolution is
-    # dictated by what the camera will negotiate, which can be far more than a policy
-    # needs; publishing it unchanged just spends link bandwidth.
+    # Optional (width, height) to shrink frames to before encoding, for cameras that
+    # cannot capture at the size we want to publish. Ask the camera first by setting
+    # width/height in its config: that costs nothing, and OpenCVCamera raises rather than
+    # quietly handing back a different size, so a request that survives connect() is one
+    # the driver honoured. Resize here only once it has refused.
     publish_size: tuple[int, int] | None = None
     is_rgb: bool = False
 
@@ -157,11 +159,19 @@ class ImageServer:
             self._connect_with_retries(name, camera)
 
             config = self.camera_configs[name]
-            published = self.publish_size or (config.width, config.height)
+            captured = (config.width, config.height)
+            published = self.publish_size or captured
             logger.info(
-                f"Camera {name}: capture {config.width}x{config.height}, "
-                f"publish {published[0]}x{published[1]}"
+                f"Camera {name}: capture {captured[0]}x{captured[1]}, publish {published[0]}x{published[1]}"
             )
+            if published != captured and None not in captured:
+                logger.warning(
+                    "Camera %s captures %dx%d and publishes %dx%d, so every frame pays a CPU "
+                    "resize. Capture at the publish size instead if this camera supports it.",
+                    name,
+                    *captured,
+                    *published,
+                )
             # Only some camera types expose a color mode; anything else is assumed to
             # hand us BGR already, which is what the JPEG encoder wants.
             is_rgb = getattr(config, "color_mode", None) == ColorMode.RGB

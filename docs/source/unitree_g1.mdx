@@ -194,6 +194,8 @@ Each entry is `name=device[@WxH]`. The device is an index or a path, and `@WxH` 
 
 Prefer the `by-path` names: bare `/dev/videoN` indices reshuffle when a camera re-enumerates, and `by-id` names collide when two cameras share a serial number. `=` and `@` are the separators precisely because those paths contain colons.
 
+Ask for the resolution you actually want to publish, since a camera that can capture it costs nothing and a camera that can't fails to connect rather than quietly returning another size. `--camera-publish-size` is for the cameras that refuse: it downscales each frame before encoding, which spends CPU on the robot but keeps the link from carrying 1280x720 frames a policy will resize to 224x224 anyway. The bridge warns at startup for every camera where this is in play.
+
 All cameras are published on one ZMQ socket, so a client picks a stream by name:
 
 ```bash
