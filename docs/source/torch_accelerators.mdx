@@ -19,8 +19,7 @@ For XPU backend, follow instructions from [PyTorch documentation](https://docs.p
 ### AMD GPUs (ROCm)
 
 ROCm builds of PyTorch expose the HIP runtime through the `torch.cuda` namespace, so
-`--policy.device=cuda` selects an AMD GPU and no LeRobot-side change is needed. Use
-`HIP_VISIBLE_DEVICES` rather than `CUDA_VISIBLE_DEVICES` to select specific cards.
+`--policy.device=cuda` selects an AMD GPU and no LeRobot-side change is needed. `HIP_VISIBLE_DEVICES` is preferred over `CUDA_VISIBLE_DEVICES` when selecting specific cards.
 
 Installing LeRobot on top of an existing ROCm PyTorch needs care: LeRobot pins
 `torch<2.12`, `torchvision<0.27` and `numpy<2.3`, all below what current ROCm images
