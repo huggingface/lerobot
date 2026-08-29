@@ -24,7 +24,8 @@ import os
 
 import numpy as np
 
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.configs import DEPTH_MILLIMETER_UNIT, infer_depth_unit
+from lerobot.lerobot_types import RobotAction, RobotObservation
 
 from .constants import ACTION, ACTION_PREFIX, OBS_PREFIX, OBS_STR
 from .import_utils import require_package
@@ -161,7 +162,13 @@ def log_rerun_data(
                     observation_paths.add(key)
                 else:
                     if arr.shape[-1] == 1:
-                        img_entity = rr.DepthImage(arr, colormap=rr.components.Colormap.Viridis)
+                        # At record time, the depth unit is inferred from the frame type.
+                        depth_unit = infer_depth_unit(arr.dtype)
+                        img_entity = rr.DepthImage(
+                            arr,
+                            meter=1000.0 if depth_unit == DEPTH_MILLIMETER_UNIT else 1.0,
+                            colormap=rr.components.Colormap.Viridis,
+                        )
                     else:
                         img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)

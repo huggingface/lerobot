@@ -15,6 +15,7 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,10 +23,14 @@ from pathlib import Path
 import datasets
 import torch
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.configs import (
+    DEFAULT_DEPTH_UNIT,
+    DEPTH_METER_UNIT,
+    DepthEncoderConfig,
+)
 
 from .dataset_metadata import LeRobotDatasetMetadata
-from .depth_utils import dequantize_depth
+from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
@@ -35,11 +40,74 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
+from .utils import resolve_episode_indices
 from .video_utils import decode_video_frames
 
 
-class DatasetReader:
-    """Encapsulates read-side state and methods for LeRobotDataset.
+class BaseDatasetReader(ABC):
+    """Read-side data access contract for :class:`LeRobotDataset`.
+
+    A reader owns row fetching and video decoding for one storage format and
+    returns fully assembled frame dicts — tabular features, delta-timestamp
+    windows, padding masks, decoded video frames — so every format produces
+    the same items. ``LeRobotDataset`` delegates ``__getitem__`` and
+    ``__getitems__`` to it and keeps everything else (metadata, episode
+    selection, the public API). Subclasses define their own constructor
+    (their inputs legitimately differ) and must be picklable so
+    ``DataLoader`` workers can reopen their own connections.
+
+    Subclasses must set :attr:`episodes` (the selected episode indices, or
+    ``None`` for all) during construction.
+    """
+
+    episodes: list[int] | None
+
+    @property
+    @abstractmethod
+    def num_frames(self) -> int:
+        """Number of frames in selected episodes."""
+
+    @property
+    @abstractmethod
+    def num_episodes(self) -> int:
+        """Number of episodes selected."""
+
+    @property
+    @abstractmethod
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to relative row positions.
+
+        Non-None only for episode-filtered datasets where absolute indices
+        (from metadata) differ from positions in the filtered view.
+        """
+
+    @abstractmethod
+    def get_item(self, idx: int) -> dict:
+        """Return one fully assembled frame dict for a relative index."""
+
+    def get_items(self, indices: list[int]) -> list[dict]:
+        """Return frame dicts for a batch of relative indices.
+
+        Subclasses may override this with a batched implementation.
+        """
+        return [self.get_item(idx) for idx in indices]
+
+    def __len__(self) -> int:
+        return self.num_frames
+
+    def set_image_transforms(self, image_transforms: Callable | None) -> None:
+        """Replace the transform applied to visual observations."""
+        if image_transforms is not None and not callable(image_transforms):
+            raise TypeError("image_transforms must be callable or None.")
+        self._image_transforms = image_transforms
+
+    def clear_image_transforms(self) -> None:
+        """Remove the transform applied to visual observations."""
+        self._image_transforms = None
+
+
+class DatasetReader(BaseDatasetReader):
+    """Default reader serving the parquet/mp4 storage format.
 
     Owns: hf_dataset, _absolute_to_relative_idx, delta_indices.
     """
@@ -79,12 +147,10 @@ class DatasetReader:
         """
         self._meta = meta
         self.root = root
-        self.episodes = episodes
+        self.episodes = resolve_episode_indices(episodes, meta.total_episodes)
         self._tolerance_s = tolerance_s
         self._video_backend = video_backend
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self._image_transforms = image_transforms
+        self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
 
@@ -102,15 +168,12 @@ class DatasetReader:
             for vid_key in self._meta.depth_keys
         }
 
-    def set_image_transforms(self, image_transforms: Callable | None) -> None:
-        """Replace the transform applied to visual observations."""
-        if image_transforms is not None and not callable(image_transforms):
-            raise TypeError("image_transforms must be callable or None.")
-        self._image_transforms = image_transforms
-
-    def clear_image_transforms(self) -> None:
-        """Remove the transform applied to visual observations."""
-        self._image_transforms = None
+        # Get the input unit of each depth feature stored as raw images.
+        self._image_depth_units: dict[str, str | None] = {
+            key: (self._meta.features[key].get("info") or {}).get("depth_unit")
+            for key in self._meta.depth_keys
+            if key in self._meta.image_keys
+        }
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -149,12 +212,43 @@ class DatasetReader:
         """Number of episodes selected."""
         return len(self.episodes) if self.episodes is not None else self._meta.total_episodes
 
+    @property
+    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+        """Mapping from absolute frame indices to HF dataset row positions."""
+        if self.hf_dataset is None:
+            self.load_and_activate()
+        return self._absolute_to_relative_idx
+
     def _load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         features = get_hf_features_from_features(self._meta.features)
+        self._validate_language_columns_declared(features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    def _validate_language_columns_declared(self, features: datasets.Features) -> None:
+        """Require language columns stored in Parquet to be declared in metadata."""
+        # Leave empty datasets to fail through the normal loading path.
+        try:
+            sample = next((self.root / "data").glob("*/*.parquet"))
+        except StopIteration:
+            return
+
+        from pyarrow import parquet as _pq  # noqa: PLC0415
+
+        # LeRobot shards are schema-uniform, so one schema represents the dataset.
+        schema_names = set(_pq.read_schema(sample).names)
+        from .language import LANGUAGE_COLUMNS  # noqa: PLC0415
+
+        missing = sorted(set(LANGUAGE_COLUMNS) & schema_names - set(features))
+        if missing:
+            raise ValueError(
+                f"Dataset Parquet files contain language feature(s) missing from metadata: {missing}. "
+                "Metadata must describe the stored data; add the entries returned by "
+                "lerobot.datasets.language.language_feature_info() to meta/info.json['features'] "
+                "or rerun the annotation pipeline's metadata synchronization."
+            )
 
     def _check_cached_episodes_sufficient(self) -> bool:
         """Check if the cached dataset contains all requested episodes and their video files."""
@@ -299,12 +393,15 @@ class DatasetReader:
             return dict(f.result() for f in futures)
 
     def get_item(self, idx) -> dict:
-        """Core __getitem__ logic. Assumes hf_dataset is loaded.
+        """Core __getitem__ logic. Loads hf_dataset on first access.
 
         ``idx`` is a *relative* index into the (possibly episode-filtered)
         HF dataset, **not** the absolute frame index stored in the ``index``
         column.  The absolute index is retrieved from the row itself.
         """
+        if self.hf_dataset is None:
+            # One-shot load after finalize()
+            self.load_and_activate()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
         abs_idx = item["index"].item()
@@ -328,6 +425,13 @@ class DatasetReader:
                 if cam in self._meta.depth_keys:
                     continue
                 item[cam] = self._image_transforms(item[cam])
+
+        # Convert depth features to the output unit.
+        for key, stored_unit in self._image_depth_units.items():
+            if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
+                item[key] = (
+                    item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
+                )
 
         # Add task as a string
         task_idx = item["task_index"].item()

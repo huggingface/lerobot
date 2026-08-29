@@ -36,6 +36,7 @@ from lerobot.configs import (
     RGBEncoderConfig,
     VideoEncoderConfig,
     depth_encoder_defaults,
+    infer_depth_unit,
     rgb_encoder_defaults,
 )
 
@@ -171,6 +172,23 @@ class DatasetWriter:
     def _get_image_file_dir(self, episode_index: int, image_key: str) -> Path:
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
+    def _get_episode_buffer_index(self) -> int:
+        episode_index = self.episode_buffer["episode_index"]
+        # episode_index is `int` when freshly created, but becomes `np.ndarray` after
+        # save_episode() mutates the buffer. Handle both types here.
+        if isinstance(episode_index, np.ndarray):
+            episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
+        return int(episode_index)
+
+    def _delete_camera_frame_dirs(self, camera_keys: list[str]) -> None:
+        if self.image_writer is not None:
+            self._wait_image_writer()
+        episode_index = self._get_episode_buffer_index()
+        for camera_key in camera_keys:
+            img_dir = self._get_image_file_dir(episode_index, camera_key)
+            if img_dir.is_dir():
+                shutil.rmtree(img_dir)
+
     def _save_image(
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
     ) -> None:
@@ -208,6 +226,15 @@ class DatasetWriter:
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
         self.episode_buffer["task"].append(frame.pop("task"))
+
+        # Record each depth feature's input unit once, inferred from the first frame's dtype.
+        if frame_index == 0:
+            for depth_key in self._meta.depth_keys:
+                if depth_key not in frame:
+                    continue
+                info = self._meta.features[depth_key].setdefault("info", {})
+                if info.get("depth_unit") is None:
+                    info["depth_unit"] = infer_depth_unit(np.asarray(frame[depth_key]).dtype)
 
         # Start streaming encoder on first frame of episode
         if frame_index == 0 and self._streaming_encoder is not None:
@@ -359,7 +386,12 @@ class DatasetWriter:
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
-            self.clear_episode_buffer(delete_images=len(self._meta.image_keys) > 0)
+            # Post-save cleanup deliberately does not go through clear_episode_buffer():
+            # staging frames of video cameras must survive here — the (possibly batched)
+            # encoder still needs them and deletes them once each video is written.
+            if len(self._meta.image_keys) > 0:
+                self._delete_camera_frame_dirs(self._meta.image_keys)
+            self.episode_buffer = self._create_episode_buffer()
 
     def _batch_save_episode_video(self, start_episode: int, end_episode: int | None = None) -> None:
         """Batch save videos for multiple episodes."""
@@ -551,10 +583,10 @@ class DatasetWriter:
         return metadata
 
     def clear_episode_buffer(self, delete_images: bool = True) -> None:
-        """Discard the current episode buffer and optionally delete temp images.
+        """Discard the current episode buffer and optionally delete temp camera frames.
 
         Args:
-            delete_images: If ``True``, remove temporary image directories
+            delete_images: If ``True``, remove temporary camera frame directories
                 written for the current episode.
         """
         # Cancel streaming encoder if active
@@ -562,17 +594,7 @@ class DatasetWriter:
             self._streaming_encoder.cancel_episode()
 
         if delete_images:
-            if self.image_writer is not None:
-                self._wait_image_writer()
-            episode_index = self.episode_buffer["episode_index"]
-            # episode_index is `int` when freshly created, but becomes `np.ndarray` after
-            # save_episode() mutates the buffer. Handle both types here.
-            if isinstance(episode_index, np.ndarray):
-                episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self._meta.image_keys:
-                img_dir = self._get_image_file_dir(episode_index, cam_key)
-                if img_dir.is_dir():
-                    shutil.rmtree(img_dir)
+            self._delete_camera_frame_dirs(self._meta.camera_keys)
 
         self.episode_buffer = self._create_episode_buffer()
 

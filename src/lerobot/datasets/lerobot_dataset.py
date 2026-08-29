@@ -28,8 +28,14 @@ from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderCo
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from .dataset_reader import DatasetReader
+from .dataset_reader import BaseDatasetReader, DatasetReader
 from .dataset_writer import DatasetWriter
+from .storage import (
+    DEFAULT_STORAGE_FORMAT,
+    is_remote_uri,
+    localize_remote_root,
+    make_dataset_reader,
+)
 from .utils import (
     create_lerobot_dataset_card,
     get_safe_version,
@@ -65,6 +71,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
+        *,
+        repo_type: str = "dataset",
+        token: str | bool | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -153,7 +162,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 into. If set, all dataset files are materialized directly under this path. If not set,
                 existing local datasets are still looked up under ``$HF_LEROBOT_HOME/{repo_id}``, but Hub
                 downloads use a revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
+                ``$HF_LEROBOT_HOME/hub``. May also be an object-store URI (e.g. ``hf://datasets/{repo_id}``)
+                for storage formats that read data in place; only ``meta/`` is then materialized locally.
             episodes (list[int] | None, optional): If specified, this will only load episodes specified by
                 their episode_index in this list. Defaults to None.
             episode_filter (Callable[[dict], bool] | None, optional): Predicate over per-episode
@@ -197,6 +207,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
+            repo_type (str, optional): "dataset" (default) or "bucket" for an HF
+                Storage Bucket. With "bucket" and no ``root``, the dataset is read
+                in place from ``hf://buckets/{repo_id}`` (map-style access requires
+                a non-default storage format; the default format is streaming-only
+                on buckets). An explicit ``root`` always wins over ``repo_type``.
+            token: Authentication token used while downloading this dataset
+                from the Hub. Pass a string token, ``True`` to require the
+                locally stored token, ``False`` to disable authentication, or
+                ``None`` to use the Hugging Face Hub default. The token is not
+                retained on the dataset instance after initialization.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -205,6 +225,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
+        if repo_type not in ("dataset", "bucket"):
+            raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+        if root is None and repo_type == "bucket":
+            root = f"hf://buckets/{repo_id}"
+        # Datasets can live at an object-store root (e.g. ``hf://datasets/...``): a
+        # non-default reader reads the data in place and only ``meta/`` is localized.
+        self._storage_root = root if root is not None and is_remote_uri(root) else None
+        if self._storage_root is not None:
+            root = localize_remote_root(
+                repo_id, self._storage_root, revision, token=token, force_cache_sync=force_cache_sync
+            )
         self._requested_root = Path(root) if root else None
         self.delta_timestamps = delta_timestamps
         self.tolerance_s = tolerance_s
@@ -220,10 +251,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata (sets self.root once from the resolved metadata root)
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self._requested_root, self.revision, force_cache_sync=force_cache_sync
+            self.repo_id,
+            self._requested_root,
+            self.revision,
+            # an object-store root already refreshed its meta/ at localization
+            force_cache_sync=force_cache_sync and self._storage_root is None,
+            token=token,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        self.meta.rescale_depth_stats(self._depth_output_unit)
 
         if episodes is not None and any(
             episode >= self.meta.total_episodes or episode < 0 for episode in episodes
@@ -242,25 +279,44 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episodes = resolved
         self.episodes = episodes
 
-        # Create reader (hf_dataset loaded below)
-        self.reader = DatasetReader(
-            meta=self.meta,
-            root=self.root,
-            episodes=episodes,
-            tolerance_s=tolerance_s,
-            video_backend=self._video_backend,
-            delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            return_uint8=self._return_uint8,
-            depth_output_unit=self._depth_output_unit,
-        )
+        if self._storage_root is not None and self.meta.storage_format == DEFAULT_STORAGE_FORMAT:
+            raise ValueError(
+                f"The dataset at {self._storage_root!r} has the default {DEFAULT_STORAGE_FORMAT!r} "
+                "storage format, which cannot be read in place from an object store. For HF Storage "
+                "Buckets, use repo_type='bucket' with dataset.streaming=true."
+            )
+
+        is_default_format = self.meta.storage_format == DEFAULT_STORAGE_FORMAT
+        reader_kwargs = {
+            "meta": self.meta,
+            "episodes": episodes,
+            "delta_timestamps": delta_timestamps,
+            "image_transforms": image_transforms,
+            "tolerance_s": tolerance_s,
+            "return_uint8": return_uint8,
+            "depth_output_unit": depth_output_unit,
+        }
+        if is_default_format:
+            reader_kwargs.update(root=self.root, video_backend=self._video_backend)
+        else:
+            # non-default formats read the data in place at its root
+            reader_kwargs.update(root=self._storage_root or root, revision=revision, token=token)
+        self.reader: BaseDatasetReader | None = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
         self.image_transforms = image_transforms
+        if not is_default_format:
+            self.episodes = self.reader.episodes
+            self.writer = None
+            self._is_finalized = False
+            return
 
         # Load actual data
         if force_cache_sync or not self.reader.try_load():
             if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
-            self._download(download_videos)
+                if token is None:
+                    self.revision = get_safe_version(self.repo_id, self.revision)
+                else:
+                    self.revision = get_safe_version(self.repo_id, self.revision, token=token)
+            self._download(download_videos, token=token)
             self.reader.load_and_activate()
 
         # Detect write-mode params for backward compatibility
@@ -307,11 +363,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"Use LeRobotDataset.create() for new recording or "
                 f"LeRobotDataset.resume() for resume recording."
             )
+        if self._is_finalized:
+            raise RuntimeError(
+                f"Cannot call '{method_name}()' after finalize(). "
+                f"Use LeRobotDataset.resume() to append more episodes."
+            )
 
     # ── Reader guard ──────────────────────────────────────────────────
 
-    def _ensure_reader(self) -> DatasetReader:
-        """Lazily create the reader on first access."""
+    def _ensure_reader(self) -> BaseDatasetReader:
+        """Return the reader, lazily creating the default one on first access.
+
+        ``self.reader`` is only ``None`` in write mode (create/resume), which
+        exists for the default format only — non-default formats construct
+        their reader in ``__init__``.
+        """
+        if self.writer is not None and not self._is_finalized:
+            raise RuntimeError(
+                "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
+            )
         if self.reader is None:
             self.meta.ensure_readable()
             self.reader = DatasetReader(
@@ -351,6 +421,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.meta.fps
 
     @property
+    def depth_output_unit(self) -> str:
+        """Physical unit (``"m"`` or ``"mm"``) depth maps and statistics are returned in on read."""
+        return self._depth_output_unit
+
+    @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
         # Check directly instead of using _ensure_reader(): in write-only mode
@@ -365,7 +440,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Check directly instead of using _ensure_reader(): in write-only mode
         # (create/resume) we rely on metadata rather than initializing a reader.
         if self.reader is None:
-            return self.meta.total_episodes
+            return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
         return self.reader.num_episodes
 
     @property
@@ -376,22 +451,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def hf_dataset(self) -> datasets.Dataset:
         """The underlying Hugging Face Dataset object"""
-        self.reader = self._ensure_reader()
-        if self.reader.hf_dataset is None:
-            self.reader.load_and_activate()
-        return self.reader.hf_dataset
+        reader = self._ensure_reader()
+        if not isinstance(reader, DatasetReader):
+            raise AttributeError(
+                f"hf_dataset is not available for storage_format={self.meta.storage_format!r}: "
+                "data is read through its own dataset reader."
+            )
+        if reader.hf_dataset is None:
+            reader.load_and_activate()
+        return reader.hf_dataset
 
     @property
     def absolute_to_relative_idx(self) -> dict[int, int] | None:
-        """Mapping from absolute frame indices to HF dataset row positions.
+        """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices
-        (from metadata) differ from row positions in the loaded HF dataset.
+        (from metadata) differ from row positions in the filtered view.
         """
-        reader = self._ensure_reader()
-        if reader.hf_dataset is None:
-            reader.load_and_activate()
-        return reader._absolute_to_relative_idx
+        return self._ensure_reader().absolute_to_relative_idx
 
     # ── Writer-delegated methods ──────────────────────────────────────
 
@@ -449,7 +526,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Check if there are unsaved frames in the episode buffer."""
         if self.writer is None:
             return False
-        return self.writer.episode_buffer is not None and self.writer.episode_buffer["size"] > 0
+        # save_episode pops "size", so a buffer abandoned mid-save has nothing pending.
+        return self.writer.episode_buffer is not None and self.writer.episode_buffer.get("size", 0) > 0
 
     def finalize(self):
         """Flush all pending work and close writers.
@@ -472,32 +550,31 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Return the number of frames in the selected episodes."""
         return self.num_frames
 
-    def __getitem__(self, idx) -> dict:
-        """Return a single frame by index, with all transforms applied.
+    def __getitem__(self, idx: int | slice) -> dict | list[dict]:
+        """Return one frame or a slice of frames, with all transforms applied.
 
         Loads the frame from the underlying HF dataset, expands delta-timestamp
         windows, decodes video frames, and applies image transforms. Delegates
-        the core logic to :meth:`DatasetReader.get_item`.
+        the core logic to :class:`DatasetReader`.
 
         Args:
-            idx: Index into the (possibly episode-filtered) dataset.
+            idx: Integer index or slice into the possibly episode-filtered dataset.
 
         Returns:
-            Dict mapping feature names to their tensor values for this frame.
+            A frame dictionary for an integer index, or a list of frame
+            dictionaries for a slice.
 
         Raises:
             RuntimeError: If the dataset is currently being recorded and
                 :meth:`finalize` has not been called yet.
         """
-        if self.writer is not None and not self._is_finalized:
-            raise RuntimeError(
-                "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
-            )
-        reader = self._ensure_reader()
-        if reader.hf_dataset is None:
-            # One-shot load after finalize()
-            reader.load_and_activate()
-        return reader.get_item(idx)
+        if isinstance(idx, slice):
+            return [self[item_idx] for item_idx in range(*idx.indices(len(self)))]
+
+        return self._ensure_reader().get_item(idx)
+
+    def __getitems__(self, indices: list[int]) -> list[dict]:
+        return self._ensure_reader().get_items(list(indices))
 
     def select_columns(self, column_names: str | list[str]):
         """Select specific columns from the underlying dataset.
@@ -573,6 +650,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             **card_kwargs: Additional keyword arguments forwarded to dataset card
                 creation.
         """
+        if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise NotImplementedError(
+                f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
+                "the data files are not managed by LeRobotDataset."
+            )
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
@@ -616,10 +698,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
             hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    def _download(self, download_videos: bool = True) -> None:
+    def _download(self, download_videos: bool = True, *, token: str | bool | None = None) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version."""
         ignore_patterns = None if download_videos else "videos/"
         files = None
+        token_kwargs = {} if token is None else {"token": token}
         if self.episodes is not None:
             # Reader is guaranteed to exist here (created in __init__ before _download)
             files = self.reader.get_episodes_file_paths()
@@ -633,6 +716,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     cache_dir=HF_LEROBOT_HUB_CACHE,
                     allow_patterns=files,
                     ignore_patterns=ignore_patterns,
+                    **token_kwargs,
                 )
             )
         else:
@@ -644,6 +728,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 local_dir=self._requested_root,
                 allow_patterns=files,
                 ignore_patterns=ignore_patterns,
+                **token_kwargs,
             )
             self.meta.root = self._requested_root
 
@@ -740,6 +825,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
+        obj._storage_root = None
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
@@ -783,6 +869,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_threads: int = 0,
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
+        *,
+        token: str | bool | None = None,
     ) -> "LeRobotDataset":
         """Resume recording on an existing dataset.
 
@@ -816,6 +904,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             streaming_encoding: If ``True``, encode video in real-time during
                 capture.
             encoder_queue_maxsize: Max buffered frames per camera for streaming.
+            token: Authentication token used if metadata must be downloaded
+                from the Hub. The token is not retained on the dataset instance.
 
         Returns:
             A :class:`LeRobotDataset` in write mode, ready to append episodes.
@@ -844,10 +934,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata (revision-safe when root is not provided)
         obj.meta = LeRobotDatasetMetadata(
-            obj.repo_id, obj._requested_root, obj.revision, force_cache_sync=force_cache_sync
+            obj.repo_id,
+            obj._requested_root,
+            obj.revision,
+            force_cache_sync=force_cache_sync,
+            token=token,
         )
 
         obj._encoder_threads = encoder_threads
+        obj._storage_root = None
         obj.root = obj.meta.root
 
         # Reader is lazily created on first access (write-only mode)

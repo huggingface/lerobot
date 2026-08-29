@@ -19,6 +19,7 @@ import logging
 
 import numpy as np
 
+from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -509,7 +510,7 @@ def compute_episode_stats(
         For 'image'/'video' features, stats are computed per channel and kept with a
         leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
         255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
-        this rescaling and remain in their stored units.
+        this rescaling and remain in their stored units (stored in ``depth_unit``).
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
@@ -533,9 +534,7 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
-            normalization_factor = (
-                255.0 if not (features[key].get("info") or {}).get("is_depth_map", False) else 1.0
-            )
+            normalization_factor = 1.0 if is_depth_map(features[key]) else 255.0
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
                 for k, v in ep_stats[key].items()
@@ -613,8 +612,15 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
         for q_key in quantile_keys:
             if all(q_key in s for s in stats_ft_list):
                 quantile_values = np.stack([s[q_key] for s in stats_ft_list])
-                weighted_quantiles = quantile_values * counts
-                aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
+                # Exact global quantiles cannot be recovered from quantile summaries.
+                # Keep a conservative envelope of the available estimates: min
+                # for lower quantiles and max for upper quantiles. The resulting
+                # values are bounds across the inputs, not global quantile estimates.
+                q_percent = int(q_key[1:])
+                if q_percent <= 50:
+                    aggregated[q_key] = np.min(quantile_values, axis=0)
+                else:
+                    aggregated[q_key] = np.max(quantile_values, axis=0)
 
     return aggregated
 

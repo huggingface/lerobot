@@ -26,6 +26,7 @@ import pytest
 import torch
 from datasets import Dataset
 
+from lerobot.configs.video import infer_depth_unit
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.io_utils import flatten_dict, hf_transform_to_torch
@@ -535,6 +536,13 @@ def lerobot_dataset_factory(
                 chunks_size=chunks_size,
                 **info_kwargs,
             )
+            # This synthetic path skips add_frame, so record the depth unit the writer would
+            # have stored (dummy depth is uint16) to keep ``depth_unit`` present in info.json.
+            # Reassign a fresh info dict to avoid mutating the shared feature constants.
+            for ft in info.features.values():
+                ft_info = ft.get("info")
+                if ft_info is not None and ft_info.get("is_depth_map") and "depth_unit" not in ft_info:
+                    ft["info"] = {**ft_info, "depth_unit": infer_depth_unit(np.uint16)}
         if stats is None:
             stats = stats_factory(features=info.features)
         if tasks is None:
