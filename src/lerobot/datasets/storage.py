@@ -34,7 +34,18 @@ DEFAULT_STORAGE_FORMAT = "lerobot"
 # ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
 # ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
 # object-store roots.
-_DATASET_READER_MODULES = {"lance": "lerobot.datasets.lance_backend"}
+_DATASET_READER_MODULES: dict[str, str] = {}
+
+
+def register_dataset_reader(storage_format: str, module: str) -> None:
+    """Register ``module`` (implementing the contract above) to serve ``storage_format``."""
+    existing = _DATASET_READER_MODULES.get(storage_format, module)
+    if storage_format == DEFAULT_STORAGE_FORMAT or existing != module:
+        raise ValueError(f"storage_format {storage_format!r} is already registered.")
+    _DATASET_READER_MODULES[storage_format] = module
+
+
+register_dataset_reader("lance", "lerobot.datasets.lance_backend")
 
 
 def is_remote_uri(root: str | Path) -> bool:
