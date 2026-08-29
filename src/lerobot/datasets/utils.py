@@ -181,6 +181,11 @@ class DatasetInfo:
     data_path: str = field(default=DEFAULT_DATA_PATH)
     video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
 
+    # Format holding the underlying data files. ``None`` means the built-in
+    # parquet/mp4 layout; any other value (e.g. "lance") routes LeRobotDataset's
+    # data access through the storage backend registered for that format.
+    storage_format: str | None = None
+
     # Optional metadata
     robot_type: str | None = None
     splits: dict[str, str] = field(default_factory=dict)
@@ -208,8 +213,8 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools`` when unset so existing datasets keep a clean
-        ``info.json``.
+        Drops ``tools`` and ``storage_format`` when unset so existing datasets
+        keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
@@ -217,6 +222,8 @@ class DatasetInfo:
                 ft["shape"] = list(ft["shape"])
         if d.get("tools") is None:
             d.pop("tools", None)
+        if d.get("storage_format") is None:
+            d.pop("storage_format", None)
         return d
 
     @classmethod

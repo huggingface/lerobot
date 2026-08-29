@@ -738,8 +738,9 @@ def _compute_horizon_relative_action_stats(
 
 def _iter_action_state_training_samples(dataset: Any):
     ensure_reader = getattr(dataset, "_ensure_reader", None)
-    if callable(ensure_reader):
-        reader = ensure_reader()
+    # Only the default parquet reader exposes hf_dataset; other readers
+    # (e.g. lance) fall through to the generic per-item loop below.
+    if callable(ensure_reader) and hasattr(reader := ensure_reader(), "hf_dataset"):
         if reader.hf_dataset is None:
             reader.load_and_activate()
         delta_indices = getattr(reader, "delta_indices", None)
