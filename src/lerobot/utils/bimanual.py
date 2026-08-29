@@ -54,25 +54,12 @@ class BimanualMixin:
             self.left_arm.connect(calibrate)
             self.right_arm.connect(calibrate)
         except Exception:
-            self._rollback_failed_connect()
+            self._disconnect_arms(after_failed_connect=True)
             raise
 
-    def _disconnect_arm_for_cleanup(self, arm: Any) -> None:
-        """Disconnect one arm while recovering from a failed startup.
-
-        Override this when cleanup has to be stronger than the arm's normal
-        ``disconnect()``: a motorized follower configured with
-        ``disable_torque_on_disconnect=False`` still has to end up torque-free
-        when the robot as a whole failed to come up.
-        """
+    def _disconnect_arm_after_failed_connect(self, arm: Any) -> None:
+        """Disconnect an arm while rolling back a failed bimanual startup."""
         arm.disconnect()
-
-    def _rollback_failed_connect(self) -> None:
-        """Release both arms without masking the error that triggered rollback."""
-        # The right arm goes first because it may hold the half-initialized
-        # resources of the attempt that just failed.
-        for arm_name, arm in (("right", self.right_arm), ("left", self.left_arm)):
-            self._release_arm(arm_name, arm, after_failed_connect=True)
 
     def calibrate(self) -> None:
         self.left_arm.calibrate()
@@ -83,24 +70,21 @@ class BimanualMixin:
         self.right_arm.configure()
 
     def disconnect(self) -> None:
-        """Release both arms, continuing if one of them fails.
+        self._disconnect_arms()
 
-        Safe to call repeatedly and after a partial connection, so a caller can
-        always shut the robot down in a ``finally`` block.
-        """
-        for arm_name, arm in (("left", self.left_arm), ("right", self.right_arm)):
-            self._release_arm(arm_name, arm, after_failed_connect=False)
-
-    def _release_arm(self, arm_name: str, arm: Any, *, after_failed_connect: bool) -> None:
-        """Disconnect one arm, logging instead of raising."""
-        try:
-            if after_failed_connect:
-                self._disconnect_arm_for_cleanup(arm)
-            else:
-                arm.disconnect()
-        except DeviceNotConnectedError:
-            # An arm that never came up, or that is already released, is the
-            # normal case here. Staying quiet keeps real cleanup faults visible.
-            logger.debug("The %s arm was already disconnected.", arm_name)
-        except Exception:
-            logger.exception("Failed to disconnect the %s arm during cleanup.", arm_name)
+    def _disconnect_arms(self, *, after_failed_connect: bool = False) -> None:
+        arms = (
+            (("right", self.right_arm), ("left", self.left_arm))
+            if after_failed_connect
+            else (("left", self.left_arm), ("right", self.right_arm))
+        )
+        for name, arm in arms:
+            try:
+                if after_failed_connect:
+                    self._disconnect_arm_after_failed_connect(arm)
+                else:
+                    arm.disconnect()
+            except DeviceNotConnectedError:
+                pass
+            except Exception:
+                logger.exception("Failed to disconnect the %s arm.", name)
