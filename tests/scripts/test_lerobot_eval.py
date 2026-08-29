@@ -16,8 +16,6 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
-import pytest
-import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
