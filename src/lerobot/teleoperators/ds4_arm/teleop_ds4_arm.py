@@ -101,10 +101,9 @@ class DS4ArmTeleop(Teleoperator):
         # Per-joint position targets (maintained across calls)
         self._targets: dict[str, float] = dict.fromkeys(config.motor_names, 0.0)
 
-        # Home position — captured on the first reset_targets() call so that
-        # pressing Triangle snaps the arm back to where teleop started.
+        # Home position — snapped by Triangle button. Set to zero here, then
+        # overwritten in connect() and optionally by reset_targets().
         self._home_targets: dict[str, float] = dict.fromkeys(config.motor_names, 0.0)
-        self._home_captured: bool = False
 
         # Edge-detection state for toggle buttons
         self._prev_triangle: bool = False
@@ -151,6 +150,9 @@ class DS4ArmTeleop(Teleoperator):
         self._joy = pygame.joystick.Joystick(idx)
         self._joy.init()
         self._connected = True
+
+        # Record starting position as home (zeros until reset_targets() is called)
+        self._home_targets = dict(self._targets)
 
     def calibrate(self) -> None:
         """No-op — DS4 requires no calibration."""
@@ -220,7 +222,7 @@ class DS4ArmTeleop(Teleoperator):
         # ── Triangle — return to home (rising-edge only) ─────────────────────
         triangle_pressed = inp["triangle"] and not self._prev_triangle
         self._prev_triangle = inp["triangle"]
-        if triangle_pressed and self._home_captured:
+        if triangle_pressed:
             self._targets = dict(self._home_targets)
             return {f"{m}.pos": self._targets[m] for m in self.config.motor_names}
 
@@ -273,10 +275,8 @@ class DS4ArmTeleop(Teleoperator):
             if motor in self._targets:
                 self._targets[motor] = value
 
-        # Capture home position on the very first call (teleop start)
-        if not self._home_captured:
-            self._home_targets = dict(self._targets)
-            self._home_captured = True
+        # Update home to reflect the actual start pose of the arm
+        self._home_targets = dict(self._targets)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """No-op — DS4 does not support position feedback."""
