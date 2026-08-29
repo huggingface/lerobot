@@ -15,6 +15,7 @@
 # limitations under the License.
 
 
+import logging
 from typing import Any
 
 import torch
@@ -23,6 +24,18 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.policies import PreTrainedPolicy
+
+
+def _scale_group_lr(group: dict[str, Any], loraplus_lr_ratio: float) -> None:
+    """Scale a parameter group's learning rate, keeping ``initial_lr`` in sync.
+
+    LR schedulers stamp ``initial_lr`` on each group and anneal from it, so a group whose ``lr`` is
+    scaled must have its ``initial_lr`` scaled by the same factor, otherwise the scheduler would
+    reset the group back to the unscaled learning rate.
+    """
+    group["lr"] = group["lr"] * loraplus_lr_ratio
+    if "initial_lr" in group:
+        group["initial_lr"] = group["initial_lr"] * loraplus_lr_ratio
 
 
 def apply_loraplus_lr_ratio(optimizer: Optimizer, model: torch.nn.Module, loraplus_lr_ratio: float) -> None:
@@ -50,6 +63,10 @@ def apply_loraplus_lr_ratio(optimizer: Optimizer, model: torch.nn.Module, lorapl
         if param.requires_grad and ("lora_B" in name or "lora_embedding_B" in name)
     }
     if not lora_b_param_ids:
+        logging.warning(
+            "`loraplus_lr_ratio` is set but no trainable LoRA B parameters were found, so LoRA+ has "
+            "no effect. Check that a LoRA adapter is attached (e.g. `--peft.method_type=LORA`)."
+        )
         return
 
     scaled_b_groups: list[dict[str, Any]] = []
@@ -60,13 +77,13 @@ def apply_loraplus_lr_ratio(optimizer: Optimizer, model: torch.nn.Module, lorapl
         other_params = [p for p in group["params"] if id(p) not in lora_b_param_ids]
         if not other_params:
             # The whole group is LoRA B: scale its learning rate in place.
-            group["lr"] = group["lr"] * loraplus_lr_ratio
+            _scale_group_lr(group, loraplus_lr_ratio)
             continue
         # Keep the non-B params in this group and move the B params to a scaled sibling group.
         group["params"] = other_params
         b_group = {key: value for key, value in group.items() if key != "params"}
         b_group["params"] = b_params
-        b_group["lr"] = group["lr"] * loraplus_lr_ratio
+        _scale_group_lr(b_group, loraplus_lr_ratio)
         scaled_b_groups.append(b_group)
 
     for b_group in scaled_b_groups:
