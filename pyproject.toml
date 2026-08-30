@@ -25,7 +25,7 @@ discord = "https://discord.gg/s3KuuzsPFb"
 
 [project]
 name = "lerobot"
-version = "0.6.1"
+version = "0.6.2"
 description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 dynamic = ["readme"]
 license = { text = "Apache-2.0" }
@@ -94,6 +94,14 @@ dependencies = [
 [project.optional-dependencies]
 
 # ── Feature-scoped extras ──────────────────────────────────
+lancedb = [
+    "lerobot[dataset]",
+    "lancedb>=0.37.1,<0.40.0",
+]
+lancedb-convert = [
+    "lerobot[lancedb]",
+    "lerobot-lancedb>=0.3.1,<0.4.0",
+]
 dataset = [
     "datasets>=4.8.0,<5.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
@@ -289,6 +297,7 @@ metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 all = [
     # Feature-scoped extras
     "lerobot[dataset]",
+    "lerobot[lancedb]",
     "lerobot[training]",
     "lerobot[hardware]",
     "lerobot[viz]",
@@ -346,6 +355,7 @@ lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"
 lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
+lerobot-convert-dcp="lerobot.scripts.lerobot_convert_dcp:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
 lerobot-train-tokenizer="lerobot.scripts.lerobot_train_tokenizer:main"
@@ -400,7 +410,7 @@ exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 # N: pep8-naming
 # TODO: Uncomment rules when ready to use
 select = [
-    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM" #, "A", "S", "D", "RUF"
+    "E", "W", "F", "I", "B", "C4", "T20", "N", "UP", "SIM", "D" #, "A", "S", "RUF"
 ]
 ignore = [
     "E501", # Line too long
@@ -410,9 +420,53 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401", "F403", "E402"]
+"__init__.py" = ["F401", "F403", "E402", "D104"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
+
+# D (pydocstyle) is enabled globally, but only holds for code that has been converted to the docstring
+# standard in docs/source/writing_docstrings.mdx. Every module below is still on the old style; each entry
+# is deleted as that module is converted, and this block can be removed once it is empty.
+#
+# Not part of the API reference and not planned for conversion: tests, examples, benchmarks, templates,
+# CI helper scripts and the packaging shim.
+"tests/**" = ["D"]
+"examples/**" = ["D"]
+"benchmarks/**" = ["D"]
+"scripts/**" = ["D"]
+"setup.py" = ["D"]
+"src/lerobot/templates/**" = ["D"]
+# Vendored from transformers; keeps its upstream docstring style so syncs stay clean.
+"src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
+# Awaiting conversion, one PR per module.
+"src/lerobot/annotations/**" = ["D"]
+"src/lerobot/async_inference/**" = ["D"]
+"src/lerobot/cameras/**" = ["D"]
+"src/lerobot/common/**" = ["D"]
+"src/lerobot/configs/**" = ["D"]
+"src/lerobot/data_processing/**" = ["D"]
+"src/lerobot/datasets/**" = ["D"]
+"src/lerobot/distributed/**" = ["D"]
+"src/lerobot/envs/**" = ["D"]
+"src/lerobot/jobs/**" = ["D"]
+"src/lerobot/model/**" = ["D"]
+"src/lerobot/motors/**" = ["D"]
+"src/lerobot/optim/**" = ["D"]
+"src/lerobot/policies/**" = ["D"]
+"src/lerobot/processor/**" = ["D"]
+"src/lerobot/rewards/**" = ["D"]
+"src/lerobot/rl/**" = ["D"]
+"src/lerobot/robots/**" = ["D"]
+"src/lerobot/rollout/**" = ["D"]
+"src/lerobot/scripts/**" = ["D"]
+"src/lerobot/teleoperators/**" = ["D"]
+"src/lerobot/transforms/**" = ["D"]
+"src/lerobot/transport/**" = ["D"]
+"src/lerobot/utils/**" = ["D"]
+"src/lerobot/lerobot_types.py" = ["D"]
+# Package root: two one-line docstring fixes land with the docstring PR.
+"src/lerobot/__init__.py" = ["D"]
+"src/lerobot/__version__.py" = ["D"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["lerobot"]
@@ -456,24 +510,33 @@ default.extend-ignore-identifiers-re = [
     "seperated_timestep",
 ]
 
-# TODO: Uncomment when ready to use
-# [tool.interrogate]
-# ignore-init-module = true
-# ignore-init-method = true
-# ignore-nested-functions = false
-# ignore-magic = false
-# ignore-semiprivate = false
-# ignore-private = false
-# ignore-property-decorators = false
-# ignore-module = false
-# ignore-setters = false
-# fail-under = 80
-# output-format = "term-missing"
-# color = true
-# paths = ["src/lerobot"]
+# Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently
+# measured coverage so it passes today, and is raised in the same PR that documents a module. Never set it
+# to a value that fails on main. The destination is 100; see docs/source/writing_docstrings.mdx.
+[tool.interrogate]
+ignore-init-module = true
+ignore-init-method = true
+ignore-nested-functions = false
+ignore-magic = false
+ignore-semiprivate = false
+ignore-private = false
+ignore-property-decorators = false
+ignore-module = false
+ignore-setters = false
+fail-under = 52
+output-format = "term-missing"
+color = true
+paths = ["src/lerobot"]
+exclude = ["src/lerobot/policies/molmoact2/molmoact2_hf_model"]
 
 # TODO: Enable mypy gradually module by module across multiple PRs
 # Uncomment [tool.mypy] first, then uncomment individual module overrides as they get proper type annotations
+
+[tool.pytest.ini_options]
+markers = [
+    "multigpu: distributed tests needing 2-4 GPUs (CI: docker_publish.yml lane)",
+    "multigpu_heavy: 8-GPU sweeps and soak tests; never run in CI",
+]
 
 [tool.mypy]
 python_version = "3.12"
@@ -517,6 +580,15 @@ module = "lerobot.configs.*"
 ignore_errors = false
 
 # extra strictness for configs
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "lerobot.distributed.*"
+ignore_errors = false
+
+# extra strictness for the distributed engine
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true

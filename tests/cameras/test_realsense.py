@@ -20,6 +20,7 @@
 # ```
 
 from pathlib import Path
+from threading import Event
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -134,20 +135,20 @@ def test_connect_cleans_up_after_warmup_failure_and_allows_retry():
         read_threads.append(camera.thread)
         raise TimeoutError("no frame")
 
+    # Every attempt times out, so connect() exhausts its retries and reports the failure.
     with (
         patch.object(camera, "async_read", side_effect=fail_warmup),
-        pytest.raises(TimeoutError, match="no frame"),
+        patch.object(camera, "_hardware_reset"),
+        pytest.raises(ConnectionError, match="failed to capture frames"),
     ):
-        camera.connect()
+        camera.connect(warmup=True)
 
-    assert camera.rs_pipeline is None
-    assert camera.rs_profile is None
-    assert camera.thread is None
-    assert not camera.is_connected
     assert read_threads[0] is not None
     assert not read_threads[0].is_alive()
 
-    camera.connect(warmup=False)
+    with patch.object(camera, "_run_warmup") as mock_warmup:
+        camera.connect(warmup=False)
+    mock_warmup.assert_not_called()
     assert camera.is_connected
     camera.disconnect()
 
@@ -511,3 +512,159 @@ def test_rotation(rotation):
             assert camera.width == 640
             assert camera.height == 480
             assert img.shape[:2] == (480, 640)
+
+
+# --- connect() retry/state-machine tests ---
+
+
+def test_connect_open_failure_propagates(patch_realsense):
+    """A pipeline that cannot be opened at all fails immediately, with no hardware reset."""
+    patch_realsense.side_effect = mock_rs_config_enable_device_bad_file
+    config = RealSenseCameraConfig(serial_number_or_name="042")
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(ConnectionError),
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "warmup_error",
+    [ConnectionError("no frames"), TimeoutError("timed out")],
+    ids=["connection_error", "timeout_error"],
+)
+def test_connect_retries_without_reset_first(patch_realsense, warmup_error):
+    """A failed warmup tears down and is first retried with a plain stop/start cycle.
+
+    Both failure types are covered: warmup itself raises ConnectionError, while a
+    stalled read surfaces as TimeoutError from async_read.
+    """
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=[warmup_error, None]) as mock_warmup,
+        patch.object(camera, "_hardware_reset") as mock_reset,
+    ):
+        camera.connect(warmup=True)
+
+    assert mock_warmup.call_count == 2
+    mock_reset.assert_not_called()
+    assert camera.is_connected
+    camera.disconnect()
+
+
+def test_connect_resets_before_final_attempt(patch_realsense):
+    """When plain retries keep failing, the device is reset before the final attempt."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+    real_release = camera._release_after_failed_setup
+    calls = []
+
+    def tracked_release():
+        calls.append("teardown")
+        real_release()
+
+    failures = [ConnectionError("no frames")] * (RealSenseCamera._MAX_CONNECT_ATTEMPTS - 1)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=[*failures, None]) as mock_warmup,
+        patch.object(camera, "_release_after_failed_setup", side_effect=tracked_release),
+        patch.object(camera, "_hardware_reset", side_effect=lambda: calls.append("reset")),
+    ):
+        camera.connect(warmup=True)
+
+    assert mock_warmup.call_count == RealSenseCamera._MAX_CONNECT_ATTEMPTS
+    # every failed attempt is torn down, and the reset happens after the last teardown
+    assert calls == ["teardown"] * len(failures) + ["reset"]
+    assert camera.is_connected
+    camera.disconnect()
+
+
+def test_connect_exhausts_attempts_and_cleans_up(patch_realsense):
+    """When every attempt fails, connect() raises and leaves the camera fully torn down."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+    max_attempts = RealSenseCamera._MAX_CONNECT_ATTEMPTS
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=ConnectionError("no frames")) as mock_warmup,
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(ConnectionError, match=f"after {max_attempts} attempts"),
+    ):
+        camera.connect(warmup=True)
+
+    assert mock_warmup.call_count == max_attempts
+    # the hardware reset is a last resort, used only before the final attempt
+    assert mock_reset.call_count == 1
+    assert not camera.is_connected
+    assert camera.thread is None
+    assert camera.rs_pipeline is None
+
+
+def test_connect_setup_failure_after_start_tears_down_and_is_not_retried(patch_realsense):
+    """A failure in _configure_capture_settings/_start_read_thread after a successful pipeline
+    start must tear down and propagate unchanged, not be retried."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_configure_capture_settings", side_effect=RuntimeError("boom")),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        camera.connect(warmup=False)
+
+    mock_reset.assert_not_called()
+    assert not camera.is_connected
+    assert camera.rs_pipeline is None
+
+
+def test_connect_unexpected_warmup_exception_tears_down_and_propagates(patch_realsense):
+    """An unexpected (non-Timeout/Connection) exception from warmup tears down and propagates
+    unchanged, not treated as retry-worthy."""
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+
+    with (
+        patch.object(camera, "_run_warmup", side_effect=ValueError("unexpected")),
+        patch.object(camera, "_hardware_reset") as mock_reset,
+        pytest.raises(ValueError, match="unexpected"),
+    ):
+        camera.connect(warmup=True)
+
+    mock_reset.assert_not_called()
+    assert not camera.is_connected
+    assert camera.thread is None
+    assert camera.rs_pipeline is None
+
+
+def test_read_loop_does_not_publish_after_stop_requested():
+    """A read landing after a stop was requested must not repopulate the frame buffer.
+
+    `_stop_read_thread` gives up joining after 2s while a hardware read can block for up
+    to 10s, so a late frame would otherwise resurrect the buffer that was just cleared and
+    be seen as a fresh frame by the next connect attempt.
+    """
+    config = RealSenseCameraConfig(serial_number_or_name="042", warmup_s=0)
+    camera = RealSenseCamera(config)
+    camera.stop_event = Event()
+
+    def read_then_request_stop():
+        # the stop lands while this read is in flight
+        camera.stop_event.set()
+        return MagicMock()
+
+    with (
+        patch.object(camera, "_read_from_hardware", side_effect=read_then_request_stop),
+        patch.object(camera, "_postprocess_image", return_value=np.zeros((480, 640, 3), np.uint8)),
+    ):
+        camera._read_loop()
+
+    assert camera.latest_color_frame is None
+    assert camera.latest_timestamp is None
+    assert not camera.new_frame_event.is_set()
