@@ -28,6 +28,12 @@ Mark it UNUSABLE if the frames do not clearly show the real scene because of:
   - a test pattern;
   - an application/logo graphic;
   - a blank, solid-colour, or nearly-empty image that does not depict the task;
+  - a TACTILE / touch-sensor readout rather than a camera view of the scene — e.g.
+    a GelSight/DIGIT-style contact image, a uniform elastomer/gel pad, or a
+    force/pressure heatmap (reason: "tactile sensor, not a camera view");
+  - a DEPTH map / disparity image rather than a normal RGB photo — a smooth
+    grayscale or false-colour distance map of the scene (reason: "depth map, not
+    an RGB camera view");
   - a foreign obstruction blocking the lens such that no useful part of the task
     or robot is visible in any provided frame.
 

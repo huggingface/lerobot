@@ -257,8 +257,8 @@ def _episode_task(root: Path, cfg: CameraCurationConfig) -> str | None:
             if task:
                 return task
             break
-    except Exception:  # noqa: BLE001 - task context is optional; never fail curation on it
-        pass
+    except Exception as exc:  # noqa: BLE001 - task context is optional; never fail curation on it
+        logger.debug("episode task via reader unavailable: %s", exc)
     try:
         from lerobot.datasets.io_utils import load_tasks
 
@@ -266,8 +266,8 @@ def _episode_task(root: Path, cfg: CameraCurationConfig) -> str | None:
         names = [str(t).strip() for t in list(getattr(tasks, "index", [])) if str(t).strip()]
         if names:
             return "; ".join(dict.fromkeys(names))
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("episode task via meta/tasks unavailable: %s", exc)
     return None
 
 
@@ -296,6 +296,20 @@ def _decide(
     if task:
         logger.info("  [%s] task context: %r", label, task)
     verdicts = curator.curate_cameras(frames, cfg, vlm, task=task)
+    # Depth cameras are not RGB scene views — they are excluded from VLM sampling,
+    # so add explicit UNUSABLE verdicts with a clear reason rather than dropping them.
+    seen = {v.camera_key for v in verdicts}
+    for dk in getattr(meta, "depth_keys", []):
+        if dk not in seen:
+            verdicts.append(
+                curator.CameraVerdict(
+                    camera_key=dk,
+                    usable=False,
+                    view_label=None,
+                    blur_reason="Depth map, not an RGB camera view.",
+                    mount_type=None,
+                )
+            )
     for v in verdicts:
         logger.info(
             "  [%s] %s -> label=%s usable=%s%s",
