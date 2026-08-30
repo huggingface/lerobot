@@ -202,28 +202,27 @@ Use "wrist".
 
 Default to plain "wrist".
 
-Only use "left_wrist" or "right_wrist" when there is explicit and reliable
-evidence that:
+DETERMINE HANDEDNESS FROM THE HAND SHAPE. If the camera shows a multi-fingered /
+anthropomorphic hand (e.g. a humanoid or five-finger hand), you can usually tell
+which hand it is — a LEFT hand and a RIGHT hand are MIRROR IMAGES, so the THUMB
+sits on the opposite side of the fingers. Actively work it out:
 
-  1. the robot has distinct left and right manipulators; AND
-  2. this camera can reliably be associated with one of them.
+  1. decide whether you are seeing the PALM or the BACK of the hand;
+  2. locate the THUMB relative to the other four fingers;
+  3. exactly as with a human hand, that fixes left vs right — assign "left_wrist"
+     or "right_wrist".
 
-A VALID anatomical cue: for a multi-fingered / anthropomorphic hand (e.g. a
-humanoid hand), the THUMB position relative to the fingers reveals which hand it
-is, exactly like telling a human left hand from a right hand. When you can
-clearly see the hand's fingers and thumb (and thus read its palm/back
-orientation), use that to assign left_wrist / right_wrist.
+Do this whenever the fingers and thumb are reasonably visible; do NOT default to
+plain "wrist" just because it is easier. Fall back to plain "wrist" only when the
+hand is a simple 2-jaw parallel gripper (no distinguishable thumb) or the hand's
+structure genuinely cannot be read.
 
-Do NOT infer handedness from SUPERFICIAL cues instead:
+Do NOT infer handedness from SUPERFICIAL cues instead — use the hand's OWN
+anatomy, never:
 
   - which side of the image the arm appears on;
   - the direction the gripper happens to point;
-  - apparent image direction;
-  - mirroring;
-  - camera rotation.
-
-If the hand's structure is not clearly readable and no reliable cue is available,
-use plain "wrist".
+  - apparent image direction / mirroring / camera rotation.
 
 If mount_type == "fixed"
 
