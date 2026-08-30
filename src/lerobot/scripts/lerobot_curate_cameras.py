@@ -427,7 +427,8 @@ _AGG_SET_KEYS = (
 def _empty_aggregate() -> dict[str, Any]:
     agg: dict[str, Any] = {k: set() for k in _AGG_SET_KEYS}
     agg["failed"] = {}
-    # per-flagged-dataset detail, so the summary shows the WHY, not just which:
+    # per-dataset detail, so the summary shows the WHY, not just which:
+    agg["views"] = {}  # subpath -> {camera: {view_label, mount_type, usable}} (always)
     agg["unusable_views"] = {}  # subpath -> {camera: reason}
     agg["conflicting_views"] = {}  # subpath -> {label: [cameras]}
     agg["renames"] = {}  # subpath -> {old_key: new_key}
@@ -454,7 +455,7 @@ def _seed_aggregate_from_report(agg: dict[str, Any], report_path: Path) -> None:
         vals = prior.get(key)
         if isinstance(vals, list):
             agg[key].update(vals)
-    for key in ("failed", "unusable_views", "conflicting_views", "renames"):
+    for key in ("failed", "views", "unusable_views", "conflicting_views", "renames"):
         vals = prior.get(key)
         if isinstance(vals, dict):
             agg[key].update(vals)
@@ -468,6 +469,17 @@ def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) 
     agg["failed"].pop(subpath, None)  # a previously-failed dataset that now succeeded
     agg["completed"].add(subpath)
     cameras = (entry.get("cameras") or {}) if isinstance(entry, dict) else {}
+    # Always record every camera's VLM classification, even with no rename/unusable.
+    views = {
+        k.split("observation.images.")[-1]: {
+            "view_label": (cam or {}).get("view_label"),
+            "mount_type": (cam or {}).get("mount_type"),
+            "usable": (cam or {}).get("usable"),
+        }
+        for k, cam in cameras.items()
+    }
+    if views:
+        agg["views"][subpath] = views
     renames = entry.get("renames") or {}
     if renames:
         agg["renamed"].add(subpath)
@@ -566,8 +578,9 @@ def _summary_report(
         "n_with_unusable": len(agg["with_unusable"]),
         "n_with_name_collision": len(agg["with_name_collision"]),
         "renamed": sorted(agg["renamed"]),
-        # the actual {old: new} key renames per dataset, plus the unusable views WITH
-        # reasons and the conflicting views, per flagged dataset:
+        # every camera's VLM classification (always), the actual {old: new} renames,
+        # and the unusable views WITH reasons and the conflicting views:
+        "views": dict(sorted(agg["views"].items())),
         "renames": dict(sorted(agg["renames"].items())),
         "unusable_views": dict(sorted(agg["unusable_views"].items())),
         "conflicting_views": dict(sorted(agg["conflicting_views"].items())),

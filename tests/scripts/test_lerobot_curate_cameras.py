@@ -97,7 +97,14 @@ def test_summary_report_tallies_no_per_dataset_detail():
         agg,
         "u/ok",
         {
-            "cameras": {"a": {"proposed_new_key": "observation.images.top"}},
+            "cameras": {
+                "observation.images.cam0": {
+                    "view_label": "top",
+                    "mount_type": "fixed",
+                    "usable": True,
+                    "proposed_new_key": "observation.images.top",
+                }
+            },
             "renames": {"observation.images.cam0": "observation.images.top"},
         },
     )
@@ -128,6 +135,8 @@ def test_summary_report_tallies_no_per_dataset_detail():
     assert report["conflicting_views"] == {"u/flag": {"top": ["top_1", "top_2"]}}
     # and the report shows the actual {old: new} renames (prefix stripped)
     assert report["renames"] == {"u/ok": {"cam0": "top"}}
+    # every camera's VLM classification is shown even with no rename/unusable
+    assert report["views"]["u/ok"] == {"cam0": {"view_label": "top", "mount_type": "fixed", "usable": True}}
 
 
 def test_update_aggregate_retry_clears_failure():
