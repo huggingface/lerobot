@@ -654,20 +654,17 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
         _update_aggregate(agg, sp, entry)
         # Progress bar for the job log: one line per completed sub-dataset. Called
         # from the main thread in both the serial and parallel branches, so the
-        # counter needs no lock.
+        # counter needs no lock. Use print (not logger) so it ALWAYS shows in the
+        # job log — an imported lib may have configured root logging first, which
+        # would make our basicConfig a no-op and swallow logger.info lines.
         progress["n"] += 1
         filled = int(20 * progress["n"] / n_todo) if n_todo else 20
-        logger.info(
-            "curate-cameras: [%s] %d/%d (%.0f%%) done — %s | renamed=%d unusable=%d conflicts=%d failed=%d",
-            "#" * filled + "-" * (20 - filled),
-            progress["n"],
-            n_todo,
-            100 * progress["n"] / n_todo if n_todo else 100.0,
-            sp,
-            len(agg["renamed"]),
-            len(agg["with_unusable"]),
-            len(agg["with_name_collision"]),
-            len(agg["failed"]),
+        print(
+            f"curate-cameras: [{'#' * filled + '-' * (20 - filled)}] "
+            f"{progress['n']}/{n_todo} ({100 * progress['n'] / n_todo if n_todo else 100.0:.0f}%) "
+            f"done — {sp} | renamed={len(agg['renamed'])} unusable={len(agg['with_unusable'])} "
+            f"conflicts={len(agg['with_name_collision'])} failed={len(agg['failed'])}",
+            flush=True,
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(_summary_report(cfg, subpaths, agg), indent=2), encoding="utf-8")
