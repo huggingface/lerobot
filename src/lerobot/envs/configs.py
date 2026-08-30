@@ -128,6 +128,20 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""
         return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
 
+    def validate_platform(self) -> None:
+        """Fail fast when this environment cannot run on the current machine.
+
+        Called from `TrainPipelineConfig.validate()` at startup, before the dataset
+        is downloaded and the policy is built, so a run that could never reach an
+        environment rollout stops immediately instead of minutes later.
+
+        Deliberately kept out of `__post_init__`: `make_env_config()` constructs
+        registered envs to enumerate the available choices, and raising during
+        construction would break callers that never intended to run one. Subclasses
+        with a platform, driver or simulator constraint override this; the default
+        is a no-op.
+        """
+
 
 @dataclass
 class HubEnvConfig(EnvConfig):
@@ -331,6 +345,22 @@ LIBERO_SIMULATOR_MISSING_MSG = (
 )
 
 
+def _assert_libero_simulator_available() -> None:
+    """Raise with an actionable message if the LIBERO simulator is not importable.
+
+    Shared by `LiberoEnv.create_envs()` and `LiberoEnv.validate_platform()`, so the
+    check and its message exist in exactly one place.
+
+    `find_spec` proves the module is on the path, not that it imports cleanly: a
+    partial manual install on a non-Linux machine can pass here and still fail later
+    with the original traceback. Tightening this to a real `import libero` would be
+    exact but would import a heavy package on every `create_envs()` call. If that
+    trade is ever revisited, this is the only place it changes.
+    """
+    if importlib.util.find_spec("libero") is None:
+        raise ModuleNotFoundError(LIBERO_SIMULATOR_MISSING_MSG)
+
+
 @EnvConfig.register_subclass("libero")
 @dataclass
 class LiberoEnv(EnvConfig):
@@ -439,12 +469,15 @@ class LiberoEnv(EnvConfig):
             kwargs["task_ids"] = self.task_ids
         return kwargs
 
+    def validate_platform(self) -> None:
+        """LIBERO is Linux-only, see `_assert_libero_simulator_available` (#4388)."""
+        _assert_libero_simulator_available()
+
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
         # Fail fast at env-construction time with an actionable message when the
         # simulator was silently omitted (e.g. a non-Linux install), instead of
         # letting a cryptic ModuleNotFoundError surface from the import below (#4388).
-        if importlib.util.find_spec("libero") is None:
-            raise ModuleNotFoundError(LIBERO_SIMULATOR_MISSING_MSG)
+        _assert_libero_simulator_available()
 
         from .libero import create_libero_envs
 
