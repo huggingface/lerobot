@@ -464,16 +464,21 @@ def test_build_report_flags_unusable_and_collision():
     report = build_report(verdicts, mapping, cfg)
     assert report["has_unusable"] is True
     assert report["unusable_cameras"] == ["observation.images.c"]
+    # unusable views carry the reason
+    assert report["unusable_views"] == {"observation.images.c": "placeholder"}
     assert report["has_name_collision"] is True
     assert report["suffixed_cameras"] == ["observation.images.a", "observation.images.b"]
+    # conflicting views show which cameras share the label
+    assert report["conflicting_views"] == {"top": ["observation.images.a", "observation.images.b"]}
 
-    # A clean dataset (all usable, no suffix) reports both flags False.
+    # A clean dataset (all usable, no conflict) reports both flags False and empty detail.
     clean = build_report(
         [CameraVerdict("observation.images.a", usable=True, view_label="top")],
         {"observation.images.a": "observation.images.top"},
         cfg,
     )
     assert clean["has_unusable"] is False and clean["has_name_collision"] is False
+    assert clean["unusable_views"] == {} and clean["conflicting_views"] == {}
 
 
 def test_write_report(tmp_path):

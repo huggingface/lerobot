@@ -497,16 +497,26 @@ def build_report(
     — surfaced per dataset so a curation sweep is auditable at a glance.
     """
     unusable_cameras = sorted(v.camera_key for v in verdicts if not v.usable)
+    # {camera: reason} for every unusable view — the "why", surfaced up front.
+    unusable_views = {v.camera_key: v.blur_reason for v in verdicts if not v.usable}
     # A numeric suffix on the new key means the label collided and was suffixed
     # (vocabulary labels never end in ``_<digits>``, so this is unambiguous).
     suffixed_cameras = sorted(old for old, new in mapping.items() if re.search(r"_\d+$", new))
+    # Conflicting views: cameras that landed on the SAME view label (>= 2).
+    _by_label: dict[str, list[str]] = {}
+    for v in verdicts:
+        if v.view_label is not None:
+            _by_label.setdefault(v.view_label, []).append(v.camera_key)
+    conflicting_views = {lbl: sorted(cams) for lbl, cams in _by_label.items() if len(cams) > 1}
     return {
         "repo_id": cfg.repo_id,
         "episode_index": cfg.episode_index,
         "view_vocabulary": list(cfg.view_vocabulary),
         "has_unusable": bool(unusable_cameras),
         "unusable_cameras": unusable_cameras,
-        "has_name_collision": bool(suffixed_cameras),
+        "unusable_views": unusable_views,
+        "has_name_collision": bool(conflicting_views or suffixed_cameras),
+        "conflicting_views": conflicting_views,
         "suffixed_cameras": suffixed_cameras,
         "cameras": {
             v.camera_key: {

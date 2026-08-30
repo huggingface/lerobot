@@ -427,6 +427,9 @@ _AGG_SET_KEYS = (
 def _empty_aggregate() -> dict[str, Any]:
     agg: dict[str, Any] = {k: set() for k in _AGG_SET_KEYS}
     agg["failed"] = {}
+    # per-flagged-dataset detail, so the summary shows the WHY, not just which:
+    agg["unusable_views"] = {}  # subpath -> {camera: reason}
+    agg["conflicting_views"] = {}  # subpath -> {label: [cameras]}
     return agg
 
 
@@ -450,9 +453,10 @@ def _seed_aggregate_from_report(agg: dict[str, Any], report_path: Path) -> None:
         vals = prior.get(key)
         if isinstance(vals, list):
             agg[key].update(vals)
-    failed = prior.get("failed")
-    if isinstance(failed, dict):
-        agg["failed"].update(failed)
+    for key in ("failed", "unusable_views", "conflicting_views"):
+        vals = prior.get(key)
+        if isinstance(vals, dict):
+            agg[key].update(vals)
 
 
 def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) -> None:
@@ -467,8 +471,18 @@ def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) 
         agg["renamed"].add(subpath)
     if entry.get("has_unusable"):
         agg["with_unusable"].add(subpath)
+        # {camera: reason} for the unusable views — surface the WHY in the summary.
+        uv = {k.split("observation.images.")[-1]: r for k, r in (entry.get("unusable_views") or {}).items()}
+        if uv:
+            agg["unusable_views"][subpath] = uv
     if entry.get("has_name_collision"):
         agg["with_name_collision"].add(subpath)
+        cv = {
+            lbl: [c.split("observation.images.")[-1] for c in cams]
+            for lbl, cams in (entry.get("conflicting_views") or {}).items()
+        }
+        if cv:
+            agg["conflicting_views"][subpath] = cv
     if entry.get("collisions"):
         agg["conflicts"].add(subpath)
     if entry.get("rename_error"):
@@ -524,8 +538,11 @@ def _persist_progress_to_hub(cfg: CameraCurationConfig, report_path: Path, lock:
 def _summary_report(
     cfg: CameraCurationConfig, all_subpaths: list[str], agg: dict[str, Any]
 ) -> dict[str, Any]:
-    """Assemble the aggregated nested summary — counts plus lists of sub-datasets by
-    outcome, no per-dataset detail (that lives in each dataset's own meta/info.json).
+    """Assemble the aggregated nested summary — counts, lists of sub-datasets by
+    outcome, and focused detail for the flagged ones: the unusable views WITH their
+    reasons and the conflicting views (which cameras share a label). Clean cameras
+    are not dumped; their full per-camera verdicts live in each dataset's own
+    meta/info.json.
 
     The ``completed`` list is what ``--resume`` reads to skip finished sub-datasets.
     """
@@ -541,6 +558,9 @@ def _summary_report(
         "n_with_unusable": len(agg["with_unusable"]),
         "n_with_name_collision": len(agg["with_name_collision"]),
         "renamed": sorted(agg["renamed"]),
+        # unusable views WITH reasons, and the conflicting views, per flagged dataset:
+        "unusable_views": dict(sorted(agg["unusable_views"].items())),
+        "conflicting_views": dict(sorted(agg["conflicting_views"].items())),
         "with_unusable": sorted(agg["with_unusable"]),
         "with_name_collision": sorted(agg["with_name_collision"]),
         "conflicts": sorted(agg["conflicts"]),

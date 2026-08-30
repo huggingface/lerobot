@@ -103,6 +103,8 @@ def test_summary_report_tallies_no_per_dataset_detail():
             "cameras": {"a": {"proposed_new_key": "observation.images.top_1"}},
             "has_unusable": True,
             "has_name_collision": True,
+            "unusable_views": {"observation.images.phone": "placeholder graphic"},
+            "conflicting_views": {"top": ["observation.images.top_1", "observation.images.top_2"]},
         },
     )
     report = _summary_report(cfg, ["u/ok", "u/noop", "u/bad", "u/flag"], agg)
@@ -113,7 +115,10 @@ def test_summary_report_tallies_no_per_dataset_detail():
     assert report["with_unusable"] == ["u/flag"] and report["n_with_unusable"] == 1
     assert report["with_name_collision"] == ["u/flag"] and report["n_with_name_collision"] == 1
     assert set(report["completed"]) == {"u/ok", "u/noop", "u/flag"}  # resume source
-    assert "subdatasets" not in report  # summary only — no per-dataset detail
+    assert "subdatasets" not in report  # summary only — no per-camera dump for clean cams
+    # but the flagged datasets DO carry the reason + which cameras conflict
+    assert report["unusable_views"] == {"u/flag": {"phone": "placeholder graphic"}}
+    assert report["conflicting_views"] == {"u/flag": {"top": ["top_1", "top_2"]}}
 
 
 def test_update_aggregate_retry_clears_failure():
