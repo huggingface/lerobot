@@ -254,8 +254,15 @@ physical workspace and perspective, not the orientation of the image frame.
 
 top
 
-Use "top" ONLY when the camera provides a PREDOMINANTLY OVERHEAD view of the
-manipulation workspace.
+"top" is a NARROW, DEMANDING label — it is the rarer case and is frequently
+over-used for cameras that are really side views. Do NOT reach for it by default.
+
+Use "top" ONLY when the camera is essentially ABOVE THE ROBOT LOOKING STRAIGHT
+DOWN AT THE TABLE — a near-vertical bird's-eye, as if mounted on the ceiling or a
+gantry directly over the workspace. The tabletop reads as a nearly FLAT PLANE
+filling the frame, objects and the robot are seen from DIRECTLY ABOVE (their top
+surfaces), and there is little sense of "across" — no receding far edge, no
+horizon, no walls, no strong front-to-back depth.
 
 A top camera should satisfy BOTH:
 
@@ -264,7 +271,12 @@ A top camera should satisfy BOTH:
      diagonally across the workspace.
 
 The camera does NOT need to be perfectly vertical, but the resulting perspective
-must still be primarily overhead.
+must still be primarily overhead — a modest tilt is fine, an oblique diagonal
+view across the table is NOT top.
+
+If you can see the robot largely FROM THE SIDE (its column/base standing up, the
+sides of objects, the far edge of the table receding into the distance), it is a
+SIDE view, no matter how high the camera sits or how much tabletop it shows.
 
 Strong evidence for "top":
 
@@ -401,7 +413,12 @@ Look for:
   - substantial side faces of objects;
   - an obvious oblique viewing direction across the work surface.
 
-Choose "top" ONLY when Hypothesis A is clearly better supported.
+Choose "top" ONLY when Hypothesis A is clearly and decisively better supported.
+
+DEFAULT TO SIDE. If the two hypotheses are close, if you are unsure, or if the
+view is merely elevated-and-downward rather than an unmistakable straight-down
+bird's-eye, choose a SIDE label. "top" must be earned by a clearly overhead
+geometry; it is never the safe fallback.
 
 If the camera is elevated but the geometry is clearly oblique across the
 workspace, choose a side label.

@@ -151,7 +151,16 @@ the manipulation workspace.
 
 top
 
-Use "top" ONLY when the camera provides a PREDOMINANTLY OVERHEAD view.
+"top" is a NARROW, DEMANDING label and is frequently over-used for cameras that
+are really side views. Do NOT reach for it by default.
+
+Use "top" ONLY when the camera is essentially ABOVE THE ROBOT LOOKING STRAIGHT
+DOWN AT THE TABLE — a near-vertical bird's-eye, as if mounted on the ceiling or a
+gantry directly over the workspace. The tabletop reads as a nearly FLAT PLANE,
+objects and the robot are seen from DIRECTLY ABOVE (their top surfaces), with no
+receding far edge, no horizon, no walls, and little front-to-back depth. If you
+can see the robot largely FROM THE SIDE or the far table edge receding, it is a
+SIDE view, however high the camera sits.
 
 A top camera should satisfy BOTH:
 
@@ -159,7 +168,8 @@ A top camera should satisfy BOTH:
   2. its viewing geometry is predominantly downward / bird's-eye.
 
 It does NOT need to be perfectly vertical, but the resulting perspective must
-still be primarily overhead.
+still be primarily overhead — a modest tilt is fine, an oblique diagonal across
+the table is NOT top.
 
 Strong evidence:
 
