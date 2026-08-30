@@ -213,13 +213,13 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   on the RIGHT with the arm reaching LEFT -> left_side; base/body on the LEFT with
   the arm reaching RIGHT -> right_side. A rolled or mirrored view flips this.
 
-REQUIRED for any direction: you must actually SEE the robot's body/base and read
-which way it faces. If the base is out of frame and only the arm/gripper enters
-(e.g. descending from a frame edge), or you only see the workspace and objects,
-you CANNOT tell front/rear/left/right — use plain "side". When the robot's facing
-IS visible you do not need certainty, only reasonable visual support. Do not force
-a direction from weak cues alone — where the robot or objects appear in the image,
-gripper direction, or image orientation/tilt/mirroring are not reliable on their own.
+WHENEVER the base and the reach direction are visible, you MUST commit to a
+direction (left_side / right_side, or front_side / rear_side) — do NOT default to
+plain "side". Plain "side" is a LAST RESORT: only when the base is out of frame,
+or you see just the workspace/objects, or you genuinely cannot tell which way the
+arm reaches. Certainty is not required; reasonable visual support is enough. Do
+not, however, invent a direction from the raw image side alone, gripper pointing
+direction, or an unresolved image roll/mirror.
 
 4. DUPLICATE TOP CANDIDATES
 

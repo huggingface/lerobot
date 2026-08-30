@@ -348,12 +348,14 @@ BASE/BODY sits and which way the arm REACHES:
 Mentally LEVEL the image first; a rolled (tilted/upside-down) or mirrored view
 flips left and right, so correct for that before applying this.
 
-When the robot's facing IS visible, a confident directional label is fine — you
-do not need certainty, only reasonable visual support. Otherwise use plain "side".
-
-Do not force a direction from weak cues — the raw image side ALONE (without the
-base-vs-reach reading above), or a view whose roll/mirror you cannot resolve, is
-not reliable.
+This base-vs-reach reading is USUALLY available for a side view: the arm base and
+the direction it reaches are visible in most fixed side shots. WHENEVER you can
+see the base and the reach direction, you MUST commit to left_side / right_side
+(or front_side / rear_side) — do NOT fall back to plain "side". Plain "side" is a
+LAST RESORT, only for when the base is out of frame or you genuinely cannot tell
+which way the arm reaches. Certainty is not required; reasonable visual support is
+enough. Do not, however, invent a direction from the raw image side ALONE (with no
+base/reach reading) or from a roll/mirror you cannot resolve.
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 
