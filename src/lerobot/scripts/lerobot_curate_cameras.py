@@ -630,12 +630,31 @@ def _run_nested(cfg: CameraCurationConfig, vlm: Any, subpaths: list[str]) -> Non
             )
 
     todo = [sp for sp in subpaths if sp not in agg["completed"]]
+    n_todo = len(todo)
+    progress = {"n": 0}
 
     def _record(sp: str, entry: dict[str, Any]) -> None:
         # Fold into the aggregate and persist after every completion so a
         # crashed/killed sweep can --resume. Only the summary is written — the
         # per-camera detail already lives in each sub-dataset's meta/info.json.
         _update_aggregate(agg, sp, entry)
+        # Progress bar for the job log: one line per completed sub-dataset. Called
+        # from the main thread in both the serial and parallel branches, so the
+        # counter needs no lock.
+        progress["n"] += 1
+        filled = int(20 * progress["n"] / n_todo) if n_todo else 20
+        logger.info(
+            "curate-cameras: [%s] %d/%d (%.0f%%) done — %s | renamed=%d unusable=%d conflicts=%d failed=%d",
+            "#" * filled + "-" * (20 - filled),
+            progress["n"],
+            n_todo,
+            100 * progress["n"] / n_todo if n_todo else 100.0,
+            sp,
+            len(agg["renamed"]),
+            len(agg["with_unusable"]),
+            len(agg["with_name_collision"]),
+            len(agg["failed"]),
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(_summary_report(cfg, subpaths, agg), indent=2), encoding="utf-8")
         if cfg.progress_to_hub:
