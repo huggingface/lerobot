@@ -518,6 +518,9 @@ def build_report(
         "has_name_collision": bool(conflicting_views or suffixed_cameras),
         "conflicting_views": conflicting_views,
         "suffixed_cameras": suffixed_cameras,
+        # the actual {old_key: new_key} renames (proposed in report mode, applied
+        # in rename mode) — so the report shows WHAT gets renamed, not just that it does.
+        "renames": dict(mapping),
         "cameras": {
             v.camera_key: {
                 "view_label": v.view_label,

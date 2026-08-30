@@ -93,7 +93,14 @@ import json  # noqa: E402
 def test_summary_report_tallies_no_per_dataset_detail():
     cfg = CameraCurationConfig(repo_id="u/collection", mode="rename")
     agg = _empty_aggregate()
-    _update_aggregate(agg, "u/ok", {"cameras": {"a": {"proposed_new_key": "observation.images.top"}}})
+    _update_aggregate(
+        agg,
+        "u/ok",
+        {
+            "cameras": {"a": {"proposed_new_key": "observation.images.top"}},
+            "renames": {"observation.images.cam0": "observation.images.top"},
+        },
+    )
     _update_aggregate(agg, "u/noop", {"cameras": {"a": {"proposed_new_key": None}}})
     _update_aggregate(agg, "u/bad", {"error": "boom"})
     _update_aggregate(
@@ -119,6 +126,8 @@ def test_summary_report_tallies_no_per_dataset_detail():
     # but the flagged datasets DO carry the reason + which cameras conflict
     assert report["unusable_views"] == {"u/flag": {"phone": "placeholder graphic"}}
     assert report["conflicting_views"] == {"u/flag": {"top": ["top_1", "top_2"]}}
+    # and the report shows the actual {old: new} renames (prefix stripped)
+    assert report["renames"] == {"u/ok": {"cam0": "top"}}
 
 
 def test_update_aggregate_retry_clears_failure():

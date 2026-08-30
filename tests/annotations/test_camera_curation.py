@@ -470,6 +470,8 @@ def test_build_report_flags_unusable_and_collision():
     assert report["suffixed_cameras"] == ["observation.images.a", "observation.images.b"]
     # conflicting views show which cameras share the label
     assert report["conflicting_views"] == {"top": ["observation.images.a", "observation.images.b"]}
+    # the report shows the actual {old: new} renames
+    assert report["renames"] == mapping
 
     # A clean dataset (all usable, no conflict) reports both flags False and empty detail.
     clean = build_report(

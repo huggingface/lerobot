@@ -430,6 +430,7 @@ def _empty_aggregate() -> dict[str, Any]:
     # per-flagged-dataset detail, so the summary shows the WHY, not just which:
     agg["unusable_views"] = {}  # subpath -> {camera: reason}
     agg["conflicting_views"] = {}  # subpath -> {label: [cameras]}
+    agg["renames"] = {}  # subpath -> {old_key: new_key}
     return agg
 
 
@@ -453,7 +454,7 @@ def _seed_aggregate_from_report(agg: dict[str, Any], report_path: Path) -> None:
         vals = prior.get(key)
         if isinstance(vals, list):
             agg[key].update(vals)
-    for key in ("failed", "unusable_views", "conflicting_views"):
+    for key in ("failed", "unusable_views", "conflicting_views", "renames"):
         vals = prior.get(key)
         if isinstance(vals, dict):
             agg[key].update(vals)
@@ -467,7 +468,14 @@ def _update_aggregate(agg: dict[str, Any], subpath: str, entry: dict[str, Any]) 
     agg["failed"].pop(subpath, None)  # a previously-failed dataset that now succeeded
     agg["completed"].add(subpath)
     cameras = (entry.get("cameras") or {}) if isinstance(entry, dict) else {}
-    if any((cam or {}).get("proposed_new_key") for cam in cameras.values()):
+    renames = entry.get("renames") or {}
+    if renames:
+        agg["renamed"].add(subpath)
+        # {old: new} with the observation.images. prefix stripped for readability
+        agg["renames"][subpath] = {
+            o.split("observation.images.")[-1]: n.split("observation.images.")[-1] for o, n in renames.items()
+        }
+    elif any((cam or {}).get("proposed_new_key") for cam in cameras.values()):
         agg["renamed"].add(subpath)
     if entry.get("has_unusable"):
         agg["with_unusable"].add(subpath)
@@ -558,7 +566,9 @@ def _summary_report(
         "n_with_unusable": len(agg["with_unusable"]),
         "n_with_name_collision": len(agg["with_name_collision"]),
         "renamed": sorted(agg["renamed"]),
-        # unusable views WITH reasons, and the conflicting views, per flagged dataset:
+        # the actual {old: new} key renames per dataset, plus the unusable views WITH
+        # reasons and the conflicting views, per flagged dataset:
+        "renames": dict(sorted(agg["renames"].items())),
         "unusable_views": dict(sorted(agg["unusable_views"].items())),
         "conflicting_views": dict(sorted(agg["conflicting_views"].items())),
         "with_unusable": sorted(agg["with_unusable"]),
