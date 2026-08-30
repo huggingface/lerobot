@@ -258,6 +258,45 @@ def _parse_candidates(
     return sorted(best.items(), key=lambda kv: kv[1], reverse=True)
 
 
+def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
+    """Upgrade a plain base label to a directional candidate from the VLM's own list.
+
+    When the primary ``view_label`` is a plain position with no direction
+    (``side``/``wrist``) but the model's ranked ``candidates`` include a
+    directional refinement of that SAME position (e.g. ``front_side`` for
+    ``side``, ``left_wrist`` for ``wrist``) with confidence at least
+    ``cfg.promote_direction_min_confidence``, adopt it in place. This recovers the
+    direction the model hedged out of on the primary label; the position is never
+    changed. Mutates ``verdict``. No-op unless ``cfg.promote_direction_candidate``.
+    """
+    if not cfg.promote_direction_candidate:
+        return
+    label = verdict.view_label
+    # Only act on a plain single-token base; an existing direction is left alone.
+    if not label or "_" in label:
+        return
+    for cand_label, cand_conf in verdict.candidates:  # already sorted best-first
+        if cand_conf < cfg.promote_direction_min_confidence:
+            continue
+        # A directional refinement of the SAME position: exactly one qualifier
+        # plus this base (e.g. label "side" -> candidate "front_side").
+        tokens = cand_label.split("_")
+        if (
+            len(tokens) == 2
+            and _position_token(cand_label) == label
+            and any(tok in _QUALIFIERS for tok in tokens)
+        ):
+            logger.info(
+                "camera %s: promoting plain %r to directional candidate %r (confidence %.2f)",
+                verdict.camera_key,
+                label,
+                cand_label,
+                cand_conf,
+            )
+            verdict.view_label = cand_label
+            return
+
+
 def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig) -> str | None:
     """Normalize and validate a raw VLM ``view_label`` into a canonical label or None."""
     label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
@@ -332,6 +371,11 @@ def curate_cameras(
             for key, (mount_type, label) in relabeled.items():
                 verdicts[key].mount_type = mount_type
                 verdicts[key].view_label = label
+        # Final pass: recover a direction the model hedged out of (plain "side" ->
+        # "front_side" when its candidates carry it). Runs after joint labeling so
+        # it normalizes whichever label ended up on the verdict.
+        for key in callable_keys:
+            _promote_direction_candidate(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]
 

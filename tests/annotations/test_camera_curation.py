@@ -416,6 +416,62 @@ def test_curate_cameras_parses_candidates():
     assert v.candidates == [("top", 0.6), ("left_side", 0.35)]  # sorted best-first, invalid dropped
 
 
+def test_promote_direction_candidate():
+    # Primary label is a hedged plain "side", but a strong "front_side" candidate
+    # exists -> the flag upgrades the label to front_side (no collision needed).
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, promote_direction_candidate=True)
+    frames = {"observation.images.a": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [
+            {
+                "usable": True,
+                "mount_type": "fixed",
+                "view_label": "side",
+                "confidence": 0.7,
+                "candidates": [
+                    {"view_label": "side", "confidence": 0.7},
+                    {"view_label": "front_side", "confidence": 0.5},
+                ],
+            }
+        ]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.a"]
+    assert v.view_label == "front_side"
+
+
+def test_promote_direction_candidate_gated():
+    # Off by default, below-threshold candidates, and wrong-position candidates all
+    # leave the plain label untouched.
+    frames = {"observation.images.a": [_tiny_image()]}
+
+    def _run(cfg):
+        vlm = _queued_vlm(
+            [
+                {
+                    "usable": True,
+                    "mount_type": "fixed",
+                    "view_label": "side",
+                    "confidence": 0.7,
+                    "candidates": [
+                        {"view_label": "side", "confidence": 0.7},
+                        {"view_label": "front_side", "confidence": 0.3},  # below default 0.4
+                        {"view_label": "top", "confidence": 0.9},  # different position -> ignored
+                    ],
+                }
+            ]
+        )
+        return {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.a"]
+
+    # Flag off -> untouched.
+    assert _run(CameraCurationConfig(view_vocabulary=VOCAB)).view_label == "side"
+    # Flag on but the only same-position candidate is below threshold -> untouched
+    # (the high-confidence "top" is a different position and must not be adopted).
+    assert (
+        _run(CameraCurationConfig(view_vocabulary=VOCAB, promote_direction_candidate=True)).view_label
+        == "side"
+    )
+
+
 def test_candidate_fallback_resolves_collision():
     # cam_a/cam_b both -> "top"; cam_b (lower conf) has a strong "left_side" #2, so it
     # falls back instead of being skipped. Both get renamed, no collision.

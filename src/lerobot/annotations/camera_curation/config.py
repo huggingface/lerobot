@@ -130,6 +130,17 @@ class CameraCurationConfig:
     candidate_fallback: bool = False
     candidate_fallback_min_confidence: float = 0.4
 
+    # Promote a hedged label to a directional candidate: when the primary view
+    # label is a plain base (``side``/``wrist``, no direction) but the VLM's own
+    # ranked candidates include a directional refinement of that SAME position
+    # (e.g. ``front_side`` for ``side``, ``left_wrist`` for ``wrist``) with
+    # confidence >= promote_direction_min_confidence, adopt it. Unlike
+    # candidate_fallback this needs no collision — it just recovers the direction
+    # the model hedged out of on the primary label. The position never changes
+    # (``side`` never becomes ``top``). Off by default.
+    promote_direction_candidate: bool = False
+    promote_direction_min_confidence: float = 0.4
+
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 
