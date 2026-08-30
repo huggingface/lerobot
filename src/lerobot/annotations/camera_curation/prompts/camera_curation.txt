@@ -44,22 +44,24 @@ is FINE as long as you can still make out the scene, the robot, and the objects.
 Do not flag a view just because it is not perfectly sharp — only when the blur is
 so extreme the frame is unintelligible.
 
-HUMANS. These are teleoperated recordings, so the operator/bystander should be
-OUT OF FRAME. Mark the camera UNUSABLE when a human is present as an
-OPERATOR/BYSTANDER (not as part of the task) and is more than a tiny fleeting
-sliver. This applies ANYWHERE in the frame — NOT only over the workspace:
+HUMANS. These are teleoperated recordings. Mark the camera UNUSABLE only when a
+human is PROMINENTLY or SUBSTANTIALLY present as an operator/bystander (not part
+of the task):
 
-  - a person's body, torso, shoulder, head, or face is visible, even off to the
-    side or in the background;
-  - a human hand or arm is prominently or persistently in view;
+  - a person occupies a large part of the frame, or reaches into / leans over the
+    working area;
+  - a human hand or arm is prominently or persistently in or over the workspace;
   - a human is HOLDING A SECOND ARM / teleoperation "leader" device. The leader
     arm often looks IDENTICAL to the robot, but a human hand gripping an arm means
     the operator is in frame -> UNUSABLE. (The robot's own arm is mounted to the
     table/base, not held by a hand.)
 
-Do NOT excuse a visible operator just because they sit to the SIDE rather than
-over the objects — a seated operator, a visible torso, or a hand on a leader arm
-is exactly the teleoperator we want out of frame, and the view is UNUSABLE.
+A human who is only PARTIALLY visible or in the BACKGROUND is FINE and stays
+USABLE: someone seen far off, small, cut off at the frame edge, or in the
+background of the room, and not interacting with the robot or workspace, does NOT
+make the view unusable. "A human is visible in the background" is by itself NEVER
+a reason to flag — flag only a prominent operator in/over the working area or one
+holding a leader arm.
 
 EXCEPTION — the task itself involves a person. Some tasks are human-interactive
 (e.g. a handshake, or a person handing/holding an object for the robot to
@@ -68,10 +70,9 @@ person, OR the human is clearly a PARTICIPANT in the manipulation (interacting
 with the robot/objects, not operating it), that is expected and the view stays
 USABLE — do not flag the human in that case.
 
-Only a tiny, fleeting human sliver right at the frame edge is tolerable. Carefully
-distinguish the robot's own (table/base-mounted) manipulator from BOTH a human
-limb AND a human-HELD leader arm — a hand or wrist gripping the arm marks it as
-operator-held, not the robot.
+Carefully distinguish the robot's own (table/base-mounted) manipulator from BOTH a
+human limb AND a human-HELD leader arm — a hand or wrist gripping the arm marks it
+as operator-held, not the robot.
 
 Set "blur_reason" to a short reason for an unusable verdict, otherwise null.
 
