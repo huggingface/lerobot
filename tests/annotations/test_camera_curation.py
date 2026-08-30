@@ -31,6 +31,7 @@ import pandas as pd  # noqa: E402
 from lerobot.annotations.camera_curation.config import CameraCurationConfig  # noqa: E402
 from lerobot.annotations.camera_curation.curator import (  # noqa: E402
     CameraVerdict,
+    _parse_view_label,
     _reconcile_label_with_mount,
     build_name_mapping,
     curate_cameras,
@@ -161,6 +162,25 @@ def test_is_valid_view_label():
     assert not is_valid_view_label("banana", VOCAB, allow_combos=True)
     assert not is_valid_view_label("top_wrist_front", VOCAB, allow_combos=True)  # 3 tokens
     assert not is_valid_view_label("", VOCAB, allow_combos=True)
+
+
+def test_parse_view_label_coerces_bare_direction():
+    from lerobot.annotations.camera_curation.config import CameraCurationConfig
+
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=True)
+    # A bare direction qualifier is coerced to "<qualifier>_side" (not dropped).
+    assert _parse_view_label("cam", "front", cfg) == "front_side"
+    assert _parse_view_label("cam", "rear", cfg) == "rear_side"
+    assert _parse_view_label("cam", "left", cfg) == "left_side"
+    assert _parse_view_label("cam", "Right", cfg) == "right_side"
+    # Real positions and combos are untouched; "unknown"/junk still abstain.
+    assert _parse_view_label("cam", "top", cfg) == "top"
+    assert _parse_view_label("cam", "left_wrist", cfg) == "left_wrist"
+    assert _parse_view_label("cam", "unknown", cfg) is None
+    assert _parse_view_label("cam", "banana", cfg) is None
+    # With combos disabled there is no "<dir>_side" to coerce to -> abstain.
+    cfg_no_combo = CameraCurationConfig(view_vocabulary=VOCAB, allow_combos=False)
+    assert _parse_view_label("cam", "front", cfg_no_combo) is None
 
 
 def test_reconcile_label_with_mount():

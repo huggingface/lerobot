@@ -54,6 +54,8 @@ _MOUNT_TYPES = (MOUNT_FIXED, MOUNT_ROBOT, MOUNT_UNKNOWN)
 
 # The single POSITION word of a wrist label (robot-mounted cameras only).
 _WRIST_POSITION = "wrist"
+# The default POSITION a bare direction qualifier ("front"/"left"/...) resolves to.
+_SIDE_POSITION = "side"
 
 
 @dataclass
@@ -263,6 +265,23 @@ def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig
     # unlabeled (no rename) rather than forcing a guess.
     if label == "unknown" or not label:
         return None
+    # A common under-specification: the VLM emits a bare direction qualifier
+    # ("front"/"rear"/"left"/"right") without a position word. It means a SIDE
+    # camera sitting at that direction (side is the only position that takes all
+    # four qualifiers, and directions are never given to an overhead top view),
+    # so coerce "front" -> "front_side" instead of dropping the label. Mount
+    # reconciliation still collapses e.g. "left_side" -> "wrist" for a
+    # robot_mounted camera downstream.
+    if cfg.allow_combos and label in _QUALIFIERS:
+        coerced = f"{label}_{_SIDE_POSITION}"
+        if is_valid_view_label(coerced, cfg.view_vocabulary, cfg.allow_combos):
+            logger.info(
+                "camera %s: VLM returned bare direction view_label=%r; coercing to %r",
+                camera_key,
+                raw_label,
+                coerced,
+            )
+            label = coerced
     if is_valid_view_label(label, cfg.view_vocabulary, cfg.allow_combos):
         # Canonicalize combo order (``wrist_left`` -> ``left_wrist``) so the set
         # of possible keys is deterministic regardless of the VLM's word order.
