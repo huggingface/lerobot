@@ -82,10 +82,11 @@ class CameraCurationConfig:
     branch: str | None = None
 
     # Fraction of the episode to sample frames from, as (lo, hi) in [0, 1].
-    # Defaults to the whole episode — the wider the span, the more arm motion is
-    # visible, which helps tell a moving wrist camera from a fixed one. Narrow it
-    # (e.g. 0.25, 0.75) to skip setup/teardown frames.
-    sample_window: tuple[float, float] = (0.0, 1.0)
+    # Defaults to the middle 10-90% — this skips the unrepresentative setup/teardown
+    # frames (arm at rest, scene being reset) and favours the active-manipulation
+    # part, where arm motion is visible (helps tell a moving wrist camera from a
+    # fixed one). Widen to (0.0, 1.0) for the whole episode.
+    sample_window: tuple[float, float] = (0.1, 0.9)
 
     # Episode inspected by the VLM (first episode by default).
     episode_index: int = 0
