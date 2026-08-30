@@ -128,7 +128,8 @@ For a fixed camera:
 
 A camera is still FIXED when the robot arm or gripper is very close to it.
 
-A prominent gripper is NOT evidence of a wrist camera.
+A prominent gripper by itself is not decisive — see the wrist-vs-fixed
+discriminator under ROBOT_MOUNTED below.
 
 ROBOT_MOUNTED
 
@@ -146,6 +147,14 @@ Strong evidence includes:
   - the workspace appears to move around the camera;
   - a visible part of the wrist/gripper may remain relatively stable in camera
     coordinates while the static environment moves.
+
+GRIPPER IN THE FOREGROUND (a strong wrist signal on its own): if you clearly see
+the robot's OWN gripper/end-effector right in FRONT of the camera — close, in the
+near foreground, and staying ANCHORED at roughly the same place in the frame (as
+if the camera is mounted just behind it, looking out along the arm) — it is very
+likely a wrist camera, even before you check background drift. A wrist camera's
+defining look is "the camera watching its own gripper." So do not require dramatic
+background motion to call wrist when the gripper sits anchored in the foreground.
 
 COMMONLY MISSED WRIST: a wrist camera often looks like a CLOSE-UP, roughly
 top-down view of the workspace with the gripper prominent, and is easily mistaken
@@ -165,15 +174,20 @@ STATIONARY object instead, per the drift check above).
 
 Large differences between frames alone are NOT evidence of camera movement.
 
-Do NOT classify as robot_mounted merely because:
+WRIST vs FIXED when a gripper is in view — the discriminator is whether the
+gripper is ANCHORED to the camera or TRAVELS through the scene:
 
-  - a gripper is visible;
-  - the gripper occupies most of the image;
-  - the camera is close to the manipulation;
-  - the view looks like a close-up;
-  - the camera points approximately where the gripper points;
-  - the arm partially blocks the workspace;
-  - the gripper remains visible across frames.
+  - WRIST: the gripper sits in the near foreground and stays roughly ANCHORED at
+    the same place/orientation in the frame while the background/scene shifts —
+    the camera moves WITH the gripper.
+  - FIXED: the gripper (however large) MOVES THROUGH the frame — it enters,
+    crosses, and exits a stable scene whose background stays put; e.g. an overhead
+    or side camera watching the arm pass below it.
+
+So do NOT call it robot_mounted merely because a gripper is visible, or the arm
+partially blocks an otherwise STABLE scene, or the gripper travels across a fixed
+background — that is a fixed camera. But DO lean wrist when the gripper is close,
+in the foreground, and anchored to the camera as above.
 
 Required mount decision
 

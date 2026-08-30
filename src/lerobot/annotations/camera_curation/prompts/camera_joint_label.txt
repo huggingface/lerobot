@@ -75,10 +75,10 @@ across its frames.
 The robot moves THROUGH the image while the static environment remains registered
 to the camera.
 
-A gripper may be prominent, stay visible across frames, pass close to the lens,
-or occupy much of the image.
-
-None of these facts makes the camera robot-mounted.
+A gripper that MOVES THROUGH the frame — entering, crossing, and exiting while the
+background stays put — does not make the camera robot-mounted; that is a fixed
+camera watching the arm pass by. (Contrast: a gripper ANCHORED in the foreground
+that moves WITH the camera is a wrist — see below.)
 
 ROBOT_MOUNTED
 
@@ -101,12 +101,19 @@ that translates across the frame or grows/shrinks between the first and last
 frame. Fixed objects can't move on their own, so that drift means the CAMERA
 moved -> robot_mounted (wrist), even when the view looks overhead.
 
+GRIPPER IN THE FOREGROUND (a strong wrist signal): if you clearly see the robot's
+own gripper right in FRONT of the camera — close, in the near foreground, anchored
+at roughly the same spot in the frame as if the camera is mounted just behind it —
+it is very likely a wrist, even without dramatic background drift. A wrist camera's
+defining look is "the camera watching its own gripper."
+
 Robot motion alone is NOT sufficient.
 
 Object motion alone is NOT sufficient (track a STATIONARY object for the drift
 check above).
 
-A close-up view alone is NOT sufficient.
+A close-up alone is not decisive — but a gripper anchored in the foreground leans
+wrist (per the cue above), while a gripper crossing a stable scene is fixed.
 
 A visible gripper alone is NOT sufficient.
 
