@@ -120,6 +120,16 @@ class CameraCurationConfig:
     #   "suffix" : rename all, disambiguating with a numeric suffix (top, top_2).
     #   "error"  : skip the whole dataset's rename and report the conflict.
     on_collision: str = "skip"
+
+    # Candidate fallback: when two cameras collide on a label, let a losing camera
+    # (the lower-confidence one) take its next-best ALTERNATIVE from the VLM's
+    # ranked candidates instead of being skipped/suffixed — but only if that
+    # alternative is a valid vocabulary label, is still free, and its confidence is
+    # at least candidate_fallback_min_confidence. Off by default; applied before the
+    # on_collision policy, which still handles whatever remains contested.
+    candidate_fallback: bool = False
+    candidate_fallback_min_confidence: float = 0.4
+
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 

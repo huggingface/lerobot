@@ -374,6 +374,110 @@ def test_build_name_mapping_skip_target_taken_by_existing_feature():
     assert set(skipped) == {"observation.images.cam_0"}
 
 
+def test_curate_cameras_parses_candidates():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB)
+    frames = {"observation.images.a": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [
+            {
+                "usable": True,
+                "mount_type": "fixed",
+                "view_label": "top",
+                "confidence": 0.6,
+                "candidates": [
+                    {"view_label": "top", "confidence": 0.6},
+                    {"view_label": "left_side", "confidence": 0.35},
+                    {"view_label": "banana", "confidence": 0.1},  # invalid -> dropped
+                ],
+            }
+        ]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.a"]
+    assert v.candidates == [("top", 0.6), ("left_side", 0.35)]  # sorted best-first, invalid dropped
+
+
+def test_candidate_fallback_resolves_collision():
+    # cam_a/cam_b both -> "top"; cam_b (lower conf) has a strong "left_side" #2, so it
+    # falls back instead of being skipped. Both get renamed, no collision.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, candidate_fallback=True, ignore_key_names=True)
+    existing = {"observation.images.cam_a": {}, "observation.images.cam_b": {}}
+    verdicts = [
+        CameraVerdict(
+            "observation.images.cam_a",
+            usable=True,
+            view_label="top",
+            confidence=0.9,
+            candidates=[("top", 0.9)],
+        ),
+        CameraVerdict(
+            "observation.images.cam_b",
+            usable=True,
+            view_label="top",
+            confidence=0.5,
+            candidates=[("top", 0.5), ("left_side", 0.45)],
+        ),
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {
+        "observation.images.cam_a": "observation.images.top",
+        "observation.images.cam_b": "observation.images.left_side",
+    }
+    assert skipped == {}
+
+
+def test_candidate_fallback_below_threshold_still_skips():
+    # cam_b's alternative is below the confidence threshold -> no fallback -> normal
+    # skip resolution (most confident keeps "top", cam_b skipped).
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, candidate_fallback=True, ignore_key_names=True)
+    existing = {"observation.images.cam_a": {}, "observation.images.cam_b": {}}
+    verdicts = [
+        CameraVerdict(
+            "observation.images.cam_a",
+            usable=True,
+            view_label="top",
+            confidence=0.9,
+            candidates=[("top", 0.9)],
+        ),
+        CameraVerdict(
+            "observation.images.cam_b",
+            usable=True,
+            view_label="top",
+            confidence=0.5,
+            candidates=[("top", 0.5), ("left_side", 0.30)],
+        ),
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {"observation.images.cam_a": "observation.images.top"}
+    assert set(skipped) == {"observation.images.cam_b"}
+
+
+def test_candidate_fallback_off_by_default():
+    # Without the flag, the strong #2 is ignored and cam_b is skipped on collision.
+    cfg = CameraCurationConfig(
+        view_vocabulary=VOCAB, ignore_key_names=True
+    )  # candidate_fallback defaults False
+    existing = {"observation.images.cam_a": {}, "observation.images.cam_b": {}}
+    verdicts = [
+        CameraVerdict(
+            "observation.images.cam_a",
+            usable=True,
+            view_label="top",
+            confidence=0.9,
+            candidates=[("top", 0.9)],
+        ),
+        CameraVerdict(
+            "observation.images.cam_b",
+            usable=True,
+            view_label="top",
+            confidence=0.5,
+            candidates=[("top", 0.5), ("left_side", 0.9)],
+        ),
+    ]
+    mapping, skipped = build_name_mapping(verdicts, existing, cfg)
+    assert mapping == {"observation.images.cam_a": "observation.images.top"}
+    assert set(skipped) == {"observation.images.cam_b"}
+
+
 def test_build_name_mapping_suffix_numbers_from_one():
     # on_collision="suffix" renames ALL cameras; a contended label is numbered
     # from _1 (top_1, top_2), a unique label stays bare.

@@ -446,9 +446,19 @@ Return strictly valid JSON with exactly these keys:
     "blur_reason": null,
     "mount_type": "fixed",
     "view_label": "top",
-    "confidence": 0.95
+    "confidence": 0.95,
+    "candidates": [
+      {{"view_label": "top", "confidence": 0.6}},
+      {{"view_label": "left_side", "confidence": 0.35}}
+    ]
   }}
 
 "confidence" must be between 0 and 1.
+
+"candidates" is your view_label ranked BEST-FIRST with a confidence for each,
+including 1-2 plausible ALTERNATIVES when you are unsure between labels (e.g. top
+vs a side, or which side direction). The FIRST candidate must equal "view_label".
+When you are certain, a single-entry list is fine. Every candidate label must be
+from the vocabulary and consistent with mount_type.
 
 Return JSON only. No prose. No code fences.

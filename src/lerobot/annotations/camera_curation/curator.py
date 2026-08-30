@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,10 @@ class CameraVerdict:
     confidence: float | None = None
     # How the camera is mounted ("fixed" / "robot_mounted" / "unknown" / None).
     mount_type: str | None = None
+    # Ranked alternative view labels (validated + reconciled), best-first, as
+    # (label, confidence) — used to break a collision by falling back to a strong
+    # #2 when ``candidate_fallback`` is on. Empty when the VLM gave none.
+    candidates: list[tuple[str, float]] = field(default_factory=list)
     # Populated by ``build_name_mapping`` once collisions are resolved (pure
     # Python, deterministic — the VLM never sees or proposes a dataset key).
     proposed_new_key: str | None = None
@@ -210,6 +214,8 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
     except (TypeError, ValueError):
         confidence = None
 
+    candidates = _parse_candidates(camera_key, result.get("candidates"), mount_type, cfg)
+
     return CameraVerdict(
         camera_key=camera_key,
         usable=usable,
@@ -217,7 +223,37 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
         blur_reason=blur_reason,
         confidence=confidence,
         mount_type=mount_type,
+        candidates=candidates,
     )
+
+
+def _parse_candidates(
+    camera_key: str, raw: Any, mount_type: str | None, cfg: CameraCurationConfig
+) -> list[tuple[str, float]]:
+    """Parse the VLM's ranked ``candidates`` into validated (label, confidence) pairs.
+
+    Each candidate label is normalized, vocabulary-validated, and reconciled against
+    the mount type (same as the primary view label). Invalid/None labels are dropped;
+    duplicates keep their highest confidence; the result is sorted best-first.
+    """
+    if not isinstance(raw, list):
+        return []
+    best: dict[str, float] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        label = _reconcile_label_with_mount(
+            _parse_view_label(camera_key, item.get("view_label"), cfg), mount_type
+        )
+        if label is None:
+            continue
+        conf = item.get("confidence")
+        try:
+            conf = float(conf) if conf is not None else 0.0
+        except (TypeError, ValueError):
+            conf = 0.0
+        best[label] = max(best.get(label, -1.0), conf)
+    return sorted(best.items(), key=lambda kv: kv[1], reverse=True)
 
 
 def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig) -> str | None:
@@ -316,6 +352,11 @@ def _joint_label(
                 "text": (
                     f"Camera {i} preliminary: mount_type={v.mount_type or MOUNT_UNKNOWN}, "
                     f"view_label={v.view_label or 'unknown'}"
+                    + (
+                        "; candidates=" + ", ".join(f"{lbl}:{conf:.2f}" for lbl, conf in v.candidates)
+                        if v.candidates
+                        else ""
+                    )
                 ),
             }
         )
@@ -337,6 +378,48 @@ def _joint_label(
         label = _parse_view_label(key, item.get("view_label"), cfg)
         out[key] = (mount_type, _reconcile_label_with_mount(label, mount_type))
     return out
+
+
+def _apply_candidate_fallback(
+    label_by_cam: dict[str, str],
+    verdicts: list[CameraVerdict],
+    existing_features: dict[str, dict],
+    cfg: CameraCurationConfig,
+) -> dict[str, str]:
+    """Break label collisions by moving losers to their best alternative candidate.
+
+    For each label held by 2+ cameras, keep the highest-confidence camera and try to
+    move each other to its best-ranked candidate that (a) differs from the contested
+    label, (b) clears ``candidate_fallback_min_confidence``, and (c) is completely
+    FREE — not assigned to another camera here and not an existing untouched feature
+    (so no new collision is created). Greedy single pass; anything still contested is
+    left for the caller's ``on_collision`` policy.
+    """
+    by_key = {v.camera_key: v for v in verdicts}
+    assigned = dict(label_by_cam)
+    untouched_keys = set(existing_features) - set(assigned)
+
+    def _is_free(label: str) -> bool:
+        return label not in set(assigned.values()) and f"{OBS_IMAGE_PREFIX}{label}" not in untouched_keys
+
+    def _conf(cam: str) -> float:
+        c = by_key[cam].confidence
+        return c if c is not None else -1.0
+
+    for label, n in Counter(assigned.values()).items():
+        if n < 2:
+            continue
+        losers = sorted((c for c in assigned if assigned[c] == label), key=_conf, reverse=True)[1:]
+        for loser in losers:
+            for cand_label, cand_conf in by_key[loser].candidates:
+                if (
+                    cand_label != label
+                    and cand_conf >= cfg.candidate_fallback_min_confidence
+                    and _is_free(cand_label)
+                ):
+                    assigned[loser] = cand_label
+                    break
+    return assigned
 
 
 def build_name_mapping(
@@ -363,6 +446,8 @@ def build_name_mapping(
     label_by_cam = {v.camera_key: v.view_label for v in verdicts if v.view_label is not None}
     if cfg.allow_combos and not cfg.ignore_key_names:
         label_by_cam = _disambiguate_from_source_names(label_by_cam, cfg.view_vocabulary)
+    if cfg.candidate_fallback:
+        label_by_cam = _apply_candidate_fallback(label_by_cam, verdicts, existing_features, cfg)
 
     desired: dict[str, str] = {}
     for cam, label in label_by_cam.items():
