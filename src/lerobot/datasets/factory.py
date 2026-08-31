@@ -203,6 +203,10 @@ def make_train_eval_datasets(
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
     If eval_split == 0.0, returns (full_dataset, None).
     """
+    if cfg.dataset.eval_split != 0.0 and cfg.dataset.streaming:
+        raise ValueError(
+            "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
+        )
     full_dataset = make_dataset(cfg)
 
     if cfg.dataset.eval_split == 0.0:
@@ -251,6 +255,7 @@ def make_train_eval_datasets(
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
+        repo_type=cfg.dataset.repo_type,
     )
 
     eval_dataset = LeRobotDataset(
@@ -264,6 +269,7 @@ def make_train_eval_datasets(
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
+        repo_type=cfg.dataset.repo_type,
     )
 
     if cfg.dataset.use_imagenet_stats:

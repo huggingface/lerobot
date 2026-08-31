@@ -57,6 +57,6 @@ def test_dataset_config_invalid_repo_type():
         DatasetConfig(repo_id="user/repo", repo_type="model")
 
 
-def test_dataset_config_bucket_rejects_eval_split():
-    with pytest.raises(ValueError, match="eval_split"):
-        DatasetConfig(repo_id="user/repo", repo_type="bucket", streaming=True, eval_split=0.1)
+def test_dataset_config_bucket_eval_split_ok():
+    # allowed at config level; the factory rejects eval_split with streaming access
+    DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
