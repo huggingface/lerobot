@@ -155,50 +155,45 @@ When the hand's structure is not clearly readable, use plain "wrist".
 3. FIXED CAMERAS
 
 For fixed cameras, classify according to PHYSICAL VIEWING GEOMETRY relative to
-the manipulation workspace.
+the manipulation workspace. Use the preliminary label as evidence, but revise it
+when direct comparison provides stronger geometric evidence.
 
 top
 
-Use "top" when the camera is mounted ABOVE the workspace and looks predominantly
-DOWN ONTO it, so the work surface is the DOMINANT plane and objects present mainly
-their TOP faces. Think "camera above the table angled down at it", not "camera at
-table level looking across it".
+Use "top" for a genuinely OVERHEAD or NEAR-OVERHEAD camera.
 
-A top camera should satisfy BOTH:
+The camera should be physically above the manipulation area and look mainly
+DOWN ONTO the workspace. This is a canonical overhead role, but it does NOT need
+to be perfect nadir / bird's-eye.
 
-  1. it is physically above the manipulation area; AND
-  2. its viewing geometry is predominantly downward rather than diagonally across.
+Positive evidence for "top":
 
-It does NOT need to be a perfect straight-down / nadir bird's-eye — a steep
-DOWNWARD tilt with MODERATE perspective (some far-edge receding, a sliver of
-wall/floor at the edges, the arm seen partly from the side) is still "top", as
-long as the camera clearly looks down onto the surface and you mostly see the tops
-of things. DECISIVE TOP-vs-SIDE TELL — VERTICAL STRUCTURE (applies even to an
-ELEVATED camera): if the robot's body/column STANDS UP vertically in the frame
-and/or a WALL / room background is visible behind the workspace, that vertical
-structure means SIDE (an elevated side), even with a prominent tabletop. A true
-top shows the scene almost entirely as the tabletop PLANE — objects and the arm
-from their TOP faces, laid flat, little vertical structure, little/no wall. Do not
-call top just because it is angled down; check for a standing column and a wall
-first.
+  - the camera is physically above / over the workspace;
+  - the manipulation area is primarily seen from above;
+  - the work surface is the dominant scene plane;
+  - object TOP faces are prominent;
+  - the camera optical axis points mainly downward toward the manipulation region;
+  - the overall scene reads as overhead or near-overhead, even if some perspective
+    remains.
 
-Strong evidence:
+IMPORTANT: the following do NOT disqualify a true top camera by themselves:
 
-  - the horizontal work surface dominates;
-  - objects are seen mainly from their top surfaces;
-  - the manipulation area has bird's-eye or near-bird's-eye geometry;
-  - relatively few vertical surfaces are visible;
-  - depth perspective across the work surface is relatively weak;
-  - the camera looks DOWN ONTO the workspace rather than ACROSS it.
+  - moderate perspective;
+  - some visible object side faces;
+  - some visible robot vertical structure;
+  - a small amount of wall/background;
+  - a camera that is slightly offset from the exact workspace center.
 
-Being high is NOT sufficient.
+Use "side" instead when the camera is clearly positioned around the workspace
+perimeter and views it diagonally / obliquely from the side.
 
-Looking downward is NOT sufficient.
+Practical rule:
 
-Seeing a lot of tabletop is NOT sufficient.
+  - physically over workspace + mainly downward -> top;
+  - physically beside/perimeter + diagonal across workspace -> side.
 
-A high camera outside the workspace looking diagonally across the table is a side
-view, not top.
+When uncertain, do NOT decide from a single cue. Combine camera position,
+viewing direction, dominant planes, and perspective.
 
 bottom
 
@@ -207,59 +202,191 @@ looks upward.
 
 side
 
-Use a side label when the camera views the workspace predominantly FROM AROUND IT
-rather than FROM ABOVE IT.
+Use a side label for ANY camera physically positioned around / beside the
+workspace rather than directly overhead. This includes elevated cameras looking
+strongly downward from the workspace perimeter.
 
-A side camera may be high and tilted downward.
+A side camera may be elevated and tilted downward. The deciding factor is the physical camera role: cameras positioned around or
+beside the workspace are side cameras, including elevated cameras tilted strongly
+downward.
 
-It may show substantial tabletop.
+Evidence supporting side includes stronger near/far depth, perspective
+convergence, substantial side/vertical surfaces, and an obvious oblique view
+across the workspace. These are supporting cues, not independent hard rules.
 
-It is still side when the viewing geometry is predominantly oblique ACROSS the
-workspace.
+TOP VS SIDE — PRIMARY GEOMETRIC TEST
 
-Evidence:
+For every fixed top/side candidate compare:
 
-  - stronger near-to-far depth;
-  - stronger perspective convergence;
-  - substantial vertical surfaces;
-  - substantial side faces of objects;
-  - a clear oblique view across the work surface.
+  A. genuinely OVERHEAD / near-nadir -> top
+  B. any clearly OBLIQUE / diagonal / perimeter view -> side
 
-Add a direction (front_side / rear_side / left_side / right_side) when the
-camera's position relative to the robot is reasonably clear; fall back to plain
-"side" only when the direction is genuinely ambiguous.
+Use physical camera position relative to the workspace as the PRIMARY criterion,
+with viewing direction as supporting evidence.
 
-  - judge direction from where the camera sits relative to the ROBOT'S OWN facing
-    (its front / base / working direction) whenever that can be read from the scene;
-  - front_side: in FRONT — the working face, gripper/arm reaching TOWARD the camera;
-  - rear_side: BEHIND — you see the motor-backs and CABLING, arm reaching AWAY;
-  - left_side / right_side: off to the robot's left / right.
-  FRONT vs REAR — combine TWO cues. Cue 1 (objects): the robot manipulates in
-  FRONT of itself, so manipulated objects between the base and the camera (arm
-  behind reaching toward them/you) -> front_side; objects on the far side of the
-  arm (arm reaching away) -> rear_side. Cue 2 (hardware): motor-BACKS, mounting
-  bracket and CABLING with the arm reaching away -> rear_side; the gripper's
-  working face reaching toward you -> front_side. When the cues AGREE, commit
-  confidently; when they CONFLICT, trust Cue 1 — a low SO-100/SO-101 arm shows
-  some brackets and cables from almost every angle (front views included), so a
-  few visible motors alone do NOT mean rear. Do not default to "front" merely
-  because the arm is prominent.
-  LEFT vs RIGHT — DERIVE IT FROM THE ROBOT'S FRONT, not from which side of the
-  frame the robot's body sits on. Using the FRONT (working face / objects /
-  workspace) and BACK (motor/cable side) you located above: left vs right is when
-  the front points ACROSS the image. The side the robot's WORKING FACE / workspace
-  points to IS the label — front/workspace toward the LEFT (motor-back toward the
-  RIGHT) -> left_side; front/workspace toward the RIGHT (motor-back toward the
-  LEFT) -> right_side. A camera off to the robot's LEFT sees its front swung to the
-  LEFT of the image, so anchor on the FRONT you can SEE (the objects mark it); do
-  NOT label from where the robot's BODY sits (that gives the OPPOSITE, wrong
-  answer). Level the image first; a rolled/mirrored view flips left and right.
+A visible wall, visible robot column, or visible vertical surfaces do NOT
+automatically mean side. Likewise, an elevated camera or a large visible
+tabletop do NOT automatically mean top.
 
-WHENEVER you can locate the robot's front/workspace and read which way it points,
-COMMIT to a direction (left_side / right_side, or front_side / rear_side) — do NOT
-default to plain "side". Plain "side" is a LAST RESORT: only when you truly cannot
-locate the robot's front or read its facing. Do not invent a direction from a
-roll/mirror you cannot resolve.
+When borderline, ask whether the camera is physically OVER the workspace or
+around its PERIMETER. If that cannot be established, prefer side. Reserve top
+for a clearly genuine overhead camera role.
+
+SIDE DIRECTION — CAMERA POSITION IN THE ROBOT FRAME
+
+Once a camera is classified as side, directional labels describe the CAMERA'S
+PHYSICAL POSITION relative to the ROBOT'S OWN coordinate frame:
+
+  - front_side: camera physically in front of the robot;
+  - rear_side: camera physically behind the robot;
+  - left_side: camera physically on the robot's left;
+  - right_side: camera physically on the robot's right.
+
+First establish the robot's physical front/back orientation. The front is its
+working direction: where it reaches and where the active manipulation workspace
+lies. Motor backs, mounting structure, and cabling can support identification of
+the back, but object/workspace geometry is generally stronger evidence.
+
+Do NOT derive left/right from image-space direction. In particular, do NOT use:
+
+  - front/workspace points image-left -> left_side;
+  - front/workspace points image-right -> right_side;
+  - robot body appears on one side of the image;
+  - arm enters from one image edge.
+
+Image-space relationships can flip under roll, mirroring, and camera pose.
+
+Assign left_side or right_side ONLY when visible 3D geometry, a known asymmetric
+robot feature, or DIRECT MULTI-CAMERA COMPARISON lets you establish the robot's
+physical left/right orientation and therefore the camera's physical side.
+
+The joint view can provide NEW evidence. For example, two cameras may reveal
+complementary robot geometry that makes their physical positions clear. Use that
+evidence when it is genuinely present.
+
+However, do NOT assign opposite left/right labels merely because two cameras
+look different, because they collide, or because there are two side cameras.
+
+If the camera is clearly lateral/oblique but its physical direction cannot be
+established reliably, use plain "side". Plain side is a valid canonical role and
+is preferable to unsupported specificity.
+
+
+STRICT JOINT TOP RULE
+
+
+TOP REQUIRES POSITIVE OVERHEAD EVIDENCE
+
+Do not infer "top" merely because side evidence is weak. However, positive
+overhead evidence does NOT require a perfect bird's-eye view.
+
+A camera can still be "top" when it is slightly offset, angled, or shows some
+vertical structure, as long as it is physically above the workspace and mainly
+looks down onto the manipulation region.
+
+
+The joint pass MUST NOT turn an oblique/elevated side camera into "top" merely
+because it is the most overhead-looking camera among the available streams.
+
+"top" is an ABSOLUTE geometric role, not a relative winner.
+
+If none of the fixed cameras is genuinely overhead / near-overhead and physically
+over the workspace, it is valid for the episode to have NO "top" camera.
+Conversely, if one camera clearly has that overhead role, preserve it as "top"
+even when it shows moderate perspective or some vertical structure.
+
+Likewise, multiple side cameras are expected. Do not force one of them to become
+top for canonical uniqueness.
+
+
+
+JOINT LEFT / RIGHT INFERENCE FROM ROBOT LAYOUT
+
+For fixed cameras already classified as SIDE views, actively use the robot's
+layout to resolve left_side versus right_side.
+
+Strong heuristic:
+
+  - robot body/base on image RIGHT + arm reaching LEFT -> right_side;
+  - robot body/base on image LEFT  + arm reaching RIGHT -> left_side.
+
+When two side cameras form complementary views of the same robot/workspace, use
+the pair together. If one shows the first pattern and the other shows the mirror
+pattern, label them left_side and right_side respectively rather than leaving
+both as plain side.
+
+This is a ROBOT-GEOMETRY heuristic, not a raw image-coordinate rule: consider
+both body/base location and reach direction. If mirroring is suspected or the
+robot geometry is too ambiguous, fall back to plain side.
+
+
+
+JOINT DIRECTIONAL RESOLUTION — DO NOT LEAVE CLEAR PAIRS AS PLAIN SIDE
+
+For each fixed camera already identified as SIDE, explicitly attempt directional
+resolution before returning "side".
+
+Apply:
+
+  robot body/base on image RIGHT + arm reaching LEFT -> right_side
+  robot body/base on image LEFT  + arm reaching RIGHT -> left_side
+
+When two fixed side cameras show complementary patterns, resolve BOTH:
+
+  camera A: robot on image RIGHT, reaching LEFT -> right_side
+  camera B: robot on image LEFT, reaching RIGHT -> left_side
+
+In that situation, returning:
+
+  camera A -> side
+  camera B -> side
+
+is TOO CONSERVATIVE and should be avoided.
+
+Plain "side" is a fallback only when the body/reach geometry is genuinely
+ambiguous, contradictory, or likely mirrored.
+
+The joint comparison is especially useful here: a complementary pair provides
+additional confidence that the two cameras occupy opposite lateral sides of the
+robot/workspace.
+
+
+PAIRED LATERAL CAMERAS — IMPORTANT
+
+When two FIXED cameras observe the same robot/workspace from opposite or
+substantially different lateral directions, treat that pair as strong evidence
+that BOTH cameras are SIDE views.
+
+Do NOT label one camera "top" merely because one member of the pair is mounted
+higher, points downward more strongly, or shows more tabletop.
+
+Before assigning "top" to any fixed camera, compare it against the other fixed
+views and ask:
+
+  1. Is this camera actually physically OVER the workspace?
+  2. Or is it another perimeter / corner / side camera looking diagonally down?
+
+If the camera has the visual character of one member of a left/right lateral
+pair, it should remain a side view UNLESS there is clear independent evidence
+that it is actually physically overhead.
+
+In particular, if two cameras show complementary / opposite views of the robot
+body or workspace from around the table, classify both as SIDE first. Then, only
+if the robot coordinate frame can be established, refine them to left_side and
+right_side.
+
+Correct pattern:
+
+  lateral camera A -> side / left_side / right_side
+  lateral camera B -> side / left_side / right_side
+
+Incorrect pattern:
+
+  lateral camera A -> side
+  lateral camera B -> top
+
+unless camera B is genuinely positioned over the workspace and has clear
+near-bird's-eye geometry independent of camera A.
 
 4. DUPLICATE TOP CANDIDATES
 
@@ -308,8 +435,10 @@ depending on the visual evidence.
 
 IMPORTANT:
 
-A camera may look somewhat top-down when considered ALONE but still be a side view
-relative to another camera that is clearly more overhead.
+Direct comparison can reveal that one camera is substantially more overhead than
+another, but RELATIVE ranking alone must not override the absolute geometric test.
+A camera that is genuinely predominantly DOWN ONTO the workspace remains top even
+when another camera is even more overhead.
 
 Do not classify a camera as top merely because:
 
@@ -352,11 +481,11 @@ an elevated downward-looking camera.
 5. CANONICAL-ROLE RULE
 
 The final joint labels represent CANONICAL camera roles within the robot setup.
-When two fixed cameras have clearly different viewing geometry, prefer labels that
-express that geometric difference. For multiple plausible top candidates, top
-should normally represent the camera with the strongest genuine overhead/bird's-eye
-geometry, while substantially more oblique fixed views should be classified as
-side views.
+When two fixed cameras have clearly different viewing geometry, use the labels that
+best express their actual physical roles. Direct comparison is additional evidence,
+not a requirement to make labels unique. Multiple cameras may remain top only when each has a genuine physical overhead
+role. Cameras positioned around the workspace perimeter should remain side views
+even when they are elevated, tilted downward, or visually somewhat top-down.
 
 However, do NOT force uniqueness when two cameras genuinely have effectively the
 same physical viewpoint. In that exceptional case, duplicate labels are allowed
