@@ -30,7 +30,7 @@ from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
 from .compute_stats import aggregate_stats
 from .dataset_metadata import LeRobotDatasetMetadata
-from .feature_utils import features_equal_for_merge, get_hf_features_from_features
+from .feature_utils import canonicalize_depth_marker, features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
     get_file_size_in_mb,
     get_parquet_file_size_in_mb,
@@ -114,6 +114,8 @@ def merge_video_feature_info_for_aggregate(all_metadata: list[LeRobotDatasetMeta
         merged_info[vk]["info"] = {**base_video_info, **merged_encoder_info}
         # TODO(CarolinePascal): make this variable once we have support for other video backends.
         merged_info[vk]["info"]["video.video_backend"] = "pyav"
+        # Persist the canonical depth marker even when a source used a legacy key.
+        canonicalize_depth_marker(merged_info[vk])
 
     return merged_info
 
@@ -369,7 +371,7 @@ def aggregate_datasets(
     Args:
         repo_ids: List of repository IDs for the datasets to aggregate.
         aggr_repo_id: Repository ID for the aggregated output dataset.
-        roots: Optional list of root paths for the source datasets.
+        roots: Optional list containing one root path for each source dataset.
         aggr_root: Optional root path for the aggregated dataset.
         data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
@@ -378,6 +380,9 @@ def aggregate_datasets(
         concatenate_data: When False, keep one parquet per source file instead of packing into shards.
     """
     logger.info("Start aggregate_datasets")
+
+    if roots is not None and len(roots) != len(repo_ids):
+        raise ValueError("repo_ids and roots must have the same length")
 
     if data_files_size_in_mb is None:
         data_files_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
@@ -390,7 +395,7 @@ def aggregate_datasets(
         [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
         if roots is None
         else [
-            LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
+            LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=True)
         ]
     )
     fps, robot_type, _ = validate_all_metadata(all_metadata)
