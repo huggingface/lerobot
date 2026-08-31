@@ -99,7 +99,12 @@ top-down view of the workspace and is mistaken for a fixed "top"/"side". The
 giveaway is DRIFT — a STATIONARY object (cup, bin, paper, tape marks, table edge)
 that translates across the frame or grows/shrinks between the first and last
 frame. Fixed objects can't move on their own, so that drift means the CAMERA
-moved -> robot_mounted (wrist), even when the view looks overhead.
+moved -> robot_mounted (wrist), even when the view looks overhead. Also: if the
+WHOLE composition re-frames each shot (the same box/container at a different
+position/scale/angle), the camera is moving -> wrist. BEWARE a blank backdrop
+(green screen, plain wall) — it has no trackable texture and can look "static"
+while the camera swings; track the concrete OBJECTS, not the blank background, and
+do not infer fixed from an unchanging blank backdrop.
 
 ROBOT PART ANCHORED IN THE FOREGROUND (a strong wrist signal): if a piece of the
 ROBOT ITSELF sits large and close in the foreground, anchored at roughly the same

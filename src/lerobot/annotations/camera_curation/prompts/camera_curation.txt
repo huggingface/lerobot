@@ -175,6 +175,20 @@ robot_mounted (wrist). Concretely: pick one stationary object and compare its
 image position/size in the FIRST vs the LAST frame — a clear shift means wrist,
 even if the view looks overhead and the background is a plain uniform surface.
 
+WHOLE-SCENE RE-FRAMING = WRIST: when the ENTIRE composition swings between frames
+— the same table, box, or container appears at a clearly DIFFERENT position,
+scale, or angle each frame, so the shot looks re-aimed every time — the camera is
+moving with the arm -> wrist. A FIXED camera keeps the scene composition CONSTANT
+(the same background stays put in the same place) and only the arm/objects move
+through it.
+
+BEWARE A BLANK BACKDROP: a large uniform background — a GREEN SCREEN, a plain
+wall, a seamless tabletop — has no trackable texture, so its drift is invisible
+and the scene can look "static" even while the camera swings. Do NOT infer fixed
+from an unchanging blank backdrop. Track the CONCRETE objects (the box, a bottle,
+the container rim) instead; if THOSE jump around the frame or change scale, the
+camera moved -> wrist.
+
 Movement of the ROBOT alone is NOT evidence of camera movement.
 
 Movement of manipulated OBJECTS alone is NOT evidence of camera movement (track a
