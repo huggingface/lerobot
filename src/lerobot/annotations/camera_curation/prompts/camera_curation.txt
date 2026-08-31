@@ -354,11 +354,24 @@ camera's position relative to the robot is reasonably clear; fall back to plain
     the arm reaches AWAY from the camera into the workspace (gripper pointing away).
   - left_side / right_side: the camera is off to the robot's left / right.
 
-  FRONT vs REAR tell: the robot's BACK is the side with the visible motors and
-  cable bundle; if you are looking at that wiring/motor-backs and the arm reaches
-  away from you, it is rear_side. If instead the gripper's working face reaches
-  toward you, it is front_side. Do not default to "front" just because the arm is
-  prominent or an object faces the camera.
+  FRONT vs REAR — decisive tell (use this FIRST): a robot manipulates in FRONT of
+  itself, so the ACTIVE WORKSPACE — the objects being picked/placed — marks the
+  front. If those manipulated objects lie BETWEEN the robot's base and the camera
+  (spread across the near foreground, with the arm behind them reaching toward
+  them / toward you), the camera sits on the robot's FRONT -> front_side. If the
+  objects are on the FAR side of the arm (arm in the foreground reaching away from
+  you into a workspace beyond it), the camera is behind -> rear_side. This
+  object-placement reading is more reliable than counting motors and should settle
+  most low, table-level side views.
+
+  Secondary tell: the gripper's working face / opening direction — reaching toward
+  you is front, reaching away is rear.
+
+  Do NOT treat "I can see motors/servo housings" as rear on its own. A low-slung
+  SO-100 / SO-101 style arm exposes its servo brackets and a cable or two from
+  almost EVERY angle, including straight-on front views, so visible motors are a
+  weak signal — only motor-BACKS with the arm reaching away indicate rear. Do not
+  default to "front" merely because the arm is prominent.
 
 REQUIRED for any direction: you must actually SEE the robot's body/base and be
 able to read which way it faces. If the robot's base is out of frame and only the
