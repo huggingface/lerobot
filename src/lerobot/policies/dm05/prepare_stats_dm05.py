@@ -33,12 +33,12 @@ from lerobot.datasets.utils import STATS_PATH, serialize_dict
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_dm05 import DM05Config
+from .core.adapter import relative_action_mask
 from .stats_validation_dm05 import (
     dm05_feature_stats_complete,
     dm05_stats_complete,
     validate_dm05_relative_action_stats,
 )
-from .utils import relative_action_mask
 
 DEFAULT_SAMPLE_SIZE = 100_000
 DEFAULT_SAMPLE_SEED = 0

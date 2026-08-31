@@ -19,42 +19,45 @@
 from __future__ import annotations
 
 import builtins
-import copy
 import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import Any, Unpack
+from typing import TYPE_CHECKING, Any, Unpack
 
 import torch
 import torch.nn.functional as torch_nn_functional
-from huggingface_hub import save_torch_state_dict, snapshot_download
+from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector
 from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
 from .constants import ACTION_REFERENCE_OFFSET
 from .conversion_dm05 import DM05LerobotBatchConverter
+from .core.adapter import (
+    flatten_feature_names,
+    import_dm05_core,
+    relative_action_mask,
+    resolve_torch_dtype,
+)
+from .core.utils import build_action_prefix_mask, validate_action_prefill_pair
 from .stats_validation_dm05 import (
     dm05_prepare_stats_command,
     dm05_stats_complete,
     validate_dm05_relative_action_stats,
 )
-from .utils import (
-    build_action_prefix_mask,
-    flatten_feature_names,
-    import_dm05_core,
-    relative_action_mask,
-    resolve_torch_dtype,
-    validate_action_prefill_pair,
-)
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
+else:
+    AutoProcessor = None
 
 
 def setup_compiled_suffix(config: Any, model: Any) -> bool:
@@ -157,6 +160,55 @@ def _apply_core_overrides(core_config: Any, config: DM05Config, dtype: torch.dty
     return core_config
 
 
+def _resolve_processor_source(
+    checkpoint_source: str | Path,
+    *,
+    revision: str | None = None,
+    cache_dir: str | Path | None = None,
+    force_download: bool = False,
+    proxies: dict | None = None,
+    token: str | bool | None = None,
+    local_files_only: bool = False,
+) -> str:
+    """Resolve the Gemma processor nested in a LeRobot checkpoint."""
+    source = Path(str(checkpoint_source))
+    nested = source / "dm05_processor"
+    if nested.is_dir():
+        return str(nested)
+    if source.is_dir():
+        # Small conversion fixtures may already point at the processor directory.
+        return str(source)
+    snapshot = snapshot_download(
+        repo_id=str(checkpoint_source),
+        allow_patterns="dm05_processor/**",
+        revision=revision,
+        cache_dir=cache_dir,
+        force_download=force_download,
+        proxies=proxies,
+        token=token,
+        local_files_only=local_files_only,
+    )
+    return str(Path(snapshot) / "dm05_processor")
+
+
+def _core_config_payload(model: Any) -> dict | None:
+    """Serialize the core HF config needed to reconstruct DM05."""
+    prepare_config_for_save = getattr(model, "prepare_config_for_save", None)
+    if callable(prepare_config_for_save):
+        prepare_config_for_save()
+    core_config = getattr(model, "config", None)
+    if core_config is None:
+        return None
+    to_dict = getattr(core_config, "to_dict", None)
+    payload = (
+        to_dict()
+        if callable(to_dict)
+        else {key: value for key, value in vars(core_config).items() if not key.startswith("_")}
+    )
+    payload["_name_or_path"] = "."
+    return payload
+
+
 class DM05Policy(PreTrainedPolicy):
     """LeRobot policy wrapper around the core DM05 model."""
 
@@ -166,17 +218,13 @@ class DM05Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: DM05Config,
-        *,
-        checkpoint_source: str | Path | None = None,
-        checkpoint_revision: str | None = None,
-        processor_load_kwargs: dict[str, Any] | None = None,
-        **kwargs,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+        dataset_meta: Any | None = None,
     ):
         require_package("transformers", extra="dm05")
         super().__init__(config)
         config.validate_features()
-        is_lerobot_checkpoint = checkpoint_source is not None and _has_dm05_core_config_payload(config)
-        dataset_meta = kwargs.get("dataset_meta")
+        is_lerobot_checkpoint = _has_dm05_core_config_payload(config)
         if dataset_meta is not None and hasattr(dataset_meta, "features"):
             config.action_feature_names = flatten_feature_names(
                 dataset_meta.features.get(ACTION, {}).get("names")
@@ -189,41 +237,22 @@ class DM05Policy(PreTrainedPolicy):
             )
 
         core_config_cls, core_model_cls = import_dm05_core()
-
-        from transformers import AutoProcessor
-
-        processor_load_kwargs = dict(processor_load_kwargs or {})
-        processor_load_kwargs.setdefault("revision", checkpoint_revision)
-        processor_load_kwargs.setdefault("fix_mistral_regex", False)
         if is_lerobot_checkpoint:
-            local_processor = Path(str(checkpoint_source)) / "dm05_processor"
-            if local_processor.is_dir():
-                processor_source = str(local_processor)
-            elif Path(str(checkpoint_source)).is_dir():
-                # Raw/local conversion fixtures may already be a processor directory.
-                processor_source = str(checkpoint_source)
-            else:
-                snapshot_kwargs = {
-                    key: processor_load_kwargs.pop(key)
-                    for key in (
-                        "revision",
-                        "cache_dir",
-                        "force_download",
-                        "proxies",
-                        "token",
-                        "local_files_only",
-                    )
-                    if key in processor_load_kwargs
-                }
-                snapshot = snapshot_download(
-                    repo_id=str(checkpoint_source),
-                    allow_patterns="dm05_processor/**",
-                    **snapshot_kwargs,
+            processor_source = config.processor_name_or_path
+            if processor_source is None:
+                if config.pretrained_path is None:
+                    raise ValueError("DM05 LeRobot checkpoints require config.pretrained_path.")
+                processor_source = _resolve_processor_source(
+                    config.pretrained_path,
+                    revision=config.pretrained_revision,
                 )
-                processor_source = str(Path(snapshot) / "dm05_processor")
         else:
             processor_source = config.processor_name_or_path or raw_source
-        self.processor = AutoProcessor.from_pretrained(processor_source, **processor_load_kwargs)
+        self.processor = AutoProcessor.from_pretrained(
+            processor_source,
+            revision=config.pretrained_revision,
+            fix_mistral_regex=False,
+        )
 
         torch_dtype = resolve_torch_dtype(config.dtype)
         if str(config.device) == "cuda" and torch.cuda.is_available():
@@ -245,6 +274,7 @@ class DM05Policy(PreTrainedPolicy):
         else:
             self.model = core_model_cls.from_pretrained(
                 raw_source,
+                revision=config.pretrained_revision,
                 torch_dtype=torch_dtype,
                 chunk_size=config.chunk_size,
                 vlm_gradient_checkpointing=config.vlm_gradient_checkpointing,
@@ -283,54 +313,30 @@ class DM05Policy(PreTrainedPolicy):
                     for parameter in module.parameters():
                         parameter.requires_grad = False
                     break
+        config.core_config = _core_config_payload(self.model)
         self.model.to(config.device)
         self._compile_suffix_active = setup_compiled_suffix(self.config, self.model)
         self._batch_converter = DM05LerobotBatchConverter(config, self.processor)
         self.reset()
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        """Save the policy weights, processor, and serialized DM05 config."""
-        from lerobot.distributed.checkpoint import full_model_state_dict
+        """Use the base save path, then add the Gemma processor assets."""
         from lerobot.distributed.utils import is_main_process
 
-        policy_to_save = self.module if hasattr(self, "module") else self
-        state_dict = full_model_state_dict(policy_to_save)
-        if not state_dict or not is_main_process():
-            return
+        self.config.core_config = _core_config_payload(self.model)
 
-        save_directory.mkdir(parents=True, exist_ok=True)
-        policy_to_save.processor.save_pretrained(save_directory / "dm05_processor")
-        model_to_save = policy_to_save.model
+        # The VLM input embedding is tied to lm_head and is reconstructed on load.
+        # Remove only this redundant alias while the base saver gathers the state dict.
+        def drop_tied_input_embedding(_module, state_dict, prefix, _local_metadata):
+            state_dict.pop(f"{prefix}model.model.vlm.model.language_model.embed_tokens.weight", None)
 
-        save_config = copy.deepcopy(self.config)
-        prepare_config_for_save = getattr(model_to_save, "prepare_config_for_save", None)
-        if callable(prepare_config_for_save):
-            prepare_config_for_save()
-        model_core_config = getattr(model_to_save, "config", None)
-        to_dict = getattr(model_core_config, "to_dict", None)
-        if callable(to_dict):
-            core_config = to_dict()
-        elif model_core_config is not None:
-            core_config = {
-                key: value
-                for key, value in vars(model_core_config).items()
-                if not key.startswith("_") or key in {"_name_or_path"}
-            }
-        else:
-            core_config = None
-        if core_config:
-            core_config["_name_or_path"] = "."
-            save_config.core_config = core_config
-        save_config.pretrained_name_or_path = "."
-        save_config.processor_name_or_path = None
-        save_config.pretrained_path = None
-        save_config._save_pretrained(save_directory)
-
-        # Match safetensors.save_model by omitting the tied input embedding.
-        state_dict = dict(state_dict)
-        state_dict.pop("model.model.vlm.model.language_model.embed_tokens.weight", None)
-        total_bytes = sum(t.numel() * t.element_size() for t in state_dict.values())
-        save_torch_state_dict(state_dict, str(save_directory), max_shard_size=max(total_bytes, 1))
+        hook = self.register_state_dict_post_hook(drop_tied_input_embedding)
+        try:
+            super()._save_pretrained(save_directory)
+        finally:
+            hook.remove()
+        if is_main_process():
+            self.processor.save_pretrained(save_directory / "dm05_processor")
 
     @classmethod
     def from_pretrained(
@@ -351,14 +357,6 @@ class DM05Policy(PreTrainedPolicy):
         """Load DM05 from a self-contained LeRobot checkpoint."""
         model_id = str(pretrained_name_or_path)
         saved_config = None
-        processor_load_kwargs = {
-            "force_download": force_download,
-            "proxies": proxies,
-            "token": token,
-            "cache_dir": cache_dir,
-            "local_files_only": local_files_only,
-            "revision": revision,
-        }
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -443,6 +441,17 @@ class DM05Policy(PreTrainedPolicy):
                 "DM05Policy.from_pretrained requires a converted LeRobot checkpoint with core_config. "
                 "Convert raw OpenDM release assets before using them as --policy.path."
             )
+        config.pretrained_path = Path(model_id)
+        config.pretrained_revision = revision
+        config.processor_name_or_path = _resolve_processor_source(
+            model_id,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            token=token,
+            local_files_only=local_files_only,
+        )
         policy = super().from_pretrained(
             pretrained_name_or_path,
             config=config,
@@ -454,9 +463,6 @@ class DM05Policy(PreTrainedPolicy):
             local_files_only=local_files_only,
             revision=revision,
             strict=strict,
-            checkpoint_source=model_id,
-            checkpoint_revision=revision,
-            processor_load_kwargs=processor_load_kwargs,
             **kwargs,
         )
         return policy

@@ -45,16 +45,25 @@ relative-action statistics; see the [normalization guide](./dm05.mdx#normalizati
 
 ## Evaluation
 
-Evaluate a fine-tuned checkpoint:
+Reproduce the reported 197/200 LIBERO result with the 50k-step checkpoint:
 
 ```bash
 MUJOCO_GL=egl lerobot-eval \
-  --policy.path=/path/to/checkpoint/pretrained_model \
+  --policy.path=Dexmal/DM05-Lerobot-LIBERO \
   --env.type=libero \
-  --env.task=libero_spatial \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
   --env.control_mode=relative \
+  --eval.n_episodes=5 \
+  --eval.batch_size=1 \
+  --seed=7 \
   --policy.device=cuda
 ```
+
+The four suites score 49/50, 50/50, 50/50, and 48/50 respectively. See the
+[complete user guide](./dm05.mdx#evaluation) for the evaluation contract.
 
 Use the complete checkpoint directory; policy weights, config, and processor state are all required.
 
