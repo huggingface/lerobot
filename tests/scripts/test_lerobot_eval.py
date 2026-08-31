@@ -16,12 +16,14 @@ from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
+import pytest
+import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.scripts.lerobot_eval import eval_policy, rollout
-from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy
+from tests.fixtures.dummy_checkpoint_policy import DummyCheckpointConfig, DummyCheckpointPolicy, make_dummy_policy
 
 
 class DummyCountingEnv(gym.Env):
@@ -145,3 +147,47 @@ def test_rollout_standalone_recording(tmp_path: Path):
     ds = LeRobotDataset(root=str(recording_dir))
     assert ds.meta.total_episodes == 1
     vec_env.close()
+
+
+def test_eval_policy_aborted_episode_buffer_cleared(tmp_path: Path):
+    """Verify that interrupted/crashing rollouts discard partial episode buffers before finalizing."""
+
+    class CrashingPolicy(DummyCheckpointPolicy):
+        def __init__(self, config: DummyCheckpointConfig):
+            super().__init__(config)
+            self.call_count = 0
+
+        def select_action(self, batch, **kwargs):
+            self.call_count += 1
+            if self.call_count > 4:  # crash mid-way through episode 2 (step 2)
+                raise RuntimeError("Simulated mid-episode failure")
+            return super().select_action(batch, **kwargs)
+
+    vec_env = gym.vector.SyncVectorEnv([lambda: DummyCountingEnv(max_steps=3)])
+    config = DummyCheckpointConfig(device="cpu")
+    policy = CrashingPolicy(config)
+    with torch.no_grad():
+        policy.net.weight.fill_(0.5)
+
+    pipeline = PolicyProcessorPipeline([])
+    recording_dir = tmp_path / "recordings_aborted"
+
+    with pytest.raises(RuntimeError, match="Simulated mid-episode failure"):
+        eval_policy(
+            env=vec_env,
+            policy=policy,
+            env_preprocessor=pipeline,
+            env_postprocessor=pipeline,
+            preprocessor=pipeline,
+            postprocessor=pipeline,
+            n_episodes=3,
+            max_episodes_rendered=0,
+            recording_dir=recording_dir,
+            env_features=_make_dummy_env_features(),
+        )
+
+    # Episode 1 completed (steps 1-3), episode 2 crashed at step 2 -> partial buffer cleared, only 1 full episode saved
+    ds = LeRobotDataset(root=str(recording_dir))
+    assert ds.meta.total_episodes == 1
+    vec_env.close()
+

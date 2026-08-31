@@ -387,7 +387,7 @@ def rollout(
         if created_datasets_locally and recording_datasets is not None:
             for ds in recording_datasets:
                 if ds.has_pending_frames():
-                    ds.save_episode()
+                    ds.clear_episode_buffer()
                 ds.finalize()
                 if recording_repo_id is not None:
                     if ds.num_episodes > 0:
@@ -681,7 +681,7 @@ def eval_policy(
         if recording_datasets is not None:
             for ds in recording_datasets:
                 if ds.has_pending_frames():
-                    ds.save_episode()
+                    ds.clear_episode_buffer()
                 ds.finalize()
                 if recording_repo_id is not None:
                     if ds.num_episodes > 0:
