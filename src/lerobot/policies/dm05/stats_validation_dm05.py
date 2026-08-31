@@ -25,7 +25,7 @@ from lerobot.configs import NormalizationMode
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .configuration_dm05 import DM05Config
-from .utils import relative_action_mask
+from .core.adapter import relative_action_mask
 
 _REQUIRED_STATS = {
     NormalizationMode.MEAN_STD: ("mean", "std"),

@@ -50,8 +50,7 @@ from transformers.models.gemma3.modeling_gemma3 import (
     repeat_kv,
 )
 
-from .constants import IGNORE_INDEX
-from .utils import build_action_prefix_mask, validate_action_prefill_pair
+from .utils import IGNORE_INDEX, build_action_prefix_mask, validate_action_prefill_pair
 
 try:
     from transformers.utils import is_torch_flex_attn_available

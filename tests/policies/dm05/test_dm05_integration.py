@@ -36,19 +36,19 @@ from lerobot.policies.dm05.conversion_dm05 import (
     DM05ProcessorArtifactsStep,
     DM05StateBinsProcessorStep,
 )
-from lerobot.policies.dm05.modeling_dm05 import DM05Policy, prepare_compiled_suffix_inputs
-from lerobot.policies.dm05.modeling_dm05_core import (
+from lerobot.policies.dm05.core.modeling import (
     DM05CoreModelConfig,
     DM05ForCausalLM,
     masked_flow_matching_loss,
 )
+from lerobot.policies.dm05.core.tokenization import DM05Tokenization
+from lerobot.policies.dm05.modeling_dm05 import DM05Policy, prepare_compiled_suffix_inputs
 from lerobot.policies.dm05.prepare_stats_dm05 import (
     _training_episodes,
     compute_dm05_stats,
     prepare_dm05_stats,
 )
 from lerobot.policies.dm05.processor_dm05 import make_dm05_pre_post_processors
-from lerobot.policies.dm05.tokenization_dm05 import DM05Tokenization
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
@@ -403,6 +403,10 @@ def test_dm05_processors_roundtrip(tmp_path):
     postprocessor.save_pretrained(tmp_path, config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json")
 
     loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
+    dcp_only_dir = tmp_path / "dcp_only"
+    loaded_preprocessor.save_pretrained(dcp_only_dir)
+    assert (dcp_only_dir / "dm05_processor" / "processor_config.json").exists()
+    assert (dcp_only_dir / "dm05_processor" / "chat_template.jinja").is_file()
 
     assert {path.name for path in tmp_path.glob("*normalizer_processor.safetensors")} == {
         "policy_preprocessor_step_5_normalizer_processor.safetensors",
@@ -752,18 +756,27 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
         "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
     }
     config.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,))}
-    policy = DM05Policy(config, checkpoint_source=processor_path)
+    config.pretrained_revision = "runtime-revision"
+    policy = DM05Policy(config)
     checkpoint = tmp_path / "checkpoint" / "pretrained_model"
     (checkpoint.parent / "training_state").mkdir(parents=True)
 
     # The gathered weights deliberately differ from the live model so this cannot pass by accident.
     gathered_state_dict = {key: value.detach().clone() for key, value in policy.state_dict().items()}
-    sentinel_key = next(key for key, value in gathered_state_dict.items() if value.is_floating_point())
+    sentinel_key = next(
+        key
+        for key, value in gathered_state_dict.items()
+        if value.is_floating_point() and "embed_tokens.weight" not in key and "lm_head.weight" not in key
+    )
     gathered_state_dict[sentinel_key] = gathered_state_dict[sentinel_key] + 1
+
+    def gather_with_sentinel(model):
+        state_dict = dict(model.state_dict())
+        state_dict[sentinel_key] = gathered_state_dict[sentinel_key]
+        return state_dict
+
     with monkeypatch.context() as save_monkeypatch:
-        save_monkeypatch.setattr(
-            "lerobot.distributed.checkpoint.full_model_state_dict", lambda _policy: gathered_state_dict
-        )
+        save_monkeypatch.setattr("lerobot.distributed.checkpoint.full_model_state_dict", gather_with_sentinel)
 
         non_main_checkpoint = tmp_path / "non_main"
         save_monkeypatch.setattr("lerobot.distributed.utils.is_main_process", lambda: False)
@@ -797,6 +810,9 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     torch.testing.assert_close(saved_state_dict, expected_state_dict)
     assert saved_config["pretrained_name_or_path"] == "."
     assert saved_config["processor_name_or_path"] is None
+    assert saved_config["pretrained_revision"] is None
+    assert policy.config.processor_name_or_path == str(processor_path)
+    assert policy.config.pretrained_revision == "runtime-revision"
     assert saved_config["core_config"]["model_type"] == "dexbotic_dm05"
     assert saved_config["core_config"]["_name_or_path"] == "."
     assert PreTrainedConfig.from_pretrained(checkpoint).type == "dm05"

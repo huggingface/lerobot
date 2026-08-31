@@ -58,7 +58,7 @@ def flatten_feature_names(names: Any) -> list[str] | None:
 def import_dm05_core():
     """Import the self-contained DM05 core bundled with this LeRobot policy."""
     require_package("transformers", extra="dm05")
-    from .modeling_dm05_core import DM05CoreModelConfig, DM05ForCausalLM
+    from .modeling import DM05CoreModelConfig, DM05ForCausalLM
 
     return DM05CoreModelConfig, DM05ForCausalLM
 
@@ -93,30 +93,6 @@ def relative_action_mask(
         raise ValueError(f"DM05 relative_exclude_joints did not match action feature names: {unmatched}.")
     mask = [not any(token == name or token in name for token in excluded) for name in action_names_lower]
     return mask
-
-
-def build_action_prefix_mask(
-    action_prefill_len: torch.Tensor | None,
-    *,
-    horizon: int,
-    device: torch.device,
-) -> torch.Tensor | None:
-    """Build a mask for timesteps that are fixed by action prefill."""
-    if action_prefill_len is None:
-        return None
-
-    lengths = action_prefill_len.to(device=device, dtype=torch.long)
-    positions = torch.arange(horizon, device=device)
-    return positions[None, :] < lengths[:, None]
-
-
-def validate_action_prefill_pair(
-    prefill_actions: torch.Tensor | None,
-    action_prefill_len: torch.Tensor | None,
-) -> None:
-    """Require action prefill values and lengths to be provided together."""
-    if (prefill_actions is None) != (action_prefill_len is None):
-        raise ValueError("prefill_actions and action_prefill_len must be provided together.")
 
 
 def normalize_task_batch(task: Any, batch_size: int, default_task: str) -> list[str]:
