@@ -223,14 +223,16 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   - front_side: in FRONT — the working face, gripper/arm reaching TOWARD the camera;
   - rear_side: BEHIND — you see the motor-backs and CABLING, arm reaching AWAY;
   - left_side / right_side: off to the robot's left / right.
-  FRONT vs REAR — decisive tell (use FIRST): the robot manipulates in FRONT of
-  itself, so the manipulated objects mark the front. Objects between the base and
-  the camera (near foreground, arm behind reaching toward them/you) -> front_side;
-  objects on the far side of the arm (arm reaching away into a workspace beyond)
-  -> rear_side. This beats counting motors. Do NOT call rear just because servos
-  are visible — a low SO-100/SO-101 arm shows its brackets and cables from almost
-  every angle, including front views; only motor-BACKS with the arm reaching away
-  mean rear. Do not default to "front" merely because the arm is prominent.
+  FRONT vs REAR — combine TWO cues. Cue 1 (objects): the robot manipulates in
+  FRONT of itself, so manipulated objects between the base and the camera (arm
+  behind reaching toward them/you) -> front_side; objects on the far side of the
+  arm (arm reaching away) -> rear_side. Cue 2 (hardware): motor-BACKS, mounting
+  bracket and CABLING with the arm reaching away -> rear_side; the gripper's
+  working face reaching toward you -> front_side. When the cues AGREE, commit
+  confidently; when they CONFLICT, trust Cue 1 — a low SO-100/SO-101 arm shows
+  some brackets and cables from almost every angle (front views included), so a
+  few visible motors alone do NOT mean rear. Do not default to "front" merely
+  because the arm is prominent.
   LEFT vs RIGHT tell (upright, non-mirrored view; level the image first): base/body
   on the RIGHT with the arm reaching LEFT -> left_side; base/body on the LEFT with
   the arm reaching RIGHT -> right_side. A rolled or mirrored view flips this.

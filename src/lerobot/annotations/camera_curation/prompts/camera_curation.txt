@@ -354,24 +354,26 @@ camera's position relative to the robot is reasonably clear; fall back to plain
     the arm reaches AWAY from the camera into the workspace (gripper pointing away).
   - left_side / right_side: the camera is off to the robot's left / right.
 
-  FRONT vs REAR — decisive tell (use this FIRST): a robot manipulates in FRONT of
-  itself, so the ACTIVE WORKSPACE — the objects being picked/placed — marks the
-  front. If those manipulated objects lie BETWEEN the robot's base and the camera
-  (spread across the near foreground, with the arm behind them reaching toward
-  them / toward you), the camera sits on the robot's FRONT -> front_side. If the
-  objects are on the FAR side of the arm (arm in the foreground reaching away from
-  you into a workspace beyond it), the camera is behind -> rear_side. This
-  object-placement reading is more reliable than counting motors and should settle
-  most low, table-level side views.
+  FRONT vs REAR — read TWO complementary cues, then combine them:
 
-  Secondary tell: the gripper's working face / opening direction — reaching toward
-  you is front, reaching away is rear.
+  Cue 1 — WORKSPACE / OBJECTS: a robot manipulates in FRONT of itself, so the
+  objects being picked/placed mark the front. Manipulated objects BETWEEN the base
+  and the camera (near foreground, arm behind them reaching toward them / toward
+  you) -> front_side. Objects on the FAR side of the arm (arm in the foreground
+  reaching away into a workspace beyond it) -> rear_side.
 
-  Do NOT treat "I can see motors/servo housings" as rear on its own. A low-slung
-  SO-100 / SO-101 style arm exposes its servo brackets and a cable or two from
-  almost EVERY angle, including straight-on front views, so visible motors are a
-  weak signal — only motor-BACKS with the arm reaching away indicate rear. Do not
-  default to "front" merely because the arm is prominent.
+  Cue 2 — MOTOR-BACKS & CABLING and the WORKING FACE: the robot's BACK is the side
+  that shows the backs of the servo housings, the mounting bracket, and the CABLE
+  bundle exiting the base; seeing those with the arm reaching away -> rear_side.
+  The FRONT is the working face — the gripper's opening reaching toward you ->
+  front_side.
+
+  Combine them: when the two cues AGREE, commit with high confidence. When they
+  CONFLICT, trust Cue 1 (object placement). A low-slung SO-100 / SO-101 style arm
+  exposes some servo brackets and a cable or two from almost EVERY angle, front
+  views included, so a few visible motors do NOT by themselves mean rear — only
+  clear motor-BACKS with the arm reaching away do. Do not default to "front"
+  merely because the arm is prominent.
 
 REQUIRED for any direction: you must actually SEE the robot's body/base and be
 able to read which way it faces. If the robot's base is out of frame and only the
