@@ -502,6 +502,7 @@ def push_checkpoint_to_hub(
     repo_id: str,
     *,
     private: bool | None = None,
+    include_training_state: bool = True,
 ) -> None:
     """Upload a saved checkpoint directory to the Hub under checkpoints/<name>/.
 
@@ -511,15 +512,18 @@ def push_checkpoint_to_hub(
     checkpoint step so a checkpoint can be recovered with
     --policy.pretrained_revision=<step> instead of a commit sha.
 
-    The directory is uploaded verbatim — including DCP shards under the DCP formats: this tree
-    exists for *resume*, not distribution, and `resolve_resume_checkpoint` downloads it back
-    symmetrically.
+    By default, the directory is uploaded verbatim — including DCP shards under the DCP formats:
+    this tree exists for *resume*, not distribution, and `resolve_resume_checkpoint` downloads it
+    back symmetrically. Excluding the training state creates a model-only checkpoint that cannot be
+    used to resume training.
 
     Args:
         checkpoint_dir (Path): The local checkpoint step directory to upload.
         repo_id (str): The Hub model repo to push to (created idempotently if missing).
         private (bool | None): Whether a newly created repo should be private. Defaults to
             None (public unless the organization's default is private).
+        include_training_state (bool): Whether to upload optimizer, scheduler, RNG, and step state.
+            Defaults to True; disabling it makes the uploaded checkpoint non-resumable.
     """
     api = HfApi()
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
@@ -529,6 +533,7 @@ def push_checkpoint_to_hub(
         repo_type="model",
         path_in_repo=f"checkpoints/{checkpoint_dir.name}",
         commit_message=f"checkpoint {checkpoint_dir.name}",
+        ignore_patterns=None if include_training_state else f"{TRAINING_STATE_DIR}/**",
     )
     api.create_tag(
         repo_id=repo_id,
