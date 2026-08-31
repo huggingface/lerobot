@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
@@ -22,8 +24,8 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
-from .constants import DM05_STATE_BINS
-from .utils import flatten_feature_names
+from .core.adapter import flatten_feature_names
+from .core.utils import DM05_STATE_BINS
 
 _BASE_STATE_DIM = 14
 _BASE_ACTION_DIM = 14
@@ -105,6 +107,15 @@ class DM05Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 1000
     scheduler_decay_steps: int = 50000
     scheduler_decay_lr: float = 2.5e-6
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        """Save a self-contained config without changing the runtime source."""
+        save_config = copy.deepcopy(self)
+        save_config.pretrained_name_or_path = "."
+        save_config.processor_name_or_path = None
+        save_config.pretrained_path = None
+        save_config.pretrained_revision = None
+        PreTrainedConfig._save_pretrained(save_config, save_directory)
 
     def __post_init__(self):
         """Validate constructor defaults and normalize derived values."""
