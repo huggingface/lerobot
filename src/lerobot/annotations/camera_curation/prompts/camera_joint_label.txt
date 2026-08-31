@@ -238,23 +238,21 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   some brackets and cables from almost every angle (front views included), so a
   few visible motors alone do NOT mean rear. Do not default to "front" merely
   because the arm is prominent.
-  LEFT vs RIGHT — the HARDEST call; work it out from the robot's own body. Method:
-  find the robot's FRONT (working side, where the objects are); sit at the base
-  facing that front — your left/right hands are the robot's left/right; the camera
-  is off to one of those sides -> left_side / right_side. Shortcut (upright,
-  non-mirrored, level first): the label is the side of the ROBOT the CAMERA is on,
-  which is OPPOSITE the side the robot OCCUPIES in the frame — base/body on the
-  RIGHT (arm reaching LEFT) -> left_side; base/body on the LEFT (arm reaching
-  RIGHT) -> right_side. If you catch yourself naming the side the robot is ON, FLIP
-  it. A rolled/mirrored view flips this. A WRONG left/right is WORSE than plain
-  "side": if you cannot confidently carry out the method, output plain "side".
+  LEFT vs RIGHT tell: the label is which side of the ROBOT the CAMERA is on, NOT
+  which side of the IMAGE the robot occupies — these are OPPOSITE (a camera to the
+  robot's left sees it pushed to the RIGHT of frame). Upright, non-mirrored, level
+  the image first: base/body on the RIGHT with the arm reaching LEFT -> left_side;
+  base/body on the LEFT with the arm reaching RIGHT -> right_side. COMMON MISTAKE:
+  do NOT name it after the side the robot is ON — a robot filling the RIGHT of the
+  frame is left_side. A rolled or mirrored view flips this.
 
-For FRONT vs REAR, COMMIT whenever the base and the working-face/reach are
-readable — do NOT default to plain "side" there. Plain "side" is otherwise a last
-resort (base out of frame, only the workspace/objects visible, or you truly cannot
-read the facing) — and, per the caution above, the preferred output for an
-UNCERTAIN left/right. Do not invent a direction from the raw image side alone,
-gripper pointing direction, or an unresolved image roll/mirror.
+WHENEVER the base and the reach direction are visible, you MUST commit to a
+direction (left_side / right_side, or front_side / rear_side) — do NOT default to
+plain "side". Plain "side" is a LAST RESORT: only when the base is out of frame,
+or you see just the workspace/objects, or you genuinely cannot tell which way the
+arm reaches. Certainty is not required; reasonable visual support is enough. Do
+not, however, invent a direction from the raw image side alone, gripper pointing
+direction, or an unresolved image roll/mirror.
 
 4. DUPLICATE TOP CANDIDATES
 
