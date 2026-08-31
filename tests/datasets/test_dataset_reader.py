@@ -27,7 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.datasets import LeRobotDataset, register_dataset_reader
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.language import LANGUAGE_EVENTS
-from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT
+from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
 from lerobot.utils.import_utils import get_safe_default_video_backend
 from tests.fixtures.constants import DUMMY_REPO_ID
 
@@ -233,5 +233,20 @@ def test_register_dataset_reader(tmp_path, lerobot_dataset_factory, monkeypatch)
             register_dataset_reader("toyfmt", "some.other.module")
         with pytest.raises(ValueError, match="already registered"):
             register_dataset_reader(DEFAULT_STORAGE_FORMAT, "toyfmt_reader")
+
+        # a format whose optional deps are missing must not block probing the others
+        module.localize_root = lambda *args, **kwargs: root
+        broken = types.ModuleType("broken_reader")
+
+        def raise_import_error(*args, **kwargs):
+            raise ImportError("install some-extra")
+
+        broken.localize_root = raise_import_error
+        monkeypatch.setitem(sys.modules, "broken_reader", broken)
+        monkeypatch.setattr(
+            "lerobot.datasets.storage._DATASET_READER_MODULES",
+            {"broken": "broken_reader", "toyfmt": "toyfmt_reader"},
+        )
+        assert localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds") == root
     finally:
         _DATASET_READER_MODULES.pop("toyfmt", None)

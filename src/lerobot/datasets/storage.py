@@ -91,7 +91,9 @@ def localize_remote_root(
             return _reader_module(storage_format).localize_root(
                 repo_id, root, revision, token=token, force_cache_sync=force_cache_sync
             )
-        except FileNotFoundError as error:
+        except (FileNotFoundError, ImportError) as error:
+            # ImportError: this format's optional dependencies are missing, which
+            # must not stop the probe from reaching other registered formats.
             errors.append(f"{storage_format}: {error}")
     raise FileNotFoundError(
         f"No dataset found at {str(root)!r}. Tried {errors}. "
