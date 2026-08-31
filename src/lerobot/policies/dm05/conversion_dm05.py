@@ -18,7 +18,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -26,11 +26,17 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import ProcessorStep, ProcessorStepRegistry
 from lerobot.utils.constants import OBS_STATE
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
-from .constants import DM05_STATE_BINS, STATE_BINS
-from .tokenization_dm05 import DM05Tokenization, action_to_bin_tokens
-from .utils import build_meta, get_image_keys, normalize_task_batch
+from .constants import STATE_BINS
+from .core.adapter import build_meta, get_image_keys, normalize_task_batch
+from .core.tokenization import DM05Tokenization, action_to_bin_tokens
+from .core.utils import DM05_STATE_BINS
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
+else:
+    AutoProcessor = None
 
 
 @ProcessorStepRegistry.register(name="dm05_state_bins_processor")
@@ -64,7 +70,7 @@ class DM05StateBinsProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="dm05_processor_artifacts")
 @dataclass
 class DM05ProcessorArtifactsStep(ProcessorStep):
-    """Keep the Gemma processor self-contained without changing runtime data."""
+    """Save Gemma assets with the pipeline, including DCP-only checkpoints."""
 
     processor_name_or_path: str
     processor: Any = field(default=None, repr=False)
@@ -78,11 +84,11 @@ class DM05ProcessorArtifactsStep(ProcessorStep):
     def save_artifacts(self, save_directory: Path) -> dict[str, str]:
         artifact_path = Path("dm05_processor")
         target = save_directory / artifact_path
+        # Safetensors saves create this through DM05Policy first; DCP-only saves
+        # serialize only the pipelines and therefore need this fallback.
         if not (target / "processor_config.json").exists():
             if self.processor is None:
                 require_package("transformers", extra="dm05")
-                from transformers import AutoProcessor
-
                 self.processor = AutoProcessor.from_pretrained(
                     self.processor_name_or_path,
                     fix_mistral_regex=False,

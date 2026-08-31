@@ -97,19 +97,33 @@ for the same state/action contract and distribution.
 
 ## Evaluation
 
-Evaluate a fine-tuned checkpoint rather than the base model:
+The LIBERO checkpoint `Dexmal/DM05-Lerobot-LIBERO` was trained for 50,000 steps and evaluated on all 40
+LIBERO tasks with 5 episodes per task:
 
 ```bash
 MUJOCO_GL=egl lerobot-eval \
-  --policy.path=/path/to/checkpoint/pretrained_model \
+  --policy.path=Dexmal/DM05-Lerobot-LIBERO \
   --env.type=libero \
-  --env.task=libero_spatial \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
   --env.control_mode=relative \
+  --eval.n_episodes=5 \
+  --eval.batch_size=1 \
+  --seed=7 \
   --policy.device=cuda
 ```
 
-For a full LIBERO benchmark, evaluate `libero_spatial`, `libero_object`, `libero_goal`, and `libero_10` with the
-required episode count.
+| Suite     |           Successes |
+| --------- | ------------------: |
+| Spatial   |               49/50 |
+| Object    |               50/50 |
+| Goal      |               50/50 |
+| LIBERO-10 |               48/50 |
+| **Total** | **197/200 (98.5%)** |
+
+This is a 200-episode reproduction check, not the 2,000-episode LIBERO benchmark protocol.
 
 ## Checkpoint layout
 
