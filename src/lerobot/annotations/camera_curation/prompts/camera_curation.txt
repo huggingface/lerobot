@@ -404,28 +404,32 @@ workspace), you CANNOT tell front from rear from left/right — use plain "side"
 Seeing only the workspace and objects (a bowl, a table) is never enough for a
 direction, no matter how "frontal" the workspace looks.
 
-LEFT vs RIGHT tell: the label names which side of the ROBOT the CAMERA sits on —
-NOT which side of the IMAGE the robot appears on. THESE ARE OPPOSITE: a camera
-placed to the robot's LEFT sees the robot pushed toward the RIGHT of the frame,
-and vice versa. So, on an upright, non-mirrored view, read it from where the
-robot's BASE/BODY sits and which way the arm REACHES:
-  - base/body on the RIGHT of the frame, arm reaching toward the LEFT -> left_side;
-  - base/body on the LEFT of the frame, arm reaching toward the RIGHT -> right_side.
-COMMON MISTAKE — DO NOT name the view after the side the robot OCCUPIES in the
-frame. A robot filling the RIGHT half of the image is being viewed from its LEFT,
-so it is left_side (NOT right_side); a robot on the LEFT of the image is
-right_side. If you catch yourself picking the side the robot is ON, flip it.
-Mentally LEVEL the image first; a rolled (tilted/upside-down) or mirrored view
-flips left and right, so correct for that before applying this.
+LEFT vs RIGHT — the HARDEST call; WORK IT OUT from the robot's own body, do not
+guess from where the robot sits in the frame. Method:
+  1. Find the robot's FRONT — its working side, where the manipulated objects /
+     active workspace are (per the FRONT/REAR cues above).
+  2. Put yourself at the base FACING that front (sit in the robot's seat). Your
+     left and right hands now define the robot's LEFT and RIGHT.
+  3. The camera sits off to one of those sides: by the robot's LEFT -> left_side;
+     by its RIGHT -> right_side.
+Shortcut (equivalent, upright non-mirrored view): the label is the side of the
+ROBOT the CAMERA is on, which is OPPOSITE the side the robot OCCUPIES in the frame
+— a camera to the robot's left pushes the robot toward the RIGHT of the frame. So:
+  - robot BASE/BODY on the RIGHT of the frame (arm reaching LEFT) -> left_side;
+  - robot BASE/BODY on the LEFT of the frame (arm reaching RIGHT) -> right_side.
+If you catch yourself naming the side the robot is ON, FLIP it. Level the image
+first; a rolled or mirrored view flips left/right, so correct for that.
 
-This base-vs-reach reading is USUALLY available for a side view: the arm base and
-the direction it reaches are visible in most fixed side shots. WHENEVER you can
-see the base and the reach direction, you MUST commit to left_side / right_side
-(or front_side / rear_side) — do NOT fall back to plain "side". Plain "side" is a
-LAST RESORT, only for when the base is out of frame or you genuinely cannot tell
-which way the arm reaches. Certainty is not required; reasonable visual support is
-enough. Do not, however, invent a direction from the raw image side ALONE (with no
-base/reach reading) or from a roll/mirror you cannot resolve.
+A WRONG left/right is WORSE than an honest plain "side". If you cannot confidently
+carry out the method above — place yourself in the robot's seat and put the camera
+by its left or its right hand — output plain "side" instead of guessing. (This
+"prefer side when unsure" caution applies to LEFT vs RIGHT ONLY.)
+
+For FRONT vs REAR, by contrast, COMMIT whenever the base and the working-face /
+reach direction are readable — do not fall back to plain "side" there. Plain
+"side" is otherwise a last resort (base out of frame, or you truly cannot read the
+robot's facing). Do not invent a direction from the raw image side ALONE or from a
+roll/mirror you cannot resolve.
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 
