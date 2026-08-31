@@ -141,6 +141,18 @@ class CameraCurationConfig:
     promote_direction_candidate: bool = False
     promote_direction_min_confidence: float = 0.4
 
+    # Borrow a direction from the existing key name: when the VLM labels a camera a
+    # plain base that accepts a direction (``side``/``wrist``, no direction) and the
+    # ORIGINAL key name carries a direction qualifier (``front``/``rear``/``left``/
+    # ``right`` — e.g. ``observation.images.front_side``), adopt it so the label
+    # becomes ``front_side``. ONLY the direction qualifier is borrowed, never a
+    # position word, so a mislabeled position in the key (a "top" that is really a
+    # side) cannot leak in. This is the last-resort fix when the model refuses to
+    # emit the direction itself (not even as a candidate). Off by default; unlike
+    # the label decision it deliberately still reads the key even under
+    # ignore_key_names, since a bare direction qualifier is usually trustworthy.
+    direction_from_key_name: bool = False
+
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 

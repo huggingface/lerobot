@@ -297,6 +297,39 @@ def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConf
             return
 
 
+def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
+    """Borrow a direction qualifier from the camera's original key name.
+
+    When ``view_label`` is a plain base that accepts a direction (``side``/
+    ``wrist``, no direction yet) and the ORIGINAL key contains a direction
+    qualifier (``front``/``rear``/``left``/``right`` — e.g. a camera keyed
+    ``observation.images.front_side``), adopt it so the label becomes
+    ``front_side``. ONLY a direction qualifier is borrowed, never a position word,
+    so a mislabeled position in the key cannot leak in. Mutates ``verdict``. No-op
+    unless ``cfg.direction_from_key_name``.
+    """
+    if not cfg.direction_from_key_name or not cfg.allow_combos:
+        return
+    label = verdict.view_label
+    if not label or "_" in label or label not in (_SIDE_POSITION, _WRIST_POSITION):
+        return
+    qualifier = next(
+        (tok for tok in _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary) if tok in _QUALIFIERS),
+        None,
+    )
+    if qualifier is None:
+        return
+    combined = _order_combo([label, qualifier], cfg.view_vocabulary)
+    if is_valid_view_label(combined, cfg.view_vocabulary, allow_combos=True):
+        logger.info(
+            "camera %s: borrowing direction %r from key name -> %r",
+            verdict.camera_key,
+            qualifier,
+            combined,
+        )
+        verdict.view_label = combined
+
+
 def _parse_view_label(camera_key: str, raw_label: Any, cfg: CameraCurationConfig) -> str | None:
     """Normalize and validate a raw VLM ``view_label`` into a canonical label or None."""
     label = str(raw_label).strip().lower().replace(" ", "_") if raw_label else ""
@@ -376,6 +409,7 @@ def curate_cameras(
         # it normalizes whichever label ended up on the verdict.
         for key in callable_keys:
             _promote_direction_candidate(verdicts[key], cfg)
+            _direction_from_source_name(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]
 

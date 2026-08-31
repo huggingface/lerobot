@@ -472,6 +472,40 @@ def test_promote_direction_candidate_gated():
     )
 
 
+def test_direction_from_key_name():
+    # VLM won't emit or even propose a direction (plain "side", no useful candidate),
+    # but the key name carries "front" -> borrow it -> front_side.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
+    frames = {"observation.images.front_side": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.front_side"]
+    assert v.view_label == "front_side"
+
+
+def test_direction_from_key_name_only_borrows_direction():
+    # A position word in the key (here "top") must NOT be borrowed — only a
+    # direction qualifier. Plain "side" with a "top"-keyed camera stays "side".
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
+    frames = {"observation.images.top_cam": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.top_cam"]
+    assert v.view_label == "side"
+    # And it's off by default.
+    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
+    vlm2 = _queued_vlm(
+        [{"usable": True, "mount_type": "fixed", "view_label": "side", "confidence": 0.7}]
+    )
+    frames2 = {"observation.images.front_side": [_tiny_image()]}
+    v2 = {x.camera_key: x for x in curate_cameras(frames2, cfg_off, vlm2)}[
+        "observation.images.front_side"
+    ]
+    assert v2.view_label == "side"
+
+
 def test_candidate_fallback_resolves_collision():
     # cam_a/cam_b both -> "top"; cam_b (lower conf) has a strong "left_side" #2, so it
     # falls back instead of being skipped. Both get renamed, no collision.
