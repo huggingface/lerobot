@@ -44,21 +44,11 @@ genuine camera view and may be usable.
 The robot's own arm, gripper, or end effector may partially block the workspace.
 This is expected and MUST NOT make the camera unusable.
 
-Some blur is NORMAL and stays USABLE. Mild or moderate blur, soft focus, or
-occasional motion blur is FINE as long as you can still make out the scene, the
-robot, and the objects. Do not flag a view just because it is not perfectly sharp
-— only when the blur is so extreme the frame is unintelligible.
-
-WRIST / CLOSE-UP VIEWS GET EXTRA SLACK ON BLUR. A view that looks like a wrist or
-extreme close-up — the gripper / end-effector in the foreground, or the camera
-inches from the surface or object — is very often SOFT, WASHED-OUT, LOW-CONTRAST,
-or MOTION-BLURRED because it sits close and moves with the arm. This is completely
-NORMAL and stays USABLE. Be VERY reluctant to flag such a view: keep it usable as
-long as you can make out ANYTHING of the scene — a surface, an edge, the gripper,
-or an object — even faintly and even if most of the frame is a soft blur. Flag a
-wrist / close-up view for blur ONLY when it is essentially a uniform, featureless
-field (e.g. near-solid white, black, or grey) with NO discernible object, gripper,
-edge, or surface anywhere in it.
+Some blur is NORMAL and stays USABLE. Wrist cameras especially are often a bit
+blurry from motion. Mild or moderate blur, soft focus, or occasional motion blur
+is FINE as long as you can still make out the scene, the robot, and the objects.
+Do not flag a view just because it is not perfectly sharp — only when the blur is
+so extreme the frame is unintelligible.
 
 HUMANS. These are teleoperated recordings. Mark the camera UNUSABLE only when a
 human is PROMINENTLY or SUBSTANTIALLY present as an operator/bystander (not part
@@ -283,45 +273,64 @@ Determine the camera's PHYSICAL VIEWING GEOMETRY relative to the manipulation
 workspace.
 
 Camera images may be tilted, rolled, rotated, or mirrored. Reason about the
-physical camera pose, workspace plane, and robot coordinate frame. Do NOT map
-image-left/image-right directly to robot-left/robot-right.
+physical workspace and perspective, not the orientation of the image frame.
 
 top
 
-Use "top" for a genuinely OVERHEAD or NEAR-OVERHEAD camera.
+Use "top" when the camera is mounted ABOVE the workspace and looks predominantly
+DOWN ONTO it, so the work surface is the DOMINANT plane and objects present mainly
+their TOP faces. Think "camera above the table angled down at it", not "camera at
+table level looking across it".
 
-The camera should be physically above the manipulation area and look mainly
-DOWN ONTO the workspace. This is a canonical overhead role, but it does NOT need
-to be perfect nadir / bird's-eye.
+A top camera should satisfy BOTH:
 
-Positive evidence for "top":
+  1. it is physically positioned above the manipulation area; AND
+  2. its viewing geometry is predominantly downward rather than diagonally across
+     the workspace.
 
-  - the camera is physically above / over the workspace;
-  - the manipulation area is primarily seen from above;
-  - the work surface is the dominant scene plane;
-  - object TOP faces are prominent;
-  - the camera optical axis points mainly downward toward the manipulation region;
-  - the overall scene reads as overhead or near-overhead, even if some perspective
-    remains.
+It does NOT need to be a perfect straight-down / nadir bird's-eye. A steep
+DOWNWARD tilt is still top even with MODERATE perspective — some receding of the
+far table edge, a sliver of background wall/floor at the edges, and the arm seen
+partly from the side are all FINE and remain "top", as long as the camera is
+clearly looking down onto the work surface and you mostly see the tops of things.
 
-IMPORTANT: the following do NOT disqualify a true top camera by themselves:
+What is NOT top: a camera looking ACROSS the workspace — strong horizontal
+perspective, objects shown mainly by their SIDE faces, the robot's column/base
+standing UP in the frame, a prominent horizon or wall behind. That is a SIDE view
+however much tabletop it shows.
 
-  - moderate perspective;
-  - some visible object side faces;
-  - some visible robot vertical structure;
-  - a small amount of wall/background;
-  - a camera that is slightly offset from the exact workspace center.
+DECISIVE TOP-vs-SIDE TELL — VERTICAL STRUCTURE: this applies even to an ELEVATED
+camera, not just a table-level one. If you can see the robot's body/column STANDING
+UP vertically in the frame, and/or a WALL or room background behind the workspace,
+there is real vertical structure -> it is a SIDE view (elevated side), even though
+the camera is high and the tabletop is prominent. A true TOP shows the scene almost
+entirely as the tabletop PLANE: objects and the arm seen from their TOP faces, laid
+out flat, with little vertical structure and little or no wall/background. So do not
+call it top merely because it is angled down at the table — check for a standing
+robot column and a visible wall first; their presence means side.
 
-Use "side" instead when the camera is clearly positioned around the workspace
-perimeter and views it diagonally / obliquely from the side.
+Strong evidence for "top":
 
-Practical rule:
+  - the horizontal work surface dominates the view;
+  - objects are seen mainly from their TOP surfaces;
+  - the manipulation area has a bird's-eye or near-bird's-eye appearance;
+  - vertical faces of objects and furniture are relatively reduced;
+  - perspective depth across the table/work surface is relatively weak;
+  - the camera looks DOWN ONTO the workspace rather than ACROSS it.
 
-  - physically over workspace + mainly downward -> top;
-  - physically beside/perimeter + diagonal across workspace -> side.
+IMPORTANT:
 
-When uncertain, do NOT decide from a single cue. Combine camera position,
-viewing direction, dominant planes, and perspective.
+Being elevated is NOT sufficient for "top".
+
+Looking downward is NOT sufficient for "top".
+
+Seeing a large amount of tabletop is NOT sufficient for "top".
+
+A camera mounted high outside the workspace and looking diagonally across it is
+NOT "top". It is a side view.
+
+A robot arm or gripper may be prominent in a top view. That does NOT make it a
+wrist camera.
 
 bottom
 
@@ -330,190 +339,150 @@ looks upward toward it.
 
 side
 
-Use a side label for ANY camera physically positioned around / beside the
-workspace rather than directly overhead. This includes elevated cameras looking
-strongly downward from the workspace perimeter.
+Use a side label when the camera views the workspace predominantly FROM AROUND
+IT rather than FROM ABOVE IT.
 
-A side camera may be elevated, tilted downward, and show substantial tabletop.
-The deciding factor is the physical camera role: a camera positioned around or
-beside the workspace is a side camera even when it is elevated and strongly
-tilted downward.
+A side camera may:
 
-Evidence supporting "side":
+  - be mounted high;
+  - be tilted downward;
+  - show a large amount of tabletop;
+  - provide a partially top-down-looking image.
 
-  - the camera looks primarily across the manipulation region;
-  - strong near-to-far depth across the workspace;
-  - strong perspective convergence;
-  - substantial side/vertical surfaces;
-  - the workspace is seen obliquely rather than mainly from above.
+It is still a side view when its geometry is predominantly OBLIQUE ACROSS the
+workspace rather than overhead.
 
-These are supporting cues, not independent hard rules.
+Strong evidence for a side view:
+
+  - strong perspective depth across the work surface;
+  - clear near-versus-far structure;
+  - visible vertical faces of objects, furniture, robot parts, or workspace
+    boundaries;
+  - the camera looks ACROSS the workspace rather than DOWN ONTO it;
+  - objects are seen substantially from their sides rather than primarily from
+    their top surfaces.
+
+Therefore:
+
+HIGH + DOWNWARD does NOT imply "top".
+
+HIGH + OBLIQUE ACROSS WORKSPACE -> side.
+
+OVERHEAD / BIRD'S-EYE -> top.
+
+Add a direction (front_side / rear_side / left_side / right_side) when the
+camera's position relative to the robot is reasonably clear; fall back to plain
+"side" only when the direction is genuinely ambiguous.
+
+  - Judge direction from where the camera sits relative to the ROBOT'S OWN facing
+    (its front / base / working direction) whenever that can be read from the
+    scene.
+  - front_side: the camera is in FRONT of the robot, seeing its WORKING FACE — the
+    arm/gripper reaches TOWARD the camera, the gripper's opening faces you, and
+    the manipulated objects sit between the robot and the camera.
+  - rear_side: the camera is BEHIND the robot, seeing its BACK — you see the backs
+    of the motor/servo housings, the mounting bracket, and the CABLING/wiring, and
+    the arm reaches AWAY from the camera into the workspace (gripper pointing away).
+  - left_side / right_side: the camera is off to the robot's left / right.
+
+  FRONT vs REAR — read TWO complementary cues, then combine them:
+
+  Cue 1 — WORKSPACE / OBJECTS: a robot manipulates in FRONT of itself, so the
+  objects being picked/placed mark the front. Manipulated objects BETWEEN the base
+  and the camera (near foreground, arm behind them reaching toward them / toward
+  you) -> front_side. Objects on the FAR side of the arm (arm in the foreground
+  reaching away into a workspace beyond it) -> rear_side.
+
+  Cue 2 — MOTOR-BACKS & CABLING and the WORKING FACE: the robot's BACK is the side
+  that shows the backs of the servo housings, the mounting bracket, and the CABLE
+  bundle exiting the base; seeing those with the arm reaching away -> rear_side.
+  The FRONT is the working face — the gripper's opening reaching toward you ->
+  front_side.
+
+  Combine them: when the two cues AGREE, commit with high confidence. When they
+  CONFLICT, trust Cue 1 (object placement). A low-slung SO-100 / SO-101 style arm
+  exposes some servo brackets and a cable or two from almost EVERY angle, front
+  views included, so a few visible motors do NOT by themselves mean rear — only
+  clear motor-BACKS with the arm reaching away do. Do not default to "front"
+  merely because the arm is prominent.
+
+REQUIRED for any direction: you must actually SEE the robot's body/base and be
+able to read which way it faces. If the robot's base is out of frame and only the
+arm or gripper enters the view (e.g. descending from a frame edge into the
+workspace), you CANNOT tell front from rear from left/right — use plain "side".
+Seeing only the workspace and objects (a bowl, a table) is never enough for a
+direction, no matter how "frontal" the workspace looks.
+
+LEFT vs RIGHT — DERIVE IT FROM THE ROBOT'S FRONT, never from which side of the
+frame the robot's body happens to sit on. You already located, above, the robot's
+FRONT (its working face — where the manipulated OBJECTS and the active workspace
+are) and its BACK (the motor / servo / cable side). Left vs right is the case where
+that front points ACROSS the image (sideways), rather than toward you (front_side)
+or away (rear_side). Read WHICH WAY the front points:
+
+  - FRONT / workspace toward the LEFT of the image (motor-BACK toward the RIGHT)
+    -> left_side;
+  - FRONT / workspace toward the RIGHT of the image (motor-BACK toward the LEFT)
+    -> right_side.
+
+In one line: the side the robot's WORKING FACE / workspace points to in the image
+IS the label — front points left -> left_side, front points right -> right_side —
+and the motor/cable back sits on the OPPOSITE side.
+
+WHY this works and the naive read does not: a camera placed off to the robot's LEFT
+sees the robot's front swung toward the LEFT of the image (and its base/body toward
+the right). So anchor on the FRONT, which you can actually SEE (the objects mark
+it) — do NOT label from where the robot's BODY sits, which gives the OPPOSITE,
+wrong answer. Mentally LEVEL the image first; a rolled or mirrored view flips left
+and right, so correct for that.
+
+WHENEVER you can locate the robot's front/workspace and see which way it points,
+COMMIT to left_side / right_side (or front_side / rear_side) — do not fall back to
+plain "side". Plain "side" is a LAST RESORT, only when you truly cannot locate the
+robot's front or read its facing. Do not invent a direction from a roll/mirror you
+cannot resolve.
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 
-For every fixed camera that could plausibly be either top or side, explicitly
-compare:
+For EVERY fixed camera that could plausibly be either top or side, explicitly
+compare the two hypotheses before answering.
 
-  A. genuinely OVERHEAD / near-nadir -> "top"
-  B. any clearly OBLIQUE / diagonal / perimeter view -> side
+Ask:
 
-Use physical camera position relative to the workspace as the PRIMARY criterion,
-and viewing direction as supporting evidence.
+Hypothesis A — TOP
 
-Do NOT use any single secondary cue as a veto. In particular:
+Does the camera look predominantly DOWN ONTO the workspace?
 
-  - a visible wall does NOT automatically mean side;
-  - a visible robot column does NOT automatically mean side;
-  - visible vertical faces do NOT automatically mean side;
-  - a large tabletop does NOT automatically mean top;
-  - an elevated camera does NOT automatically mean top.
+Look for:
 
-When the geometry is genuinely borderline, ask whether the camera is physically
-OVER the workspace or around its PERIMETER. If that cannot be established,
-prefer "side". Reserve "top" for a clearly genuine overhead camera role.
+  - bird's-eye geometry;
+  - dominant top surfaces;
+  - weak depth perspective across the work surface;
+  - relatively little vertical geometry.
 
-SIDE DIRECTION
+Hypothesis B — SIDE
 
-After deciding that the view is a side view, determine whether its physical
-position relative to the ROBOT'S OWN coordinate frame is known.
+Does the camera look predominantly ACROSS the workspace from an oblique angle?
 
-The labels mean CAMERA POSITION:
+Look for:
 
-  - front_side: camera is physically in FRONT of the robot;
-  - rear_side: camera is physically BEHIND the robot;
-  - left_side: camera is physically on the ROBOT'S LEFT;
-  - right_side: camera is physically on the ROBOT'S RIGHT.
+  - strong near-to-far depth;
+  - perspective convergence;
+  - substantial vertical surfaces;
+  - substantial side faces of objects;
+  - an obvious oblique viewing direction across the work surface.
 
-First establish the robot's physical FRONT/BACK orientation from the scene. The
-front is the robot's working direction: where it normally reaches and where the
-active manipulation workspace lies. The back may be supported by motor backs,
-mounting structure, and cabling.
+Choose "top" when Hypothesis A is the better fit: the camera looks predominantly
+DOWN onto the work surface (even at a steep angle with moderate perspective).
+Choose a SIDE label when Hypothesis B clearly fits — the camera looks ACROSS the
+workspace from near table level. When the two are genuinely close and you cannot
+tell down-onto from across, lean SIDE; but do NOT downgrade a clear angled-down
+overhead view to side just because it is not a perfect straight-down bird's-eye.
 
-Useful FRONT/REAR evidence:
+If the camera is elevated but the geometry is clearly oblique across the
+workspace, choose a side label.
 
-  - manipulated objects between the robot base and camera, with the arm reaching
-    toward the camera -> supports front_side;
-  - workspace beyond the robot, with the arm reaching away from the camera ->
-    supports rear_side;
-  - clear motor backs / mounting structure / cabling together with the arm
-    reaching away -> supports rear_side.
-
-Object/workspace geometry is generally stronger evidence than a few visible
-motors or cables, because some robots expose those from many angles.
-
-LEFT vs RIGHT — PHYSICAL CAMERA POSITION, NOT IMAGE DIRECTION
-
-Determine whether the CAMERA itself is physically on the robot's left or right
-side after establishing the robot's coordinate frame.
-
-Do NOT use a rule such as:
-
-  - robot front points toward image-left -> left_side;
-  - robot front points toward image-right -> right_side.
-
-Do NOT infer left/right from:
-
-  - which half of the image contains the robot;
-  - which image edge the arm enters from;
-  - apparent image-left/image-right;
-  - camera roll;
-  - an assumed image mirroring convention.
-
-Those image-space relationships can flip under camera rotation, mirroring, and
-different camera poses.
-
-Assign left_side or right_side ONLY when visible 3D scene geometry or a known
-asymmetric robot feature lets you establish the robot's physical left/right
-orientation and therefore the camera's physical side.
-
-REQUIRED FOR A DIRECTIONAL SIDE LABEL
-
-Use front_side / rear_side / left_side / right_side only when there is positive
-visual evidence for that physical camera position.
-
-If the robot's base/body is out of frame, or the robot coordinate frame cannot
-be established reliably, use plain "side".
-
-
-ROBOT-LAYOUT HEURISTIC FOR LEFT / RIGHT SIDE
-
-When the camera is already known to be a SIDE view, use the robot's visible
-layout and reaching direction to infer which physical side the camera is on.
-
-A strong practical cue is:
-
-  - robot body / base appears toward the RIGHT side of the image and the arm
-    reaches LEFTWARD across the workspace -> camera is usually on the ROBOT'S
-    RIGHT side -> "right_side";
-
-  - robot body / base appears toward the LEFT side of the image and the arm
-    reaches RIGHTWARD across the workspace -> camera is usually on the ROBOT'S
-    LEFT side -> "left_side".
-
-Think of this as viewing the robot from one side across its workspace: the robot
-body tends to occupy the near-side image edge while the arm reaches away across
-the scene.
-
-Use this cue from the ROBOT GEOMETRY, not from image-left/image-right alone.
-The important pattern is the combination of:
-
-  1. where the robot body/base is located in the image, and
-  2. the direction in which the arm extends / reaches into the workspace.
-
-If the two cues form the patterns above, prefer the corresponding directional
-side label instead of plain "side".
-
-Examples:
-
-  robot on image RIGHT + reaching LEFT  -> right_side
-  robot on image LEFT  + reaching RIGHT -> left_side
-
-Do not invert this rule just because the camera image may be rolled or tilted.
-If the image is known or strongly suspected to be horizontally mirrored, avoid
-using this heuristic unless other robot geometry confirms the same conclusion.
-
-
-DIRECTIONAL SIDE LABELS — PREFER THEM WHEN THE ROBOT LAYOUT SUPPORTS THEM
-
-Once a fixed camera is classified as a SIDE view, do NOT stop at plain "side"
-when the robot layout gives a clear left/right pattern.
-
-Use these patterns as actionable evidence:
-
-  - robot body/base on image RIGHT + arm reaching LEFT
-      -> output "right_side"
-
-  - robot body/base on image LEFT + arm reaching RIGHT
-      -> output "left_side"
-
-These are not merely weak candidates. When the body/base position and reach
-direction are both clear and consistent, choose the directional label directly.
-
-Use plain "side" only when at least one of the following is true:
-
-  - the robot body/base position is unclear;
-  - the reaching direction is unclear;
-  - the image is likely horizontally mirrored;
-  - the visible geometry contradicts the heuristic;
-  - the camera is lateral but the robot layout cannot establish a direction.
-
-Do NOT keep "side" just because full 3D reconstruction of the robot coordinate
-frame is unavailable. The body-position + reach-direction pattern is sufficient
-when it is visually clear.
-
-
-Plain "side" is a VALID, CONFIDENT classification when the camera is clearly
-lateral/oblique but its physical direction cannot be established. It is not a
-failure and must be preferred over an unsupported directional guess.
-
-CANDIDATE BEHAVIOR FOR DIRECTIONAL UNCERTAINTY
-
-If the camera is clearly a side view but a direction is only plausible rather
-than established:
-
-  - set view_label to "side";
-  - put the plausible directional label(s) in "candidates" with lower confidence;
-  - do NOT promote a weak left/right/front/rear guess to view_label.
+Do NOT use camera height alone to decide.
 
 If mount_type == "unknown"
 
