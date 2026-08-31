@@ -404,17 +404,10 @@ workspace), you CANNOT tell front from rear from left/right — use plain "side"
 Seeing only the workspace and objects (a bowl, a table) is never enough for a
 direction, no matter how "frontal" the workspace looks.
 
-LEFT vs RIGHT tell: the label names which side of the ROBOT the CAMERA sits on —
-NOT which side of the IMAGE the robot appears on. THESE ARE OPPOSITE: a camera
-placed to the robot's LEFT sees the robot pushed toward the RIGHT of the frame,
-and vice versa. So, on an upright, non-mirrored view, read it from where the
-robot's BASE/BODY sits and which way the arm REACHES:
+LEFT vs RIGHT tell: on an upright, non-mirrored view, look at where the robot's
+BASE/BODY sits and which way the arm REACHES:
   - base/body on the RIGHT of the frame, arm reaching toward the LEFT -> left_side;
   - base/body on the LEFT of the frame, arm reaching toward the RIGHT -> right_side.
-COMMON MISTAKE — DO NOT name the view after the side the robot OCCUPIES in the
-frame. A robot filling the RIGHT half of the image is being viewed from its LEFT,
-so it is left_side (NOT right_side); a robot on the LEFT of the image is
-right_side. If you catch yourself picking the side the robot is ON, flip it.
 Mentally LEVEL the image first; a rolled (tilted/upside-down) or mirrored view
 flips left and right, so correct for that before applying this.
 
