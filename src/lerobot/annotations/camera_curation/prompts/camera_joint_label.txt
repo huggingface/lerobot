@@ -154,25 +154,22 @@ the manipulation workspace.
 
 top
 
-"top" is a NARROW, DEMANDING label and is frequently over-used for cameras that
-are really side views. Do NOT reach for it by default.
-
-Use "top" ONLY when the camera is essentially ABOVE THE ROBOT LOOKING STRAIGHT
-DOWN AT THE TABLE — a near-vertical bird's-eye, as if mounted on the ceiling or a
-gantry directly over the workspace. The tabletop reads as a nearly FLAT PLANE,
-objects and the robot are seen from DIRECTLY ABOVE (their top surfaces), with no
-receding far edge, no horizon, no walls, and little front-to-back depth. If you
-can see the robot largely FROM THE SIDE or the far table edge receding, it is a
-SIDE view, however high the camera sits.
+Use "top" when the camera is mounted ABOVE the workspace and looks predominantly
+DOWN ONTO it, so the work surface is the DOMINANT plane and objects present mainly
+their TOP faces. Think "camera above the table angled down at it", not "camera at
+table level looking across it".
 
 A top camera should satisfy BOTH:
 
   1. it is physically above the manipulation area; AND
-  2. its viewing geometry is predominantly downward / bird's-eye.
+  2. its viewing geometry is predominantly downward rather than diagonally across.
 
-It does NOT need to be perfectly vertical, but the resulting perspective must
-still be primarily overhead — a modest tilt is fine, an oblique diagonal across
-the table is NOT top.
+It does NOT need to be a perfect straight-down / nadir bird's-eye — a steep
+DOWNWARD tilt with MODERATE perspective (some far-edge receding, a sliver of
+wall/floor at the edges, the arm seen partly from the side) is still "top", as
+long as the camera clearly looks down onto the surface and you mostly see the tops
+of things. It is NOT top only when the camera is near TABLE LEVEL looking ACROSS —
+side faces dominant, the robot's column standing up, a prominent horizon/wall.
 
 Strong evidence:
 
@@ -387,8 +384,10 @@ B. predominantly ACROSS the workspace -> side
 
 Use viewing geometry rather than camera height.
 
-When uncertain between an elevated side view and a true overhead view, favor
-"side" unless the bird's-eye geometry provides positive evidence for "top".
+When genuinely uncertain between an elevated across-the-workspace view and a
+looking-down overhead view, lean "side" — but a clear angled-down overhead view is
+"top" even with moderate perspective; do not demote it just for lacking a perfect
+straight-down bird's-eye.
 
 8. UNCERTAINTY AND SPECIFICITY
 

@@ -263,29 +263,28 @@ physical workspace and perspective, not the orientation of the image frame.
 
 top
 
-"top" is a NARROW, DEMANDING label — it is the rarer case and is frequently
-over-used for cameras that are really side views. Do NOT reach for it by default.
-
-Use "top" ONLY when the camera is essentially ABOVE THE ROBOT LOOKING STRAIGHT
-DOWN AT THE TABLE — a near-vertical bird's-eye, as if mounted on the ceiling or a
-gantry directly over the workspace. The tabletop reads as a nearly FLAT PLANE
-filling the frame, objects and the robot are seen from DIRECTLY ABOVE (their top
-surfaces), and there is little sense of "across" — no receding far edge, no
-horizon, no walls, no strong front-to-back depth.
+Use "top" when the camera is mounted ABOVE the workspace and looks predominantly
+DOWN ONTO it, so the work surface is the DOMINANT plane and objects present mainly
+their TOP faces. Think "camera above the table angled down at it", not "camera at
+table level looking across it".
 
 A top camera should satisfy BOTH:
 
   1. it is physically positioned above the manipulation area; AND
-  2. its viewing geometry is predominantly downward / bird's-eye rather than
-     diagonally across the workspace.
+  2. its viewing geometry is predominantly downward rather than diagonally across
+     the workspace.
 
-The camera does NOT need to be perfectly vertical, but the resulting perspective
-must still be primarily overhead — a modest tilt is fine, an oblique diagonal
-view across the table is NOT top.
+It does NOT need to be a perfect straight-down / nadir bird's-eye. A steep
+DOWNWARD tilt is still top even with MODERATE perspective — some receding of the
+far table edge, a sliver of background wall/floor at the edges, and the arm seen
+partly from the side are all FINE and remain "top", as long as the camera is
+clearly looking down onto the work surface and you mostly see the tops of things.
 
-If you can see the robot largely FROM THE SIDE (its column/base standing up, the
-sides of objects, the far edge of the table receding into the distance), it is a
-SIDE view, no matter how high the camera sits or how much tabletop it shows.
+What is NOT top: a camera roughly at TABLE LEVEL looking ACROSS the workspace —
+strong horizontal perspective, objects shown mainly by their SIDE faces, the
+robot's column/base standing UP in the frame, a prominent horizon or wall behind.
+That is a SIDE view however much tabletop it shows. Reserve the switch to side for
+these clearly across-the-table cases, not for a genuine angled-down overhead view.
 
 Strong evidence for "top":
 
@@ -444,12 +443,12 @@ Look for:
   - substantial side faces of objects;
   - an obvious oblique viewing direction across the work surface.
 
-Choose "top" ONLY when Hypothesis A is clearly and decisively better supported.
-
-DEFAULT TO SIDE. If the two hypotheses are close, if you are unsure, or if the
-view is merely elevated-and-downward rather than an unmistakable straight-down
-bird's-eye, choose a SIDE label. "top" must be earned by a clearly overhead
-geometry; it is never the safe fallback.
+Choose "top" when Hypothesis A is the better fit: the camera looks predominantly
+DOWN onto the work surface (even at a steep angle with moderate perspective).
+Choose a SIDE label when Hypothesis B clearly fits — the camera looks ACROSS the
+workspace from near table level. When the two are genuinely close and you cannot
+tell down-onto from across, lean SIDE; but do NOT downgrade a clear angled-down
+overhead view to side just because it is not a perfect straight-down bird's-eye.
 
 If the camera is elevated but the geometry is clearly oblique across the
 workspace, choose a side label.
