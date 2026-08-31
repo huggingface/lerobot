@@ -294,11 +294,20 @@ far table edge, a sliver of background wall/floor at the edges, and the arm seen
 partly from the side are all FINE and remain "top", as long as the camera is
 clearly looking down onto the work surface and you mostly see the tops of things.
 
-What is NOT top: a camera roughly at TABLE LEVEL looking ACROSS the workspace —
-strong horizontal perspective, objects shown mainly by their SIDE faces, the
-robot's column/base standing UP in the frame, a prominent horizon or wall behind.
-That is a SIDE view however much tabletop it shows. Reserve the switch to side for
-these clearly across-the-table cases, not for a genuine angled-down overhead view.
+What is NOT top: a camera looking ACROSS the workspace — strong horizontal
+perspective, objects shown mainly by their SIDE faces, the robot's column/base
+standing UP in the frame, a prominent horizon or wall behind. That is a SIDE view
+however much tabletop it shows.
+
+DECISIVE TOP-vs-SIDE TELL — VERTICAL STRUCTURE: this applies even to an ELEVATED
+camera, not just a table-level one. If you can see the robot's body/column STANDING
+UP vertically in the frame, and/or a WALL or room background behind the workspace,
+there is real vertical structure -> it is a SIDE view (elevated side), even though
+the camera is high and the tabletop is prominent. A true TOP shows the scene almost
+entirely as the tabletop PLANE: objects and the arm seen from their TOP faces, laid
+out flat, with little vertical structure and little or no wall/background. So do not
+call it top merely because it is angled down at the table — check for a standing
+robot column and a visible wall first; their presence means side.
 
 Strong evidence for "top":
 

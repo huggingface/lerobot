@@ -173,8 +173,14 @@ It does NOT need to be a perfect straight-down / nadir bird's-eye — a steep
 DOWNWARD tilt with MODERATE perspective (some far-edge receding, a sliver of
 wall/floor at the edges, the arm seen partly from the side) is still "top", as
 long as the camera clearly looks down onto the surface and you mostly see the tops
-of things. It is NOT top only when the camera is near TABLE LEVEL looking ACROSS —
-side faces dominant, the robot's column standing up, a prominent horizon/wall.
+of things. DECISIVE TOP-vs-SIDE TELL — VERTICAL STRUCTURE (applies even to an
+ELEVATED camera): if the robot's body/column STANDS UP vertically in the frame
+and/or a WALL / room background is visible behind the workspace, that vertical
+structure means SIDE (an elevated side), even with a prominent tabletop. A true
+top shows the scene almost entirely as the tabletop PLANE — objects and the arm
+from their TOP faces, laid flat, little vertical structure, little/no wall. Do not
+call top just because it is angled down; check for a standing column and a wall
+first.
 
 Strong evidence:
 
