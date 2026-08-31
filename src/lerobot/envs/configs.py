@@ -332,16 +332,23 @@ class HILSerlRobotEnvConfig(EnvConfig):
         return {}
 
 
-# The LIBERO simulator ships in the `hf-libero` package, which carries a
-# `sys_platform == 'linux'` marker in the `lerobot[libero]` extra. On non-Linux
-# platforms `pip install 'lerobot[libero]'` resolves cleanly but silently omits it,
-# so the failure would otherwise surface much later as a cryptic ModuleNotFoundError
-# from deep inside the `lerobot.envs.libero` import. See #4388.
+# The LIBERO simulator ships in the `hf-libero` package, which the `lerobot[libero]`
+# extra requires behind a `sys_platform == 'linux'` marker. On non-Linux platforms
+# `pip install 'lerobot[libero]'` therefore resolves cleanly but silently omits it, and
+# the failure would otherwise surface much later as a cryptic ModuleNotFoundError from
+# deep inside the `lerobot.envs.libero` import. See #4388.
+#
+# The check below is deliberately an IMPORTABILITY test, not a platform test: the marker
+# governs what the extra installs, and says nothing about where the simulator can run. A
+# user who installs `hf-libero` or builds LIBERO from source on another platform passes
+# this check and proceeds, which is the intended behaviour.
 LIBERO_SIMULATOR_MISSING_MSG = (
-    "The LIBERO simulator is not installed. LIBERO is Linux-only: the 'hf-libero' "
-    "package carries a sys_platform == 'linux' marker, so `pip install 'lerobot[libero]'` "
-    "resolves cleanly but silently omits the simulator on non-Linux platforms. "
-    "Install it on Linux (or in a Linux container) to run LIBERO environments."
+    "The LIBERO simulator is not installed. `pip install 'lerobot[libero]'` does not "
+    "install it on non-Linux platforms: 'hf-libero' carries a sys_platform == 'linux' "
+    "marker, so the extra resolves cleanly and silently omits the simulator. That is a "
+    "packaging constraint of this extra, not a statement about where LIBERO can run. "
+    "Install 'hf-libero' directly, install LIBERO from source, or use Linux (or a Linux "
+    "container), then re-run."
 )
 
 
@@ -470,7 +477,8 @@ class LiberoEnv(EnvConfig):
         return kwargs
 
     def validate_platform(self) -> None:
-        """LIBERO is Linux-only, see `_assert_libero_simulator_available` (#4388)."""
+        """Fail fast when the LIBERO simulator is absent, see
+        `_assert_libero_simulator_available` (#4388)."""
         _assert_libero_simulator_available()
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):

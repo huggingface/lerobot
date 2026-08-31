@@ -60,7 +60,7 @@ class TestPlatformValidation:
     def test_libero_without_simulator_fails_at_startup(self, simulator_missing):
         cfg = make_cfg(env=LiberoEnv(), env_eval_freq=20_000)
 
-        with pytest.raises(ModuleNotFoundError, match="Linux") as exc_info:
+        with pytest.raises(ModuleNotFoundError, match="LIBERO simulator is not installed") as exc_info:
             cfg.validate()
 
         message = str(exc_info.value)
@@ -82,7 +82,7 @@ class TestPlatformValidation:
         monkeypatch.setattr(TrainPipelineConfig, "_resolve_pretrained_from_cli", explode)
         cfg = make_cfg(env=LiberoEnv(), env_eval_freq=20_000)
 
-        with pytest.raises(ModuleNotFoundError, match="Linux"):
+        with pytest.raises(ModuleNotFoundError, match="LIBERO simulator is not installed"):
             cfg.validate()
 
     def test_eval_disabled_skips_the_check(self, simulator_missing):
