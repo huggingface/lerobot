@@ -101,11 +101,14 @@ that translates across the frame or grows/shrinks between the first and last
 frame. Fixed objects can't move on their own, so that drift means the CAMERA
 moved -> robot_mounted (wrist), even when the view looks overhead.
 
-GRIPPER IN THE FOREGROUND (a strong wrist signal): if you clearly see the robot's
-own gripper right in FRONT of the camera — close, in the near foreground, anchored
-at roughly the same spot in the frame as if the camera is mounted just behind it —
-it is very likely a wrist, even without dramatic background drift. A wrist camera's
-defining look is "the camera watching its own gripper."
+ROBOT PART ANCHORED IN THE FOREGROUND (a strong wrist signal): if a piece of the
+ROBOT ITSELF sits large and close in the foreground, anchored at roughly the same
+spot in the frame as if bolted just in front of the lens, it is very likely a
+wrist — even without dramatic background drift. It need NOT be a recognizable
+gripper: gripper jaws/fingers, the wrist housing, or a smooth ARM LINK all count,
+and it is often oversized, cut off at the bottom/side edge, blurry, or a dark
+featureless blob. A wrist camera's defining look is "a bit of the robot fixed in
+view while the world goes by."
 
 Robot motion alone is NOT sufficient.
 

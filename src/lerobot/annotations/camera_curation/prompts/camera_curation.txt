@@ -148,13 +148,21 @@ Strong evidence includes:
   - a visible part of the wrist/gripper may remain relatively stable in camera
     coordinates while the static environment moves.
 
-GRIPPER IN THE FOREGROUND (a strong wrist signal on its own): if you clearly see
-the robot's OWN gripper/end-effector right in FRONT of the camera — close, in the
-near foreground, and staying ANCHORED at roughly the same place in the frame (as
-if the camera is mounted just behind it, looking out along the arm) — it is very
-likely a wrist camera, even before you check background drift. A wrist camera's
-defining look is "the camera watching its own gripper." So do not require dramatic
-background motion to call wrist when the gripper sits anchored in the foreground.
+ROBOT PART ANCHORED IN THE FOREGROUND (a strong wrist signal on its own): if a
+piece of the ROBOT ITSELF sits large and close in the near foreground and stays
+ANCHORED at roughly the same place in the frame across the frames — as if bolted
+just in front of the lens — it is very likely a wrist camera, even before you
+check background drift. This anchored part does NOT have to be a recognizable
+"gripper": it can be the gripper jaws or fingers, the end-effector, the wrist
+housing, or a smooth ARM LINK, and it is often
+  - oversized and only partly in frame (cut off at the BOTTOM or a side edge),
+  - out of focus / motion-blurred because it is inches from the lens,
+  - a dark, plain, or featureless blob rather than an obvious mechanism.
+Whenever such a robot part stays put in the frame while the WORKSPACE/BACKGROUND
+shifts behind it, the camera is riding on the arm -> wrist. A wrist camera's
+defining look is "a bit of the robot fixed in view, watching the world go by." So
+do not require dramatic background motion, and do not require identifying an
+actual gripper, to call wrist when a robot part sits anchored in the foreground.
 
 COMMONLY MISSED WRIST: a wrist camera often looks like a CLOSE-UP, roughly
 top-down view of the workspace with the gripper prominent, and is easily mistaken
@@ -174,19 +182,20 @@ STATIONARY object instead, per the drift check above).
 
 Large differences between frames alone are NOT evidence of camera movement.
 
-WRIST vs FIXED when a gripper is in view — the discriminator is whether the
-gripper is ANCHORED to the camera or TRAVELS through the scene:
+WRIST vs FIXED when a robot part (gripper, end-effector, or arm link) is in view —
+the discriminator is whether that part is ANCHORED to the camera or TRAVELS
+through the scene:
 
-  - WRIST: the gripper sits in the near foreground and stays roughly ANCHORED at
-    the same place/orientation in the frame while the background/scene shifts —
-    the camera moves WITH the gripper.
-  - FIXED: the gripper (however large) MOVES THROUGH the frame — it enters,
+  - WRIST: the robot part sits in the near foreground and stays roughly ANCHORED
+    at the same place/orientation in the frame while the background/scene shifts —
+    the camera moves WITH the arm.
+  - FIXED: the gripper/arm (however large) MOVES THROUGH the frame — it enters,
     crosses, and exits a stable scene whose background stays put; e.g. an overhead
     or side camera watching the arm pass below it.
 
 So do NOT call it robot_mounted merely because a gripper is visible, or the arm
 partially blocks an otherwise STABLE scene, or the gripper travels across a fixed
-background — that is a fixed camera. But DO lean wrist when the gripper is close,
+background — that is a fixed camera. But DO lean wrist when a robot part is close,
 in the foreground, and anchored to the camera as above.
 
 Required mount decision
