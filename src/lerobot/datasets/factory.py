@@ -203,10 +203,6 @@ def make_train_eval_datasets(
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
     If eval_split == 0.0, returns (full_dataset, None).
     """
-    if cfg.dataset.eval_split != 0.0 and cfg.dataset.streaming:
-        raise ValueError(
-            "eval_split requires map-style datasets and is not supported with dataset.streaming=true."
-        )
     full_dataset = make_dataset(cfg)
 
     if cfg.dataset.eval_split == 0.0:
