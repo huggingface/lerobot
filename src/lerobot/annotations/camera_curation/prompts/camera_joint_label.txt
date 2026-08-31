@@ -238,17 +238,22 @@ camera's position relative to the robot is reasonably clear; fall back to plain
   some brackets and cables from almost every angle (front views included), so a
   few visible motors alone do NOT mean rear. Do not default to "front" merely
   because the arm is prominent.
-  LEFT vs RIGHT tell (upright, non-mirrored view; level the image first): base/body
-  on the RIGHT with the arm reaching LEFT -> left_side; base/body on the LEFT with
-  the arm reaching RIGHT -> right_side. A rolled or mirrored view flips this.
+  LEFT vs RIGHT — DERIVE IT FROM THE ROBOT'S FRONT, not from which side of the
+  frame the robot's body sits on. Using the FRONT (working face / objects /
+  workspace) and BACK (motor/cable side) you located above: left vs right is when
+  the front points ACROSS the image. The side the robot's WORKING FACE / workspace
+  points to IS the label — front/workspace toward the LEFT (motor-back toward the
+  RIGHT) -> left_side; front/workspace toward the RIGHT (motor-back toward the
+  LEFT) -> right_side. A camera off to the robot's LEFT sees its front swung to the
+  LEFT of the image, so anchor on the FRONT you can SEE (the objects mark it); do
+  NOT label from where the robot's BODY sits (that gives the OPPOSITE, wrong
+  answer). Level the image first; a rolled/mirrored view flips left and right.
 
-WHENEVER the base and the reach direction are visible, you MUST commit to a
-direction (left_side / right_side, or front_side / rear_side) — do NOT default to
-plain "side". Plain "side" is a LAST RESORT: only when the base is out of frame,
-or you see just the workspace/objects, or you genuinely cannot tell which way the
-arm reaches. Certainty is not required; reasonable visual support is enough. Do
-not, however, invent a direction from the raw image side alone, gripper pointing
-direction, or an unresolved image roll/mirror.
+WHENEVER you can locate the robot's front/workspace and read which way it points,
+COMMIT to a direction (left_side / right_side, or front_side / rear_side) — do NOT
+default to plain "side". Plain "side" is a LAST RESORT: only when you truly cannot
+locate the robot's front or read its facing. Do not invent a direction from a
+roll/mirror you cannot resolve.
 
 4. DUPLICATE TOP CANDIDATES
 

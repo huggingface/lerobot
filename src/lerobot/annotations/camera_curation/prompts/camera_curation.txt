@@ -404,21 +404,34 @@ workspace), you CANNOT tell front from rear from left/right — use plain "side"
 Seeing only the workspace and objects (a bowl, a table) is never enough for a
 direction, no matter how "frontal" the workspace looks.
 
-LEFT vs RIGHT tell: on an upright, non-mirrored view, look at where the robot's
-BASE/BODY sits and which way the arm REACHES:
-  - base/body on the RIGHT of the frame, arm reaching toward the LEFT -> left_side;
-  - base/body on the LEFT of the frame, arm reaching toward the RIGHT -> right_side.
-Mentally LEVEL the image first; a rolled (tilted/upside-down) or mirrored view
-flips left and right, so correct for that before applying this.
+LEFT vs RIGHT — DERIVE IT FROM THE ROBOT'S FRONT, never from which side of the
+frame the robot's body happens to sit on. You already located, above, the robot's
+FRONT (its working face — where the manipulated OBJECTS and the active workspace
+are) and its BACK (the motor / servo / cable side). Left vs right is the case where
+that front points ACROSS the image (sideways), rather than toward you (front_side)
+or away (rear_side). Read WHICH WAY the front points:
 
-This base-vs-reach reading is USUALLY available for a side view: the arm base and
-the direction it reaches are visible in most fixed side shots. WHENEVER you can
-see the base and the reach direction, you MUST commit to left_side / right_side
-(or front_side / rear_side) — do NOT fall back to plain "side". Plain "side" is a
-LAST RESORT, only for when the base is out of frame or you genuinely cannot tell
-which way the arm reaches. Certainty is not required; reasonable visual support is
-enough. Do not, however, invent a direction from the raw image side ALONE (with no
-base/reach reading) or from a roll/mirror you cannot resolve.
+  - FRONT / workspace toward the LEFT of the image (motor-BACK toward the RIGHT)
+    -> left_side;
+  - FRONT / workspace toward the RIGHT of the image (motor-BACK toward the LEFT)
+    -> right_side.
+
+In one line: the side the robot's WORKING FACE / workspace points to in the image
+IS the label — front points left -> left_side, front points right -> right_side —
+and the motor/cable back sits on the OPPOSITE side.
+
+WHY this works and the naive read does not: a camera placed off to the robot's LEFT
+sees the robot's front swung toward the LEFT of the image (and its base/body toward
+the right). So anchor on the FRONT, which you can actually SEE (the objects mark
+it) — do NOT label from where the robot's BODY sits, which gives the OPPOSITE,
+wrong answer. Mentally LEVEL the image first; a rolled or mirrored view flips left
+and right, so correct for that.
+
+WHENEVER you can locate the robot's front/workspace and see which way it points,
+COMMIT to left_side / right_side (or front_side / rear_side) — do not fall back to
+plain "side". Plain "side" is a LAST RESORT, only when you truly cannot locate the
+robot's front or read its facing. Do not invent a direction from a roll/mirror you
+cannot resolve.
 
 TOP VS SIDE — REQUIRED GEOMETRIC TEST
 
