@@ -67,7 +67,7 @@ class BiRebotB601Follower(BimanualMixin, Robot):
         # Only for compatibility with parts of the codebase that expect `robot.cameras`.
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
-    def _disconnect_arm_for_cleanup(self, arm: RebotB601Follower) -> None:
+    def _disconnect_arm_after_failed_connect(self, arm: RebotB601Follower) -> None:
         """Force-disable an arm while recovering from a bimanual failure."""
         arm._disconnect(force_disable=True)
 
@@ -105,7 +105,7 @@ class BiRebotB601Follower(BimanualMixin, Robot):
                 obs_dict[f"right_{k}"] = v
             return obs_dict
         except Exception:
-            self._rollback_failed_connect()
+            self._disconnect_arms(after_failed_connect=True)
             raise
 
     @check_if_not_connected
@@ -126,5 +126,5 @@ class BiRebotB601Follower(BimanualMixin, Robot):
                 **{f"right_{k}": v for k, v in sent_action_right.items()},
             }
         except Exception:
-            self._rollback_failed_connect()
+            self._disconnect_arms(after_failed_connect=True)
             raise
