@@ -43,19 +43,22 @@ is recovered as the softmax-weighted mean of those centers — see
 
 This LeRobot port is **inference-only**: the preference head is preserved in
 the state dict for byte-equivalence with the published ``Robometer-4B``
-checkpoint but is not queried by :meth:`RobometerRewardModel.compute_reward`,
-which returns the last-frame progress (clamped to ``[0, 1]``) or sigmoid'd
-success probability depending on :attr:`RobometerConfig.reward_output`.
+checkpoint but is not queried by :meth:`RobometerRewardModel.predict_progress`.
+That method returns frame-level progress and success probability without
+choosing a frame or thresholding either signal.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor, nn
 
+from lerobot.rewards.capabilities import ProgressPrediction
 from lerobot.rewards.pretrained import PreTrainedRewardModel
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.utils.constants import OBS_PREFIX
@@ -130,40 +133,11 @@ class RobometerPredictionHead(nn.Sequential):
         super().__init__(*layers)
 
 
-def decode_progress_outputs(
-    progress_logits: Tensor | None,
-    success_logits: Tensor | None,
-    *,
-    is_discrete_mode: bool,
-) -> dict[str, list[list[float]]]:
-    """Decode RBM head outputs into per-frame floats.
+@dataclass(frozen=True)
+class RobometerPrediction(ProgressPrediction):
+    """RoboMeter frame signals, each float32 with shape ``(batch, time)``."""
 
-    Args:
-        progress_logits: ``(B, T)`` (continuous) or ``(B, T, num_bins)`` (discrete).
-        success_logits: ``(B, T)`` raw logits, ``sigmoid``-ed to probabilities.
-        is_discrete_mode: if True the progress logits get a softmax over bins
-            and are projected onto bin centers via :func:`convert_bins_to_continuous`.
-
-    Returns:
-        Dict with ``progress_pred`` and ``success_probs``, each a list of
-        length ``B`` of per-frame float lists.
-    """
-    progress_pred: list[list[float]] = []
-    success_probs: list[list[float]] = []
-
-    if progress_logits is not None:
-        for sample_logits in progress_logits:
-            if is_discrete_mode:
-                continuous = convert_bins_to_continuous(sample_logits.detach().float().cpu())
-                progress_pred.append(continuous.flatten().tolist())
-            else:
-                progress_pred.append(sample_logits.detach().float().cpu().flatten().tolist())
-
-    if success_logits is not None:
-        for sample_logits in success_logits:
-            success_probs.append(torch.sigmoid(sample_logits.detach().float().cpu()).flatten().tolist())
-
-    return {"progress_pred": progress_pred, "success_probs": success_probs}
+    success_probability: Tensor
 
 
 class RobometerRewardModel(PreTrainedRewardModel):
@@ -246,7 +220,13 @@ class RobometerRewardModel(PreTrainedRewardModel):
         self.success_head.to(dtype=model_dtype)
         self.frame_pool_attn.to(dtype=model_dtype)
 
-    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_progress(self, batch: Mapping[str, Any]) -> RobometerPrediction:
+        """Predict frame-level progress and success probability.
+
+        The processor-prepared input mapping is not mutated. Frame selection,
+        thresholding, and conversion into a downstream reward belong to the
+        caller.
+        """
         inputs = {
             key: batch[f"{ROBOMETER_FEATURE_PREFIX}{key}"]
             for key in ROBOMETER_INPUT_KEYS
@@ -256,33 +236,25 @@ class RobometerRewardModel(PreTrainedRewardModel):
             raise KeyError(
                 f"Robometer batch missing pre-encoded inputs (expected "
                 f"`{ROBOMETER_FEATURE_PREFIX}input_ids`). Make sure the "
-                "RobometerEncoderProcessorStep ran before `compute_reward`."
+                "RobometerEncoderProcessorStep ran before `predict_progress`."
             )
 
         device = next(self.model.parameters()).device
         inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
 
         self.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             progress_logits, success_logits = self._compute_rbm_logits(inputs)
 
-        decoded = decode_progress_outputs(
-            progress_logits,
-            success_logits,
-            is_discrete_mode=self.config.use_discrete_progress,
+        progress = (
+            convert_bins_to_continuous(progress_logits.float())
+            if self.config.use_discrete_progress
+            else progress_logits.float()
         )
-        values = (
-            decoded["success_probs"] if self.config.reward_output == "success" else decoded["progress_pred"]
+        return RobometerPrediction(
+            progress=progress.clamp(0.0, 1.0),
+            success_probability=torch.sigmoid(success_logits.float()),
         )
-
-        rewards = torch.stack([torch.as_tensor(seq, dtype=torch.float32)[-1] for seq in values])
-        if self.config.reward_output == "success":
-            rewards = (rewards > self.config.success_threshold).float()
-        else:
-            # Match upstream Robometer's ``extract_rewards_from_output``: per-frame
-            # progress predictions are clamped to ``[0, 1]`` before being returned.
-            rewards = rewards.clamp(0.0, 1.0)
-        return rewards.to(self.config.device or "cpu")
 
     def _compute_rbm_logits(
         self,

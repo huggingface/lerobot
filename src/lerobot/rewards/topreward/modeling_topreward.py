@@ -57,10 +57,10 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
@@ -112,15 +112,15 @@ class TOPRewardModel(PreTrainedRewardModel):
 
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(config.vlm_name, **model_kwargs)
 
-    def compute_reward(self, batch: dict[str, Any]) -> Tensor:
-        """Return one log-prob reward per sample in the batch."""
+    def compute_log_probability(self, batch: Mapping[str, Any]) -> Tensor:
+        """Return ``log P(target token | video, prompt)`` for each sample."""
         inputs: dict[str, Any] = {}
         for key in TOPREWARD_INPUT_KEYS:
             batch_key = f"{TOPREWARD_FEATURE_PREFIX}{key}"
             if batch_key not in batch:
                 raise KeyError(
                     f"TOPReward batch missing `{batch_key}`. Make sure the "
-                    "TOPRewardEncoderProcessorStep ran before `compute_reward`."
+                    "TOPRewardEncoderProcessorStep ran before `compute_log_probability`."
                 )
             inputs[key] = batch[batch_key]
 
@@ -130,13 +130,10 @@ class TOPRewardModel(PreTrainedRewardModel):
         inputs["logits_to_keep"] = 2
 
         self.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(**inputs)
         logits = outputs.logits
-        rewards = -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
-        if np.isfinite(self.config.success_threshold):
-            rewards = (rewards > self.config.success_threshold).float()
-        return rewards.to(self.config.device or "cpu")
+        return -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save ``config.json`` only."""
