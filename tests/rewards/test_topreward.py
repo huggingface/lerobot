@@ -52,7 +52,7 @@ def _make_dummy_topreward_batch(image_key: str, task_key: str) -> dict[str, obje
 
 
 @require_cuda
-def test_topreward_full_qwen3vl_preprocessor_to_compute_reward():
+def test_topreward_full_qwen3vl_preprocessor_to_compute_log_probability():
     cfg = TOPRewardConfig(
         vlm_name="Qwen/Qwen3-VL-8B-Instruct",
         device="cuda",
@@ -70,7 +70,7 @@ def test_topreward_full_qwen3vl_preprocessor_to_compute_reward():
     try:
         model.to(cfg.device)
         model.eval()
-        rewards = model.compute_reward(encoded_batch)
+        rewards = model.compute_log_probability(encoded_batch)
     finally:
         del model
         torch.cuda.empty_cache()
