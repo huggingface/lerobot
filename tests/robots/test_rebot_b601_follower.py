@@ -55,6 +55,7 @@ def _per_joint(value: float | list[float] | Mapping[str, float]) -> dict[str, fl
 
 
 FAMILIES = [MotorFamily.DM, MotorFamily.RS]
+_ROBSTRIDE_PING_RESPONDER_ID = 0xFE
 
 
 def _make_motor_mock(position_rad: float | None = 0.0) -> MagicMock:
@@ -82,7 +83,7 @@ def _make_bus_mock(positions_deg: list[float | None] | None = None) -> MagicMock
         motor = _make_motor_mock(position_rad=None if position is None else math.radians(position))
         motor.model = model
         motor.damiao_get_param_u32.return_value = send_id
-        motor.robstride_ping.return_value = (send_id, recv_id)
+        motor.robstride_ping.return_value = (send_id, _ROBSTRIDE_PING_RESPONDER_ID)
         return motor
 
     bus.add_damiao_motor.side_effect = _add_motor
@@ -503,6 +504,35 @@ def test_startup_requires_a_synchronous_response_from_every_motor(family):
         with pytest.raises(MotorFeedbackError, match="valid synchronous startup response"):
             robot.connect(calibrate=False)
 
+    assert robot.bus is None
+    assert robot.motors == {}
+    bus_mock.close.assert_called_once()
+
+
+def test_rs_startup_rejects_ping_from_wrong_device_id():
+    bus_mock = _make_bus_mock()
+    original_add_motor = bus_mock.add_robstride_motor.side_effect
+
+    def _add_motor_with_wrong_device_id(send_id, recv_id, model):
+        motor = original_add_motor(send_id, recv_id, model)
+        if send_id == 0x01:
+            motor.robstride_ping.return_value = (0x02, _ROBSTRIDE_PING_RESPONDER_ID)
+        return motor
+
+    bus_mock.add_robstride_motor.side_effect = _add_motor_with_wrong_device_id
+
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.return_value = bus_mock
+        robot = RebotB601Follower(RebotB601FollowerRobotConfig(motor_family=MotorFamily.RS, port="can0"))
+
+        with pytest.raises(MotorFeedbackError, match="valid synchronous startup response") as exc_info:
+            robot.connect(calibrate=False)
+
+    assert "reported device CAN ID 0x2, expected 0x1" in str(exc_info.value.__cause__)
     assert robot.bus is None
     assert robot.motors == {}
     bus_mock.close.assert_called_once()
