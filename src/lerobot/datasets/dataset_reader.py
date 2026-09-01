@@ -317,24 +317,14 @@ class DatasetReader(BaseDatasetReader):
         }
         return query_indices, padding
 
-    def _get_query_timestamps(
-        self,
-        current_ts: float,
-        query_indices: dict[str, list[int]] | None = None,
-    ) -> dict[str, list[float]]:
-        query_timestamps = {}
-        for key in self._meta.video_keys:
-            if query_indices is not None and key in query_indices:
-                if self._absolute_to_relative_idx is not None:
-                    relative_indices = [self._absolute_to_relative_idx[idx] for idx in query_indices[key]]
-                    timestamps = self._column_view("timestamp")[relative_indices]["timestamp"]
-                else:
-                    timestamps = self._column_view("timestamp")[query_indices[key]]["timestamp"]
-                query_timestamps[key] = torch.stack(timestamps).tolist()
-            else:
-                query_timestamps[key] = [current_ts]
+    def _to_relative(self, indices: list[int]) -> list[int]:
+        """Map absolute frame indices to relative row positions in ``hf_dataset``.
 
-        return query_timestamps
+        Passthrough when the dataset is not episode-filtered.
+        """
+        if self._absolute_to_relative_idx is None:
+            return indices
+        return [self._absolute_to_relative_idx[i] for i in indices]
 
     def _column_view(self, key: str) -> datasets.Dataset:
         """Return a cached single-column view of ``hf_dataset``.
@@ -359,34 +349,122 @@ class DatasetReader(BaseDatasetReader):
             self._column_views[key] = self.hf_dataset.select_columns(key)
         return self._column_views[key]
 
-    def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        """Query dataset for indices across keys, skipping video keys."""
-        result: dict = {}
-        for key, q_idx in query_indices.items():
-            if key in self._meta.video_keys:
-                continue
-            relative_indices = (
-                q_idx
-                if self._absolute_to_relative_idx is None
-                else [self._absolute_to_relative_idx[idx] for idx in q_idx]
-            )
-            result[key] = torch.stack(self._column_view(key)[relative_indices][key])
-        return result
+    def _get_query_timestamps(
+        self,
+        current_ts: list[float],
+        query_indices_per_item: list[dict[str, list[int]] | None],
+    ) -> list[dict[str, list[float]]]:
+        """Timestamps to decode for each requested item, as one ``{video_key: [timestamp, ...]}`` dict.
 
-    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
-        """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
-        in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
-        Segmentation Fault.
+        Per video key: the referenced rows' timestamps if the item has a delta
+        window on it, else the item's own ``current_ts``. Timestamps are read
+        through the cached single-column view (see :meth:`_column_view`).
+        ``current_ts`` and ``query_indices_per_item`` are batch-aligned (indices
+        ABSOLUTE), so every referenced row is read from Arrow in a single shot.
         """
-        ep = self._meta.episodes[ep_idx]
+        # Pass 1: per item, collect the relative rows each video key needs a
+        # timestamp for.
+        rel_per_item: list[dict[str, list[int]]] = []
+        needed: set[int] = set()
+        for q_idx in query_indices_per_item:
+            rel: dict[str, list[int]] = {}
+            if q_idx is not None:
+                for key in self._meta.video_keys:
+                    if key in q_idx:  # this item has a delta window on this video key
+                        rel[key] = self._to_relative(q_idx[key])
+                        needed.update(rel[key])
+            rel_per_item.append(rel)
 
-        def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:
-            from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
-            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
-            video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
+        # Single Arrow read for every referenced row, keyed by row for lookup below.
+        ts_lookup: dict[int, float] = {}
+        if needed:
+            rel_sorted = sorted(needed)
+            column = self._column_view("timestamp")[rel_sorted]["timestamp"]
+            ts_lookup = {rel: float(column[j]) for j, rel in enumerate(rel_sorted)}
+
+        # Pass 2: assemble per item; keys without a delta window fall back to current_ts.
+        return [
+            {
+                key: [ts_lookup[r] for r in rel[key]] if key in rel else [current_ts[i]]
+                for key in self._meta.video_keys
+            }
+            for i, rel in enumerate(rel_per_item)
+        ]
+
+    def _query_hf_dataset(self, query_indices_per_item: list[dict[str, list[int]]]) -> list[dict]:
+        """Tabular columns to gather for each requested item, as one ``{key: stacked tensor}`` dict.
+
+        Per non-video key: the referenced rows stacked into the item's delta window.
+        ``query_indices_per_item`` are batch-aligned (indices ABSOLUTE). Each key
+        is read through its cached single-column view (see :meth:`_column_view`),
+        so only that column is decoded — never the embedded camera images of the
+        queried rows. Every row a key needs across the batch is read in a single
+        shot, then redistributed (preserving per-item order and duplicates).
+        """
+        # Pass 1: per item, collect the relative rows each non-video key needs.
+        rel_per_item: list[dict[str, list[int]]] = []
+        per_key_rows: dict[str, set[int]] = {}
+        for query_indices in query_indices_per_item:
+            rel = {
+                key: self._to_relative(q_idx)
+                for key, q_idx in query_indices.items()
+                if key not in self._meta.video_keys
+            }
+            rel_per_item.append(rel)
+            for key, q in rel.items():
+                per_key_rows.setdefault(key, set()).update(q)
+
+        if not per_key_rows:
+            return [{} for _ in query_indices_per_item]
+
+        # Pass 2: one column-pruned Arrow read per key over its row union, keyed by row.
+        gathered: dict[str, tuple[list, dict[int, int]]] = {}
+        for key, rows in per_key_rows.items():
+            rel_sorted = sorted(rows)
+            column = self._column_view(key)[rel_sorted][key]
+            gathered[key] = (column, {rel: j for j, rel in enumerate(rel_sorted)})
+
+        return [
+            {
+                key: torch.stack([gathered[key][0][gathered[key][1][r]] for r in q])
+                for key, q in rel.items()
+            }
+            for rel in rel_per_item
+        ]
+
+    def _query_videos(
+        self, query_timestamps_per_item: list[dict[str, list[float]]], ep_idxs: list[int]
+    ) -> list[dict[str, torch.Tensor]]:
+        """Decode video frames for a batch, grouped by physical MP4 file.
+
+        All (file, timestamp) requests across the batch are grouped so each file
+        is opened/seeked once (amortizing decode when consecutive samples share
+        files. ``query_timestamps`` are within-episode, so the episode's ``from_timestamp``
+        offset is applied here.
+
+        Note: When using data workers (e.g. DataLoader with num_workers>0), do not
+        call this in the main process. It will result in a Segmentation Fault.
+        """
+        # Group the queried timestamps by physical MP4 files.
+        group_ts: dict[str, list[float]] = {}
+        group_meta: dict[str, str] = {}  # path -> vid_key
+        segments: list[tuple[int, str, int, int]] = []  # (item, path, start, length)
+        for i, (query_ts_per_key, ep_idx) in enumerate(zip(query_timestamps_per_item, ep_idxs, strict=True)):
+            ep = self._meta.episodes[ep_idx]
+            for vid_key, query_ts in query_ts_per_key.items():
+                from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
+                path = str(self.root / self._meta.get_video_file_path(ep_idx, vid_key))
+                buf = group_ts.setdefault(path, [])
+                start = len(buf)
+                buf.extend(from_timestamp + ts for ts in query_ts)
+                segments.append((i, path, start, len(query_ts)))
+                group_meta[path] = vid_key
+
+        def _decode(path: str) -> tuple[str, torch.Tensor]:
+            vid_key = group_meta[path]
             frames = decode_video_frames(
-                video_path,
-                shifted_query_ts,
+                path,
+                group_ts[path],
                 self._tolerance_s,
                 self._video_backend,
                 return_uint8=self._return_uint8,
@@ -402,62 +480,103 @@ class DatasetReader(BaseDatasetReader):
                     use_log=depth_encoder.use_log,
                     output_unit=self._depth_output_unit,
                 )
-            return vid_key, frames.squeeze(0)
+            return path, frames
 
-        items = list(query_timestamps.items())
+        # Decode each physical MP4 file in parallel.
+        paths = list(group_ts)
+        if len(paths) <= 1:
+            decoded = dict(_decode(p) for p in paths)
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(paths), 8)) as pool:
+                decoded = dict(pool.map(_decode, paths))
 
-        # Single camera: no threading overhead
-        if len(items) <= 1:
-            return {vid_key: _decode_single(vid_key, query_ts)[1] for vid_key, query_ts in items}
-
-        # Multi-camera: decode in parallel (video decoding releases the GIL)
-        with ThreadPoolExecutor(max_workers=len(items)) as pool:
-            futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
-            return dict(f.result() for f in futures)
+        result: list[dict[str, torch.Tensor]] = [{} for _ in query_timestamps_per_item]
+        for i, path, start, length in segments:
+            result[i][group_meta[path]] = decoded[path][start : start + length].squeeze(0)
+        return result
 
     def get_item(self, idx) -> dict:
-        """Core __getitem__ logic. Loads hf_dataset on first access.
+        """Return one fully assembled frame dict for a single *relative* index.
 
-        ``idx`` is a *relative* index into the (possibly episode-filtered)
-        HF dataset, **not** the absolute frame index stored in the ``index``
-        column.  The absolute index is retrieved from the row itself.
+        "Relative" is the row position in the (possibly episode-filtered) ``hf_dataset``,
+        not the dataset-wide absolute index (see :attr:`absolute_to_relative_idx`).
+        Delegates to :meth:`get_items` so single- and batched-access share one
+        code path (and identical output).
+
+        Args:
+            idx: Relative row position in the loaded ``hf_dataset``.
+
+        Returns:
+            The fully assembled frame dict for ``idx``.
+        """
+        return self.get_items([idx])[0]
+
+    def get_items(self, indices: list[int]) -> list[dict]:
+        """Assemble frame dicts for a batch of *relative* indices.
+
+        "Relative" indices are row positions in the (possibly episode-filtered) ``hf_dataset``,
+        not the dataset-wide absolute indices (see :attr:`absolute_to_relative_idx`).
+
+        Tabular rows are gathered from the Arrow-backed HF dataset in one shot,
+        and all requested video frames are grouped by physical MP4 file so each
+        file is opened/seeked once per batch (amortizing decode across the
+        batch; effective when consecutive samples share files).
+
+        Args:
+            indices: Relative row positions in the loaded ``hf_dataset``.
+
+        Returns:
+            One fully assembled frame dict per entry in ``indices``, in order.
         """
         if self.hf_dataset is None:
             # One-shot load after finalize()
             self.load_and_activate()
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        abs_idx = item["index"].item()
+        if len(indices) == 0:
+            return []
 
-        query_indices = None
+        n = len(indices)
+
+        # Batched tabular gather: one Arrow read for all base rows.
+        base = self.hf_dataset[indices]
+        items: list[dict] = [{key: base[key][i] for key in base} for i in range(n)]
+        ep_idxs = [int(items[i]["episode_index"]) for i in range(n)]
+        abs_idxs = [int(items[i]["index"]) for i in range(n)]
+
+        # Delta windows: per-item absolute query indices + padding, then one
+        # batched tabular gather across the whole batch.
+        query_indices_per_item: list[dict[str, list[int]] | None] = [None] * n
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
+            for i in range(n):
+                query_indices_per_item[i], padding = self._get_query_indices(abs_idxs[i], ep_idxs[i])
+                items[i].update(padding)
+            for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
+                items[i].update(tabular)
 
+        # Video frames: batched decode, grouped by physical MP4 across the batch.
         if len(self._meta.video_keys) > 0:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
+            current_ts = [float(items[i]["timestamp"]) for i in range(n)]
+            query_timestamps = self._get_query_timestamps(current_ts, query_indices_per_item)
+            for i, video in enumerate(self._query_videos(query_timestamps, ep_idxs)):
+                items[i].update(video)
 
-        if self._image_transforms is not None:
-            for cam in self._meta.camera_keys:
-                if cam in self._meta.depth_keys:
-                    continue
-                item[cam] = self._image_transforms(item[cam])
+        for i in range(n):
+            item = items[i]
+            # Apply image transforms to RGB cameras.
+            if self._image_transforms is not None:
+                for cam in self._meta.camera_keys:
+                    if cam in self._meta.depth_keys:
+                        continue
+                    item[cam] = self._image_transforms(item[cam])
 
-        # Convert depth features to the output unit.
-        for key, stored_unit in self._image_depth_units.items():
-            if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
-                item[key] = (
-                    item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
-                )
+            # Convert depth features to the output unit.
+            for key, stored_unit in self._image_depth_units.items():
+                if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
+                    item[key] = (
+                        item[key] * MM_PER_METRE
+                        if stored_unit == DEPTH_METER_UNIT
+                        else item[key] / MM_PER_METRE
+                    )
 
-        # Add task as a string
-        task_idx = item["task_index"].item()
-        item["task"] = self._meta.tasks.iloc[task_idx].name
+            item["task"] = self._meta.tasks.iloc[int(item["task_index"])].name
 
-        return item
+        return items
