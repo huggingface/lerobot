@@ -344,16 +344,4 @@ The shared command path accepts a feedforward torque term, but this LeRobot inte
 
 Swap `lerobot-teleoperate` for `lerobot-record` (with the same `--robot.*` / `--teleop.*` arguments, plus `--dataset.*`) to record demonstrations for training. See [Imitation Learning for Robots](./il_robots) for the full workflow.
 
-### Migration from the experimental RS PR branch
-
-The experimental implementation from PR #4256 used the separate `rebot_b601_rs_follower` type and reported RS observations in raw motor signs while accepting actions in the shared public signs. When migrating:
-
-- Replace `rebot_b601_rs_follower` with `rebot_b601_follower` and add `motor_family=rs`.
-- Replace `bi_rebot_b601_rs_follower` with `bi_rebot_b601_follower`; both arms must be RS.
-- Rename `gripper_mit_torque_limit` and `gripper_mit_hold_torque_limit` to `gripper_torque_limit` and `gripper_hold_torque_limit`.
-- Recalibrate under the unified type instead of reusing an experimental calibration file without verification.
-- Existing experimental RS datasets may require negating joint observation positions. Actions were already expressed in the public convention; validate each dataset before training or replay.
-
 For hardware assembly and wiring, see the Seeed Studio wiki for your build: [B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) or [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/).
-
-The RS MotorBridge integration, impedance gripper and initial documentation come from @SeakingForHeart in PR #4256. Encoder-wrap safety builds on @johnnynunez's work in PR #4071, with protocol review from @infoslack and physical B601-RS validation and documentation review from @NikodemBartnik.
