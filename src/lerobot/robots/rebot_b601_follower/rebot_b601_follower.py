@@ -249,7 +249,7 @@ class RebotB601Follower(Robot):
         startup attempt. Use each vendor's request/response operation instead.
         """
         for motor_name, motor in self.motors.items():
-            send_id, recv_id = self.config.motor_can_ids[motor_name]
+            send_id, _ = self.config.motor_can_ids[motor_name]
             try:
                 if self.config.motor_family is MotorFamily.DM:
                     reported_id = motor.damiao_get_param_u32(
@@ -261,9 +261,11 @@ class RebotB601Follower(Robot):
                             f"reported command CAN ID 0x{reported_id:X}, expected 0x{send_id:X}"
                         )
                 else:
-                    reported_ids = tuple(motor.robstride_ping())
-                    if reported_ids != (send_id, recv_id):
-                        raise RuntimeError(f"reported IDs {reported_ids}, expected {(send_id, recv_id)}")
+                    # The second value identifies the ping reply frame (0xFE on
+                    # hardware); it is not the configured host ID (0xFD).
+                    device_id, _responder_id = motor.robstride_ping()
+                    if device_id != send_id:
+                        raise RuntimeError(f"reported device CAN ID 0x{device_id:X}, expected 0x{send_id:X}")
             except Exception as exc:
                 raise MotorFeedbackError(
                     f"Motor '{motor_name}' did not provide a valid synchronous startup response."
