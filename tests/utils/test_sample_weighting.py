@@ -361,6 +361,33 @@ def test_rabc_get_stats(sample_progress_parquet):
     assert "delta_std" in stats
 
 
+def test_rabc_accepts_namespaced_signal(tmp_path):
+    """Shared scoring artifacts can select a progress signal explicitly."""
+    import pandas as pd
+
+    from lerobot.rewards.sarm.rabc import RABCWeights
+
+    path = tmp_path / "robometer.parquet"
+    pd.DataFrame(
+        {
+            "index": [0, 1],
+            "episode_index": [0, 0],
+            "frame_index": [0, 1],
+            "reward.robometer.progress": [0.0, 1.0],
+        }
+    ).to_parquet(path)
+
+    weighter = RABCWeights(
+        progress_path=path,
+        chunk_size=1,
+        signal_name="reward.robometer.progress",
+        device=torch.device("cpu"),
+    )
+
+    assert weighter.progress_column == "reward.robometer.progress"
+    assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
+
+
 def test_factory_creates_rabc_weighter(sample_progress_parquet):
     """Test factory creates RABCWeights with valid config."""
     from lerobot.rewards.sarm.rabc import RABCWeights

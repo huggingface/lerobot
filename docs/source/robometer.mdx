@@ -85,6 +85,9 @@ reward = prediction.progress[:, -1]
 reward = (
     prediction.success_probability[:, -1] > success_threshold
 ).float()
+```
+
+Offline dataset scoring exposes both signals explicitly through the shared [offline scoring workflow](./reward_scoring). It does not read the compatibility-only `reward_output` field.
 
 ## Usage
 
@@ -145,6 +148,36 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 ```
 
 The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` namespace, and `predict_progress()` reads those encoded tensors.
+
+### Score a LeRobot Dataset
+
+Install both dataset and ROBOMETER dependencies, then run:
+
+```bash
+pip install -e ".[dataset,robometer]"
+
+uv run lerobot-score-dataset \
+    --dataset_repo_id=lerobot/libero_10_image \
+    --reward_model_path=lerobot/Robometer-4B \
+    --device=cuda
+```
+
+The default artifact, `reward_signals/robometer.parquet`, contains:
+
+- `reward.robometer.progress`
+- `reward.robometer.success_probability`
+
+Both are dense float32 frame signals in `[0, 1]`. ROBOMETER's adapter uses the characterized fixed-prefix sampling rule, while the shared scoring runner handles validation, atomic episode commits, resume, and deterministic merging.
+
+For RA-BC weighting, select the namespaced progress signal explicitly:
+
+```yaml
+sample_weighting:
+  type: rabc
+  progress_path: /path/to/reward_signals/robometer.parquet
+  extra_params:
+    signal_name: reward.robometer.progress
+```
 
 ## Configuration Notes
 
