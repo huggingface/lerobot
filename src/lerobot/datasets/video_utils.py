@@ -504,8 +504,9 @@ def encode_video_frames(
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
-    # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w") as output:
+    # Create and open output file (overwrite by default).
+    # faststart moves the moov atom to the front so decoders can seek without reading the whole file.
+    with av.open(str(video_path), "w", options={"movflags": "faststart"}) as output:
         output_stream = output.add_stream(vcodec, fps, options=video_options)
         output_stream.pix_fmt = pix_fmt
         output_stream.width = width
@@ -817,7 +818,7 @@ class _CameraEncoderThread(threading.Thread):
                 if container is None:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
-                    container = av.open(str(self.video_path), "w")
+                    container = av.open(str(self.video_path), "w", options={"movflags": "faststart"})
                     output_stream = container.add_stream(
                         self.video_encoder.vcodec,
                         self.fps,
