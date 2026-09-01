@@ -251,6 +251,7 @@ def make_train_eval_datasets(
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
+        repo_type=cfg.dataset.repo_type,
     )
 
     eval_dataset = LeRobotDataset(
@@ -264,6 +265,7 @@ def make_train_eval_datasets(
         video_backend=cfg.dataset.video_backend,
         return_uint8=True,
         tolerance_s=cfg.tolerance_s,
+        repo_type=cfg.dataset.repo_type,
     )
 
     if cfg.dataset.use_imagenet_stats:
