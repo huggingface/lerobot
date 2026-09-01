@@ -298,20 +298,34 @@ def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConf
 
 
 def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
-    """Borrow a direction qualifier from the camera's original key name.
+    """Take a direction qualifier from the camera's original key name.
 
-    When ``view_label`` is a plain base that accepts a direction (``side``/
-    ``wrist``, no direction yet) and the ORIGINAL key contains a direction
-    qualifier (``front``/``rear``/``left``/``right`` — e.g. a camera keyed
-    ``observation.images.front_side``), adopt it so the label becomes
-    ``front_side``. ONLY a direction qualifier is borrowed, never a position word,
-    so a mislabeled position in the key cannot leak in. Mutates ``verdict``. No-op
-    unless ``cfg.direction_from_key_name``.
+    Two modes, both keeping the VLM's POSITION word (``side``/``wrist``) and only
+    touching the direction qualifier (``front``/``rear``/``left``/``right``):
+
+    - ``direction_from_key_name`` (fill): only when ``view_label`` is a PLAIN base
+      with no direction yet — borrow the key's direction so ``side`` becomes
+      ``front_side``. It never changes a direction the VLM already committed to.
+    - ``trust_key_direction`` (override): the key's direction REPLACES whatever the
+      VLM assigned, correcting a wrong left/right/front/rear (e.g. a camera keyed
+      ``left_side`` the VLM called ``right_side`` becomes ``left_side``). Use when
+      the model is unreliable on direction but the key encodes it. Implies fill.
+
+    Only a direction qualifier is ever taken, never a position word, so a
+    mislabeled position in the key cannot leak in. Mutates ``verdict``. No-op
+    unless one of the two flags is set.
     """
-    if not cfg.direction_from_key_name or not cfg.allow_combos:
+    override = cfg.trust_key_direction
+    if not (cfg.direction_from_key_name or override) or not cfg.allow_combos:
         return
     label = verdict.view_label
-    if not label or "_" in label or label not in (_SIDE_POSITION, _WRIST_POSITION):
+    if not label:
+        return
+    position = _position_token(label)
+    if position not in (_SIDE_POSITION, _WRIST_POSITION):
+        return
+    # Fill mode only acts on a plain base; override also replaces an existing direction.
+    if "_" in label and not override:
         return
     qualifier = next(
         (tok for tok in _extract_vocab_tokens(verdict.camera_key, cfg.view_vocabulary) if tok in _QUALIFIERS),
@@ -319,13 +333,14 @@ def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfi
     )
     if qualifier is None:
         return
-    combined = _order_combo([label, qualifier], cfg.view_vocabulary)
-    if is_valid_view_label(combined, cfg.view_vocabulary, allow_combos=True):
+    combined = _order_combo([position, qualifier], cfg.view_vocabulary)
+    if is_valid_view_label(combined, cfg.view_vocabulary, allow_combos=True) and combined != label:
         logger.info(
-            "camera %s: borrowing direction %r from key name -> %r",
+            "camera %s: %s direction from key -> %r (was %r)",
             verdict.camera_key,
-            qualifier,
+            "overriding" if override else "borrowing",
             combined,
+            label,
         )
         verdict.view_label = combined
 

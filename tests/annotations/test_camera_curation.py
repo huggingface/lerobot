@@ -484,6 +484,38 @@ def test_direction_from_key_name():
     assert v.view_label == "front_side"
 
 
+def test_trust_key_direction_overrides_wrong_direction():
+    # VLM commits to the WRONG direction; trust_key_direction replaces it from the key.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, trust_key_direction=True)
+    frames = {"observation.images.left_side_2": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [{"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8}]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.left_side_2"]
+    assert v.view_label == "left_side"  # right_side (VLM) overridden by left (key)
+
+
+def test_trust_key_direction_keeps_position_not_from_key():
+    # Key position word must NOT leak: a camera keyed "left_side" the VLM called a
+    # plain "wrist" keeps the wrist POSITION, only taking the left/right qualifier.
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, trust_key_direction=True)
+    frames = {"observation.images.left_side_2": [_tiny_image()]}
+    vlm = _queued_vlm(
+        [{"usable": True, "mount_type": "robot_mounted", "view_label": "wrist", "confidence": 0.8}]
+    )
+    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}["observation.images.left_side_2"]
+    assert v.view_label == "left_wrist"  # position wrist kept, left borrowed
+    # Plain fill mode (no override) leaves an already-directional label alone.
+    cfg_fill = CameraCurationConfig(view_vocabulary=VOCAB, direction_from_key_name=True)
+    vlm2 = _queued_vlm(
+        [{"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8}]
+    )
+    v2 = {x.camera_key: x for x in curate_cameras({"observation.images.left_side_2": [_tiny_image()]}, cfg_fill, vlm2)}[
+        "observation.images.left_side_2"
+    ]
+    assert v2.view_label == "right_side"  # fill mode does NOT override a wrong direction
+
+
 def test_direction_from_key_name_only_borrows_direction():
     # A position word in the key (here "top") must NOT be borrowed — only a
     # direction qualifier. Plain "side" with a "top"-keyed camera stays "side".

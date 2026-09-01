@@ -153,6 +153,17 @@ class CameraCurationConfig:
     # ignore_key_names, since a bare direction qualifier is usually trustworthy.
     direction_from_key_name: bool = False
 
+    # Trust the key name's direction OVER the VLM's. Like direction_from_key_name
+    # but stronger: when the ORIGINAL key carries a direction qualifier, it REPLACES
+    # whatever direction the VLM assigned, correcting a wrong left/right/front/rear
+    # (e.g. a camera keyed ``left_side`` the model called ``right_side`` becomes
+    # ``left_side``). Only the direction qualifier is overridden; the VLM's position
+    # (``side``/``wrist``) is kept, so a wrong position in the key cannot leak in.
+    # Use it when the model is unreliable on direction but the owner's key naming is
+    # trustworthy — the reliable fix for left/right, which VLMs read poorly even
+    # from a clear frame. Implies direction_from_key_name. Off by default.
+    trust_key_direction: bool = False
+
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 
