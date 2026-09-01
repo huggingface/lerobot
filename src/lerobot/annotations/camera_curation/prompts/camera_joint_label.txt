@@ -346,14 +346,23 @@ Apply:
   robot body/base on image RIGHT + arm reaching LEFT -> left_side
   robot body/base on image LEFT  + arm reaching RIGHT -> right_side
 
-When two fixed side cameras show complementary patterns, you MAY resolve them
-directionally when each camera independently satisfies the robot-layout cue:
+Judge EACH camera's direction from its OWN body/reach geometry, INDEPENDENTLY. Two
+side cameras are NOT necessarily a left/right pair:
 
-  camera A: robot on image RIGHT, reaching LEFT -> left_side
-  camera B: robot on image LEFT, reaching RIGHT -> right_side
+  - DIFFERENT layouts may resolve to opposite sides:
+      camera A: robot on image RIGHT, reaching LEFT -> left_side
+      camera B: robot on image LEFT,  reaching RIGHT -> right_side
+  - the SAME layout gets the SAME label — a legitimate duplicate, NOT a problem:
+      camera A: robot on image RIGHT, reaching LEFT -> left_side
+      camera B: robot on image RIGHT, reaching LEFT -> left_side   (BOTH left_side)
 
-However, duplicate or plain "side" labels remain valid when the directional
-evidence is not strong enough.
+NEVER flip a camera whose OWN geometry shows robot-on-image-RIGHT + reaching-LEFT
+to right_side just to differentiate it from another left_side camera, or to make a
+"complementary pair". Two cameras on the same side of the robot are a valid
+duplicate; the downstream system numbers them (left_side_1, left_side_2).
+
+Duplicate or plain "side" labels remain valid when the directional evidence is not
+strong enough.
 
 Plain "side" is a fallback only when the body/reach geometry is genuinely
 ambiguous, contradictory, or likely mirrored.
