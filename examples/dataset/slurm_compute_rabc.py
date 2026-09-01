@@ -145,25 +145,27 @@ class ComputeProgressShards(PipelineStep):
 
                         sparse_val = dense_val = np.nan
                         if compute_sparse:
-                            r = reward_model.calculate_rewards(
-                                text_embeddings=tf,
-                                video_embeddings=vf,
-                                state_features=sf,
-                                lengths=lengths,
-                                return_all_frames=True,
+                            prediction = reward_model.predict_progress(
+                                {
+                                    "text_features": tf,
+                                    "video_features": vf,
+                                    "state_features": sf,
+                                    "lengths": lengths,
+                                },
                                 head_mode="sparse",
                             )
-                            sparse_val = float(r[0, center_idx] if r.ndim == 2 else r[center_idx])
+                            sparse_val = prediction.progress[0, center_idx].cpu().item()
                         if compute_dense:
-                            r = reward_model.calculate_rewards(
-                                text_embeddings=tf,
-                                video_embeddings=vf,
-                                state_features=sf,
-                                lengths=lengths,
-                                return_all_frames=True,
+                            prediction = reward_model.predict_progress(
+                                {
+                                    "text_features": tf,
+                                    "video_features": vf,
+                                    "state_features": sf,
+                                    "lengths": lengths,
+                                },
                                 head_mode="dense",
                             )
-                            dense_val = float(r[0, center_idx] if r.ndim == 2 else r[center_idx])
+                            dense_val = prediction.progress[0, center_idx].cpu().item()
 
                         frame_results[qi] = (sparse_val, dense_val)
                 except Exception as e:

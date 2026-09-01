@@ -43,9 +43,6 @@ class _DummyHubReward(PreTrainedRewardModel):
         super().__init__(config)
         self.bias = torch.nn.Parameter(torch.zeros(1))
 
-    def compute_reward(self, batch):
-        return self.bias.expand(1)
-
 
 def test_reward_model_config_registry():
     """Verify that classifier and sarm are registered."""
@@ -80,15 +77,16 @@ def test_factory_unknown_raises():
         get_reward_model_class("nonexistent_reward_model")
 
 
+def test_pretrained_reward_model_has_no_universal_inference_method():
+    assert not hasattr(PreTrainedRewardModel, "compute_reward")
+
+
 def test_pretrained_reward_model_requires_config_class():
     """Subclass without config_class should fail."""
     with pytest.raises(TypeError, match="must define 'config_class'"):
 
         class BadModel(PreTrainedRewardModel):
             name = "bad"
-
-            def compute_reward(self, batch):
-                pass
 
 
 def test_pretrained_reward_model_requires_name():
@@ -97,9 +95,6 @@ def test_pretrained_reward_model_requires_name():
 
         class BadModel(PreTrainedRewardModel):
             config_class = RewardModelConfig
-
-            def compute_reward(self, batch):
-                pass
 
 
 def test_non_trainable_forward_raises():
@@ -117,9 +112,6 @@ def test_non_trainable_forward_raises():
         config_class = DummyConfig
         name = "dummy_test"
 
-        def compute_reward(self, batch):
-            return torch.zeros(1)
-
     config = DummyConfig()
     model = DummyReward(config)
 
@@ -136,7 +128,7 @@ def test_non_trainable_forward_raises():
 
 
 def test_is_trainable_false_when_forward_not_overridden():
-    """A reward model that only implements ``compute_reward`` is zero-shot."""
+    """A reward model that does not override ``forward`` is zero-shot."""
     model, _ = _make_dummy_reward_model()
     assert model.is_trainable is False
 
@@ -386,6 +378,18 @@ def test_reward_model_generate_model_card_uses_default_license(_offline_model_ca
     card = generate_model_card(model.config, cfg=_make_train_cfg("user/my_dataset"))
 
     assert card.data.license == "apache-2.0"
+
+
+def test_inference_only_reward_model_card_does_not_advertise_training(_offline_model_card):
+    from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
+
+    card = generate_model_card(TOPRewardConfig(), cfg=_make_train_cfg("user/my_dataset"))
+    body = str(card)
+
+    assert "inference-only reward-model integration" in body
+    assert "Training this model through `lerobot-train` is not currently supported" in body
+    assert "### Train from scratch" not in body
+    assert "compute_log_probability" in body
 
 
 def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offline_model_card):

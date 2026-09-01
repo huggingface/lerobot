@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import abc
 import builtins
 import logging
 import os
@@ -36,8 +35,13 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound="PreTrainedRewardModel")
 
 
-class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
-    """Base class for reward models."""
+class PreTrainedRewardModel(nn.Module, HubMixin):
+    """Base class for reward-model configuration, serialization, and training.
+
+    Reward models intentionally expose model-specific inference capabilities
+    such as ``predict_progress`` or ``compute_log_probability``. There is no
+    universal scalar inference method on this base class.
+    """
 
     config_class: None
     name: None
@@ -162,23 +166,11 @@ class PreTrainedRewardModel(nn.Module, HubMixin, abc.ABC):
         """Reset any internal state."""
         pass
 
-    @abc.abstractmethod
-    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
-        """Compute a scalar reward signal for a batch of observations.
-
-        Args:
-            batch: Dictionary containing at minimum observation tensors.
-                   May also contain "action", "next_observation.*", etc.
-
-        Returns:
-            Tensor of shape ``(batch_size,)`` with reward values.
-        """
-        ...
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
         """Training forward pass — override for trainable reward models."""
         raise NotImplementedError(
-            f"{self.__class__.__name__} is not trainable. Only use compute_reward() for inference."
+            f"{self.__class__.__name__} is not trainable. "
+            "Use the model's documented inference capabilities instead."
         )
 
     @property

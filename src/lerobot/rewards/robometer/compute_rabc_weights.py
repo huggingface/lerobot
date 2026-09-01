@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compute per-frame Robometer progress and success curves for a LeRobot dataset.
+"""Compute per-frame Robometer progress for a LeRobot dataset.
 
 For each episode, builds per-frame sub-samples using the frame-steps
 strategy from the Robometer eval server: for each original frame ``t``,
@@ -59,7 +59,7 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
-from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
+from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction, RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
@@ -93,11 +93,35 @@ def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> lis
     """Frame-steps linspace expansion.
 
     For each ``t in [0, num_frames - 1]`` returns ``num_subsampled_frames``
-    indices from ``np.linspace(0, t, num_subsampled_frames)`` — the first
-    and last frames are always included. Each entry is a fixed-size array
-    so the model can batch them.
+    indices from ``np.linspace(0, t, num_subsampled_frames)``. With at least
+    two sampled frames, the first and current frames are included. The
+    existing one-frame behavior retains only the first frame. Each entry is
+    fixed-size so the model can batch them.
     """
     return [np.linspace(0, t, num_subsampled_frames).round().astype(np.int64) for t in range(num_frames)]
+
+
+def _make_robometer_scoring_encoder(config: RobometerConfig) -> RobometerEncoderProcessorStep:
+    """Build the encoder for frame-steps samples selected by this script."""
+    return RobometerEncoderProcessorStep(
+        base_model_id=config.base_model_id,
+        image_key=config.image_key,
+        task_key=config.task_key,
+        default_task=config.default_task,
+        max_frames=None,
+        use_multi_image=config.use_multi_image,
+        use_per_frame_progress_token=config.use_per_frame_progress_token,
+    )
+
+
+def _select_last_frame_progress(prediction: RobometerPrediction) -> torch.Tensor:
+    """Apply the legacy script's explicit last-frame selection."""
+    if prediction.progress.ndim != 2 or prediction.progress.shape[1] == 0:
+        raise ValueError(
+            "Robometer progress must have shape (batch, time) with at least one frame, "
+            f"got {tuple(prediction.progress.shape)}"
+        )
+    return prediction.progress[:, -1]
 
 
 def compute_robometer_progress(
@@ -110,7 +134,10 @@ def compute_robometer_progress(
     episodes: list[int] | None = None,
     image_key: str | None = None,
 ) -> Path:
-    """Run Robometer over a dataset and write per-frame progress + success."""
+    """Run Robometer over a dataset and write per-frame progress."""
+    if num_subsampled_frames < 1:
+        raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
+
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
     if image_key is not None:
@@ -118,15 +145,7 @@ def compute_robometer_progress(
     model = RobometerRewardModel.from_pretrained(reward_model_path, config=config)
     model.to(device).eval()
 
-    encoder = RobometerEncoderProcessorStep(
-        base_model_id=config.base_model_id,
-        image_key=config.image_key,
-        task_key=config.task_key,
-        default_task=config.default_task,
-        max_frames=num_subsampled_frames,
-        use_multi_image=config.use_multi_image,
-        use_per_frame_progress_token=config.use_per_frame_progress_token,
-    )
+    encoder = _make_robometer_scoring_encoder(config)
 
     image_key = config.image_key
 
@@ -174,9 +193,8 @@ def compute_robometer_progress(
                 for key, value in obs.items()
             }
 
-            with torch.no_grad():
-                rewards = model.compute_reward(batch)
-            progress_per_frame[start:end] = rewards.cpu().numpy()
+            prediction = model.predict_progress(batch)
+            progress_per_frame[start:end] = _select_last_frame_progress(prediction).cpu().numpy()
 
         for local in range(num_frames):
             all_index.append(ep_start + local)

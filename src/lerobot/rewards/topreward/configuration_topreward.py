@@ -67,10 +67,9 @@ class TOPRewardConfig(RewardModelConfig):
         add_chat_template: If ``True``, wrap the full prompt with the
             tokenizer's chat template before tokenisation (matches
             upstream ``add_chat_template=True``).
-        success_threshold: Optional log-prob threshold. If finite,
-            :meth:`TOPRewardModel.compute_reward` returns
-            ``(reward > success_threshold).float()`` instead of the raw
-            log-prob.
+        success_threshold: Legacy serialized log-probability threshold kept
+            for checkpoint compatibility. ``compute_log_probability`` always
+            returns the raw value; consumers apply thresholds explicitly.
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
     """

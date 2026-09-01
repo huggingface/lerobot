@@ -277,7 +277,8 @@ def make_topreward_pre_post_processors(
     The preprocessor adds a batch dimension if needed, runs TOPReward's
     encoder (which tokenises the full prompt and emits ``labels``), and
     moves everything to the configured device. The postprocessor is
-    the identity since TOPReward outputs a single reward tensor.
+    the identity because ``compute_log_probability`` returns its tensor
+    result directly.
     """
     preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=[

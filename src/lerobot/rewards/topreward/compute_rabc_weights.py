@@ -90,6 +90,13 @@ def normalize_rewards(rewards: list[float] | np.ndarray) -> np.ndarray:
     return ((rewards_arr - r_min) / (r_max - r_min)).astype(np.float32)
 
 
+def _apply_legacy_success_threshold(log_probability: torch.Tensor, threshold: float) -> torch.Tensor:
+    """Preserve the old script output for configs that selected binary success."""
+    if np.isfinite(threshold):
+        return (log_probability > threshold).float()
+    return log_probability
+
+
 def compute_instruction_rewards_for_prefixes(
     model: TOPRewardModel,
     encoder: TOPRewardEncoderProcessorStep,
@@ -122,9 +129,11 @@ def compute_instruction_rewards_for_prefixes(
             key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in obs.items()
         }
 
-        with torch.no_grad():
-            reward = model.compute_reward(batch)
-        rewards.append(float(reward.item()))
+        log_probability = _apply_legacy_success_threshold(
+            model.compute_log_probability(batch),
+            model.config.success_threshold,
+        )
+        rewards.append(float(log_probability.item()))
 
     normalized_rewards = normalize_rewards(rewards)
 

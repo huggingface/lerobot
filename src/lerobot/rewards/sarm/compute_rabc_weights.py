@@ -346,27 +346,17 @@ def visualize_sarm_predictions(
                         )
 
                     # Predictions
-                    reward, stage_probs = reward_model.calculate_rewards(
-                        text_embeddings=text_features,
-                        video_embeddings=video_features,
-                        state_features=state_features,
-                        lengths=lengths,
-                        return_all_frames=True,
-                        return_stages=True,
+                    prediction = reward_model.predict_progress(
+                        {
+                            "text_features": text_features,
+                            "video_features": video_features,
+                            "state_features": state_features,
+                            "lengths": lengths,
+                        },
                         head_mode=scheme,
                     )
-
-                    # Handle both tensor and numpy outputs
-                    if isinstance(reward, torch.Tensor):
-                        reward = reward.cpu().numpy()
-                        stage_probs = stage_probs.cpu().numpy()
-
-                    if reward.ndim == 2:
-                        sd["viz_progress"][local_idx] = reward[0, target_idx]
-                        sd["viz_stages"][local_idx] = stage_probs[0, target_idx, :]
-                    else:
-                        sd["viz_progress"][local_idx] = reward[target_idx]
-                        sd["viz_stages"][local_idx] = stage_probs[target_idx, :]
+                    sd["viz_progress"][local_idx] = prediction.progress[0, target_idx].cpu().item()
+                    sd["viz_stages"][local_idx] = prediction.stage_probabilities[0, target_idx].cpu().numpy()
 
                 # Clear GPU memory after each frame
                 del processed, video_features, text_features
@@ -569,35 +559,29 @@ def compute_sarm_progress(
 
                     # Compute sparse prediction for center frame
                     if compute_sparse:
-                        sparse_progress = reward_model.calculate_rewards(
-                            text_embeddings=text_features,
-                            video_embeddings=video_features,
-                            state_features=state_features,
-                            lengths=lengths,
-                            return_all_frames=True,
+                        sparse_prediction = reward_model.predict_progress(
+                            {
+                                "text_features": text_features,
+                                "video_features": video_features,
+                                "state_features": state_features,
+                                "lengths": lengths,
+                            },
                             head_mode="sparse",
                         )
-                        sparse_val = float(
-                            sparse_progress[0, center_idx]
-                            if sparse_progress.ndim == 2
-                            else sparse_progress[center_idx]
-                        )
+                        sparse_val = sparse_prediction.progress[0, center_idx].cpu().item()
 
                     # Compute dense prediction for center frame
                     if compute_dense:
-                        dense_progress = reward_model.calculate_rewards(
-                            text_embeddings=text_features,
-                            video_embeddings=video_features,
-                            state_features=state_features,
-                            lengths=lengths,
-                            return_all_frames=True,
+                        dense_prediction = reward_model.predict_progress(
+                            {
+                                "text_features": text_features,
+                                "video_features": video_features,
+                                "state_features": state_features,
+                                "lengths": lengths,
+                            },
                             head_mode="dense",
                         )
-                        dense_val = float(
-                            dense_progress[0, center_idx]
-                            if dense_progress.ndim == 2
-                            else dense_progress[center_idx]
-                        )
+                        dense_val = dense_prediction.progress[0, center_idx].cpu().item()
 
                     frame_results[query_idx] = (sparse_val, dense_val)
 
