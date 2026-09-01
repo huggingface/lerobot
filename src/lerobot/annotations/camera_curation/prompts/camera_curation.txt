@@ -443,16 +443,18 @@ layout and reaching direction to infer which physical side the camera is on.
 A strong practical cue is:
 
   - robot body / base appears toward the RIGHT side of the image and the arm
-    reaches LEFTWARD across the workspace -> camera is usually on the ROBOT'S
-    RIGHT side -> "right_side";
+    reaches LEFTWARD across the workspace -> camera is on the ROBOT'S
+    LEFT side -> "left_side";
 
   - robot body / base appears toward the LEFT side of the image and the arm
-    reaches RIGHTWARD across the workspace -> camera is usually on the ROBOT'S
-    LEFT side -> "left_side".
+    reaches RIGHTWARD across the workspace -> camera is on the ROBOT'S
+    RIGHT side -> "right_side".
 
-Think of this as viewing the robot from one side across its workspace: the robot
-body tends to occupy the near-side image edge while the arm reaches away across
-the scene.
+Why (do not invert this): a camera off to the robot's LEFT sees the robot's body
+pushed toward the RIGHT / FAR edge of the frame, with the workspace and working
+face on the LEFT — the body sits on the OPPOSITE image edge from the camera's own
+side. So robot-body-on-image-RIGHT means the camera is on the robot's LEFT
+-> left_side.
 
 Use this cue from the ROBOT GEOMETRY, not from image-left/image-right alone.
 The important pattern is the combination of:
@@ -465,8 +467,8 @@ side label instead of plain "side".
 
 Examples:
 
-  robot on image RIGHT + reaching LEFT  -> right_side
-  robot on image LEFT  + reaching RIGHT -> left_side
+  robot on image RIGHT + reaching LEFT  -> left_side
+  robot on image LEFT  + reaching RIGHT -> right_side
 
 Do not invert this rule just because the camera image may be rolled or tilted.
 If the image is known or strongly suspected to be horizontally mirrored, avoid
@@ -481,10 +483,10 @@ when the robot layout gives a clear left/right pattern.
 Use these patterns as actionable evidence:
 
   - robot body/base on image RIGHT + arm reaching LEFT
-      -> output "right_side"
+      -> output "left_side"
 
   - robot body/base on image LEFT + arm reaching RIGHT
-      -> output "left_side"
+      -> output "right_side"
 
 These are not merely weak candidates. When the body/base position and reach
 direction are both clear and consistent, choose the directional label directly.

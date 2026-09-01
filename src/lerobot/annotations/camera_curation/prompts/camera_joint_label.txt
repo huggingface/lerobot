@@ -322,8 +322,8 @@ layout to resolve left_side versus right_side.
 
 Strong heuristic:
 
-  - robot body/base on image RIGHT + arm reaching LEFT -> right_side;
-  - robot body/base on image LEFT  + arm reaching RIGHT -> left_side.
+  - robot body/base on image RIGHT + arm reaching LEFT -> left_side;
+  - robot body/base on image LEFT  + arm reaching RIGHT -> right_side.
 
 When two side cameras form complementary views of the same robot/workspace, the
 pair may provide extra evidence for left/right direction. Use that evidence only
@@ -343,14 +343,14 @@ resolution before returning "side".
 
 Apply:
 
-  robot body/base on image RIGHT + arm reaching LEFT -> right_side
-  robot body/base on image LEFT  + arm reaching RIGHT -> left_side
+  robot body/base on image RIGHT + arm reaching LEFT -> left_side
+  robot body/base on image LEFT  + arm reaching RIGHT -> right_side
 
 When two fixed side cameras show complementary patterns, you MAY resolve them
 directionally when each camera independently satisfies the robot-layout cue:
 
-  camera A: robot on image RIGHT, reaching LEFT -> right_side
-  camera B: robot on image LEFT, reaching RIGHT -> left_side
+  camera A: robot on image RIGHT, reaching LEFT -> left_side
+  camera B: robot on image LEFT, reaching RIGHT -> right_side
 
 However, duplicate or plain "side" labels remain valid when the directional
 evidence is not strong enough.
