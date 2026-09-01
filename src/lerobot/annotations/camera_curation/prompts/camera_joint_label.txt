@@ -15,12 +15,15 @@ from an independent per-camera analysis.
 
 Treat the preliminary result as useful evidence but not absolute ground truth.
 
-This is NOT merely a repeat of the independent per-camera classification. Your job
-is to assign each camera its FINAL, CANONICAL mount type and view label by
-comparing the cameras directly against each other. The final labels are intended
-to become semantic camera feature names within the robot setup, such as
-"top", "side", "front_side", or "wrist" — so they should express the real
-geometric role of each camera relative to the others.
+Your job is to assign each camera its FINAL mount type and view label using both
+its own visual evidence and the other cameras as additional context.
+
+IMPORTANT: cameras are classified by their ACTUAL physical geometry, not by the
+need to create a diverse or unique set of labels. Multiple cameras may legitimately
+have exactly the same final label.
+
+Cross-camera comparison is evidence only. It must never create a distinction that
+is not visually supported.
 
 Use ONLY this closed view-label vocabulary:
 
@@ -32,15 +35,27 @@ Mount type must be one of:
   - "robot_mounted"
   - "unknown"
 
-COLLISIONS ARE EXPECTED
+DUPLICATE LABELS ARE NORMAL
 
-Preliminary per-camera labels may collide because each camera was classified
-independently. During the joint pass, compare cameras with the same preliminary
-label and determine whether they actually represent different physical
-viewpoints. If their geometry is meaningfully different, refine them into the most
-appropriate distinct canonical view labels. Do not invent distinctions when the
-physical viewpoints are genuinely equivalent, and never change mount_type merely
-to eliminate a label collision.
+Two or more cameras may have the SAME physical role and therefore the SAME final
+view_label.
+
+Examples that are completely valid:
+
+  - two fixed cameras both labeled "side";
+  - two fixed cameras both labeled "top";
+  - two fixed cameras both labeled "left_side";
+  - two robot-mounted cameras both labeled "wrist" when handedness cannot be read.
+
+Do NOT change a label merely because another camera already has that label.
+
+Do NOT interpret a duplicate preliminary label as a problem to solve.
+
+Only change a preliminary label when there is POSITIVE VISUAL EVIDENCE that the
+camera's actual physical geometry corresponds to a different label.
+
+Cross-camera comparison may reveal such evidence, but label diversity itself is
+NEVER evidence.
 
 1. REVIEW MOUNT TYPE
 
@@ -310,10 +325,10 @@ Strong heuristic:
   - robot body/base on image RIGHT + arm reaching LEFT -> right_side;
   - robot body/base on image LEFT  + arm reaching RIGHT -> left_side.
 
-When two side cameras form complementary views of the same robot/workspace, use
-the pair together. If one shows the first pattern and the other shows the mirror
-pattern, label them left_side and right_side respectively rather than leaving
-both as plain side.
+When two side cameras form complementary views of the same robot/workspace, the
+pair may provide extra evidence for left/right direction. Use that evidence only
+when the body/reach geometry is clear. Do not force opposite labels merely because
+there are two cameras.
 
 This is a ROBOT-GEOMETRY heuristic, not a raw image-coordinate rule: consider
 both body/base location and reach direction. If mirroring is suspected or the
@@ -331,17 +346,14 @@ Apply:
   robot body/base on image RIGHT + arm reaching LEFT -> right_side
   robot body/base on image LEFT  + arm reaching RIGHT -> left_side
 
-When two fixed side cameras show complementary patterns, resolve BOTH:
+When two fixed side cameras show complementary patterns, you MAY resolve them
+directionally when each camera independently satisfies the robot-layout cue:
 
   camera A: robot on image RIGHT, reaching LEFT -> right_side
   camera B: robot on image LEFT, reaching RIGHT -> left_side
 
-In that situation, returning:
-
-  camera A -> side
-  camera B -> side
-
-is TOO CONSERVATIVE and should be avoided.
+However, duplicate or plain "side" labels remain valid when the directional
+evidence is not strong enough.
 
 Plain "side" is a fallback only when the body/reach geometry is genuinely
 ambiguous, contradictory, or likely mirrored.
@@ -388,108 +400,65 @@ Incorrect pattern:
 unless camera B is genuinely positioned over the workspace and has clear
 near-bird's-eye geometry independent of camera A.
 
-4. DUPLICATE TOP CANDIDATES
+4. MULTIPLE TOP CANDIDATES
 
-If TWO OR MORE FIXED cameras are preliminary candidates for top, they MUST be
-compared directly.
+If TWO OR MORE FIXED cameras are preliminary candidates for "top", evaluate EACH
+camera against the absolute top-vs-side geometry.
 
-Do not simply apply the absolute top definition independently to each camera.
+Do NOT rank them in order to select a single canonical "top".
 
-Rank the candidate cameras by how strongly OVERHEAD their viewing geometry is.
+Do NOT demote one camera merely because another camera is more overhead.
 
-Compare:
+For each camera independently:
 
-  - how directly the camera looks DOWN ONTO the work surface;
-  - how much objects are seen from their TOP faces;
-  - how little of their VERTICAL/SIDE faces are visible;
-  - how weak the near-to-far perspective is across the workspace;
-  - how little perspective convergence is present;
-  - how bird's-eye-like the manipulation area appears;
-  - whether the camera looks DOWN ONTO the workspace or diagonally ACROSS it.
+  - physically over workspace + mainly looking down -> top;
+  - physically around/beside workspace + diagonal/oblique across it -> side.
 
-The camera with the strongest overall overhead/bird's-eye geometry is the
-strongest candidate for the canonical label:
+Cross-camera comparison may help clarify ambiguous geometry, but the final label
+for one camera must not depend on whether another camera already received the
+same label.
 
-  top
+Valid outcomes include:
 
-For every other fixed camera initially classified as top, compare it RELATIVE to
-the strongest top candidate.
+  Camera A -> top
+  Camera B -> top
 
-If another camera:
+when both are genuinely overhead.
 
-  - looks substantially more ACROSS the workspace;
-  - has stronger near-to-far depth;
-  - shows more vertical or side surfaces;
-  - has stronger perspective convergence;
-  - views the workspace more diagonally/obliquely;
+Also valid:
 
-then it should be classified as a side view:
+  Camera A -> side
+  Camera B -> side
 
-  - side
-  - front_side
-  - rear_side
-  - left_side
-  - right_side
+when both are genuinely lateral.
 
-depending on the visual evidence.
-
-IMPORTANT:
-
-Direct comparison can reveal that one camera is substantially more overhead than
-another, but RELATIVE ranking alone must not override the absolute geometric test.
-A camera that is genuinely predominantly DOWN ONTO the workspace remains top even
-when another camera is even more overhead.
-
-Do not classify a camera as top merely because:
-
-  - it is elevated;
-  - it points downward;
-  - much of the tabletop is visible.
-
-The distinction is:
-
-  - predominantly bird's-eye / DOWN ONTO workspace -> top
-  - predominantly oblique / ACROSS workspace -> side
-
-Example
-
-Suppose two fixed cameras are independently classified as top.
-
-Camera A:
-
-  - nearly bird's-eye;
-  - objects mostly visible from above;
-  - little vertical geometry;
-  - weak depth perspective.
-
-Camera B:
-
-  - elevated and looking downward;
-  - but visibly more oblique;
-  - more object side faces are visible;
-  - stronger near/far perspective;
-  - looks diagonally across the workspace.
-
-The FINAL joint labels should be:
+And valid:
 
   Camera A -> top
   Camera B -> side
 
-Do NOT keep both as top merely because both satisfy a loose absolute definition of
-an elevated downward-looking camera.
+when their actual physical geometry differs.
 
-5. CANONICAL-ROLE RULE
+There is NO preferred number of cameras per label.
 
-The final joint labels represent CANONICAL camera roles within the robot setup.
-When two fixed cameras have clearly different viewing geometry, use the labels that
-best express their actual physical roles. Direct comparison is additional evidence,
-not a requirement to make labels unique. Multiple cameras may remain top only when each has a genuine physical overhead
-role. Cameras positioned around the workspace perimeter should remain side views
-even when they are elevated, tilted downward, or visually somewhat top-down.
+5. LABEL-IDENTITY RULE
 
-However, do NOT force uniqueness when two cameras genuinely have effectively the
-same physical viewpoint. In that exceptional case, duplicate labels are allowed
-and the downstream system will handle the naming collision separately.
+Final labels describe each camera's physical role, independently of how many
+other cameras share that role.
+
+Never change a label for the purpose of:
+
+  - making labels unique;
+  - increasing diversity;
+  - avoiding a naming collision;
+  - assigning each camera a different semantic role;
+  - ensuring one camera fills each available category.
+
+If two cameras are physically equivalent or sufficiently similar for this
+taxonomy, KEEP THE SAME LABEL.
+
+Only assign different labels when the visual evidence itself supports a
+meaningful geometric difference.
 
 6. PRESERVE MOUNT TYPE DURING CANONICALIZATION
 
@@ -506,14 +475,9 @@ For example, this is INVALID collision resolution:
 unless there is independent, positive visual evidence that Camera B actually moves
 with the robot.
 
-Resolve fixed-camera collisions using fixed-camera geometry only:
-
-  fixed/top
-  fixed/top
-  -> fixed/top
-  -> fixed/side
-
-when the visual evidence supports that distinction.
+If two fixed cameras share the same label, that is not a collision that must be
+resolved. Keep both labels unless the visual evidence independently supports a
+different classification for one of them.
 
 7. TOP VS SIDE DECISION RULE
 
@@ -539,6 +503,34 @@ Prefer a less-specific valid label over unsupported specificity:
 
   - "side" instead of guessing front/rear/left/right;
   - "wrist" instead of guessing left/right wrist.
+
+
+GLOBAL ANTI-DIVERSITY RULE
+
+The set of final labels does NOT need to be diverse, unique, balanced, or
+one-per-role.
+
+Never ask "which camera should get this label?"
+Ask only "what label does THIS camera's geometry support?"
+
+A result such as:
+
+  Camera 1 -> side
+  Camera 2 -> side
+  Camera 3 -> side
+
+is fully valid if all three cameras are genuinely side views.
+
+Likewise:
+
+  Camera 1 -> top
+  Camera 2 -> top
+
+is fully valid if both cameras are genuinely overhead.
+
+Duplicate final labels are expected and must be preserved whenever the physical
+views are duplicated or equivalent.
+
 
 9. CONSISTENCY
 
