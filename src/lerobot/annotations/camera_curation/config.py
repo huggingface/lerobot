@@ -141,16 +141,6 @@ class CameraCurationConfig:
     promote_direction_candidate: bool = False
     promote_direction_min_confidence: float = 0.4
 
-    # Invert left/right after the VLM pass. Vision-language models have a well-known
-    # systematic left/right (mirror) confusion: on these side views the VLM reliably
-    # assigns the OPPOSITE handedness (a right_side camera -> "left_side" and vice
-    # versa). When this flag is set, every left/right qualifier on the final label is
-    # swapped deterministically (left_side <-> right_side, left_wrist <-> right_wrist);
-    # plain labels with no left/right qualifier are untouched. It is a blunt
-    # workaround: only correct if the inversion is truly SYSTEMATIC — if the VLM ever
-    # gets left/right right, this flips those wrong. Off by default.
-    invert_left_right: bool = False
-
     # Borrow a direction from the existing key name: when the VLM labels a camera a
     # plain base that accepts a direction (``side``/``wrist``, no direction) and the
     # ORIGINAL key name carries a direction qualifier (``front``/``rear``/``left``/

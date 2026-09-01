@@ -297,35 +297,6 @@ def _promote_direction_candidate(verdict: CameraVerdict, cfg: CameraCurationConf
             return
 
 
-def _invert_left_right(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
-    """Swap the left/right qualifier on the final label (and its candidates).
-
-    A deterministic workaround for the VLM's systematic left/right mirror
-    inversion: when ``cfg.invert_left_right`` is set, every ``left`` token becomes
-    ``right`` and vice versa — ``left_side`` <-> ``right_side``, ``left_wrist`` <->
-    ``right_wrist``. Labels with no left/right qualifier (``side``, ``top``,
-    ``wrist``, ``front_side`` ...) are untouched. Mutates ``verdict``. No-op unless
-    the flag is set.
-    """
-    if not cfg.invert_left_right:
-        return
-
-    def _swap(label: str | None) -> str | None:
-        if not label:
-            return label
-        toks = [("right" if t == "left" else "left" if t == "right" else t) for t in label.split("_")]
-        return "_".join(toks)
-
-    new = _swap(verdict.view_label)
-    if new != verdict.view_label:
-        logger.info(
-            "camera %s: inverting left/right %r -> %r", verdict.camera_key, verdict.view_label, new
-        )
-        verdict.view_label = new
-    # Keep candidates consistent so any downstream use (candidate fallback) matches.
-    verdict.candidates = [(_swap(lbl), conf) for lbl, conf in verdict.candidates]
-
-
 def _direction_from_source_name(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
     """Borrow a direction qualifier from the camera's original key name.
 
@@ -438,7 +409,6 @@ def curate_cameras(
         # it normalizes whichever label ended up on the verdict.
         for key in callable_keys:
             _promote_direction_candidate(verdicts[key], cfg)
-            _invert_left_right(verdicts[key], cfg)
             _direction_from_source_name(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]

@@ -506,35 +506,6 @@ def test_direction_from_key_name_only_borrows_direction():
     assert v2.view_label == "side"
 
 
-def test_invert_left_right():
-    # The VLM systematically mirrors left/right; the flag swaps it back on the final
-    # label. Plain/non-directional labels are untouched.
-    cfg = CameraCurationConfig(view_vocabulary=VOCAB, invert_left_right=True)
-    frames = {
-        "cam_a": [_tiny_image()],
-        "cam_b": [_tiny_image()],
-        "cam_c": [_tiny_image()],
-    }
-    vlm = _queued_vlm(
-        [
-            {"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8},
-            {"usable": True, "mount_type": "robot_mounted", "view_label": "left_wrist", "confidence": 0.8},
-            {"usable": True, "mount_type": "fixed", "view_label": "front_side", "confidence": 0.8},
-        ]
-    )
-    v = {x.camera_key: x for x in curate_cameras(frames, cfg, vlm)}
-    assert v["cam_a"].view_label == "left_side"  # right_side -> left_side
-    assert v["cam_b"].view_label == "right_wrist"  # left_wrist -> right_wrist
-    assert v["cam_c"].view_label == "front_side"  # no left/right qualifier -> untouched
-    # Off by default -> no swap.
-    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
-    vlm2 = _queued_vlm(
-        [{"usable": True, "mount_type": "fixed", "view_label": "right_side", "confidence": 0.8}]
-    )
-    v2 = {x.camera_key: x for x in curate_cameras({"cam_a": [_tiny_image()]}, cfg_off, vlm2)}
-    assert v2["cam_a"].view_label == "right_side"
-
-
 def test_candidate_fallback_resolves_collision():
     # cam_a/cam_b both -> "top"; cam_b (lower conf) has a strong "left_side" #2, so it
     # falls back instead of being skipped. Both get renamed, no collision.
