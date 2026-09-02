@@ -16,19 +16,23 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
 
+from lerobot.configs.recipe import language_recipe_enabled
 from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
+from lerobot.policies.language import normalize_semantic_messages
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
+    RenderMessagesStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -105,8 +109,119 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
         images = {
             key: observation[key].clamp(0, 1).mul(255.0).round().to(torch.uint8) for key in self._image_keys
         }
+        recipe_messages = complementary_data.get("messages")
+        recipe_streams = complementary_data.get("message_streams")
+        recipe_targets = complementary_data.get("target_message_indices")
+        generation_request = recipe_messages is not None and recipe_streams is None
+        conversations = (
+            normalize_semantic_messages(recipe_messages, policy_name="EO-1", batch_size=len(tasks))
+            if recipe_messages is not None
+            else None
+        )
         messages = []
+        adjusted_targets: list[list[int]] = []
         for i in range(len(tasks)):
+            if conversations is not None:
+                row_messages = conversations[i]
+                row_streams = (
+                    [] if generation_request else (recipe_streams[i] if len(tasks) > 1 else recipe_streams[0])
+                )
+                row_targets = (
+                    [] if generation_request else (recipe_targets[i] if len(tasks) > 1 else recipe_targets[0])
+                )
+                if not isinstance(row_messages, list) or not isinstance(row_streams, list):
+                    raise TypeError("EO-1 messages and streams must be batched lists.")
+
+                rendered = [{"role": "system", "content": [{"type": "text", "text": SYSTEM_MESSAGE}]}]
+                image_blocks = [{"type": "image", "image": images[key][i]} for key in self._image_keys]
+                injected_images = False
+                inserted_observation_turn = not any(
+                    str(message.get("role", "user")) == "user" for message in row_messages
+                )
+                if inserted_observation_turn:
+                    observation_content = [*image_blocks]
+                    if not generation_request:
+                        observation_content.append(
+                            {
+                                "type": "text",
+                                "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                            }
+                        )
+                    rendered.append(
+                        {
+                            "role": "user",
+                            "content": observation_content,
+                        }
+                    )
+                    injected_images = True
+                for message in row_messages:
+                    converted = dict(message)
+                    tool_calls = converted.pop("tool_calls", None)
+                    content = converted.get("content", "")
+                    if isinstance(content, str):
+                        blocks = [{"type": "text", "text": content}]
+                    elif isinstance(content, list):
+                        blocks = []
+                        for block in content:
+                            block = dict(block)
+                            if block.get("type") == "image" and "feature" in block:
+                                feature = block.pop("feature")
+                                if feature in images:
+                                    block["image"] = images[feature][i]
+                            blocks.append(block)
+                    else:
+                        blocks = [{"type": "text", "text": "" if content is None else str(content)}]
+                    say_text = "".join(f"<say>{value}</say>" for value in _say_tool_texts(tool_calls))
+                    if say_text:
+                        blocks.append({"type": "text", "text": say_text})
+                    if converted.get("role") == "user" and not injected_images:
+                        state_blocks = []
+                        if not generation_request:
+                            state_blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": f"{STATE_START_TOKEN}{DEFAULT_STATE_TOKEN}{STATE_END_TOKEN}",
+                                }
+                            )
+                        blocks = [*image_blocks, *state_blocks, *blocks]
+                        injected_images = True
+                    converted["content"] = blocks
+                    rendered.append(converted)
+
+                predicts_action = any(stream == "low_level" for stream in row_streams)
+                if predicts_action:
+                    rendered.extend(
+                        [
+                            {
+                                "role": "user",
+                                "content": [
+                                    *([] if injected_images else image_blocks),
+                                    {
+                                        "type": "text",
+                                        "text": f"{tasks[i]}{TASK_VLA_TOKEN}",
+                                    },
+                                ],
+                            },
+                            {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            f"{ACTION_START_TOKEN}"
+                                            f"{DEFAULT_ACTION_TOKEN * self.chunk_size}"
+                                            f"{ACTION_END_TOKEN}"
+                                        ),
+                                    }
+                                ],
+                            },
+                        ]
+                    )
+                messages.append(rendered)
+                target_offset = 2 if inserted_observation_turn else 1
+                adjusted_targets.append([int(index) + target_offset for index in row_targets])
+                continue
+
             content = [
                 *[{"type": "image", "image": images[key][i]} for key in self._image_keys],
                 {
@@ -131,8 +246,11 @@ class EO1ConversationTemplateStep(ComplementaryDataProcessorStep):
                     },
                 ]
             )
+            adjusted_targets.append([])
 
         complementary_data["messages"] = messages
+        complementary_data["target_message_indices"] = adjusted_targets
+        complementary_data["text_generation_request"] = generation_request
 
         return complementary_data
 
@@ -162,6 +280,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
     image_min_pixels: int | None = 64 * 28 * 28
     image_max_pixels: int | None = 128 * 28 * 28
     use_fast_processor: bool = False
+    tokenizer_max_length: int = 1000
 
     _processor: Qwen2_5_VLProcessor | None = field(default=None, init=False, repr=False)
     _state_token_id: int | None = field(default=None, init=False, repr=False)
@@ -172,6 +291,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         self._processor = Qwen2_5_VLProcessor.from_pretrained(
             self.processor_name,
             use_fast=self.use_fast_processor,
+            fix_mistral_regex=True,
         )
         self._processor.tokenizer.add_tokens(EO1_SPECIAL_TOKENS, special_tokens=True)
         self._state_token_id = self._processor.tokenizer.convert_tokens_to_ids(DEFAULT_STATE_TOKEN)
@@ -181,6 +301,11 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         messages = complementary_data.pop("messages", None)
         if messages is None:
             raise ValueError("Messages are required for EO1QwenProcessorStep.")
+        target_message_indices = complementary_data.pop("target_message_indices", None)
+        generation_request = complementary_data.pop("text_generation_request", False)
+        has_text_targets = bool(
+            target_message_indices and any(bool(indices) for indices in target_message_indices)
+        )
 
         # Rollout batches use left padding so action spans stay aligned across samples.
         # Supervised batches use right padding to match standard training collation.
@@ -189,13 +314,18 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         inputs = self._processor.apply_chat_template(
             messages,
             tokenize=True,
-            padding=True,
-            padding_side=padding_side,
-            min_pixels=self.image_min_pixels,
-            max_pixels=self.image_max_pixels,
-            add_generation_prompt=False,
+            add_generation_prompt=generation_request,
             return_dict=True,
             return_tensors="pt",
+            processor_kwargs={
+                "padding": True,
+                "padding_side": padding_side,
+                "min_pixels": self.image_min_pixels,
+                "max_pixels": self.image_max_pixels,
+                "truncation": True,
+                "max_length": self.tokenizer_max_length,
+                "return_offsets_mapping": has_text_targets,
+            },
         )
 
         complementary_data["input_ids"] = inputs["input_ids"]
@@ -205,6 +335,17 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
         complementary_data["mm_token_type_ids"] = inputs["mm_token_type_ids"]
         complementary_data["state_token_id"] = self._state_token_id
         complementary_data["action_token_id"] = self._action_token_id
+        if has_text_targets:
+            complementary_data["text_labels"] = _targeted_assistant_labels(
+                self._processor.tokenizer,
+                messages,
+                target_message_indices,
+                inputs["input_ids"],
+                inputs["attention_mask"],
+                inputs.pop("offset_mapping"),
+                self._state_token_id,
+                self._action_token_id,
+            )
 
         return complementary_data
 
@@ -214,6 +355,7 @@ class EO1QwenProcessorStep(ComplementaryDataProcessorStep):
             "image_min_pixels": self.image_min_pixels,
             "image_max_pixels": self.image_max_pixels,
             "use_fast_processor": self.use_fast_processor,
+            "tokenizer_max_length": self.tokenizer_max_length,
         }
 
     def transform_features(
@@ -236,7 +378,15 @@ def make_eo1_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
 
+    render_training = language_recipe_enabled(
+        use_language_recipe=config.use_language_recipe,
+        recipe_path=config.recipe_path,
+    )
+    if render_training and config.recipe is None:
+        raise ValueError("EO-1 language training requires a recipe in policy config.")
+
     input_steps: list[ProcessorStep] = [
+        RenderMessagesStep(config.recipe, render_training=render_training),
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,
@@ -246,6 +396,7 @@ def make_eo1_pre_post_processors(
             image_min_pixels=config.image_min_pixels,
             image_max_pixels=config.image_max_pixels,
             use_fast_processor=config.use_fast_processor,
+            tokenizer_max_length=config.tokenizer_max_length,
         ),
         steps.to_device,
     ]
@@ -256,3 +407,62 @@ def make_eo1_pre_post_processors(
     ]
 
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
+
+
+def _say_tool_texts(tool_calls: Any) -> list[str]:
+    values = []
+    for call in tool_calls or []:
+        function = call.get("function", {}) if isinstance(call, dict) else {}
+        if function.get("name") != "say":
+            continue
+        arguments = function.get("arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (TypeError, ValueError):
+                arguments = {}
+        if isinstance(arguments, dict) and arguments.get("text"):
+            values.append(str(arguments["text"]))
+    return values
+
+
+def _targeted_assistant_labels(
+    tokenizer: Any,
+    messages: list[list[dict[str, Any]]],
+    target_message_indices: list[list[int]],
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    offsets: torch.Tensor,
+    state_token_id: int,
+    action_token_id: int,
+) -> torch.Tensor:
+    """Label only targeted assistant payloads and their closing ``<|im_end|>`` tokens."""
+    labels = torch.full_like(input_ids, -100)
+    for row, (row_messages, target_indices) in enumerate(zip(messages, target_message_indices, strict=True)):
+        rendered = tokenizer.decode(input_ids[row], skip_special_tokens=False)
+        cursor = 0
+        spans: dict[int, tuple[int, int]] = {}
+        for message_index, message in enumerate(row_messages):
+            marker = f"<|im_start|>{message.get('role', 'user')}\n"
+            marker_start = rendered.find(marker, cursor)
+            if marker_start < 0:
+                raise ValueError(f"Could not locate EO-1 message {message_index} in rendered prompt.")
+            payload_start = marker_start + len(marker)
+            payload_end = rendered.find("<|im_end|>", payload_start)
+            if payload_end < 0:
+                raise ValueError(f"EO-1 message {message_index} has no closing <|im_end|> token.")
+            spans[message_index] = (payload_start, payload_end + len("<|im_end|>"))
+            cursor = payload_end + len("<|im_end|>")
+
+        for message_index in target_indices:
+            if message_index not in spans:
+                raise ValueError(f"EO-1 target message index {message_index} is out of range.")
+            start, end = spans[message_index]
+            overlap = (offsets[row, :, 1] > start) & (offsets[row, :, 0] < end) & attention_mask[row].bool()
+            labels[row, overlap] = input_ids[row, overlap]
+
+    labels[labels == state_token_id] = -100
+    labels[labels == action_token_id] = -100
+    if tokenizer.pad_token_id is not None:
+        labels[labels == tokenizer.pad_token_id] = -100
+    return labels
