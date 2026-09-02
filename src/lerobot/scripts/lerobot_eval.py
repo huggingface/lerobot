@@ -120,6 +120,48 @@ def _env_features_to_dataset_features(env_features: dict) -> dict:
     return features
 
 
+def _create_recording_datasets(
+    env: gym.vector.VectorEnv,
+    recording_dir: Path,
+    env_features: dict,
+    recording_repo_id: str | None = None,
+) -> list[LeRobotDataset]:
+    """Create one recording dataset per sub-environment."""
+    features = _env_features_to_dataset_features(env_features)
+    fps = env.unwrapped.metadata.get("render_fps", 30)
+    multi_env = env.num_envs > 1
+    base_repo_id = recording_repo_id or "eval_recording"
+    datasets = []
+    for i in range(env.num_envs):
+        root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
+        repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
+        datasets.append(
+            LeRobotDataset.create(
+                repo_id=repo_id,
+                fps=fps,
+                features=features,
+                root=root,
+                use_videos=True,
+            )
+        )
+    return datasets
+
+
+def _finalize_recording_datasets(
+    recording_datasets: list[LeRobotDataset],
+    recording_repo_id: str | None = None,
+    recording_private: bool = False,
+) -> None:
+    """Finalize the recording datasets and, if asked for, push them to the hub."""
+    for ds in recording_datasets:
+        ds.finalize()
+        if recording_repo_id is not None:
+            if ds.num_episodes > 0:
+                ds.push_to_hub(private=recording_private)
+            else:
+                logging.warning("No episodes recorded for %s — skipping push to hub.", ds.repo_id)
+
+
 def _build_raw_frame(
     raw_obs: dict,
     env_idx: int,
@@ -178,6 +220,7 @@ def rollout(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    recording_datasets: list[LeRobotDataset] | None = None,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
@@ -224,27 +267,14 @@ def rollout(
     if render_callback is not None:
         render_callback(env)
 
-    recording_datasets: list[LeRobotDataset] | None = None
+    # Datasets passed in by the caller belong to the caller: this rollout is one
+    # batch of a longer evaluation, so it must not finalize or push them.
+    owns_recording = recording_datasets is None
     raw_observation = None
     task_desc = ""
-    if recording_dir is not None and env_features is not None:
-        features = _env_features_to_dataset_features(env_features)
-        fps = env.unwrapped.metadata.get("render_fps", 30)
-        recording_datasets = []
-        multi_env = env.num_envs > 1
-        base_repo_id = recording_repo_id or "eval_recording"
-        for i in range(env.num_envs):
-            root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
-            repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
-            recording_datasets.append(
-                LeRobotDataset.create(
-                    repo_id=repo_id,
-                    fps=fps,
-                    features=features,
-                    root=root,
-                    use_videos=True,
-                )
-            )
+    if owns_recording and recording_dir is not None and env_features is not None:
+        recording_datasets = _create_recording_datasets(env, recording_dir, env_features, recording_repo_id)
+    if recording_datasets is not None:
         raw_observation = deepcopy(observation)
         try:
             task_desc = list(env.call("task_description"))[0]
@@ -378,14 +408,8 @@ def rollout(
             progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
             progbar.update()
     finally:
-        if recording_datasets is not None:
-            for ds in recording_datasets:
-                ds.finalize()
-                if recording_repo_id is not None:
-                    if ds.num_episodes > 0:
-                        ds.push_to_hub(private=recording_private)
-                    else:
-                        logging.warning("No episodes recorded for %s — skipping push to hub.", ds.repo_id)
+        if owns_recording and recording_datasets is not None:
+            _finalize_recording_datasets(recording_datasets, recording_repo_id, recording_private)
 
     # Track the final observation.
     if return_observations:
@@ -514,6 +538,14 @@ def eval_policy(
     if return_episode_data:
         episode_data: dict | None = None
 
+    # One set of datasets for the whole evaluation. Creating them per batch would
+    # fail on the second one -- `LeRobotDataset.create` makes its root directory
+    # with `exist_ok=False` -- so recording only ever worked for a single batch,
+    # i.e. when `batch_size >= n_episodes`.
+    recording_datasets = None
+    if recording_dir is not None and env_features is not None:
+        recording_datasets = _create_recording_datasets(env, recording_dir, env_features, recording_repo_id)
+
     # we dont want progress bar when we use slurm, since it clutters the logs
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
@@ -541,10 +573,7 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
-            recording_dir=recording_dir,
-            env_features=env_features,
-            recording_repo_id=recording_repo_id,
-            recording_private=recording_private,
+            recording_datasets=recording_datasets,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
         )
 
@@ -643,6 +672,9 @@ def eval_policy(
         progbar.set_postfix(
             {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
         )
+
+    if recording_datasets is not None:
+        _finalize_recording_datasets(recording_datasets, recording_repo_id, recording_private)
 
     # Wait till all video rendering threads are done.
     for thread in threads:
