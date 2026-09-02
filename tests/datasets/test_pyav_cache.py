@@ -25,6 +25,7 @@ import io
 import types
 from pathlib import Path
 
+import fsspec
 import pytest
 import torch
 
@@ -186,3 +187,21 @@ class TestPyavCacheDecode:
         decode_video_frames_pyav(str(SRC_CLIP), [0.0], 1.0, container_cache=cache)
         resource_second = cache._cache[str(SRC_CLIP)][0]
         assert resource_first is resource_second
+
+    def test_decodes_remote_url_via_fsspec(self):
+        """A non-local URL is opened through fsspec and decodes identically to local.
+
+        This is the path that lets pyav read remote videos at all (e.g. streaming
+        depth maps, which are pyav-only), so it must produce the same frames.
+        """
+        url = "memory://test_pyav_cache/clip.mp4"
+        with fsspec.open(url, "wb") as f:
+            f.write(SRC_CLIP.read_bytes())
+
+        cache = PyavCache()
+        remote = decode_video_frames_pyav(url, [0.0], 1.0, container_cache=cache)
+        with open(SRC_CLIP, "rb") as fh:
+            local = decode_video_frames_pyav(fh, [0.0], 1.0)
+
+        assert torch.equal(remote, local)
+        assert cache.size() == 1
