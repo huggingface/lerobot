@@ -43,9 +43,10 @@ class RynnValueConfig(RewardModelConfig):
     camera_description: str | None = None
     use_meta: bool | None = None
 
-    # ``potential`` follows the paper: Phi = -remaining_time.
-    # ``remaining_time`` exposes the native prediction for diagnostics.
-    reward_output: str = "potential"
+    # Load-only compatibility for checkpoints created by the unpublished
+    # pre-capability integration. Native inference always returns remaining
+    # time; consumers decide whether to derive potential or progress.
+    reward_output: str | None = None
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -70,15 +71,18 @@ class RynnValueConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
-        if self.reward_output not in {"potential", "remaining_time"}:
+        if self.reward_output not in {None, "potential", "remaining_time"}:
             raise ValueError(
-                f"reward_output must be 'potential' or 'remaining_time', got {self.reward_output!r}"
+                "reward_output is a load-only compatibility field and must be "
+                f"None, 'potential', or 'remaining_time', got {self.reward_output!r}"
             )
         if self.attn_implementation != "pred_slot_isolated_eager":
             raise ValueError("RynnValue checkpoints require attn_implementation='pred_slot_isolated_eager'")
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)
-        self.output_features.setdefault("reward", PolicyFeature(shape=(1,), type=FeatureType.REWARD))
+        self.output_features.setdefault(
+            "remaining_time_s", PolicyFeature(shape=(1,), type=FeatureType.REWARD)
+        )
 
     @property
     def observation_delta_indices(self) -> list[int] | None:

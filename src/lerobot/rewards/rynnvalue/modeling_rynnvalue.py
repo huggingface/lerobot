@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import builtins
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -42,6 +44,13 @@ RYNNVALUE_MODEL_INPUT_KEYS = (
 )
 
 T = TypeVar("T", bound="RynnValueRewardModel")
+
+
+@dataclass(frozen=True)
+class RynnValuePrediction:
+    """RynnValue's native temporal-distance prediction on the model device."""
+
+    remaining_time_s: Tensor
 
 
 def _torch_dtype(name: str) -> torch.dtype:
@@ -135,7 +144,12 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             dtype=dtype,
         )
 
-    def compute_reward(self, batch: dict[str, Any]) -> Tensor:
+    def predict_remaining_time(self, batch: Mapping[str, Any]) -> RynnValuePrediction:
+        """Predict seconds remaining for each encoded trajectory prefix.
+
+        Potential, progress, interpolation, and reward shaping are consumer
+        transforms and intentionally do not live in the model API.
+        """
         inputs: dict[str, Any] = {}
         for key in RYNNVALUE_MODEL_INPUT_KEYS:
             batch_key = f"{RYNNVALUE_FEATURE_PREFIX}{key}"
@@ -144,7 +158,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
         if "input_ids" not in inputs:
             raise KeyError(
                 f"RynnValue batch missing `{RYNNVALUE_FEATURE_PREFIX}input_ids`. "
-                "Make sure RynnValueEncoderProcessorStep ran before compute_reward()."
+                "Make sure RynnValueEncoderProcessorStep ran before predict_remaining_time()."
             )
         for required in ("attention_mask", "pixel_values", "image_grid_thw"):
             if required not in inputs:
@@ -177,8 +191,7 @@ class RynnValueRewardModel(PreTrainedRewardModel):
             batch_size=int(inputs["input_ids"].shape[0]),
             slot_counts=slot_counts,
         )
-        reward = -remaining_time if self.config.reward_output == "potential" else remaining_time
-        return reward.to(self.config.device or "cpu")
+        return RynnValuePrediction(remaining_time_s=remaining_time)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         native_config = getattr(self.model, "config", None)
