@@ -15,8 +15,6 @@
 """Tests for frame-signal output reading and legacy compatibility."""
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from lerobot.rewards.scoring import (
@@ -24,6 +22,9 @@ from lerobot.rewards.scoring import (
     get_signal_descriptors,
     read_frame_signals,
 )
+
+pa = pytest.importorskip("pyarrow")
+pq = pytest.importorskip("pyarrow.parquet")
 
 
 def test_read_frame_signals_recognizes_legacy_progress_artifact(tmp_path):

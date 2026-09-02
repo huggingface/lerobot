@@ -20,11 +20,18 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
+
+from lerobot.utils.import_utils import _pyarrow_available, require_package
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 from .types import SignalDescriptor
 
@@ -41,6 +48,12 @@ _RESERVED_COLUMNS = ("index", "episode_index", "frame_index")
 _DIRECTIONS = {"higher", "lower", "none"}
 _COMPARISON_SCOPES = {"episode", "task", "dataset", "global", "none"}
 _MISSING_VALUES = {"forbidden", "nan"}
+
+
+def _require_pyarrow() -> None:
+    """Require the parquet dependency only when scoring IO is used."""
+    require_package("pyarrow", extra="dataset")
+    assert pa is not None and pq is not None
 
 
 def _canonical_json(value: Any, *, label: str) -> str:
@@ -134,6 +147,7 @@ def get_scoring_provenance(table: pa.Table) -> dict[str, Any]:
 
 
 def _validate_new_artifact(table: pa.Table) -> None:
+    _require_pyarrow()
     metadata = table.schema.metadata or {}
     if metadata.get(_FORMAT_KEY) != SCORING_FORMAT.encode():
         raise ValueError(
@@ -272,6 +286,7 @@ def read_frame_signals(path: str | Path) -> pa.Table:
     ``progress_sparse``/``progress_dense`` parquets keep their columns but gain
     normalized in-memory descriptors and provenance metadata.
     """
+    _require_pyarrow()
     artifact_path = Path(path)
     table = pq.read_table(artifact_path)
     metadata = table.schema.metadata or {}

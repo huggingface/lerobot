@@ -15,7 +15,7 @@
 from types import SimpleNamespace
 
 import numpy as np
-import pyarrow as pa
+import pytest
 import torch
 
 from lerobot.lerobot_types import TransitionKey
@@ -182,6 +182,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views():
 
 
 def test_robometer_vertical_slice_preserves_legacy_progress_values_and_adds_success(tmp_path):
+    pa = pytest.importorskip("pyarrow")
     image_key = "observation.images.top"
 
     class FakeDataset:

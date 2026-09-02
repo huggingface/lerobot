@@ -15,6 +15,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.scoring import ScoringSummary
 from lerobot.scripts import lerobot_score_dataset
@@ -22,6 +24,8 @@ from lerobot.scripts.lerobot_score_dataset import ScoreDatasetConfig
 
 
 def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch, tmp_path):
+    pytest.importorskip("datasets")
+    pytest.importorskip("av")
     import lerobot.datasets
 
     reward_config = RobometerConfig(
