@@ -556,6 +556,8 @@ Return strictly valid JSON with exactly these keys:
     "mount_type": "fixed",
     "view_label": "top",
     "confidence": 0.95,
+    "base_image_side": "center",
+    "workspace_image_side": "center",
     "candidates": [
       {{"view_label": "top", "confidence": 0.6}},
       {{"view_label": "left_side", "confidence": 0.35}}
@@ -563,6 +565,20 @@ Return strictly valid JSON with exactly these keys:
   }}
 
 "confidence" must be between 0 and 1.
+
+LOCALIZATION FIELDS — "base_image_side" and "workspace_image_side". These are
+PLAIN LOCALIZATION, not a left/right decision. Report, as "left" / "right" /
+"center":
+
+  - "base_image_side": which side of the IMAGE the robot's BASE / body / mounting
+    column mainly sits on (where the arm is anchored), in an upright, leveled view;
+  - "workspace_image_side": which side of the IMAGE the ACTIVE WORKSPACE — the
+    manipulated objects / where the gripper works — mainly sits on.
+
+Just report WHAT YOU SEE in the image; do NOT try to work out left_side vs
+right_side from them — that mapping is done afterwards. Use "center" when the
+thing is roughly centered or you cannot tell. For a top/wrist/front/rear view or
+when there is no clear base/workspace, "center" for both is fine.
 
 "candidates" is your view_label ranked BEST-FIRST with a confidence for each,
 including 1-2 plausible ALTERNATIVES when you are unsure between labels (e.g. top

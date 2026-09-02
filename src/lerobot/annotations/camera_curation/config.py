@@ -164,6 +164,18 @@ class CameraCurationConfig:
     # from a clear frame. Implies direction_from_key_name. Off by default.
     trust_key_direction: bool = False
 
+    # Derive left/right from localization instead of asking the VLM for the label.
+    # VLMs are near-chance at the left_side/right_side call itself (an allocentric
+    # flip) but decent at plain localization ("the base is on the RIGHT of the
+    # image"). With this flag the VLM additionally reports base_image_side and
+    # workspace_image_side, and Python computes the left/right of a lateral side
+    # camera from those (base-on-image-right -> camera on the robot's LEFT ->
+    # left_side; workspace-on-image-left -> left_side; the two cross-check). Only
+    # the left/right axis of a plain/left/right "side" label is recomputed;
+    # front_side/rear_side, top, and wrist are left to the VLM. Ambiguous or
+    # conflicting localization -> plain "side". Off by default.
+    derive_left_right_from_localization: bool = False
+
     # Remove cameras judged unusable (default: only flag them, still rename).
     drop_unusable: bool = False
 

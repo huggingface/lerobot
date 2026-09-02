@@ -73,6 +73,12 @@ class CameraVerdict:
     # (label, confidence) — used to break a collision by falling back to a strong
     # #2 when ``candidate_fallback`` is on. Empty when the VLM gave none.
     candidates: list[tuple[str, float]] = field(default_factory=list)
+    # Raw localization the VLM reports for a side camera ("left"/"right"/"center"):
+    # which image side the robot's base/body and the workspace/objects are on. Used
+    # to DERIVE left/right in Python (``derive_left_right_from_localization``),
+    # moving the error-prone allocentric flip out of the model.
+    base_image_side: str | None = None
+    workspace_image_side: str | None = None
     # Populated by ``build_name_mapping`` once collisions are resolved (pure
     # Python, deterministic — the VLM never sees or proposes a dataset key).
     proposed_new_key: str | None = None
@@ -226,7 +232,56 @@ def _parse_verdict(camera_key: str, result: Any, cfg: CameraCurationConfig) -> C
         confidence=confidence,
         mount_type=mount_type,
         candidates=candidates,
+        base_image_side=_parse_image_side(result.get("base_image_side")),
+        workspace_image_side=_parse_image_side(result.get("workspace_image_side")),
     )
+
+
+def _parse_image_side(raw: Any) -> str | None:
+    """Normalize a raw localization value to 'left' / 'right' / 'center' or None."""
+    value = str(raw).strip().lower() if raw is not None else ""
+    return value if value in ("left", "right", "center") else None
+
+
+def _derive_left_right(verdict: CameraVerdict, cfg: CameraCurationConfig) -> None:
+    """Compute the left/right of a lateral side camera from localization facts.
+
+    The VLM is near-chance at the ``left_side``/``right_side`` label (an
+    allocentric flip) but decent at plain localization, so we let it report which
+    image side the base and workspace are on and do the mapping here:
+    base-on-image-RIGHT -> camera on the robot's LEFT -> ``left_side``;
+    workspace-on-image-LEFT -> ``left_side`` (the two cross-check). Applies only to
+    a plain/left/right ``side`` label; ``front_side``/``rear_side`` (front-back
+    axis), ``top`` and ``wrist`` are left to the VLM. Ambiguous or conflicting
+    localization falls back to plain ``side``. Mutates ``verdict``. No-op unless
+    ``cfg.derive_left_right_from_localization``.
+    """
+    if not cfg.derive_left_right_from_localization or not cfg.allow_combos:
+        return
+    label = verdict.view_label
+    if not label:
+        return
+    tokens = label.split("_")
+    if _position_token(label) != _SIDE_POSITION:
+        return  # not a side view (top/wrist/bottom)
+    if any(tok in ("front", "rear") for tok in tokens):
+        return  # front/rear axis — the VLM handles this well, leave it
+    # base on image-RIGHT -> camera on robot LEFT; workspace on image-LEFT -> LEFT.
+    base_vote = {"right": "left", "left": "right"}.get(verdict.base_image_side or "")
+    ws_vote = {"left": "left", "right": "right"}.get(verdict.workspace_image_side or "")
+    votes = [v for v in (base_vote, ws_vote) if v]
+    derived = votes[0] if votes and len(set(votes)) == 1 else None
+    new_label = f"{derived}_side" if derived else _SIDE_POSITION
+    if new_label != label:
+        logger.info(
+            "camera %s: deriving left/right from localization (base=%r, workspace=%r) -> %r (was %r)",
+            verdict.camera_key,
+            verdict.base_image_side,
+            verdict.workspace_image_side,
+            new_label,
+            label,
+        )
+        verdict.view_label = new_label
 
 
 def _parse_candidates(
@@ -424,6 +479,7 @@ def curate_cameras(
         # it normalizes whichever label ended up on the verdict.
         for key in callable_keys:
             _promote_direction_candidate(verdicts[key], cfg)
+            _derive_left_right(verdicts[key], cfg)
             _direction_from_source_name(verdicts[key], cfg)
 
     return [verdicts[k] for k in ordered_keys]

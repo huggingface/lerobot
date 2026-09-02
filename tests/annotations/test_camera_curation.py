@@ -484,6 +484,40 @@ def test_direction_from_key_name():
     assert v.view_label == "front_side"
 
 
+def test_derive_left_right_from_localization():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, derive_left_right_from_localization=True)
+
+    def _run(resp):
+        vlm = _queued_vlm([resp])
+        return {x.camera_key: x for x in curate_cameras({"cam": [_tiny_image()]}, cfg, vlm)}["cam"]
+
+    # base on image-RIGHT -> camera on robot LEFT -> left_side (workspace agrees).
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "side",
+              "base_image_side": "right", "workspace_image_side": "left"})
+    assert v.view_label == "left_side"
+    # VLM's WRONG direction is overridden by localization (base left -> right_side).
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "left_side",
+              "base_image_side": "left", "workspace_image_side": "right"})
+    assert v.view_label == "right_side"
+    # Conflicting localization -> plain side.
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "left_side",
+              "base_image_side": "right", "workspace_image_side": "right"})
+    assert v.view_label == "side"
+    # front_side (front/rear axis) is left untouched by the left/right derivation.
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "front_side",
+              "base_image_side": "right", "workspace_image_side": "left"})
+    assert v.view_label == "front_side"
+    # top is untouched.
+    v = _run({"usable": True, "mount_type": "fixed", "view_label": "top",
+              "base_image_side": "right", "workspace_image_side": "left"})
+    assert v.view_label == "top"
+    # Off by default -> the VLM's (wrong) label stands.
+    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
+    vlm = _queued_vlm([{"usable": True, "mount_type": "fixed", "view_label": "left_side",
+                        "base_image_side": "left", "workspace_image_side": "right"}])
+    assert {x.camera_key: x for x in curate_cameras({"cam": [_tiny_image()]}, cfg_off, vlm)}["cam"].view_label == "left_side"
+
+
 def test_trust_key_direction_overrides_wrong_direction():
     # VLM commits to the WRONG direction; trust_key_direction replaces it from the key.
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, trust_key_direction=True)
