@@ -190,10 +190,25 @@ def test_generation_preparation_synthesizes_cache_positions():
     assert torch.equal(prepared["cache_position"], torch.arange(3))
 
 
-def test_policy_exposes_text_generation():
+def test_policy_answers_a_rendered_vqa_question():
     assert WallXPolicy.generate_text is not PreTrainedPolicy.generate_text
     assert WallXPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
     assert not hasattr(WallXPolicy, "generate_texts")
+
+    question = "What is the capital of France?"
+    rendered = RenderMessagesStep(render_training=False)(
+        batch_to_transition({QUERY_KIND: "vqa", QUERY_TEXT: question})
+    )
+    messages = transition_to_batch(rendered)["messages"]
+    assert messages == [{"role": "user", "content": question}]
+    assert (
+        _tokenizer_step()._generation_text(messages, ["front view"])
+        == "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        "<|im_start|>user\nObservation: front view: "
+        "<|vision_start|><|image_pad|><|vision_end|>\n"
+        "Instruction: What is the capital of France?<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
 
     class Tokenizer:
         eos_token_id = 2
@@ -203,7 +218,7 @@ def test_policy_exposes_text_generation():
         def batch_decode(token_ids, **kwargs):
             del kwargs
             assert torch.equal(token_ids, torch.tensor([[7, 8]]))
-            return ["move toward the cup"]
+            return ["Paris"]
 
     class Model:
         processor = SimpleNamespace(tokenizer=Tokenizer())
@@ -217,19 +232,8 @@ def test_policy_exposes_text_generation():
     policy.model = Model()
     batch = _model_inputs()
 
-    assert policy.generate_text(batch) == "move toward the cup"
+    assert policy.generate_text(batch) == "Paris"
     assert policy.supports_text_generation()
-    assert (
-        _tokenizer_step()
-        ._generation_text(
-            [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
-            ["front view"],
-        )
-        .endswith(
-            "Instruction: clear the table\nPredict the next action in language.\n"
-            "<|im_end|>\n<|im_start|>assistant\n"
-        )
-    )
 
 
 def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
