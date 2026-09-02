@@ -48,19 +48,34 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
 from lerobot.rewards.robometer.modeling_robometer import RobometerPrediction, RobometerRewardModel
 from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+else:
+    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 
@@ -68,10 +83,19 @@ DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 DEFAULT_NUM_SUBSAMPLED_FRAMES = 4
 
 
+def _require_dataset_dependencies() -> None:
+    """Require packages used only by dataset scoring and parquet IO."""
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    require_package("pyarrow", extra="dataset")
+
+
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read ``reward_model_path`` from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
+    assert pq is not None
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -137,6 +161,8 @@ def compute_robometer_progress(
     """Run Robometer over a dataset and write per-frame progress."""
     if num_subsampled_frames < 1:
         raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
+    _require_dataset_dependencies()
+    assert pa is not None and pq is not None and LeRobotDataset is not None
 
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
@@ -279,6 +305,8 @@ Examples:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    _require_dataset_dependencies()
+    assert LeRobotDataset is not None
 
     reward_model_path = args.reward_model_path
     if reward_model_path is None:

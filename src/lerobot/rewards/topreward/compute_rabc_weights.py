@@ -39,27 +39,51 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 from lerobot.rewards.topreward.processor_topreward import TOPRewardEncoderProcessorStep
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+else:
+    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
+
+
+def _require_dataset_dependencies() -> None:
+    """Require packages used only by dataset scoring and parquet IO."""
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    require_package("pyarrow", extra="dataset")
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read ``reward_model_path`` from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
+    assert pq is not None
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -158,6 +182,9 @@ def compute_topreward_progress(
     episodes: list[int] | None = None,
 ) -> Path:
     """Run TOPReward over a dataset and write per-frame progress."""
+    _require_dataset_dependencies()
+    assert pa is not None and pq is not None and LeRobotDataset is not None
+
     if reward_model_path is not None:
         logging.info(f"Loading TOPReward config from: {reward_model_path}")
         model = TOPRewardModel.from_pretrained(reward_model_path)
