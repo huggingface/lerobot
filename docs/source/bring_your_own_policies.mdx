@@ -199,6 +199,46 @@ def make_my_policy_pre_post_processors(
 
 **Important — function naming:** LeRobot discovers your processor by name. The function **must** be called `make_{policy_name}_pre_post_processors` (matching the string you passed to `@PreTrainedConfig.register_subclass`).
 
+### Text-capable policies
+
+A policy with a language head uses the same input processor for training,
+action inference, and text generation. Put `RenderMessagesStep` before the
+policy-native chat template and tokenizer:
+
+```python
+input_steps = [
+    RenderMessagesStep(config.recipe, render_training=config.use_language_recipe),
+    # observation transforms
+    # policy-native roles, image placement, chat template, and tokenization
+    # device placement
+]
+```
+
+The interactive rollout runtime adds `query_kind` and `query_text` to an
+observation before running this pipeline. `RenderMessagesStep` supports:
+
+- `vqa`: preserve the caller's question as a user message.
+- `next_subtask`: render the checkpoint recipe up to, but not including, the
+  assistant turn supervising `${subtask}`.
+
+The policy then exposes its decoder through the existing policy API:
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    def supports_text_generation(self) -> bool:
+        return True
+
+    def generate_text(self, batch) -> str:
+        token_ids = self.model.generate(**batch)
+        return self.tokenizer.decode(token_ids, skip_special_tokens=True)
+```
+
+`generate_text` consumes model-ready processor output; it must not rebuild or
+retokenize the caller's prompt. During training, the policy-native tokenizer
+uses `target_message_indices` to supervise only the selected assistant spans.
+Store the recipe in the language policy's config so it is serialized with the
+checkpoint and deployment reconstructs the prompt used for training.
+
 ---
 
 ## Path A: Out-of-tree plugin
