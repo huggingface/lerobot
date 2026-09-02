@@ -27,8 +27,12 @@ from torch import nn
 pytest.importorskip("transformers")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.eo1.configuration_eo1 import EO1Config
 from lerobot.policies.eo1.modeling_eo1 import EO1Policy
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.policies.eo1.processor_eo1 import make_eo1_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RenderMessagesStep
+from lerobot.utils.constants import ACTION, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 HIDDEN_SIZE = 8
 STATE_DIM = 4
@@ -40,10 +44,21 @@ STATE_TOKEN_ID = 5
 ACTION_TOKEN_ID = 6
 
 
+def test_eo1_defaults_match_released_base_checkpoint():
+    config = EO1Config(vlm_config={}, device="cpu")
+
+    assert config.chunk_size == 16
+    assert config.n_action_steps == 16
+    assert config.max_state_dim == 32
+    assert config.max_action_dim == 32
+    assert config.num_denoise_steps == 10
+
+
 class DummyVLMBackbone(nn.Module):
     def __init__(self, hidden_size: int, vocab_size: int = 64):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, hidden_size)
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
         self.config = SimpleNamespace(text_config=SimpleNamespace(hidden_size=hidden_size))
 
     @property
@@ -90,10 +105,46 @@ class DummyVLMBackbone(nn.Module):
             past_key_values=SimpleNamespace(crop=lambda prefix_len: None),
         )
 
+    def generate(self, input_ids, **kwargs):
+        del kwargs
+        suffix = torch.tensor([[7, 8]], device=input_ids.device).expand(input_ids.shape[0], -1)
+        return torch.cat([input_ids, suffix], dim=1)
+
+
+class DummyTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    @staticmethod
+    def add_tokens(*args, **kwargs):
+        return 0
+
+    @staticmethod
+    def convert_tokens_to_ids(token):
+        return {"<|state_pad|>": STATE_TOKEN_ID, "<|action_pad|>": ACTION_TOKEN_ID}.get(token, 3)
+
+
+class DummyTextProcessor:
+    tokenizer = DummyTokenizer()
+
+    def apply_chat_template(self, messages, **kwargs):
+        del kwargs
+        batch_size = len(messages)
+        return {
+            "input_ids": torch.tensor([[1, 2]]).expand(batch_size, -1),
+            "attention_mask": torch.ones(batch_size, 2, dtype=torch.long),
+            "pixel_values": torch.zeros(batch_size, 3, 2, 2),
+            "image_grid_thw": torch.ones(batch_size, 3, dtype=torch.long),
+            "mm_token_type_ids": torch.zeros(batch_size, 2, dtype=torch.long),
+        }
+
+    def batch_decode(self, token_ids, **kwargs):
+        del kwargs
+        assert torch.equal(token_ids, torch.tensor([[7, 8]]))
+        return ["the cup is left of the plate"]
+
 
 def make_eo1_config():
-    from lerobot.policies.eo1.configuration_eo1 import EO1Config
-
     return EO1Config(
         device="cpu",
         dtype="float32",
@@ -184,3 +235,135 @@ def test_lerobot_eo1_inference(monkeypatch):
     torch.testing.assert_close(action_0, fixed_chunk[:, 0, :ACTION_DIM])
     torch.testing.assert_close(action_1, fixed_chunk[:, 1, :ACTION_DIM])
     assert sample_calls["count"] == 1
+
+
+def test_lerobot_eo1_joint_text_and_action_supervision(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    batch = make_policy_batch(include_action=True)
+    labels = torch.full_like(batch["input_ids"], -100)
+    labels[:, 2] = batch["input_ids"][:, 2]
+    batch["text_labels"] = labels
+
+    loss, metrics = policy.forward(batch)
+
+    assert torch.isfinite(loss)
+    assert metrics["flow_loss"] > 0
+    assert metrics["text_loss"] > 0
+    loss.backward()
+    assert policy.model.vlm_backbone.lm_head.weight.grad is not None
+
+
+def test_lerobot_eo1_text_only_row_skips_flow(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    batch = make_policy_batch(include_action=True)
+    batch["input_ids"] = torch.tensor([[11, STATE_TOKEN_ID, 12, 13, 14, 15, 16]])
+    labels = torch.full_like(batch["input_ids"], -100)
+    labels[:, 3] = batch["input_ids"][:, 3]
+    batch["text_labels"] = labels
+
+    loss, metrics = policy.forward(batch)
+
+    assert torch.isfinite(loss)
+    assert "flow_loss" not in metrics
+    assert metrics["text_loss"] > 0
+
+
+def test_lerobot_eo1_exposes_image_conditioned_text_generation(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.modeling_eo1.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+        lambda *args, **kwargs: DummyVLMBackbone(HIDDEN_SIZE),
+    )
+    policy = EO1Policy(make_eo1_config())
+    policy._text_processor = DummyTextProcessor()
+    batch = make_policy_batch(include_action=False)
+
+    assert EO1Policy.generate_text is not PreTrainedPolicy.generate_text
+    assert EO1Policy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
+    assert policy.generate_text(batch) == "the cup is left of the plate"
+    assert policy.supports_text_generation()
+    assert not hasattr(EO1Policy, "generate_texts")
+
+
+def test_eo1_default_processor_owns_runtime_prompt_rendering(monkeypatch):
+    monkeypatch.setattr(
+        "lerobot.policies.eo1.processor_eo1.Qwen2_5_VLProcessor.from_pretrained",
+        lambda *args, **kwargs: DummyTextProcessor(),
+    )
+    config = make_eo1_config()
+    preprocessor, _ = make_eo1_pre_post_processors(
+        config,
+        dataset_stats={
+            OBS_STATE: {"mean": torch.zeros(STATE_DIM), "std": torch.ones(STATE_DIM)},
+            ACTION: {"mean": torch.zeros(ACTION_DIM), "std": torch.ones(ACTION_DIM)},
+        },
+    )
+
+    processed = preprocessor(
+        {
+            OBS_STATE: torch.zeros(STATE_DIM),
+            "observation.images.image": torch.zeros(3, 16, 16),
+            "task": "current subtask",
+            QUERY_KIND: "next_subtask",
+            QUERY_TEXT: "clear the table",
+        }
+    )
+
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
+    assert processed["input_ids"].shape == (1, 2)
+    assert "messages" not in processed
+    assert QUERY_KIND not in processed
+    assert QUERY_TEXT not in processed
+    assert not hasattr(EO1Policy, "prepare_runtime_action_batch")
+
+
+def test_eo1_recipe_processor_builds_sparse_joint_labels():
+    pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
+    config = make_eo1_config()
+    config.vlm_base = "Qwen/Qwen2.5-VL-3B-Instruct"
+    config.use_language_recipe = True
+    preprocessor, _ = make_eo1_pre_post_processors(
+        config,
+        dataset_stats={
+            OBS_STATE: {"mean": torch.zeros(STATE_DIM), "std": torch.ones(STATE_DIM)},
+            ACTION: {"mean": torch.zeros(ACTION_DIM), "std": torch.ones(ACTION_DIM)},
+        },
+    )
+    batch = {
+        OBS_STATE: torch.zeros(1, STATE_DIM),
+        ACTION: torch.zeros(1, CHUNK_SIZE, ACTION_DIM),
+        "observation.images.image": torch.zeros(1, 3, 56, 56),
+        "task": ["clear the table"],
+        "timestamp": torch.tensor([0.0]),
+        "index": torch.tensor([7]),
+        "language_persistent": [
+            [
+                {
+                    "role": "assistant",
+                    "content": "pick up the red block",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                    "camera": None,
+                    "tool_calls": None,
+                }
+            ]
+        ],
+        "language_events": [[]],
+    }
+
+    processed = preprocessor(batch)
+
+    labels = processed["text_labels"]
+    assert labels.shape == processed["input_ids"].shape
+    assert (labels != -100).any()
+    action_token_id = processed["action_token_id"]
+    assert (processed["input_ids"] == action_token_id).sum() == CHUNK_SIZE
+    assert not (labels == action_token_id).any()
