@@ -219,6 +219,34 @@ def test_render_messages_step_rejects_mismatched_non_empty_language_batches():
         RenderMessagesStep(recipe)(transition)
 
 
+def test_render_messages_step_rejects_an_entirely_unrenderable_batch():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            )
+        ]
+    )
+    transition = create_transition(
+        complementary_data={
+            "task": [None, None],
+            "timestamp": torch.tensor([0.0, 1.0]),
+            "language_persistent": [[], []],
+            "language_events": [
+                [{"style": "unmatched", "timestamp": 0.0}],
+                [{"style": "unmatched", "timestamp": 1.0}],
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="produced no renderable samples"):
+        RenderMessagesStep(recipe)(transition)
+
+
 def test_select_batch_indices_slices_numpy_action():
     action = np.arange(6).reshape(3, 2)
     transition = create_transition(action=action)

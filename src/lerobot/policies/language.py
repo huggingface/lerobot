@@ -117,4 +117,10 @@ def require_single_text_output(outputs: Sequence[str], *, policy_name: str) -> s
         raise ValueError(
             f"The interactive runtime expected one {policy_name} text output, got {len(outputs)}."
         )
-    return outputs[0].strip()
+    output = outputs[0]
+    if not isinstance(output, str):
+        raise TypeError(
+            f"The interactive runtime expected {policy_name} to return a text output, "
+            f"got {type(output).__name__}."
+        )
+    return output.strip()

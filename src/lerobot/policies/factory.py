@@ -195,6 +195,8 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=dataset_stats,
             dataset_meta=kwargs.get("dataset_meta"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+            postprocessor_overrides=kwargs.get("postprocessor_overrides"),
         )
 
     if pretrained_path:
@@ -502,6 +504,8 @@ def _make_processors_from_policy_config(
     config: PreTrainedConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     """Create pre- and post-processors from a policy configuration using dynamic imports.
 
@@ -513,6 +517,8 @@ def _make_processors_from_policy_config(
         dataset_stats: Dataset statistics for normalization.
         dataset_meta: Dataset metadata, forwarded only to factories that declare a
             ``dataset_meta`` parameter (e.g. groot, molmoact2).
+        preprocessor_overrides: Runtime overrides applied to the newly built input pipeline.
+        postprocessor_overrides: Runtime overrides applied to the newly built output pipeline.
     Returns:
         A tuple containing the input (pre-processor) and output (post-processor) pipelines.
     """
@@ -540,4 +546,24 @@ def _make_processors_from_policy_config(
     call_kwargs: dict[str, Any] = {"dataset_stats": dataset_stats}
     if "dataset_meta" in inspect.signature(function).parameters:
         call_kwargs["dataset_meta"] = dataset_meta
-    return function(config, **call_kwargs)
+    preprocessor, postprocessor = function(config, **call_kwargs)
+    preprocessor = _apply_processor_overrides(preprocessor, preprocessor_overrides)
+    postprocessor = _apply_processor_overrides(postprocessor, postprocessor_overrides)
+    _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+    return preprocessor, postprocessor
+
+
+def _apply_processor_overrides(
+    pipeline: PolicyProcessorPipeline,
+    overrides: dict[str, Any] | None,
+) -> PolicyProcessorPipeline:
+    """Rebuild an in-memory pipeline with the standard validated override semantics."""
+    if not overrides:
+        return pipeline
+    return PolicyProcessorPipeline.from_config(
+        pipeline.get_config(),
+        state_dict=pipeline.state_dict(),
+        overrides=overrides,
+        to_transition=pipeline.to_transition,
+        to_output=pipeline.to_output,
+    )

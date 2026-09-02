@@ -41,3 +41,6 @@ def test_semantic_message_helpers_reject_invalid_cardinality():
         require_single_semantic_conversation([conversation, conversation], policy_name="Test")
     with pytest.raises(ValueError, match="expected one Test text output"):
         require_single_text_output(["one", "two"], policy_name="Test")
+
+    with pytest.raises(TypeError, match="expected Test to return a text output"):
+        require_single_text_output([None], policy_name="Test")  # type: ignore[list-item]

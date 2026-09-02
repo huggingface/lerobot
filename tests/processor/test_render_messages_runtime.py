@@ -58,6 +58,35 @@ def test_next_subtask_uses_the_training_recipe_prefix():
     assert training[-1] == {"role": "assistant", "content": "pick up cup"}
 
 
+def test_next_subtask_tolerates_optional_runtime_bindings_that_are_absent():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="system", content="Memory: ${memory}", stream="high_level"),
+            MessageTurn(
+                role="assistant",
+                content="Plan: ${plan}",
+                stream="high_level",
+                if_present="plan",
+            ),
+            MessageTurn(role="user", content="Goal: ${task}", stream="high_level"),
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            ),
+        ]
+    )
+
+    data = _render("next_subtask", "tidy", recipe=recipe)[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert data["messages"] == [
+        {"role": "system", "content": "Memory: "},
+        {"role": "user", "content": "Goal: tidy"},
+    ]
+
+
 def test_ordinary_action_inputs_and_existing_messages_pass_through():
     step = RenderMessagesStep(_recipe(), render_training=False)
     action_transition = create_transition(complementary_data={"task": "pick up cup"})

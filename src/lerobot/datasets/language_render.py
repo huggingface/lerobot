@@ -188,6 +188,8 @@ def render_sample(
             return vqa_rendered
 
     selected_recipe = _select_recipe(recipe, sample_idx)
+    if selected_recipe is None:
+        return None
     bindings = _resolve_bindings(
         selected_recipe,
         persistent=persistent_rows,
@@ -252,26 +254,27 @@ def _render_vqa_if_present(
     return renderable[-1][1]
 
 
-def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
-    """Pick a deterministic blend component for ``sample_idx`` (or return ``recipe``)."""
+def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe | None:
+    """Pick a deterministic non-routed component for an ordinary sample."""
     if recipe.blend is None:
         return recipe
 
-    total_weight = sum(component.weight or 0.0 for component in recipe.blend.values())
+    components = [component for component in recipe.blend.values() if component.route is None]
+    total_weight = sum(component.weight or 0.0 for component in components)
     if total_weight <= 0:
-        raise ValueError("Blend weights must sum to a positive value.")
+        return None
 
     digest = hashlib.blake2b(str(sample_idx).encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total_weight
     cumulative = 0.0
     last_component: TrainingRecipe | None = None
-    for component in recipe.blend.values():
+    for component in components:
         last_component = component
         cumulative += component.weight or 0.0
         if draw < cumulative:
             return component
     if last_component is None:
-        raise ValueError("Blend recipes must contain at least one component.")
+        return None
     return last_component
 
 

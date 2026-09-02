@@ -205,6 +205,11 @@ A policy with a language head uses the same input processor for training,
 action inference, and text generation. Put `RenderMessagesStep` before the
 policy-native chat template and tokenizer:
 
+The policy config exposes `use_language_recipe: bool`, `recipe_path: str | None`,
+and the resolved `recipe: TrainingRecipe | None`. These fields are the opt-in
+contract used by the shared training path when it rebuilds a pretrained
+checkpoint's processors for language fine-tuning.
+
 ```python
 input_steps = [
     RenderMessagesStep(config.recipe, render_training=config.use_language_recipe),

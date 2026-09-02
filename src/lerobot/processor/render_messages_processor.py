@@ -24,13 +24,10 @@ import numpy as np
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.configs.recipe import TrainingRecipe, render_message_turns
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT, QUERY_KIND, QUERY_TEXT
 from lerobot.utils.utils import unwrap_scalar
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
-
-LANGUAGE_EVENTS = "language_events"
-LANGUAGE_PERSISTENT = "language_persistent"
 
 
 @dataclass
@@ -143,7 +140,8 @@ class RenderMessagesStep(ProcessorStep):
                     "Subtask generation requires a checkpoint recipe with an assistant target "
                     "that supervises `${subtask}`."
                 )
-            bindings = dict(complementary_data)
+            bindings = dict.fromkeys(self.recipe.referenced_binding_names())
+            bindings.update(complementary_data)
             bindings["task"] = text
             messages = render_message_turns(self.recipe.prompt_turns("subtask"), bindings)["messages"]
         else:
@@ -205,7 +203,10 @@ class RenderMessagesStep(ProcessorStep):
             target_message_indices.append(rendered["target_message_indices"])
 
         if not messages:
-            return None
+            raise ValueError(
+                "Recipe-backed training produced no renderable samples in this batch. "
+                "Provide the recipe's target annotations or a non-empty task fallback."
+            )
 
         new_transition = (
             _select_batch_indices(transition, keep_indices, batch_size)
