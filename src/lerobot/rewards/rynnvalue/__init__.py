@@ -23,12 +23,14 @@ from .configuration_rynnvalue import RynnValueConfig
 if TYPE_CHECKING or _transformers_available:
     from .modeling_rynnvalue import RynnValuePrediction, RynnValueRewardModel
     from .processor_rynnvalue import make_rynnvalue_pre_post_processors
+    from .scoring_rynnvalue import score_rynnvalue_dataset
 
     __all__ = [
         "RynnValueConfig",
         "RynnValuePrediction",
         "RynnValueRewardModel",
         "make_rynnvalue_pre_post_processors",
+        "score_rynnvalue_dataset",
     ]
 else:
     __all__ = ["RynnValueConfig"]

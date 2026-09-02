@@ -1,6 +1,6 @@
 # RynnValue
 
-RynnValue is a language-conditioned robotic value model that predicts the remaining time, in seconds, until a task is completed. LeRobot converts that temporal distance into the higher-is-better potential used by the paper:
+RynnValue is a language-conditioned robotic value model that predicts the remaining time, in seconds, until a task is completed. The native LeRobot API preserves that temporal-distance meaning. Offline and online consumers may derive the higher-is-better potential used by the paper:
 
 ```text
 potential = -remaining_time
@@ -63,12 +63,15 @@ The released checkpoints have metadata prompting enabled. Provide at least one r
 
 When a trajectory contains more than `max_frames` frames, the processor uniformly samples the full history while retaining its first and last frames. The default is eight frames.
 
-`compute_reward()` returns one scalar per trajectory:
+`predict_remaining_time()` returns a typed prediction with one scalar per trajectory:
 
-- `reward_output="potential"` (default) returns `-v_end`, where `v_end` is the final queried frame's predicted remaining time.
-- `reward_output="remaining_time"` returns `v_end` directly for diagnostics.
+- `prediction.remaining_time_s` contains `v_end`, the final queried frame's predicted remaining time.
+- The tensor stays on the model device.
+- Potential, progress normalization, interpolation, and thresholding belong to workflow adapters.
 
 If a checkpoint has multiple absolute-value heads, LeRobot averages them before selecting the final frame.
+
+The legacy `reward_output` configuration key is accepted only so unpublished converted checkpoints still load. It does not change native prediction semantics.
 
 ## Usage
 
@@ -91,7 +94,8 @@ batch = {
     "task": "put the cube in the drawer",
 }
 encoded = preprocessor(batch)
-potential = model.compute_reward(encoded)
+prediction = model.predict_remaining_time(encoded)
+remaining_time_s = prediction.remaining_time_s
 ```
 
 Use `Alibaba-DAMO-Academy/RynnValue-8B` as the converter's `--source-model-id` to select the larger checkpoint. `--revision` can pin a Hub commit.
@@ -102,19 +106,61 @@ The converted `config.json` embeds the native architecture configuration, while 
 
 Subsequent calls to `save_pretrained()` refresh the embedded native configuration before writing the checkpoint. A LeRobot checkpoint is never reconstructed from the upstream `model_id`; older checkpoints without embedded `model_config` must be reconverted.
 
+## Original-checkpoint parity
+
+An opt-in GPU test compares the released implementation and the converted LeRobot checkpoint on identical deterministic frames. It loads the models sequentially to reduce peak memory:
+
+```bash
+LEROBOT_RYNNVALUE_ORIGINAL_CHECKPOINT=/path/to/original \
+LEROBOT_RYNNVALUE_CONVERTED_CHECKPOINT=/path/to/converted \
+uv run pytest tests/rewards/test_rynnvalue_original_parity.py -v
+```
+
+The original path is the only parity-only surface that uses its released remote model code. Normal LeRobot loading never uses `trust_remote_code`.
+
+## Offline dataset scoring
+
+Use the shared scoring command rather than a RynnValue-specific dataset script:
+
+```bash
+uv run lerobot-score-dataset \
+    --dataset_repo_id=lerobot/example-dataset \
+    --reward_model_path=outputs/rynnvalue-4b \
+    --device=cuda \
+    --batch_size=2 \
+    --inference_fps=1 \
+    --max_frames=8 \
+    --robot_description="a single-arm robot" \
+    --camera_description="a fixed third-person camera"
+```
+
+RynnValue runs on causal trajectory prefixes at the configured inference frequency. The adapter linearly interpolates between inference frames and writes:
+
+- `reward.rynnvalue.remaining_time_s`;
+- `reward.rynnvalue.potential`;
+- `reward.rynnvalue.is_inference_frame`.
+
+Pass `--horizon_s=SECONDS` to additionally write bounded `reward.rynnvalue.progress`:
+
+```text
+progress = clip(1 - remaining_time_s / horizon_s, 0, 1)
+```
+
+The horizon is explicit and stored in provenance; LeRobot never normalizes remaining time relative to the observed episode maximum.
+
 ## Reward shaping
 
-The scalar returned by LeRobot is the state potential, not a complete transition reward. Apply potential-based shaping in the RL loop:
+The potential derived from remaining time is a state potential, not a complete transition reward. Apply potential-based shaping in the RL loop:
 
 ```text
 r_shape = gamma * potential_next - potential
 ```
 
-The paper combines this term with a sparse task reward. LeRobot does not infer task termination or success from the language generation branch in `compute_reward()`.
+The paper combines this term with a sparse task reward. LeRobot does not infer task termination or success from the language generation branch in `predict_remaining_time()`.
 
 ## Limitations
 
 - Inference uses eager custom attention; Flash Attention and SDPA do not implement RynnValue's prediction-slot isolation.
 - The current API scores complete supplied histories and is not a streaming KV-cache reward server.
-- Natural-language video analysis, match, and success generation remain available in the native core model but are not used by `compute_reward()`.
+- Natural-language video analysis, match, and success generation remain available in the native core model but are not used by `predict_remaining_time()`.
 - Training RynnValue from scratch is outside this integration.
