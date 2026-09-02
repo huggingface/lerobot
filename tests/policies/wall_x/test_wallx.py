@@ -16,6 +16,8 @@
 
 """Test script to verify Wall-X policy integration with LeRobot"""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -24,13 +26,25 @@ pytest.importorskip("peft")
 pytest.importorskip("transformers")
 pytest.importorskip("torchdiffeq")
 
-from lerobot.policies.factory import make_policy_config  # noqa: E402
+from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
+from lerobot.policies.factory import make_policy_config, make_pre_post_processors  # noqa: E402
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.policies.wall_x import (
     WallXConfig,  # noqa: E402
 )
-from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy  # noqa: E402
-from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors  # noqa: E402
+from lerobot.policies.wall_x.modeling_wall_x import Qwen2_5_VLMoEForAction, WallXPolicy  # noqa: E402
+from lerobot.policies.wall_x.processor_wall_x import (  # noqa: E402
+    WallXTokenizerStep,
+    make_wall_x_pre_post_processors,
+)
 from lerobot.policies.wall_x.qwen_model import Qwen2_5_VLMoEModel, Qwen2_5_VLTextConfig  # noqa: E402
+from lerobot.policies.wall_x.utils import _extract_text_target_spans  # noqa: E402
+from lerobot.processor import (  # noqa: E402
+    RenderMessagesStep,
+    batch_to_transition,
+    transition_to_batch,
+)
+from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -76,6 +90,195 @@ def test_moe_model_captures_requested_hidden_states_and_attentions():
     assert len(output.attentions) == config.num_hidden_layers
 
 
+def _make_unloaded_policy(**config_values):
+    policy = WallXPolicy.__new__(WallXPolicy)
+    torch.nn.Module.__init__(policy)
+    config_values.setdefault("text_temperature", 0.0)
+    config_values.setdefault("text_top_p", 1.0)
+    policy.config = SimpleNamespace(chunk_size=3, **config_values)
+    return policy
+
+
+def _tokenizer_step() -> WallXTokenizerStep:
+    return WallXTokenizerStep(
+        processor_name="unused",
+        image_keys=["observation.images.face_view"],
+        chunk_size=3,
+        max_state_dim=20,
+        max_action_dim=20,
+        output_action_dim=7,
+    )
+
+
+def _model_inputs() -> dict[str, torch.Tensor]:
+    return {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.ones(1, 3, dtype=torch.long),
+        "pixel_values": torch.zeros(1, 3, 2, 2),
+        "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        "moe_token_types": torch.zeros(1, 3, dtype=torch.bool),
+    }
+
+
+def test_recipe_prompt_targets_only_selected_assistant_and_keeps_action_supervision():
+    step = _tokenizer_step()
+    prompt, predicts_action = step._recipe_text(
+        [
+            {"role": "user", "content": "What should the robot do?"},
+            {"role": "assistant", "content": "Reach for the cup."},
+        ],
+        ["high_level", "low_level"],
+        [1],
+        "pick up the cup",
+        ["front view"],
+    )
+
+    clean_prompt, spans = _extract_text_target_spans(prompt)
+    assert predicts_action
+    assert len(spans) == 1
+    assert clean_prompt[slice(*spans[0])] == "Reach for the cup.<|im_end|>"
+    assert clean_prompt.count("<|action|>") == 3
+    assert "Proprioception: <|propri|>" in clean_prompt
+
+
+def test_policy_combines_text_and_flow_losses_with_configured_weights(monkeypatch):
+    policy = _make_unloaded_policy(flow_loss_weight=2.0, text_loss_weight=0.25)
+    policy.model = SimpleNamespace(
+        __call__=None,
+    )
+    outputs = SimpleNamespace(
+        loss=torch.tensor(99.0),
+        flow_loss=torch.tensor(3.0),
+        cross_entropy_loss=torch.tensor(4.0),
+        channel_loss_dict=None,
+    )
+    policy.model = lambda **kwargs: outputs
+    monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
+
+    loss, metrics = policy.forward({**_model_inputs(), "messages": [[{"role": "user"}]]})
+
+    assert loss.item() == 7.0
+    assert metrics["flow_loss"].item() == 3.0
+    assert metrics["cross_entropy_loss"].item() == 4.0
+
+
+def test_policy_preserves_original_action_only_loss(monkeypatch):
+    policy = _make_unloaded_policy(flow_loss_weight=2.0, text_loss_weight=0.25)
+    outputs = SimpleNamespace(
+        loss=torch.tensor(9.0),
+        flow_loss=torch.tensor(3.0),
+        cross_entropy_loss=torch.tensor(4.0),
+        channel_loss_dict=None,
+    )
+    policy.model = lambda **kwargs: outputs
+    monkeypatch.setattr(policy, "_pretokenized_inputs", lambda batch, **kwargs: batch)
+
+    loss, _ = policy.forward(_model_inputs())
+
+    assert loss.item() == 9.0
+
+
+def test_generation_preparation_synthesizes_cache_positions():
+    input_ids = torch.tensor([[1, 2, 3]])
+
+    prepared = Qwen2_5_VLMoEForAction.prepare_inputs_for_generation(
+        SimpleNamespace(),
+        input_ids,
+        attention_mask=torch.ones_like(input_ids),
+    )
+
+    assert torch.equal(prepared["cache_position"], torch.arange(3))
+
+
+def test_policy_exposes_text_generation():
+    assert WallXPolicy.generate_text is not PreTrainedPolicy.generate_text
+    assert WallXPolicy.supports_text_generation is not PreTrainedPolicy.supports_text_generation
+    assert not hasattr(WallXPolicy, "generate_texts")
+
+    class Tokenizer:
+        eos_token_id = 2
+        pad_token_id = 0
+
+        @staticmethod
+        def batch_decode(token_ids, **kwargs):
+            del kwargs
+            assert torch.equal(token_ids, torch.tensor([[7, 8]]))
+            return ["move toward the cup"]
+
+    class Model:
+        processor = SimpleNamespace(tokenizer=Tokenizer())
+
+        @staticmethod
+        def generate(input_ids, **kwargs):
+            del kwargs
+            return torch.cat([input_ids, torch.tensor([[7, 8]])], dim=1)
+
+    policy = _make_unloaded_policy()
+    policy.model = Model()
+    batch = _model_inputs()
+
+    assert policy.generate_text(batch) == "move toward the cup"
+    assert policy.supports_text_generation()
+    assert (
+        _tokenizer_step()
+        ._generation_text(
+            [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
+            ["front view"],
+        )
+        .endswith(
+            "Instruction: clear the table\nPredict the next action in language.\n"
+            "<|im_end|>\n<|im_start|>assistant\n"
+        )
+    )
+
+
+def test_wall_x_runtime_query_is_rendered_by_the_default_input_pipeline():
+    config = WallXConfig(device="cpu")
+    config.input_features = {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        "observation.images.face_view": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 8, 8)),
+    }
+    config.output_features = {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+    }
+    stats = {
+        "observation.state": {"mean": torch.zeros(7), "std": torch.ones(7)},
+        "action": {"mean": torch.zeros(7), "std": torch.ones(7)},
+    }
+
+    preprocessor, _ = make_pre_post_processors(config, dataset_stats=stats)
+    batch = transition_to_batch(
+        preprocessor.steps[0](
+            batch_to_transition(
+                {
+                    "observation.state": torch.zeros(7),
+                    "observation.images.face_view": torch.zeros(3, 8, 8),
+                    "task": "current subtask",
+                    QUERY_KIND: "next_subtask",
+                    QUERY_TEXT: "clear the table",
+                }
+            )
+        )
+    )
+
+    assert isinstance(preprocessor.steps[0], RenderMessagesStep)
+    assert preprocessor.steps[0].render_training is False
+    assert batch["messages"] == [
+        {"role": "user", "content": "clear the table\nPredict the next action in language.\n"}
+    ]
+    assert QUERY_KIND not in batch
+    assert QUERY_TEXT not in batch
+
+
+def test_wall_x_loads_an_explicit_external_recipe(tmp_path):
+    path = tmp_path / "recipe.yaml"
+    path.write_text("messages:\n  - {role: user, content: '${task}', stream: low_level}\n")
+    config = WallXConfig(device="cpu", recipe_path=str(path))
+
+    assert config.recipe is not None
+    assert config.recipe.messages is not None
+
+
 @require_cuda
 @require_hf_token
 def test_policy_instantiation():
@@ -84,8 +287,6 @@ def test_policy_instantiation():
     config = WallXConfig(device="cuda")
 
     # Set up input_features and output_features in the config
-    from lerobot.configs.types import FeatureType, PolicyFeature
-
     config.input_features = {
         "observation.state": PolicyFeature(
             type=FeatureType.STATE,
@@ -175,3 +376,28 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_subtask_prompt_is_token_exact_with_the_trained_template():
+    """WALL-OSS declares its mode in the user turn, so the template must match upstream."""
+    from lerobot.policies.wall_x.utils import get_wallx_normal_text
+
+    img_keys = ["observation.images.face_view"]
+    upstream, generated_subtask = get_wallx_normal_text(
+        {"instruction": "clear the table", "subtask_generation": "pick the cup"},
+        action_chunk_size=1,
+        frame_idx=0,
+        priority_order=None,
+        img_keys=list(img_keys),
+        generate_subtask_ratio=1.0,
+    )
+    assert generated_subtask
+
+    ours = _tokenizer_step()._generation_text(
+        [{"role": "user", "content": "clear the table\nPredict the next action in language.\n"}],
+        ["front view"],
+    )
+
+    # Compare the user turn only: upstream appends its own assistant target, ours ends
+    # at the generation prompt.
+    assert ours.split("<|im_start|>assistant")[0] == upstream.split("<|im_start|>assistant")[0]
