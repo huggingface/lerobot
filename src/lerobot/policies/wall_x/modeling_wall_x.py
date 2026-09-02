@@ -52,25 +52,23 @@ from torch.nn import CrossEntropyLoss
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as tv_functional
 
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
     require_package,
 )
 
+from ..language import require_single_text_output
 from ..pretrained import PreTrainedPolicy
 from ..utils import populate_queues
 from .configuration_wall_x import WallXConfig
 from .constant import (
-    GENERATE_SUBTASK_RATIO,
     IMAGE_FACTOR,
     MAX_PIXELS,
     MIN_PIXELS,
-    MODEL_TYPE,
-    PRIORITY_ORDER,
     RESOLUTION,
-    TOKENIZER_MAX_LENGTH,
 )
+from .processor_wall_x import WALL_X_GENERATION_PROMPT_IDS
 
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
@@ -105,12 +103,6 @@ else:
     Qwen2_5_VLMoEModel = None
     configure_wall_x_vision_attention = None
 
-from .utils import (
-    get_wallx_normal_text,
-    preprocesser_call,
-    process_grounding_points,
-    replace_action_token,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -959,19 +951,24 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process proprioceptive data (joint positions, orientations, etc.)
             if proprioception is not None:
-                proprioception = proprioception.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                agent_pos_mask = agent_pos_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                proprioception = self.action_preprocessor.proprioception_proj(
-                    proprioception,
-                    agent_pos_mask,
-                )
                 mask = input_ids == self.action_token_id_set["propri_token_id"]
-                mask_unsqueezed = mask.unsqueeze(-1)
-                mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
-                proprioception_mask = mask_expanded.to(inputs_embeds.device)
-
-                proprioception = proprioception.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(proprioception_mask, proprioception)
+                proprioception_rows = mask.any(dim=-1)
+                if proprioception_rows.any():
+                    active_proprioception = proprioception[proprioception_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_agent_pos_mask = agent_pos_mask[proprioception_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_proprioception = self.action_preprocessor.proprioception_proj(
+                        active_proprioception,
+                        active_agent_pos_mask,
+                    )
+                    proprioception_mask = mask.unsqueeze(-1).expand_as(inputs_embeds)
+                    inputs_embeds = inputs_embeds.masked_scatter(
+                        proprioception_mask.to(inputs_embeds.device),
+                        active_proprioception.to(inputs_embeds.device, inputs_embeds.dtype),
+                    )
             elif self.training:
                 # Dummy forward pass to ensure gradient registration in DDP
                 # This handles cases where one process has proprioception data while another doesn't
@@ -987,16 +984,19 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
             # Process action chunk data
             if action_chunk is not None:
-                action_chunk = action_chunk.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                dof_mask = dof_mask.to(inputs_embeds.device).to(inputs_embeds.dtype)
-                noisy_action_emb, flow = self.action_preprocessor(action_chunk, dof_mask)
                 mask = input_ids == self.action_token_id_set["action_token_id"]
-                mask_unsqueezed = mask.unsqueeze(-1)
-                mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
-                action_mask = mask_expanded.to(inputs_embeds.device)
-
-                noisy_action_emb = noisy_action_emb.to(inputs_embeds.device, inputs_embeds.dtype)
-                inputs_embeds = inputs_embeds.masked_scatter(action_mask, noisy_action_emb)
+                action_rows = mask.any(dim=-1)
+                if action_rows.any():
+                    active_action_chunk = action_chunk[action_rows].to(
+                        inputs_embeds.device, inputs_embeds.dtype
+                    )
+                    active_dof_mask = dof_mask[action_rows].to(inputs_embeds.device, inputs_embeds.dtype)
+                    noisy_action_emb, flow = self.action_preprocessor(active_action_chunk, active_dof_mask)
+                    action_mask = mask.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
+                    inputs_embeds = inputs_embeds.masked_scatter(
+                        action_mask,
+                        noisy_action_emb.to(inputs_embeds.device, inputs_embeds.dtype),
+                    )
 
             if attention_mask is not None:
                 attention_mask = attention_mask.to(inputs_embeds.device)
@@ -1056,16 +1056,22 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         if action_chunk is not None:
             action_mask = input_ids == self.action_token_id_set["action_token_id"]
             if action_mask.any():
+                action_rows = action_mask.any(dim=-1)
+                active_dof_mask = dof_mask[action_rows]
                 action_hidden_states = hidden_states[action_mask].to(torch.float32)
                 flow = flow.reshape(-1, flow.shape[-1]).to(torch.float32)
-                _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, dof_mask)
+                _flow_loss = self.action_preprocessor.flow_loss(action_hidden_states, flow, active_dof_mask)
                 if isinstance(_flow_loss, torch.Tensor):
                     flow_loss = _flow_loss.mean()
                 if loss is not None:
                     loss = loss + self.flow_loss_weight * flow_loss.to(torch.float32)
                 else:
                     loss = self.flow_loss_weight * flow_loss.to(torch.float32)
-                _flow_loss = _flow_loss.view(dof_mask.shape[0], dof_mask.shape[1], dof_mask.shape[2])
+                _flow_loss = _flow_loss.view(
+                    active_dof_mask.shape[0],
+                    active_dof_mask.shape[1],
+                    active_dof_mask.shape[2],
+                )
 
         # Return outputs based on return_dict setting
         if not return_dict:
@@ -1131,6 +1137,7 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
         num_inference_timesteps: int | None = 10,
         dof_mask: torch.FloatTensor | None = None,
         agent_pos_mask: torch.FloatTensor | None = None,
+        generation_prompt_ids: torch.LongTensor | None = None,
         re_generate: bool = False,
         **kwargs,
     ):
@@ -1296,15 +1303,12 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
 
         # Split input sequence for text and fast modes (not needed for diffusion)
         if predict_mode == "text" or predict_mode == "fast":
-            generation_prompt = "<|im_start|>assistant\n"
-            generation_prompt_ids = torch.tensor(
-                self.processor.tokenizer.encode(generation_prompt, add_special_tokens=False),
-                device=input_ids.device,
-                dtype=input_ids.dtype,
-            )
+            if generation_prompt_ids is None:
+                raise ValueError(
+                    "WALL-X fast/text prediction requires generation_prompt_ids from its input processor."
+                )
+            generation_prompt_ids = generation_prompt_ids.to(device=input_ids.device, dtype=input_ids.dtype)
             prompt_length = generation_prompt_ids.numel()
-            if prompt_length == 0:
-                raise ValueError(f"Tokenizer produced no tokens for generation prompt {generation_prompt!r}")
             if input_ids.shape[1] < prompt_length:
                 matches = torch.empty(0, device=input_ids.device, dtype=torch.bool)
             else:
@@ -1585,6 +1589,25 @@ class Qwen2_5_VLMoEForAction(_Qwen2_5_VLForAction_Base):  # noqa: N801
             - Handles special cases for input_embeds, generation methods, and GPU synchronization
             - Manages vision inputs to avoid unnecessary forward passes
         """
+        if cache_position is None:
+            past_length = 0
+            if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
+                past_length = int(past_key_values.get_seq_length())
+            input_length = input_ids.shape[1]
+            end = input_length if input_length > past_length else past_length + input_length
+            cache_position = torch.arange(
+                past_length,
+                end,
+                dtype=torch.long,
+                device=input_ids.device,
+            )
+            if cache_position.numel() == 0:
+                cache_position = torch.arange(
+                    input_length,
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+
         # Initialize MoE token types if not provided
         if moe_token_types is None:
             moe_token_types = torch.zeros_like(
@@ -1851,165 +1874,40 @@ class WallXPolicy(PreTrainedPolicy):
         """Get parameters for optimization."""
         return self.parameters()
 
-    def preprocess_inputs(
+    def _pretokenized_inputs(
         self,
         batch: dict[str, Any],
         *,
         compute_position_ids: bool = False,
+        text_generation: bool = False,
     ) -> BatchFeature:
-        """
-        Convert a batch of LeRobot dataset items to Wall-X model input format.
-
-        This processes a batched dictionary where tensors have batch dimension first.
-
-        Args:
-            batch: Dictionary with batched tensors:
-                - "observation.state": (batch_size, state_dim) or (batch_size, n_obs_steps, state_dim)
-                - "action": (batch_size, chunk_size, action_dim)
-                - "observation.images.<key>": (batch_size, C, H, W)
-                - "task": List[str] of length batch_size
-
-        Returns:
-            BatchFeature containing batched model inputs
-        """
-        use_fast_tokenizer = self.config.use_fast_tokenizer
-
-        # Get batch size from state tensor
-        batch_size = batch[OBS_STATE].shape[0]
-
-        # Find image keys in batch
-        img_keys = [key for key in self.config.image_features if key in batch]
-        if not img_keys:
-            raise ValueError("Wall-X requires at least one image feature in each batch")
-
-        # Resize one camera batch at a time on the tensors' current device. Reassembling
-        # sample-major keeps image_grid_thw aligned with each sample's image placeholders.
-        all_image_inputs, dimensions_by_key = _prepare_wall_x_image_inputs(batch, img_keys)
-        all_texts = []
-
-        # Preserve the existing grounding behavior for multi-camera inputs: the old camera
-        # loop left these values set to the final configured camera's dimensions.
-        orig_height, orig_width, resized_height, resized_width = dimensions_by_key[img_keys[-1]]
-
-        for i in range(batch_size):
-            # Text preprocessing
-            task_text = batch["task"][i] if isinstance(batch["task"], list) else batch["task"]
-            instruction_info = {"instruction": task_text}
-
-            frame_index = batch["frame_index"][i] if "frame_index" in batch else 0
-            complete_text, _ = get_wallx_normal_text(
-                instruction_info,
-                self.config.chunk_size,
-                frame_index,
-                PRIORITY_ORDER,
-                img_keys,
-                generate_subtask_ratio=GENERATE_SUBTASK_RATIO,
-            )
-
-            text = process_grounding_points(
-                complete_text, orig_height, orig_width, resized_height, resized_width, MODEL_TYPE
-            )
-            all_texts.append(text)
-
-        # ==================== PROCESS AGENT POS ====================
-        agent_pos = batch[OBS_STATE]  # (batch_size, state_dim)
-        if agent_pos.dim() == 2:
-            agent_pos = agent_pos.unsqueeze(1)  # (batch_size, 1, state_dim)
-        agent_pos_mask = (~torch.isnan(agent_pos)).float()
-        agent_pos = agent_pos.nan_to_num(nan=0.0)
-
-        if agent_pos.shape[-1] < self.config.max_state_dim:
-            pad_size = self.config.max_state_dim - agent_pos.shape[-1]
-            agent_pos = torch.cat(
-                [
-                    agent_pos,
-                    torch.zeros(agent_pos.shape[0], agent_pos.shape[1], pad_size, device=agent_pos.device),
-                ],
-                dim=-1,
-            )
-            agent_pos_mask = torch.cat(
-                [
-                    agent_pos_mask,
-                    torch.zeros(
-                        agent_pos_mask.shape[0],
-                        agent_pos_mask.shape[1],
-                        pad_size,
-                        device=agent_pos_mask.device,
-                    ),
-                ],
-                dim=-1,
-            )
-        elif agent_pos.shape[-1] > self.config.max_state_dim:
+        names = (
+            "input_ids",
+            "attention_mask",
+            "pixel_values",
+            "image_grid_thw",
+            "video_grid_thw",
+            "second_per_grid_ts",
+            "labels",
+            "text_labels",
+            "proprioception",
+            "agent_pos_mask",
+            "action_chunk",
+            "dof_mask",
+            "moe_token_types",
+            "frame_index",
+        )
+        inputs = BatchFeature({name: batch[name] for name in names if name in batch})
+        required = {"input_ids", "attention_mask", "pixel_values", "image_grid_thw", "moe_token_types"}
+        missing = sorted(required - inputs.keys())
+        if missing:
             raise ValueError(
-                f"State dimension {agent_pos.shape[-1]} exceeds max_state_dim {self.config.max_state_dim}"
+                f"WALL-X requires tokenized inputs from its policy preprocessor; missing {missing}."
             )
-
-        # ==================== PROCESS ACTIONS ====================
-        action = batch.get(ACTION)  # (batch_size, chunk_size, action_dim)
-        if action is not None:
-            if action.dim() == 2:
-                action = action.unsqueeze(1)
-            dof_mask = (~torch.isnan(action)).float()
-            action = action.nan_to_num(nan=0.0)
-
-            if action.shape[-1] < self.config.max_action_dim:
-                pad_size = self.config.max_action_dim - action.shape[-1]
-                action = torch.cat(
-                    [action, torch.zeros(action.shape[0], action.shape[1], pad_size, device=action.device)],
-                    dim=-1,
-                )
-                dof_mask = torch.cat(
-                    [
-                        dof_mask,
-                        torch.zeros(dof_mask.shape[0], dof_mask.shape[1], pad_size, device=dof_mask.device),
-                    ],
-                    dim=-1,
-                )
-            elif action.shape[-1] > self.config.max_action_dim:
-                raise ValueError(
-                    f"Action dimension {action.shape[-1]} exceeds max_action_dim {self.config.max_action_dim}"
-                )
-        else:
-            action_dim = self.config.output_features[ACTION].shape[0]
-            dof_mask = torch.cat(
-                [
-                    torch.ones(
-                        batch_size, self.config.chunk_size, action_dim, device=batch[OBS_STATE].device
-                    ),
-                    torch.zeros(
-                        batch_size,
-                        self.config.chunk_size,
-                        self.config.max_action_dim - action_dim,
-                        device=batch[OBS_STATE].device,
-                    ),
-                ],
-                dim=-1,
-            )
-
-        # ==================== ACTION TOKEN REPLACEMENT ====================
-        all_texts = replace_action_token(
-            all_texts,
-            action,
-            self.model.action_tokenizer if use_fast_tokenizer else None,
-            dof_mask,
-        )
-
-        # ==================== TOKENIZATION ====================
-        inputs = preprocesser_call(
-            processor=self.model.processor,
-            text=all_texts,
-            images=all_image_inputs,
-            videos=None,
-            device=batch[OBS_STATE].device,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=TOKENIZER_MAX_LENGTH,
-        )
-
+        if text_generation:
+            keep = required | {"video_grid_thw", "second_per_grid_ts"}
+            inputs = BatchFeature({name: value for name, value in inputs.items() if name in keep})
         if compute_position_ids:
-            # Qwen's RoPE indexing uses Python list/scalar conversions. Run it while the
-            # tokenizer and grid metadata are still on CPU, then move the compact result.
             position_ids, rope_deltas = self.model.get_rope_index(
                 inputs.input_ids,
                 inputs.get("image_grid_thw"),
@@ -2019,28 +1917,6 @@ class WallXPolicy(PreTrainedPolicy):
             )
             inputs["position_ids"] = position_ids
             inputs["rope_deltas"] = rope_deltas
-
-        # ==================== ADDITIONAL INPUTS ====================
-        action_token_id = self.model.processor.tokenizer.convert_tokens_to_ids("<|action|>")
-        moe_token_types = inputs.input_ids == action_token_id
-
-        inputs["proprioception"] = agent_pos
-        inputs["agent_pos_mask"] = agent_pos_mask
-        inputs["action_chunk"] = action
-        inputs["dof_mask"] = dof_mask
-        inputs["moe_token_types"] = moe_token_types
-        inputs["frame_index"] = (
-            batch["frame_index"]
-            if "frame_index" in batch
-            else torch.zeros(batch_size, device=batch[OBS_STATE].device)
-        )
-
-        # Move all tensors to the correct device
-        device = batch[OBS_STATE].device
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor):
-                inputs[key] = value.to(device)
-
         return inputs
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
@@ -2056,16 +1932,34 @@ class WallXPolicy(PreTrainedPolicy):
         Returns:
             tuple: (loss, loss_dict)
         """
-        batch = self.preprocess_inputs(batch, compute_position_ids=True)
+        recipe_supervision = "messages" in batch
+        batch = self._pretokenized_inputs(batch, compute_position_ids=True)
 
         # Call the underlying model's forward with mode="train"
         outputs = self.model(**batch, mode="train")
 
-        # Extract losses from output
-        loss = outputs.loss
-        loss_dict = {
-            "loss": loss.detach() if loss is not None else 0.0,
-        }
+        flow_loss = outputs.flow_loss
+        text_loss = outputs.cross_entropy_loss
+        if recipe_supervision:
+            loss = None
+            if flow_loss is not None:
+                loss = self.config.flow_loss_weight * flow_loss
+            if text_loss is not None:
+                weighted_text_loss = self.config.text_loss_weight * text_loss
+                loss = weighted_text_loss if loss is None else loss + weighted_text_loss
+            if loss is None:
+                raise RuntimeError(
+                    "WALL-OSS batch produced neither action nor text supervision. "
+                    "Check the selected recipe and target annotations."
+                )
+            if not torch.isfinite(loss):
+                raise FloatingPointError("WALL-OSS produced a non-finite training loss.")
+        else:
+            loss = outputs.loss
+            if loss is None:
+                raise RuntimeError("WALL-OSS action-only batch produced no training loss.")
+
+        loss_dict = {"loss": loss.detach()}
 
         if outputs.flow_loss is not None:
             loss_dict["flow_loss"] = outputs.flow_loss.detach()
@@ -2080,15 +1974,48 @@ class WallXPolicy(PreTrainedPolicy):
 
         return loss, loss_dict
 
+    def supports_text_generation(self) -> bool:
+        return True
+
+    @torch.no_grad()
+    def generate_text(self, batch: dict[str, Tensor]) -> str:
+        """Decode one response from contract-rendered messages and the current observation."""
+        self.eval()
+        inputs = self._pretokenized_inputs(batch, text_generation=True)
+        prompt_length = inputs.input_ids.shape[1]
+        sampling = self.config.text_temperature > 0
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": 100,
+            "min_new_tokens": 0,
+            "do_sample": sampling,
+            "eos_token_id": self.model.processor.tokenizer.eos_token_id,
+            "pad_token_id": self.model.processor.tokenizer.pad_token_id,
+            "use_cache": True,
+        }
+        if sampling:
+            generation_kwargs.update(
+                temperature=self.config.text_temperature,
+                top_p=self.config.text_top_p,
+            )
+        output_ids = self.model.generate(**inputs, **generation_kwargs)
+        outputs = [
+            value.strip()
+            for value in self.model.processor.tokenizer.batch_decode(
+                output_ids[:, prompt_length:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True,
+            )
+        ]
+        return require_single_text_output(outputs, policy_name="WALL-X")
+
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict action chunk for evaluation."""
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        batch = self.preprocess_inputs(
-            batch,
-        )
+        generation_prompt_ids = batch.get(WALL_X_GENERATION_PROMPT_IDS)
+        batch = self._pretokenized_inputs(batch)
 
         if self.config.prediction_mode == "diffusion":
             output = self.model(
@@ -2099,8 +2026,13 @@ class WallXPolicy(PreTrainedPolicy):
                 predict_mode="diffusion",
             )
         elif self.config.prediction_mode == "fast":
+            if not isinstance(generation_prompt_ids, Tensor):
+                raise ValueError(
+                    "WALL-X fast prediction requires generation-prompt tokens from its input processor."
+                )
             output = self.model(
                 **batch,
+                generation_prompt_ids=generation_prompt_ids,
                 action_dim=self.config.output_features[ACTION].shape[0],
                 pred_horizon=self.config.chunk_size,
                 mode="predict",
