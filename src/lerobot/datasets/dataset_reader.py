@@ -425,10 +425,7 @@ class DatasetReader(BaseDatasetReader):
             gathered[key] = (column, {rel: j for j, rel in enumerate(rel_sorted)})
 
         return [
-            {
-                key: torch.stack([gathered[key][0][gathered[key][1][r]] for r in q])
-                for key, q in rel.items()
-            }
+            {key: torch.stack([gathered[key][0][gathered[key][1][r]] for r in q]) for key, q in rel.items()}
             for rel in rel_per_item
         ]
 
