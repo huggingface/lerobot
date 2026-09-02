@@ -22,6 +22,7 @@ import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -453,12 +454,91 @@ def test_create_strategy_dispatches():
 
 
 def test_create_strategy_unknown_raises():
-    from lerobot.rollout import create_strategy
+    from lerobot.rollout import RolloutStrategyConfig, create_strategy
 
-    cfg = MagicMock()
-    cfg.type = "bogus"
-    with pytest.raises(ValueError, match="Unknown strategy type"):
-        create_strategy(cfg)
+    # Registered config, but no ``BogusStrategy`` class importable next to it.
+    @RolloutStrategyConfig.register_subclass("bogus")
+    @dataclasses.dataclass
+    class BogusStrategyConfig(RolloutStrategyConfig):
+        pass
+
+    try:
+        with pytest.raises(ValueError, match="Could not locate device class 'BogusStrategy'"):
+            create_strategy(BogusStrategyConfig())
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("bogus")
+
+
+# ---------------------------------------------------------------------------
+# Strategy capability declarations (what a third-party strategy relies on)
+# ---------------------------------------------------------------------------
+
+
+def test_rollout_config_enforces_strategy_declarations():
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import BaseStrategyConfig, DAggerStrategyConfig, RolloutConfig, RolloutStrategyConfig
+    from tests.mocks.mock_robot import MockRobotConfig
+    from tests.mocks.mock_teleop import MockTeleopConfig
+
+    @RolloutStrategyConfig.register_subclass("test_recorder")
+    @dataclasses.dataclass
+    class RecorderConfig(RolloutStrategyConfig):
+        dataset_mode: ClassVar[str] = "required"
+        requires_teleop: ClassVar[bool] = True
+
+        def requires_streaming_encoding(self) -> bool:
+            return True
+
+    def make(**kwargs):
+        return RolloutConfig(robot=MockRobotConfig(), policy=SimpleNamespace(device="cpu"), **kwargs)
+
+    dataset = DatasetRecordConfig(repo_id="user/rollout_test")
+    try:
+        with pytest.raises(ValueError, match="test_recorder strategy requires --teleop.type"):
+            make(strategy=RecorderConfig(), dataset=dataset)
+        with pytest.raises(ValueError, match="test_recorder strategy requires --dataset.repo_id"):
+            make(strategy=RecorderConfig(), teleop=MockTeleopConfig())
+        with pytest.raises(ValueError, match="--dataset.repo_id must be set"):
+            make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=DatasetRecordConfig())
+        with pytest.raises(ValueError, match="base strategy does not record data"):
+            make(strategy=BaseStrategyConfig(), dataset=dataset)
+
+        cfg = make(strategy=RecorderConfig(), teleop=MockTeleopConfig(), dataset=dataset)
+        assert cfg.dataset.streaming_encoding is True
+
+        # requires_streaming_encoding() is a method so it can depend on the config's fields.
+        dagger = make(
+            strategy=DAggerStrategyConfig(record_autonomous=False),
+            teleop=MockTeleopConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        )
+        assert dagger.dataset.streaming_encoding is False
+    finally:
+        RolloutStrategyConfig.get_known_choices().pop("test_recorder")
+
+
+def test_setup_defaults_to_starting_the_engine():
+    from lerobot.rollout import BaseStrategyConfig, RolloutStrategy
+
+    class MinimalStrategy(RolloutStrategy):
+        def run(self, ctx):
+            pass
+
+        def teardown(self, ctx):
+            pass
+
+    engine = MagicMock()
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(cfg=SimpleNamespace(interpolation_multiplier=2)),
+        policy=SimpleNamespace(inference=engine),
+    )
+    strategy = MinimalStrategy(BaseStrategyConfig())
+
+    strategy.setup(ctx)
+
+    assert strategy._engine is engine
+    assert strategy._interpolator.multiplier == 2
+    engine.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

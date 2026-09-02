@@ -103,3 +103,69 @@ def test_wrap_with_plugin(plugin_dir: Path):
     assert isinstance(cfg, Config)
     assert isinstance(cfg.env, EnvConfig.get_choice_class("test_env"))
     assert cfg.env.value == 42
+
+
+@pytest.fixture
+def strategy_plugin_dir(tmp_path: Path) -> Generator[Path, None, None]:
+    """A single-module rollout-strategy plugin: config and implementation side by side."""
+    pytest.importorskip("datasets", reason="lerobot.rollout requires lerobot[dataset]")
+    plugin_pkg = tmp_path / "lerobot_strategy_test"
+    plugin_pkg.mkdir()
+    (plugin_pkg / "__init__.py").touch()
+    (plugin_pkg / "strategy.py").write_text(
+        """
+from dataclasses import dataclass
+
+from lerobot.rollout import RolloutStrategy, RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("test_strategy")
+@dataclass
+class TestStrategyConfig(RolloutStrategyConfig):
+    gain: float = 1.0
+
+
+class TestStrategy(RolloutStrategy):
+    def run(self, ctx):
+        pass
+
+    def teardown(self, ctx):
+        pass
+"""
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    yield plugin_pkg
+    sys.path.pop(0)
+
+    from lerobot.rollout import RolloutStrategyConfig
+
+    RolloutStrategyConfig.get_known_choices().pop("test_strategy", None)
+    for name in [n for n in sys.modules if n.split(".")[0] == "lerobot_strategy_test"]:
+        del sys.modules[name]
+
+
+def test_wrap_and_create_strategy_with_plugin(strategy_plugin_dir: Path):
+    from lerobot.rollout import RolloutStrategyConfig, create_strategy
+
+    @dataclass
+    class Config:
+        strategy: RolloutStrategyConfig
+
+    @wrap()
+    def dummy_func(cfg: Config):
+        return cfg
+
+    sys.argv = [
+        "dummy_script.py",
+        "--strategy.discover_packages_path=lerobot_strategy_test",
+        "--strategy.type=test_strategy",
+        "--strategy.gain=2.5",
+    ]
+
+    cfg = dummy_func()
+    strategy = create_strategy(cfg.strategy)
+
+    assert cfg.strategy.gain == 2.5
+    assert type(strategy).__name__ == "TestStrategy"
+    assert strategy.config is cfg.strategy
