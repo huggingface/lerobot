@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
 from lerobot.rewards.scoring import ScoringSummary
 from lerobot.scripts import lerobot_score_dataset
 from lerobot.scripts.lerobot_score_dataset import ScoreDatasetConfig
@@ -107,4 +108,83 @@ def test_run_score_dataset_loads_robometer_and_calls_shared_workflow(monkeypatch
         "resume": True,
         "batch_size": 8,
         "num_subsampled_frames": 6,
+    }
+
+
+def test_run_score_dataset_loads_rynnvalue_and_calls_shared_workflow(monkeypatch, tmp_path):
+    import lerobot.datasets
+
+    reward_config = RynnValueConfig(
+        pretrained_path="old/model",
+        device="cpu",
+        use_meta=False,
+    )
+    fake_model = object()
+    fake_dataset = SimpleNamespace(
+        root=tmp_path / "dataset",
+        repo_id="user/dataset",
+        revision="dataset-revision",
+    )
+    expected_summary = ScoringSummary(
+        output_path=tmp_path / "dataset" / "reward_signals" / "rynnvalue.parquet",
+        episode_count=1,
+        new_episode_count=1,
+        resumed_episode_count=0,
+        frame_count=3,
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        lerobot_score_dataset.RewardModelConfig,
+        "from_pretrained",
+        lambda path, *, revision: reward_config,
+    )
+    monkeypatch.setattr(
+        lerobot.datasets,
+        "LeRobotDataset",
+        lambda *args, **kwargs: fake_dataset,
+    )
+    monkeypatch.setattr(lerobot_score_dataset, "make_reward_model", lambda config: fake_model)
+
+    def fake_score(dataset, model, **kwargs):
+        captured["score"] = (dataset, model, kwargs)
+        return expected_summary
+
+    monkeypatch.setattr(lerobot_score_dataset, "score_rynnvalue_dataset", fake_score)
+
+    cfg = ScoreDatasetConfig(
+        dataset_repo_id="user/dataset",
+        reward_model_path="user/rynnvalue",
+        reward_model_revision="model-revision",
+        image_key="observation.images.wrist",
+        default_task="pick up the cube",
+        inference_fps=2.0,
+        max_frames=6,
+        horizon_s=12.0,
+        robot_description="a single-arm robot",
+        camera_description="a third-person camera",
+        use_meta=True,
+    )
+
+    summary = lerobot_score_dataset.run_score_dataset(cfg)
+
+    assert summary == expected_summary
+    assert reward_config.image_key == "observation.images.wrist"
+    assert reward_config.default_task == "pick up the cube"
+    assert reward_config.robot_description == "a single-arm robot"
+    assert reward_config.camera_description == "a third-person camera"
+    assert reward_config.use_meta is True
+    dataset, model, kwargs = captured["score"]
+    assert dataset is fake_dataset
+    assert model is fake_model
+    assert kwargs == {
+        "output_path": Path(tmp_path / "dataset" / "reward_signals" / "rynnvalue.parquet"),
+        "model_id": "user/rynnvalue",
+        "model_revision": "model-revision",
+        "episode_indices": None,
+        "resume": True,
+        "batch_size": 2,
+        "inference_fps": 2.0,
+        "max_frames": 6,
+        "horizon_s": 12.0,
     }
