@@ -21,11 +21,12 @@ from lerobot.utils.import_utils import _transformers_available
 from .configuration_rynnvalue import RynnValueConfig
 
 if TYPE_CHECKING or _transformers_available:
-    from .modeling_rynnvalue import RynnValueRewardModel
+    from .modeling_rynnvalue import RynnValuePrediction, RynnValueRewardModel
     from .processor_rynnvalue import make_rynnvalue_pre_post_processors
 
     __all__ = [
         "RynnValueConfig",
+        "RynnValuePrediction",
         "RynnValueRewardModel",
         "make_rynnvalue_pre_post_processors",
     ]

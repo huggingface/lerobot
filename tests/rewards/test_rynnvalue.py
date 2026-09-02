@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @require_cuda
-def test_released_rynnvalue_4b_preprocessor_to_reward():
+def test_released_rynnvalue_4b_preprocessor_to_remaining_time():
     config = RynnValueConfig(
         device="cuda",
         max_frames=2,
@@ -51,7 +51,7 @@ def test_released_rynnvalue_4b_preprocessor_to_reward():
     assert encoded["observation.rynnvalue.attention_mask"].shape[-1] == input_length
     assert encoded["observation.rynnvalue.mm_token_type_ids"].shape[-1] == input_length
     model = RynnValueRewardModel(config).to("cuda").eval()
-    reward = model.compute_reward(encoded)
-    assert reward.shape == (1,)
-    assert reward.dtype == torch.float32
-    assert torch.isfinite(reward).all()
+    prediction = model.predict_remaining_time(encoded)
+    assert prediction.remaining_time_s.shape == (1,)
+    assert prediction.remaining_time_s.dtype == torch.float32
+    assert torch.isfinite(prediction.remaining_time_s).all()

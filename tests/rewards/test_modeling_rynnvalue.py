@@ -201,7 +201,7 @@ def test_reduce_remaining_time_supports_uneven_sample_slot_counts():
     assert torch.equal(remaining_time, torch.tensor([8.0, 2.0]))
 
 
-def test_compute_reward_uses_value_tokens_to_split_uneven_samples():
+def test_predict_remaining_time_uses_value_tokens_to_split_uneven_samples():
     native_config = _FakeNativeConfig()
     native_config.value_token_id = 99
     native_config.value_token_repeat = 2
@@ -209,10 +209,7 @@ def test_compute_reward_uses_value_tokens_to_split_uneven_samples():
         pred_value=torch.tensor([[8.0, 5.0, 1.0]]),
         config=native_config,
     )
-    model = RynnValueRewardModel(
-        RynnValueConfig(device="cpu", reward_output="remaining_time"),
-        model=native_model,
-    )
+    model = RynnValueRewardModel(RynnValueConfig(device="cpu"), model=native_model)
     batch = _encoded_batch(batch_size=2)
     batch[f"{RYNNVALUE_FEATURE_PREFIX}input_ids"] = torch.tensor(
         [
@@ -221,28 +218,31 @@ def test_compute_reward_uses_value_tokens_to_split_uneven_samples():
         ]
     )
 
-    assert torch.equal(model.compute_reward(batch), torch.tensor([8.0, 1.0]))
+    prediction = model.predict_remaining_time(batch)
+    assert torch.equal(prediction.remaining_time_s, torch.tensor([8.0, 1.0]))
 
 
-def test_compute_reward_returns_negative_remaining_time(monkeypatch):
+def test_predict_remaining_time_returns_native_seconds(monkeypatch):
     _patch_checkpoint_load(monkeypatch)
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
-    reward = model.compute_reward(_encoded_batch())
-    assert torch.equal(reward, torch.tensor([-2.0, -1.0]))
+    prediction = model.predict_remaining_time(_encoded_batch())
+    assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
     assert model.is_trainable is False
+    assert not hasattr(model, "compute_reward")
 
 
-def test_compute_reward_can_return_raw_remaining_time(monkeypatch):
+def test_legacy_reward_output_does_not_change_native_prediction(monkeypatch):
     _patch_checkpoint_load(monkeypatch)
-    model = RynnValueRewardModel(RynnValueConfig(device="cpu", reward_output="remaining_time"))
-    assert torch.equal(model.compute_reward(_encoded_batch()), torch.tensor([2.0, 1.0]))
+    model = RynnValueRewardModel(RynnValueConfig(device="cpu", reward_output="potential"))
+    prediction = model.predict_remaining_time(_encoded_batch())
+    assert torch.equal(prediction.remaining_time_s, torch.tensor([2.0, 1.0]))
 
 
-def test_compute_reward_requires_encoded_inputs(monkeypatch):
+def test_predict_remaining_time_requires_encoded_inputs(monkeypatch):
     _patch_checkpoint_load(monkeypatch)
     model = RynnValueRewardModel(RynnValueConfig(device="cpu"))
     with pytest.raises(KeyError, match="observation.rynnvalue.input_ids"):
-        model.compute_reward({})
+        model.predict_remaining_time({})
 
 
 def test_embedded_model_config_avoids_upstream_checkpoint_load(monkeypatch):
@@ -427,8 +427,8 @@ def test_offline_checkpoint_roundtrip_through_reward_factories(monkeypatch, tmp_
             config.task_key: "pick up the cube",
         }
     )
-    reward = model.compute_reward(encoded)
+    prediction = model.predict_remaining_time(encoded)
 
     assert processor_sources == [(str(tmp_path), None)]
-    assert reward.shape == (1,)
-    assert torch.isfinite(reward).all()
+    assert prediction.remaining_time_s.shape == (1,)
+    assert torch.isfinite(prediction.remaining_time_s).all()
