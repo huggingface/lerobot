@@ -36,6 +36,7 @@ import numpy as np
 import pyarrow as pa
 import torch
 from datasets.features.features import register_feature
+from fsspec.core import split_protocol
 from PIL import Image
 
 from lerobot.configs import (
@@ -240,6 +241,17 @@ to the constructor (``None`` restores the legacy unbounded behaviour).
 """
 
 
+DEFAULT_DECODER_CACHE_BYTES = None
+"""Default byte budget for :class:`VideoDecoderCache` (``None`` disables it).
+
+Bounds host RAM held by decoders that buffer their video in memory — remote
+sources opened through fsspec; local files are read from disk on demand and cost
+nothing here — on top of the count cap. Opt-in via the
+``LEROBOT_VIDEO_DECODER_CACHE_BYTES`` env var or the ``byte_budget`` constructor
+argument, e.g. ``2_000_000_000`` for a ~2 GB cap.
+"""
+
+
 def _default_max_cache_size() -> int | None:
     raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_SIZE")
     if raw is None:
@@ -258,32 +270,77 @@ def _default_max_cache_size() -> int | None:
     return value
 
 
+def _default_byte_budget() -> int | None:
+    raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_BYTES")
+    if raw is None:
+        return DEFAULT_DECODER_CACHE_BYTES
+    raw = raw.strip().lower()
+    if raw in ("", "none", "unbounded", "-1", "0"):
+        return None
+    try:
+        value = int(raw)
+    except ValueError as e:
+        raise ValueError(
+            f"LEROBOT_VIDEO_DECODER_CACHE_BYTES must be an integer, 'none', or '-1'; got {raw!r}"
+        ) from e
+    if value <= 0:
+        raise ValueError(f"LEROBOT_VIDEO_DECODER_CACHE_BYTES must be positive; got {value}")
+    return value
+
+
+def _video_file_nbytes(file_handle: Any) -> int:
+    """Best-effort size (bytes) of a remote video buffered in RAM by its decoder.
+
+    Only remote sources are opened through an in-memory ``fsspec`` handle, so
+    only they weigh against the byte budget. Returns 0 when the handle reports
+    no size, making that entry weightless.
+    """
+    size = getattr(file_handle, "size", None)
+    return size if isinstance(size, int) and size > 0 else 0
+
+
 class VideoDecoderCache:
     """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
 
-    Cached entries hold a ``VideoDecoder`` plus the open ``fsspec`` file handle
-    backing it. When the cache is full and a new path is requested, the
-    least-recently-used entry is evicted and its file handle is closed. This
+    Cached entries hold a ``VideoDecoder``. Remote sources also keep the open
+    ``fsspec`` file handle backing them (closed on eviction); local files are
+    decoded straight from their path and carry no handle. When the cache is full
+    and a new path is requested, the least-recently-used entry is evicted. This
     bounds host-RAM growth when iterating over datasets with many distinct
     video files (otherwise each ``DataLoader`` worker pins every decoder it has
     ever opened until the process exits).
 
     Args:
         max_size: Maximum number of decoders to retain. ``None`` disables
-            eviction and restores legacy unbounded behaviour. Defaults to the
-            value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if set, otherwise
-            :data:`DEFAULT_DECODER_CACHE_SIZE`.
+            count-based eviction and restores legacy unbounded behaviour.
+            Defaults to the value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if
+            set, otherwise :data:`DEFAULT_DECODER_CACHE_SIZE`.
+        byte_budget: Optional cap on the summed size of the video files buffered
+            in memory by cached decoders (remote sources only; local files are
+            read from disk and weigh nothing). When exceeded, least-recently-used
+            entries are evicted (always keeping at least one). ``None`` disables
+            it. Defaults to ``LEROBOT_VIDEO_DECODER_CACHE_BYTES`` if set,
+            otherwise :data:`DEFAULT_DECODER_CACHE_BYTES`.
     """
 
     _SENTINEL: ClassVar[object] = object()
 
-    def __init__(self, max_size: int | None | object = _SENTINEL):
+    def __init__(
+        self,
+        max_size: int | None | object = _SENTINEL,
+        byte_budget: int | None | object = _SENTINEL,
+    ):
         if max_size is VideoDecoderCache._SENTINEL:
             max_size = _default_max_cache_size()
         if max_size is not None and max_size <= 0:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
+        if byte_budget is VideoDecoderCache._SENTINEL:
+            byte_budget = _default_byte_budget()
+        if byte_budget is not None and byte_budget <= 0:
+            raise ValueError(f"byte_budget must be positive or None; got {byte_budget}")
         self.max_size: int | None = max_size  # type: ignore[assignment]
-        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+        self.byte_budget: int | None = byte_budget  # type: ignore[assignment]
+        self._cache: OrderedDict[str, tuple[Any, Any, int]] = OrderedDict()
         self._lock = Lock()
 
     def __contains__(self, video_path: object) -> bool:
@@ -308,20 +365,39 @@ class VideoDecoderCache:
                 self._cache.move_to_end(video_path)
                 return entry[0]
 
-            file_handle = fsspec.open(video_path).__enter__()
-            try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
-            except Exception:
-                file_handle.close()
-                raise
-            self._cache[video_path] = (decoder, file_handle)
+            # Local files are handed to torchcodec as a path so it reads from disk
+            # on demand (shared OS page cache, no per-decoder buffering). Remote
+            # sources are opened through fsspec and buffered in memory by the
+            # decoder, so they carry a handle to close and a byte weight for the
+            # budget.
+            protocol, _ = split_protocol(video_path)
+            if protocol in (None, "file"):
+                file_handle = None
+                decoder = VideoDecoder(video_path, seek_mode="approximate")
+                nbytes = 0
+            else:
+                file_handle = fsspec.open(video_path).__enter__()
+                try:
+                    decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                except Exception:
+                    file_handle.close()
+                    raise
+                nbytes = _video_file_nbytes(file_handle) if self.byte_budget is not None else 0
+            self._cache[video_path] = (decoder, file_handle, nbytes)
 
-            # Evict LRU entries until we are back under the cap. We close
-            # evicted file handles immediately; the associated ``VideoDecoder``
+            # Evict LRU entries until back under both the count cap and the byte
+            # budget (always keeping the just-added entry). Evicted remote handles
+            # are closed immediately (local entries have none); the ``VideoDecoder``
             # is released to the GC when its last reference goes away.
-            if self.max_size is not None:
-                while len(self._cache) > self.max_size:
-                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
+            while len(self._cache) > 1:
+                over_count = self.max_size is not None and len(self._cache) > self.max_size
+                over_bytes = self.byte_budget is not None and (
+                    sum(n for _, _, n in self._cache.values()) > self.byte_budget
+                )
+                if not (over_count or over_bytes):
+                    break
+                _path, (_decoder, evicted_handle, _nbytes) = self._cache.popitem(last=False)
+                if evicted_handle is not None:
                     with contextlib.suppress(Exception):
                         evicted_handle.close()
 
@@ -330,9 +406,10 @@ class VideoDecoderCache:
     def clear(self):
         """Clear the cache and close all file handles."""
         with self._lock:
-            for _, file_handle in self._cache.values():
-                with contextlib.suppress(Exception):
-                    file_handle.close()
+            for _decoder, file_handle, _nbytes in self._cache.values():
+                if file_handle is not None:
+                    with contextlib.suppress(Exception):
+                        file_handle.close()
             self._cache.clear()
 
     def size(self) -> int:
