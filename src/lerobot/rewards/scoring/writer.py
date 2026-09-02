@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 from .reader import (
     _RESERVED_COLUMNS,
@@ -33,8 +31,11 @@ from .reader import (
     SCORING_SCHEMA_VERSION,
     _canonical_json,
     _metadata,
+    _require_pyarrow,
     _validate_new_artifact,
     get_signal_descriptors,
+    pa,
+    pq,
 )
 from .types import SignalDescriptor
 
@@ -81,6 +82,7 @@ def _atomic_write_json(payload: Mapping[str, Any], path: Path) -> None:
 
 
 def _atomic_write_table(table: pa.Table, path: Path) -> None:
+    _require_pyarrow()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -106,6 +108,7 @@ class _FrameSignalsWriter:
         episode_indices: Sequence[int],
         resume: bool,
     ) -> None:
+        _require_pyarrow()
         self.output_path = Path(output_path)
         self.provenance = dict(provenance)
         self.episode_indices = tuple(int(index) for index in episode_indices)

@@ -16,7 +16,6 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
 from lerobot.rewards.scoring import (
@@ -28,6 +27,8 @@ from lerobot.rewards.scoring import (
     score_dataset,
     score_dataset_with_reward_model,
 )
+
+pq = pytest.importorskip("pyarrow.parquet")
 
 PROGRESS_NAME = "reward.test.progress"
 PROGRESS_DESCRIPTOR = SignalDescriptor(

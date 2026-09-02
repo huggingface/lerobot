@@ -21,9 +21,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pyarrow as pa
 
-from .reader import SCORING_SCHEMA_VERSION, read_frame_signals
+from .reader import SCORING_SCHEMA_VERSION, _require_pyarrow, pa, read_frame_signals
 from .types import FrameSignals, ScoringSummary, SignalDescriptor
 from .writer import _FrameSignalsWriter
 
@@ -186,6 +185,7 @@ def _to_episode_table(
     frame_indices: np.ndarray,
     signals: Mapping[str, np.ndarray],
 ) -> pa.Table:
+    _require_pyarrow()
     return pa.table(
         {
             "index": episode_start + frame_indices,
