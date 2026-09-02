@@ -16,6 +16,7 @@
 import contextlib
 import glob
 import importlib
+import io
 import logging
 import os
 import queue
@@ -105,6 +106,57 @@ def decode_video_frames(
         raise ValueError(f"Unsupported video backend: {backend}")
 
 
+def _pyav_decode_window(
+    container: Any,
+    stream: Any,
+    first_ts: float,
+    last_ts: float,
+    is_depth: bool,
+    log_loaded_timestamps: bool,
+) -> tuple[list[torch.Tensor], list[float]]:
+    """Seek to the keyframe at/before ``first_ts`` and decode forward through ``last_ts``.
+
+    Returns the decoded frames (CHW uint8 for RGB, 1HW uint12 for depth) and their
+    timestamps. ``container`` / ``stream`` may be freshly opened or reused from the
+    cache; this only seeks + decodes and never closes them.
+
+    `container.seek(offset)` with no `stream` argument expects the offset in
+    av.time_base units (microseconds); passing ``stream`` uses that stream's
+    time_base instead. `backward=True` lands on the nearest keyframe at or before
+    `first_ts`, so we can decode forward until we cover `last_ts`. See:
+    https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
+    """
+    loaded_frames: list[torch.Tensor] = []
+    loaded_ts: list[float] = []
+
+    # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
+    container.seek(
+        round(first_ts / stream.time_base) - 1,
+        backward=True,
+        any_frame=False,
+        stream=stream,
+    )
+
+    for frame in container.decode(stream):
+        if frame.pts is None:
+            continue
+        current_ts = float(frame.pts * stream.time_base)
+        if log_loaded_timestamps:
+            logger.info(f"frame loaded at timestamp={current_ts:.4f}")
+        if is_depth:
+            arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
+            loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
+        else:
+            arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
+            # Convert to CHW uint8 to match torchcodec's output layout.
+            loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
+        loaded_ts.append(current_ts)
+        if current_ts >= last_ts:
+            break
+
+    return loaded_frames, loaded_ts
+
+
 def decode_video_frames_pyav(
     video_path: Path | str | BinaryIO,
     timestamps: list[float],
@@ -112,6 +164,7 @@ def decode_video_frames_pyav(
     log_loaded_timestamps: bool = False,
     return_uint8: bool = False,
     is_depth: bool = False,
+    container_cache: "PyavCache | None" = None,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video using PyAV.
 
@@ -134,53 +187,34 @@ def decode_video_frames_pyav(
         return_uint8: For RGB videos, if True return raw uint8 frames (C, H, W).
             Otherwise, return float32 in [0, 1] range.
         is_depth: Set to True if the video is a depth map (1 channel, uint12).
+        container_cache: Optional :class:`PyavCache` reused across calls. Only used
+            when ``video_path`` is a path/URL (not a raw file-like object). Uses the
+            module-level default when ``None``.
 
     Returns:
         torch.Tensor of shape (len(timestamps), C, H, W).
     """
     # TODO(rcadene): also load audio stream at the same time
-    if isinstance(video_path, (str, Path)):
-        video_path = str(video_path)
-    # else: a file-like object (e.g. a buffered remote source) passes to av.open as-is.
 
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
     first_ts = min(timestamps)
     last_ts = max(timestamps)
 
-    loaded_frames: list[torch.Tensor] = []
-    loaded_ts: list[float] = []
-
-    # Seek + decode. `container.seek(offset)` with no `stream` argument expects the offset in
-    # av.time_base units (microseconds). `backward=True` lands us on the nearest keyframe at or
-    # before `first_ts`, so we can then decode forward until we cover `last_ts`. See:
-    # https://pyav.basswood-io.com/docs/stable/api/container.html#av.container.InputContainer.seek
-    with av.open(video_path) as container:
-        stream = container.streams.video[0]
-        # Seek to the nearest keyframe at or before `first_ts` with a 1 frame margin
-        container.seek(
-            round(first_ts / stream.time_base) - 1,
-            backward=True,
-            any_frame=False,
-            stream=stream,
+    # A path/URL is decoded through the container cache (reused across calls, incl.
+    # remote fsspec URLs). A raw file-like object (e.g. a caller-managed remote
+    # source) has no stable cache key, so it is opened ad hoc and closed here.
+    if isinstance(video_path, (str, Path)):
+        cache = container_cache or _default_pyav_cache
+        container, stream = cache.get_container(str(video_path))
+        loaded_frames, loaded_ts = _pyav_decode_window(
+            container, stream, first_ts, last_ts, is_depth, log_loaded_timestamps
         )
-
-        for frame in container.decode(stream):
-            if frame.pts is None:
-                continue
-            current_ts = float(frame.pts * stream.time_base)
-            if log_loaded_timestamps:
-                logger.info(f"frame loaded at timestamp={current_ts:.4f}")
-            if is_depth:
-                arr = frame.to_ndarray(format="gray12le")  # (H, W) uint12
-                loaded_frames.append(torch.from_numpy(arr).unsqueeze(0).contiguous())
-            else:
-                arr = frame.to_ndarray(format="rgb24")  # (H, W, 3)
-                # Convert to CHW uint8 to match torchcodec's output layout.
-                loaded_frames.append(torch.from_numpy(arr).permute(2, 0, 1).contiguous())
-            loaded_ts.append(current_ts)
-            if current_ts >= last_ts:
-                break
+    else:
+        with av.open(video_path) as container:
+            loaded_frames, loaded_ts = _pyav_decode_window(
+                container, container.streams.video[0], first_ts, last_ts, is_depth, log_loaded_timestamps
+            )
 
     if not loaded_frames:
         raise FrameTimestampError(
@@ -230,7 +264,7 @@ def decode_video_frames_pyav(
 
 
 DEFAULT_DECODER_CACHE_SIZE = 100
-"""Default LRU capacity for :class:`VideoDecoderCache`.
+"""Default LRU capacity for :class:`TorchcodecCache`.
 
 Sized to comfortably hold a small rolling window of episodes worth of decoders
 (typical recipes: 2-4 cameras per episode × tens of episodes in flight) while
@@ -242,7 +276,7 @@ to the constructor (``None`` restores the legacy unbounded behaviour).
 
 
 DEFAULT_DECODER_CACHE_BYTES = None
-"""Default byte budget for :class:`VideoDecoderCache` (``None`` disables it).
+"""Default byte budget for :class:`TorchcodecCache` (``None`` disables it).
 
 Bounds host RAM held by decoders that buffer their video in memory — remote
 sources opened through fsspec; local files are read from disk on demand and cost
@@ -252,39 +286,46 @@ argument, e.g. ``2_000_000_000`` for a ~2 GB cap.
 """
 
 
-def _default_max_cache_size() -> int | None:
-    raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_SIZE")
-    if raw is None:
-        return DEFAULT_DECODER_CACHE_SIZE
-    raw = raw.strip().lower()
-    if raw in ("", "none", "unbounded", "-1"):
-        return None
-    try:
-        value = int(raw)
-    except ValueError as e:
-        raise ValueError(
-            f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be an integer, 'none', or '-1'; got {raw!r}"
-        ) from e
-    if value <= 0:
-        raise ValueError(f"LEROBOT_VIDEO_DECODER_CACHE_SIZE must be positive; got {value}")
-    return value
+DEFAULT_PYAV_CACHE_SIZE = 32
+"""Default LRU capacity for :class:`PyavCache`.
+
+Smaller than the torchcodec default because pyav is the fallback backend (mainly
+macOS x86_64, where the default open-file limit is 256) and every cached entry
+holds an open container, i.e. a file descriptor. 32 keeps a multi-camera rolling
+window while staying clear of the FD limit even with several DataLoader workers
+(each worker process has its own cache). Override via the
+``LEROBOT_PYAV_CACHE_SIZE`` env var or the ``max_size`` constructor argument
+(``None`` disables count-based eviction).
+"""
 
 
-def _default_byte_budget() -> int | None:
-    raw = os.environ.get("LEROBOT_VIDEO_DECODER_CACHE_BYTES")
+DEFAULT_PYAV_CACHE_BYTES = None
+"""Default byte budget for :class:`PyavCache` (``None`` disables it).
+
+Bounds host RAM held by remote videos buffered in memory (local containers stream
+from disk and weigh nothing). Opt-in via the ``LEROBOT_PYAV_CACHE_BYTES`` env var
+or the ``byte_budget`` constructor argument.
+"""
+
+
+def _env_cache_int(env_name: str, default: int | None) -> int | None:
+    """Resolve an LRU cache bound from an environment variable.
+
+    Returns ``default`` when unset; ``None`` (disabled) for ``none`` / ``unbounded``
+    / ``-1`` / ``0`` / empty; otherwise the parsed positive integer.
+    """
+    raw = os.environ.get(env_name)
     if raw is None:
-        return DEFAULT_DECODER_CACHE_BYTES
+        return default
     raw = raw.strip().lower()
     if raw in ("", "none", "unbounded", "-1", "0"):
         return None
     try:
         value = int(raw)
     except ValueError as e:
-        raise ValueError(
-            f"LEROBOT_VIDEO_DECODER_CACHE_BYTES must be an integer, 'none', or '-1'; got {raw!r}"
-        ) from e
+        raise ValueError(f"{env_name} must be an integer, 'none', or '-1'; got {raw!r}") from e
     if value <= 0:
-        raise ValueError(f"LEROBOT_VIDEO_DECODER_CACHE_BYTES must be positive; got {value}")
+        raise ValueError(f"{env_name} must be positive; got {value}")
     return value
 
 
@@ -299,43 +340,54 @@ def _video_file_nbytes(file_handle: Any) -> int:
     return size if isinstance(size, int) and size > 0 else 0
 
 
-class VideoDecoderCache:
-    """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
+class _VideoResourceCache:
+    """Thread-safe LRU cache for per-video decode resources.
 
-    Cached entries hold a ``VideoDecoder``. Remote sources also keep the open
-    ``fsspec`` file handle backing them (closed on eviction); local files are
-    decoded straight from their path and carry no handle. When the cache is full
-    and a new path is requested, the least-recently-used entry is evicted. This
-    bounds host-RAM growth when iterating over datasets with many distinct
-    video files (otherwise each ``DataLoader`` worker pins every decoder it has
-    ever opened until the process exits).
+    Backend-agnostic base shared by :class:`TorchcodecCache` (torchcodec
+    ``VideoDecoder`` instances) and :class:`PyavCache` (open pyav containers).
+    Bounds host RAM/FD growth when iterating over datasets with many distinct
+    video files (otherwise each ``DataLoader`` worker pins every resource it has
+    ever opened until the process exits) via a count cap and an optional byte
+    budget. Subclasses provide the backend through :meth:`_create` / :meth:`_close`.
+
+    Entries are ``(resource, closeable, weight)``: ``resource`` is returned to the
+    caller, ``closeable`` (may be ``None``) is closed on eviction, and ``weight``
+    is the entry's byte cost against ``byte_budget`` (0 = weightless).
+
+    Not safe to decode the same cached resource from two threads at once: cached
+    resources are stateful (a pyav container carries a decode position). Callers
+    must ensure one path is decoded by one thread at a time — LeRobotDataset's
+    per-file grouping in ``_query_videos`` already guarantees this.
 
     Args:
-        max_size: Maximum number of decoders to retain. ``None`` disables
-            count-based eviction and restores legacy unbounded behaviour.
-            Defaults to the value of ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` if
-            set, otherwise :data:`DEFAULT_DECODER_CACHE_SIZE`.
-        byte_budget: Optional cap on the summed size of the video files buffered
-            in memory by cached decoders (remote sources only; local files are
-            read from disk and weigh nothing). When exceeded, least-recently-used
-            entries are evicted (always keeping at least one). ``None`` disables
-            it. Defaults to ``LEROBOT_VIDEO_DECODER_CACHE_BYTES`` if set,
-            otherwise :data:`DEFAULT_DECODER_CACHE_BYTES`.
+        max_size: Maximum number of resources to retain. ``None`` disables
+            count-based eviction. Defaults to the subclass env var if set,
+            otherwise the subclass default.
+        byte_budget: Optional cap on the summed weight of cached entries. When
+            exceeded, least-recently-used entries are evicted (always keeping at
+            least one). ``None`` disables it. Defaults to the subclass env var if
+            set, otherwise the subclass default.
     """
 
     _SENTINEL: ClassVar[object] = object()
+
+    # Subclasses set these to wire up env-var / default resolution.
+    _ENV_SIZE: ClassVar[str]
+    _ENV_BYTES: ClassVar[str]
+    _DEFAULT_SIZE: ClassVar[int | None]
+    _DEFAULT_BYTES: ClassVar[int | None]
 
     def __init__(
         self,
         max_size: int | None | object = _SENTINEL,
         byte_budget: int | None | object = _SENTINEL,
     ):
-        if max_size is VideoDecoderCache._SENTINEL:
-            max_size = _default_max_cache_size()
+        if max_size is _VideoResourceCache._SENTINEL:
+            max_size = _env_cache_int(self._ENV_SIZE, self._DEFAULT_SIZE)
         if max_size is not None and max_size <= 0:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
-        if byte_budget is VideoDecoderCache._SENTINEL:
-            byte_budget = _default_byte_budget()
+        if byte_budget is _VideoResourceCache._SENTINEL:
+            byte_budget = _env_cache_int(self._ENV_BYTES, self._DEFAULT_BYTES)
         if byte_budget is not None and byte_budget <= 0:
             raise ValueError(f"byte_budget must be positive or None; got {byte_budget}")
         self.max_size: int | None = max_size  # type: ignore[assignment]
@@ -347,8 +399,78 @@ class VideoDecoderCache:
         with self._lock:
             return str(video_path) in self._cache
 
-    def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
+    def _create(self, video_path: str) -> tuple[Any, Any, int]:
+        """Open a new resource for ``video_path``: ``(resource, closeable, weight)``."""
+        raise NotImplementedError
+
+    def _close(self, closeable: Any) -> None:
+        """Release a ``closeable`` returned by :meth:`_create` (never ``None``)."""
+        raise NotImplementedError
+
+    def _get(self, video_path: str) -> Any:
+        """Return a cached resource or create one, evicting LRU if over budget."""
+        video_path = str(video_path)
+        with self._lock:
+            entry = self._cache.get(video_path)
+            if entry is not None:
+                self._cache.move_to_end(video_path)
+                return entry[0]
+
+            resource, closeable, nbytes = self._create(video_path)
+            self._cache[video_path] = (resource, closeable, nbytes)
+
+            # Evict LRU entries until back under both the count cap and the byte
+            # budget (always keeping the just-added entry). Evicted closeables are
+            # released immediately; the resource is GC'd when its last reference
+            # goes away.
+            while len(self._cache) > 1:
+                over_count = self.max_size is not None and len(self._cache) > self.max_size
+                over_bytes = self.byte_budget is not None and (
+                    sum(n for _, _, n in self._cache.values()) > self.byte_budget
+                )
+                if not (over_count or over_bytes):
+                    break
+                _path, (_resource, evicted, _nbytes) = self._cache.popitem(last=False)
+                if evicted is not None:
+                    with contextlib.suppress(Exception):
+                        self._close(evicted)
+
+            return resource
+
+    def clear(self):
+        """Clear the cache and release all closeables."""
+        with self._lock:
+            for _resource, closeable, _nbytes in self._cache.values():
+                if closeable is not None:
+                    with contextlib.suppress(Exception):
+                        self._close(closeable)
+            self._cache.clear()
+
+    def size(self) -> int:
+        """Return the number of cached resources."""
+        with self._lock:
+            return len(self._cache)
+
+
+class TorchcodecCache(_VideoResourceCache):
+    """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
+
+    Local files are decoded straight from their path (shared OS page cache, no
+    per-decoder buffering); remote sources are opened through an in-memory
+    ``fsspec`` handle (closed on eviction) and weigh against ``byte_budget``.
+    See :class:`_VideoResourceCache` for the eviction and thread-safety contract.
+
+    Defaults come from ``LEROBOT_VIDEO_DECODER_CACHE_SIZE`` /
+    ``LEROBOT_VIDEO_DECODER_CACHE_BYTES`` (else :data:`DEFAULT_DECODER_CACHE_SIZE`
+    / :data:`DEFAULT_DECODER_CACHE_BYTES`).
+    """
+
+    _ENV_SIZE: ClassVar[str] = "LEROBOT_VIDEO_DECODER_CACHE_SIZE"
+    _ENV_BYTES: ClassVar[str] = "LEROBOT_VIDEO_DECODER_CACHE_BYTES"
+    _DEFAULT_SIZE: ClassVar[int | None] = DEFAULT_DECODER_CACHE_SIZE
+    _DEFAULT_BYTES: ClassVar[int | None] = DEFAULT_DECODER_CACHE_BYTES
+
+    def _create(self, video_path: str) -> tuple[Any, Any, int]:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -357,65 +479,66 @@ class VideoDecoderCache:
                 "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
             )
 
-        video_path = str(video_path)
+        protocol, _ = split_protocol(video_path)
+        if protocol in (None, "file"):
+            return VideoDecoder(video_path, seek_mode="approximate"), None, 0
 
-        with self._lock:
-            entry = self._cache.get(video_path)
-            if entry is not None:
-                self._cache.move_to_end(video_path)
-                return entry[0]
+        file_handle = fsspec.open(video_path).__enter__()
+        try:
+            decoder = VideoDecoder(file_handle, seek_mode="approximate")
+        except Exception:
+            file_handle.close()
+            raise
+        nbytes = _video_file_nbytes(file_handle) if self.byte_budget is not None else 0
+        return decoder, file_handle, nbytes
 
-            # Local files are handed to torchcodec as a path so it reads from disk
-            # on demand (shared OS page cache, no per-decoder buffering). Remote
-            # sources are opened through fsspec and buffered in memory by the
-            # decoder, so they carry a handle to close and a byte weight for the
-            # budget.
-            protocol, _ = split_protocol(video_path)
-            if protocol in (None, "file"):
-                file_handle = None
-                decoder = VideoDecoder(video_path, seek_mode="approximate")
-                nbytes = 0
-            else:
-                file_handle = fsspec.open(video_path).__enter__()
-                try:
-                    decoder = VideoDecoder(file_handle, seek_mode="approximate")
-                except Exception:
-                    file_handle.close()
-                    raise
-                nbytes = _video_file_nbytes(file_handle) if self.byte_budget is not None else 0
-            self._cache[video_path] = (decoder, file_handle, nbytes)
+    def _close(self, closeable: Any) -> None:
+        closeable.close()
 
-            # Evict LRU entries until back under both the count cap and the byte
-            # budget (always keeping the just-added entry). Evicted remote handles
-            # are closed immediately (local entries have none); the ``VideoDecoder``
-            # is released to the GC when its last reference goes away.
-            while len(self._cache) > 1:
-                over_count = self.max_size is not None and len(self._cache) > self.max_size
-                over_bytes = self.byte_budget is not None and (
-                    sum(n for _, _, n in self._cache.values()) > self.byte_budget
-                )
-                if not (over_count or over_bytes):
-                    break
-                _path, (_decoder, evicted_handle, _nbytes) = self._cache.popitem(last=False)
-                if evicted_handle is not None:
-                    with contextlib.suppress(Exception):
-                        evicted_handle.close()
+    def get_decoder(self, video_path: str):
+        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
+        return self._get(video_path)
 
-            return decoder
 
-    def clear(self):
-        """Clear the cache and close all file handles."""
-        with self._lock:
-            for _decoder, file_handle, _nbytes in self._cache.values():
-                if file_handle is not None:
-                    with contextlib.suppress(Exception):
-                        file_handle.close()
-            self._cache.clear()
+class PyavCache(_VideoResourceCache):
+    """Thread-safe LRU cache for open pyav ``(container, video stream)`` pairs.
 
-    def size(self) -> int:
-        """Return the number of cached decoders."""
-        with self._lock:
-            return len(self._cache)
+    Reuses open containers across calls so repeated access to the same file skips
+    ``av.open`` (header parse + codec-context init). Local files stream from disk
+    and weigh nothing; remote sources are read fully into memory once (so pyav's
+    per-GOP seeks don't each trigger a network round-trip) and weigh against
+    ``byte_budget``. Containers are closed on eviction. See
+    :class:`_VideoResourceCache` for the eviction and thread-safety contract.
+
+    Defaults come from ``LEROBOT_PYAV_CACHE_SIZE`` / ``LEROBOT_PYAV_CACHE_BYTES``
+    (else :data:`DEFAULT_PYAV_CACHE_SIZE` / :data:`DEFAULT_PYAV_CACHE_BYTES`).
+    """
+
+    _ENV_SIZE: ClassVar[str] = "LEROBOT_PYAV_CACHE_SIZE"
+    _ENV_BYTES: ClassVar[str] = "LEROBOT_PYAV_CACHE_BYTES"
+    _DEFAULT_SIZE: ClassVar[int | None] = DEFAULT_PYAV_CACHE_SIZE
+    _DEFAULT_BYTES: ClassVar[int | None] = DEFAULT_PYAV_CACHE_BYTES
+
+    def _create(self, video_path: str) -> tuple[Any, Any, int]:
+        protocol, _ = split_protocol(video_path)
+        if protocol in (None, "file"):
+            container = av.open(video_path)
+            return (container, container.streams.video[0]), container, 0
+
+        # Remote: buffer the whole file in RAM so pyav's per-GOP seeks don't each
+        # trigger a network round-trip (mirrors torchcodec's in-memory handling).
+        with fsspec.open(video_path) as f:
+            buffer = io.BytesIO(f.read())
+        container = av.open(buffer)
+        nbytes = buffer.getbuffer().nbytes if self.byte_budget is not None else 0
+        return (container, container.streams.video[0]), container, nbytes
+
+    def _close(self, closeable: Any) -> None:
+        closeable.close()
+
+    def get_container(self, video_path: str):
+        """Get a cached ``(container, video stream)`` pair, opening + caching on miss."""
+        return self._get(video_path)
 
 
 class FrameTimestampError(ValueError):
@@ -424,7 +547,8 @@ class FrameTimestampError(ValueError):
     pass
 
 
-_default_decoder_cache = VideoDecoderCache()
+_default_decoder_cache = TorchcodecCache()
+_default_pyav_cache = PyavCache()
 
 
 def decode_video_frames_torchcodec(
@@ -432,7 +556,7 @@ def decode_video_frames_torchcodec(
     timestamps: list[float],
     tolerance_s: float,
     log_loaded_timestamps: bool = False,
-    decoder_cache: VideoDecoderCache | None = None,
+    decoder_cache: TorchcodecCache | None = None,
     return_uint8: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.

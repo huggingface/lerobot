@@ -37,7 +37,7 @@ from .utils import (
     safe_shard,
 )
 from .video_utils import (
-    VideoDecoderCache,
+    TorchcodecCache,
     decode_video_frames,
     decode_video_frames_torchcodec,
 )
@@ -416,7 +416,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     # in parallel, feeding a queue from which this iterator will yield processed items.
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         if self.video_decoder_cache is None:
-            self.video_decoder_cache = VideoDecoderCache()
+            self.video_decoder_cache = TorchcodecCache()
 
         # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
         rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
