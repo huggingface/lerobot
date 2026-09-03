@@ -214,9 +214,37 @@ class LanceDatasetReader(BaseDatasetReader):
             for key in self.meta.video_keys
         }
 
+        # Resolved once here so DataLoader workers inherit the map instead of each
+        # scanning the videos table.
+        self._video_row_ids: dict[tuple, int] | None = None
+        if self.meta.video_keys:
+            db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
+            index = (
+                db.open_table(VIDEOS_TABLE)
+                .search()
+                .select(["video_key", "chunk_index", "file_index"])
+                .with_row_id(True)
+                .to_arrow()
+            )
+            self._video_row_ids = {
+                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
+                for row in index.to_pylist()
+            }
+            referenced = {
+                (key, int(chunk), int(file))
+                for key, (chunks, files, _) in self._video_locator.items()
+                for chunk, file in zip(chunks, files, strict=True)
+            }
+            missing = referenced - self._video_row_ids.keys()
+            if missing:
+                raise ValueError(
+                    f"videos table is missing {len(missing)} file(s) referenced by episode "
+                    f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
+                    "was converted against different metadata."
+                )
+
         self._frames_perm = None
         self._videos_table = None
-        self._video_row_ids: dict[tuple, int] | None = None
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         self._prefetch_pool: ThreadPoolExecutor | None = None
         self._decode_pool: ThreadPoolExecutor | None = None
@@ -246,29 +274,6 @@ class LanceDatasetReader(BaseDatasetReader):
         frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
-            # future TODO: resolve row ids lazily per batch.
-            index = (
-                self._videos_table.search()
-                .select(["video_key", "chunk_index", "file_index"])
-                .with_row_id(True)
-                .to_arrow()
-            )
-            self._video_row_ids = {
-                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
-                for row in index.to_pylist()
-            }
-            referenced = {
-                (key, int(chunk), int(file))
-                for key, (chunks, files, _) in self._video_locator.items()
-                for chunk, file in zip(chunks, files, strict=True)
-            }
-            missing = referenced - self._video_row_ids.keys()
-            if missing:
-                raise ValueError(
-                    f"videos table is missing {len(missing)} file(s) referenced by episode "
-                    f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
-                    "was converted against different metadata."
-                )
         # Publish last: a failure above leaves the reader closed rather than half-open.
         self._frames_perm = frames_perm
 
@@ -276,7 +281,6 @@ class LanceDatasetReader(BaseDatasetReader):
         state = self.__dict__.copy()
         state["_frames_perm"] = None
         state["_videos_table"] = None
-        state["_video_row_ids"] = None
         state["_file_meta"] = OrderedDict()
         state["_prefetch_pool"] = None
         state["_decode_pool"] = None
