@@ -33,6 +33,7 @@ import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -213,43 +214,14 @@ class LanceDatasetReader(BaseDatasetReader):
             for key in self.meta.video_keys
         }
 
-        self._frames_perm = None
-        self._videos_table = None
+        # Resolved once here so DataLoader workers inherit the map instead of each
+        # scanning the videos table.
         self._video_row_ids: dict[tuple, int] | None = None
-        self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
-        self._prefetch_pool: ThreadPoolExecutor | None = None
-        self._decode_pool: ThreadPoolExecutor | None = None
-        if video_decoder_cache_size is None:
-            video_decoder_cache_size = 16
-        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
-
-    def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
-        # Read straight from the underlying Arrow column, not HF Dataset __getitem__
-        column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
-        return column.astype(dtype, copy=False)
-
-    def _ensure_open(self) -> None:
-        if self._frames_perm is not None:
-            return
         if self.meta.video_keys:
-            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-            self._decode_pool = ThreadPoolExecutor(max_workers=16)
-        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
-        table = db.open_table(FRAMES_TABLE)
-        n_rows = table.count_rows()
-        if n_rows != self.meta.total_frames:
-            raise ValueError(
-                f"frames table has {n_rows} rows but meta declares "
-                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
-            )
-        self._frames_perm = (
-            Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
-        )
-        if self.meta.video_keys:
-            self._videos_table = db.open_table(VIDEOS_TABLE)
-            # future TODO: resolve row ids lazily per batch.
+            db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
             index = (
-                self._videos_table.search()
+                db.open_table(VIDEOS_TABLE)
+                .search()
                 .select(["video_key", "chunk_index", "file_index"])
                 .with_row_id(True)
                 .to_arrow()
@@ -271,11 +243,43 @@ class LanceDatasetReader(BaseDatasetReader):
                     "was converted against different metadata."
                 )
 
+        self._frames_perm = None
+        self._videos_table = None
+        self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
+        self._prefetch_pool: ThreadPoolExecutor | None = None
+        self._decode_pool: ThreadPoolExecutor | None = None
+        if video_decoder_cache_size is None:
+            video_decoder_cache_size = 16
+        self._decoder_cache = _VideoDecoderLRU(video_decoder_cache_size, byte_budget=2 << 30)  # 2GB cap
+
+    def _episode_numpy(self, name: str, dtype: type[np.generic]) -> np.ndarray:
+        # Read straight from the underlying Arrow column, not HF Dataset __getitem__
+        column = self.meta.episodes.data.column(name).to_numpy(zero_copy_only=False)
+        return column.astype(dtype, copy=False)
+
+    def _ensure_open(self) -> None:
+        if self._frames_perm is not None:
+            return
+        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
+        table = db.open_table(FRAMES_TABLE)
+        n_rows = table.count_rows()
+        if n_rows != self.meta.total_frames:
+            raise ValueError(
+                f"frames table has {n_rows} rows but meta declares "
+                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
+            )
+        frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
+        if self.meta.video_keys:
+            self._videos_table = db.open_table(VIDEOS_TABLE)
+            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
+            self._decode_pool = ThreadPoolExecutor(max_workers=16)
+        # Publish last: a failure above leaves the reader closed rather than half-open.
+        self._frames_perm = frames_perm
+
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_frames_perm"] = None
         state["_videos_table"] = None
-        state["_video_row_ids"] = None
         state["_file_meta"] = OrderedDict()
         state["_prefetch_pool"] = None
         state["_decode_pool"] = None
@@ -503,12 +507,9 @@ class LanceDatasetReader(BaseDatasetReader):
                 new_files.append(key)
 
         if new_files:
-            handles = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-            )
             sources = {
-                key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
-                for key, handle in zip(new_files, handles, strict=True)
+                key: _SparseBlobSource(self._file_meta[key]["file_size"], partial(self._blob_handle, key))
+                for key in new_files
             }
             spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
             for key in new_files:
@@ -556,6 +557,9 @@ class LanceDatasetReader(BaseDatasetReader):
         for key, (decoder, source) in prepared.items():
             self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered)
         return prepared
+
+    def _blob_handle(self, key: tuple):
+        return self._videos_table.fetch_blob_files(VIDEO_BLOB_COLUMN, [self._video_row_ids[key]])[0]
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
         chunk_arr, file_arr, _ = self._video_locator[key]
