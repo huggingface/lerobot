@@ -487,6 +487,8 @@ def test_frames_with_delta_consistency_with_shards(
     "delta_indices, expected",
     [
         (None, (1, 1)),  # no deltas: minimal valid Backtrackable windows
+        ({}, (1, 1)),  # empty mapping: nothing to peek
+        ({"state": []}, (1, 1)),  # empty per-key lists: nothing to peek
         # history = deepest peek_back + 1 slot for the current item held in _back_buf
         ({"state": [-3, 0], "action": [0, 3, 6]}, (4, 6)),  # extremes across all keys
         ({"action": [0, 1, 2]}, (1, 2)),  # future-only: lookback clamped to 1

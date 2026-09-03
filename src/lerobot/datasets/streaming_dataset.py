@@ -464,6 +464,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             return 1, 1
 
         all_indices = sum(self.delta_indices.values(), [])
+        if not all_indices:  # e.g. delta_timestamps={}: nothing to peek, minimal windows
+            return 1, 1
+
         # `_back_buf` also holds the current item, so peeking back n steps needs history n + 1.
         lookback = max(1, 1 - min(all_indices))
         lookahead = max(1, max(all_indices))
