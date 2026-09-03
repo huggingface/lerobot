@@ -176,7 +176,13 @@ lerobot-train \
 
 A `v3` dataset can also be stored as [Lance](https://lance.org) tables. The tabular data lives in a `frames.lance` table, the MP4 videos in a blob-encoded `videos.lance` table, and `meta/` stays exactly the same. The format is declared by `"storage_format": "lance"` in `meta/info.json`, and `LeRobotDataset` picks the reader from it. The public API, the item dictionaries and the training pipeline are the same as for the default format.
 
-What this adds is random access without downloading the dataset. A Lance dataset on the Hub, in an HF Storage Bucket or in any object store supports indexing, a global shuffle over the whole dataset and episode selection, fetching only the byte ranges each batch needs.
+What it gives you:
+
+- **Train straight from object storage while keeping the GPUs fed.** Lance reads random frames in place from the Hub, HF Storage Buckets or any object store, fetching only the bytes each batch needs, so every batch is a global shuffle over the whole dataset and nothing is downloaded first. As an example, 10,000 steps of SmolVLA on DROID (27.6M frames) trained from S3 on 8xH100 in 1 h 27 m, with the GPUs waiting on data 1.7% of the time.
+- **Convert once, at about the cost of a file copy.** Videos are stored as blobs without re-encoding, so items are bit-identical to the source. DROID converts in 34 minutes.
+- **The training tables are also queryable.** Filter, search and add columns with LanceDB on the same tables the trainer reads, and visualize any episode in Foxglove straight from where the data lives.
+
+For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/integrations/lerobotdataset).
 
 Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
 
@@ -210,8 +216,6 @@ lerobot-train \
 ```
 
 For remote roots only `meta/` is materialized locally, from the dataset's `meta` table. Data files are never downloaded. The default Parquet/MP4 format on buckets is streaming-only, so the map-style path above applies to `storage_format: "lance"`.
-
-For converting datasets and working with them as queryable tables (search, enrichment, exploratory analysis), see the [LanceDB LeRobot guide](https://docs.lancedb.com/integrations/lerobotdataset).
 
 ## Image transforms
 
