@@ -181,9 +181,13 @@ class RebotArm102Leader(Teleoperator):
         for motor_name in self.motor_names:
             range_min, range_max = self.config.joint_ranges[motor_name]
             direction = self.config.joint_directions[motor_name]
-            sign = 1.0 if direction >= 0 else -1.0
+            # The unwrap window must be centred in *leader* (raw servo) degrees. joint_ranges is
+            # in follower degrees, and direction carries a scale as well as a sign, so the raw
+            # angle matching the follower range is range/direction, not range*sign: with
+            # |direction| < 1 the sign-only window is narrower than the leader's raw travel and
+            # the extremes unwrap onto the wrong 360 deg branch.
             unwrapped, k = self._round_to_valid_range(
-                raw_positions[motor_name], range_min * sign, range_max * sign
+                raw_positions[motor_name], range_min / direction, range_max / direction
             )
             position = unwrapped * direction
             if k > 0:

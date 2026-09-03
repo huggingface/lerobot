@@ -58,8 +58,9 @@ class RebotArm102LeaderMetalConfig(RebotArm102LeaderConfig):
 
     # Mirrors MetalFollowerConfig.joint_limits so leader output is bounded by the follower's own
     # soft limits before it ever reaches the bus. Note these bounds are load-bearing beyond
-    # clipping: `_round_to_valid_range` centres the multi-turn unwrap window on (min+max)/2, so a
-    # range borrowed from the wrong follower can land a joint on the wrong 360 deg branch.
+    # clipping: together with joint_directions they centre the multi-turn unwrap window
+    # (`_round_to_valid_range` on range/direction), so a range borrowed from the wrong follower
+    # can land a joint on the wrong 360 deg branch.
     #
     # The gripper is the single intentional departure: the follower's limit is the vendor's
     # 0..2.4 rad (137.5 deg), but its own stroke table only documents jaw opening up to 116.4 deg,

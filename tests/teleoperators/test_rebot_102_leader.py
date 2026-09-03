@@ -144,6 +144,56 @@ def test_metal_preset_differs_from_b601_where_expected():
     assert differing == {"elbow_flex", "wrist_flex", "gripper"}
 
 
+def _make_metal_leader(raw_positions_deg: dict[str, float]) -> RebotArm102Leader:
+    cfg = RebotArm102LeaderMetalTeleopConfig(port="/dev/null")
+    bus = _make_bus_mock(cfg.joint_ids)
+    id_to_raw = {cfg.joint_ids[name]: deg for name, deg in raw_positions_deg.items()}
+
+    def _sync_monitor(ids):
+        monitors = {}
+        for servo_id in ids:
+            monitor = MagicMock()
+            monitor.angle_deg = id_to_raw.get(servo_id, 0.0)
+            monitors[servo_id] = monitor
+        return monitors
+
+    bus.sync_monitor.side_effect = _sync_monitor
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.FashionStarServo", return_value=bus),
+    ):
+        teleop = RebotArm102Leader(cfg)
+        teleop.connect(calibrate=False)
+    return teleop
+
+
+def test_metal_elbow_extreme_does_not_wrap_to_opposite_limit():
+    """A leader joint with |direction| < 1 must track through its full raw travel.
+
+    elbow_flex maps the leader's ~270 deg of raw travel onto the follower's 180 deg
+    (direction -0.667). The multi-turn unwrap window must therefore be sized in
+    *leader* degrees (range/direction), not follower degrees: with the old
+    follower-frame window, raw -270 sat exactly on the window edge and any overshoot
+    unwrapped a spurious full turn, snapping the output from 180 to 0.
+    """
+    # Sweep to the raw extreme and a few degrees past it; output must saturate at
+    # the 180 limit, never fall back toward 0.
+    for raw, expected in [(0.0, 0.0), (-135.0, 90.0), (-269.9, 180.0), (-271.0, 180.0), (-280.0, 180.0)]:
+        leader = _make_metal_leader({"elbow_flex": raw})
+        action = leader.get_action()
+        assert action["elbow_flex.pos"] == pytest.approx(expected, abs=0.5), (
+            f"raw {raw} deg mapped to {action['elbow_flex.pos']:.1f}, expected ~{expected}"
+        )
+
+
+def test_metal_elbow_multi_turn_unwrap_still_works():
+    """Whole extra turns reported by the servo are still removed after the window fix."""
+    for extra_turns in (-1, 1, 2):
+        leader = _make_metal_leader({"elbow_flex": -135.0 + extra_turns * 360.0})
+        action = leader.get_action()
+        assert action["elbow_flex.pos"] == pytest.approx(90.0, abs=0.5)
+
+
 def test_metal_preset_is_registered_and_builds_the_shared_driver():
     cfg = RebotArm102LeaderMetalTeleopConfig(port="/dev/null")
     assert cfg.type == "rebot_102_leader_metal"
