@@ -217,6 +217,50 @@ def test_video_parity(video_dataset_roots):
     assert item[video_key].dtype == torch.uint8
 
 
+def test_lazy_row_id_resolution(video_dataset_roots):
+    """Opening a video dataset must not scan the whole videos table.
+
+    Row ids are resolved per batch, so ``_video_row_ids`` starts empty at open
+    and grows only with the files each read actually touches. A full scan here
+    would issue one ranged read per fragment — thousands of requests on a large
+    remote Blob V2 table — and every DataLoader worker would repeat it.
+    """
+    _, lance_root = video_dataset_roots
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    reader = ds.reader
+    assert isinstance(reader, LanceDatasetReader)
+    assert reader.meta.video_keys  # fixture has video (and depth) cameras
+
+    # Opening resolves no row ids: the cache is empty until a batch is read.
+    reader._ensure_open()
+    assert reader._video_row_ids == {}
+
+    def files_for(ep_idx: int) -> set[tuple]:
+        return {reader._video_file_key(key, ep_idx) for key in reader.meta.video_keys}
+
+    # Reading a frame resolves exactly that episode's video files, nothing else.
+    ep0 = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(0))
+    ds[0]
+    assert set(reader._video_row_ids) == files_for(ep0)
+    # every resolved id maps to a real videos-table row
+    assert all(isinstance(v, int) for v in reader._video_row_ids.values())
+
+    # Reading another episode adds only its files; already-resolved ids are reused.
+    last = len(ds) - 1
+    epL = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(last))
+    resolved_before = dict(reader._video_row_ids)
+    ds[last]
+    assert set(reader._video_row_ids) == files_for(ep0) | files_for(epL)
+    for key, row_id in resolved_before.items():
+        assert reader._video_row_ids[key] == row_id  # cached, not re-resolved to a new value
+
+    # A referenced file that isn't in the table fails scoped to that file,
+    # naming it, instead of silently returning wrong frames.
+    bogus = ("observation.images.does_not_exist", 0, 999999)
+    with pytest.raises(ValueError, match="missing"):
+        reader._resolve_row_ids([bogus])
+
+
 def test_storage_format_routing(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
 
