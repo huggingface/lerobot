@@ -269,8 +269,12 @@ def _derive_left_right(verdict: CameraVerdict, cfg: CameraCurationConfig) -> Non
     # base on image-RIGHT -> camera on robot LEFT; workspace on image-LEFT -> LEFT.
     base_vote = {"right": "left", "left": "right"}.get(verdict.base_image_side or "")
     ws_vote = {"left": "left", "right": "right"}.get(verdict.workspace_image_side or "")
-    votes = [v for v in (base_vote, ws_vote) if v]
-    derived = votes[0] if votes and len(set(votes)) == 1 else None
+    # Require BOTH cues present AND agreeing to commit to a direction. On a genuine
+    # lateral view the base and the workspace sit on OPPOSITE image sides, so both
+    # fire and agree; a FRONT/REAR camera (workspace in the foreground, base roughly
+    # central or on the same side) does not satisfy this, so it stays plain "side"
+    # instead of being forced into a spurious left/right.
+    derived = base_vote if (base_vote and base_vote == ws_vote) else None
     new_label = f"{derived}_side" if derived else _SIDE_POSITION
     if new_label != label:
         logger.info(

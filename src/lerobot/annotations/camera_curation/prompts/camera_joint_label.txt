@@ -121,14 +121,14 @@ position/scale/angle), the camera is moving -> wrist. BEWARE a blank backdrop
 while the camera swings; track the concrete OBJECTS, not the blank background, and
 do not infer fixed from an unchanging blank backdrop.
 
-ROBOT PART ANCHORED IN THE FOREGROUND (a strong wrist signal): if a piece of the
-ROBOT ITSELF sits large and close in the foreground, anchored at roughly the same
-spot in the frame as if bolted just in front of the lens, it is very likely a
-wrist — even without dramatic background drift. It need NOT be a recognizable
-gripper: gripper jaws/fingers, the wrist housing, or a smooth ARM LINK all count,
-and it is often oversized, cut off at the bottom/side edge, blurry, or a dark
-featureless blob. A wrist camera's defining look is "a bit of the robot fixed in
-view while the world goes by."
+ROBOT PART ANCHORED IN THE FOREGROUND (a wrist signal ONLY with a moving
+background): a piece of the ROBOT ITSELF anchored large in the foreground (gripper
+jaws/fingers, wrist housing, or a smooth ARM LINK — often oversized, edge-cropped,
+blurry, or a dark blob) is a wrist ONLY when the WORKSPACE/BACKGROUND clearly
+SHIFTS behind it. Anchored robot part + STATIC background = FIXED, not wrist: a
+fixed camera bolted next to the robot also shows its base/bracket permanently in
+frame while the arm moves THROUGH a stable scene. Do NOT call wrist from an
+anchored part alone.
 
 Robot motion alone is NOT sufficient.
 
