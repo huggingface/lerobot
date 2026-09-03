@@ -331,8 +331,7 @@ def make_policy(
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
