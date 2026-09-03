@@ -247,17 +247,17 @@ def test_lazy_row_id_resolution(video_dataset_roots):
 
     # Reading another episode adds only its files; already-resolved ids are reused.
     last = len(ds) - 1
-    epL = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(last))
+    ep_last = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(last))
     resolved_before = dict(reader._video_row_ids)
     ds[last]
-    assert set(reader._video_row_ids) == files_for(ep0) | files_for(epL)
+    assert set(reader._video_row_ids) == files_for(ep0) | files_for(ep_last)
     for key, row_id in resolved_before.items():
         assert reader._video_row_ids[key] == row_id  # cached, not re-resolved to a new value
 
     # A referenced file that isn't in the table fails scoped to that file,
     # naming it, instead of silently returning wrong frames.
     bogus = ("observation.images.does_not_exist", 0, 999999)
-    with pytest.raises(ValueError, match="missing"):
+    with pytest.raises(ValueError, match="missing.*does_not_exist"):
         reader._resolve_row_ids([bogus])
 
 
