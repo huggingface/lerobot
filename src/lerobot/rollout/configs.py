@@ -308,11 +308,14 @@ class RolloutConfig:
     # queries, measured from the moment a subtask is applied.  Lower values
     # re-plan sooner but spend more of the loop generating text instead of acting.
     autosteer_interval_s: float = 10.0
-    # Robot commands sent per policy action.  Values > 1 linearly interpolate
-    # between consecutive policy actions for smoother motion: commands go to
-    # the robot at ``fps × multiplier`` Hz while policy inference and dataset
-    # recording stay at ``fps`` Hz.
+    # Robot commands sent per policy action.  Values > 1 interpolate between
+    # consecutive policy actions for smoother motion: commands go to the robot
+    # at ``fps × multiplier`` Hz while policy inference and dataset recording
+    # stay at ``fps`` Hz.
     interpolation_multiplier: int = 1
+    # Flat action dimensions grouped as (wx, wy, wz) rotation-vector triplets.
+    # Configured triplets use exact SLERP; every other dimension remains linear.
+    interpolation_rotation_dims: list[int] = field(default_factory=list)
     device: str | None = None
     task: str = ""
     display_data: bool = False
@@ -347,6 +350,8 @@ class RolloutConfig:
         """Validate config invariants and load the policy config from ``--policy.path``."""
         if self.interpolation_multiplier < 1:
             raise ValueError(f"interpolation_multiplier must be >= 1, got {self.interpolation_multiplier}")
+        if len(self.interpolation_rotation_dims) % 3 != 0:
+            raise ValueError("interpolation_rotation_dims must contain complete (wx, wy, wz) triplets")
 
         # --- Strategy capabilities ---
         # Read off the strategy's declarations, never its concrete type, so a
