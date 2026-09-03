@@ -44,7 +44,9 @@ from torch import Tensor
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.constants import ACTION
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import (
     _peft_available,
     _scipy_available,
@@ -634,8 +636,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return super().from_pretrained(
             pretrained_name_or_path,
             strict=strict,
+            _load_from_lerobot_checkpoint=True,
             **kwargs,
         )
+
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        state_dict = load_safetensors_file(model_file, device=resolve_safetensors_device(map_location))
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict, assign=True)
+        log_model_loading_keys(missing_keys, unexpected_keys)
+        return model
 
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
@@ -648,6 +658,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         dataset_meta: Any | None = None,
         **kwargs,
     ):
+        load_from_lerobot_checkpoint = kwargs.pop("_load_from_lerobot_checkpoint", False)
         super().__init__(config, *inputs, **kwargs)
         _apply_norm_tag_metadata(self.config)
         self.config.validate_features()
@@ -661,14 +672,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.action_tokenizer: Any | None = None
         self._compile_applied = False
         self._compiled_module_names: tuple[str, ...] = ()
-        self._load_hf_model()
+        self._load_hf_model(load_weights=not load_from_lerobot_checkpoint)
         _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
         if self.config.train_mode_vlm == "lora":
             self._apply_lora_adapters()
         self._apply_compile()
         self.init_rtc_processor()
 
-    def _load_hf_model(self) -> None:
+    def _load_hf_model(self, load_weights: bool = True) -> None:
         require_package("transformers", extra="molmoact2")
 
         checkpoint_location = _resolve_checkpoint_location(
@@ -686,13 +697,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
         text_config = getattr(hf_config, "text_config", None)
         if text_config is not None and hasattr(text_config, "residual_dropout"):
             text_config.residual_dropout = float(self.config.llm_residual_dropout)
-        self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
-            checkpoint_location,
-            config=hf_config,
-            dtype=storage_dtype,
-            low_cpu_mem_usage=True,
-            token=_hf_token(),
-        )
+        if load_weights:
+            self.model = MolmoAct2ForConditionalGeneration.from_pretrained(
+                checkpoint_location,
+                config=hf_config,
+                dtype=storage_dtype,
+                low_cpu_mem_usage=True,
+                token=_hf_token(),
+            )
+        else:
+            with torch.device("meta"):
+                self.model = MolmoAct2ForConditionalGeneration(hf_config)
         # Keep Hub loading limited to local code plus safetensors, and verify the
         # local implementation exactly matches the checkpoint key space.
         self._apply_bfloat16_parameter_policy()
@@ -700,7 +715,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         # strict load. This preserves the checkpoint's original fp32 values for
         # the action expert and other fp32-targeted modules instead of widening
         # already-rounded bf16 tensors.
-        _strict_load_safetensors_weights(self.model, checkpoint_location)
+        if load_weights:
+            _strict_load_safetensors_weights(self.model, checkpoint_location)
         hf_max_action_dim = int(getattr(self.model.config, "max_action_dim", -1))
         if hf_max_action_dim != int(self.config.expected_max_action_dim):
             raise ValueError(
