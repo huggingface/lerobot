@@ -14,9 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any
 
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.decorators import check_if_already_connected
+from lerobot.utils.errors import DeviceNotConnectedError
+
+logger = logging.getLogger(__name__)
 
 
 class BimanualMixin:
@@ -46,8 +50,16 @@ class BimanualMixin:
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        try:
+            self.left_arm.connect(calibrate)
+            self.right_arm.connect(calibrate)
+        except Exception:
+            self._disconnect_arms(after_failed_connect=True)
+            raise
+
+    def _disconnect_arm_after_failed_connect(self, arm: Any) -> None:
+        """Disconnect an arm while rolling back a failed bimanual startup."""
+        arm.disconnect()
 
     def calibrate(self) -> None:
         self.left_arm.calibrate()
@@ -57,7 +69,22 @@ class BimanualMixin:
         self.left_arm.configure()
         self.right_arm.configure()
 
-    @check_if_not_connected
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        self._disconnect_arms()
+
+    def _disconnect_arms(self, *, after_failed_connect: bool = False) -> None:
+        arms = (
+            (("right", self.right_arm), ("left", self.left_arm))
+            if after_failed_connect
+            else (("left", self.left_arm), ("right", self.right_arm))
+        )
+        for name, arm in arms:
+            try:
+                if after_failed_connect:
+                    self._disconnect_arm_after_failed_connect(arm)
+                else:
+                    arm.disconnect()
+            except DeviceNotConnectedError:
+                pass
+            except Exception:
+                logger.exception("Failed to disconnect the %s arm.", name)
