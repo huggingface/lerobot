@@ -256,6 +256,18 @@ class DAggerStrategy(RolloutStrategy):
     def setup(self, ctx: RolloutContext) -> None:
         """Initialise the inference engine and input device listener."""
         self._init_engine(ctx)
+        dataset_cfg = ctx.runtime.cfg.dataset  # never None: dataset_mode="required"
+        if self.config.num_episodes is None:
+            self.config.num_episodes = dataset_cfg.num_episodes
+            logger.info(
+                "DAgger num_episodes not set — using --dataset.num_episodes=%d", self.config.num_episodes
+            )
+        if not self.config.record_autonomous and not dataset_cfg.streaming_encoding:
+            logger.info(
+                "Streaming encoding is disabled for DAgger corrections-only mode. "
+                "Consider enabling it for faster episode saving: "
+                "--dataset.streaming_encoding=true --dataset.encoder_threads=2"
+            )
         self._push_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dagger-push")
         target_mb = self.config.target_video_file_size_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB
         self._episode_duration_s = estimate_max_episode_seconds(
