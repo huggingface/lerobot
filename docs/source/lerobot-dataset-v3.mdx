@@ -182,6 +182,8 @@ A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. Lanc
 
 For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
 
+Camera features must be video-backed. Datasets that store camera frames as images are not supported by the reader and need to be re-encoded as video before conversion.
+
 Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
 
 ```bash
@@ -383,4 +385,4 @@ Without calling `finalize()`, your parquet files will be incomplete and the data
 
 ### Lance
 
-Lance is now supported natively as a storage format, see [LanceDB dataset backend](#lancedb-dataset-backend) above. The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading. That package now provides the converter.
+Lance is now supported natively as a storage format for video-backed datasets, see [LanceDB dataset backend](#lancedb-dataset-backend) above. The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading, and image-backed datasets are not supported by the native reader. That package now provides the converter.
