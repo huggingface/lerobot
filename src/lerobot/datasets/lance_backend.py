@@ -242,9 +242,7 @@ class LanceDatasetReader(BaseDatasetReader):
                 f"frames table has {n_rows} rows but meta declares "
                 f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
             )
-        self._frames_perm = (
-            Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
-        )
+        frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
             # future TODO: resolve row ids lazily per batch.
@@ -270,6 +268,8 @@ class LanceDatasetReader(BaseDatasetReader):
                     f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
                     "was converted against different metadata."
                 )
+        # Publish last: a failure above leaves the reader closed rather than half-open.
+        self._frames_perm = frames_perm
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
