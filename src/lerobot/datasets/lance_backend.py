@@ -33,6 +33,7 @@ import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -503,12 +504,9 @@ class LanceDatasetReader(BaseDatasetReader):
                 new_files.append(key)
 
         if new_files:
-            handles = self._videos_table.fetch_blob_files(
-                VIDEO_BLOB_COLUMN, [self._video_row_ids[key] for key in new_files]
-            )
             sources = {
-                key: _SparseBlobSource(self._file_meta[key]["file_size"], handle)
-                for key, handle in zip(new_files, handles, strict=True)
+                key: _SparseBlobSource(self._file_meta[key]["file_size"], partial(self._blob_handle, key))
+                for key in new_files
             }
             spans_by_key: dict[tuple, list[tuple[int, int]]] = {}
             for key in new_files:
@@ -556,6 +554,9 @@ class LanceDatasetReader(BaseDatasetReader):
         for key, (decoder, source) in prepared.items():
             self._decoder_cache.put(key, (decoder, source), nbytes=source.buffered)
         return prepared
+
+    def _blob_handle(self, key: tuple):
+        return self._videos_table.fetch_blob_files(VIDEO_BLOB_COLUMN, [self._video_row_ids[key]])[0]
 
     def _video_file_key(self, key: str, ep_idx: int) -> tuple[str, int, int]:
         chunk_arr, file_arr, _ = self._video_locator[key]
