@@ -19,7 +19,7 @@ This docs will guide you to:
 - **Hub-native streaming**: Consume datasets directly from the Hub with `StreamingLeRobotDataset`.
 - **Lower file-system pressure**: Fewer, larger files ⇒ faster initialization and fewer issues at scale.
 - **Unified organization**: Clean directory layout with consistent path templates across data and videos.
-- **Pluggable storage formats**: Datasets can also be stored as [Lance](https://lance.org) tables for random access directly from object storage (see [Lance storage format](#lance-storage-format)).
+- **Pluggable storage formats**: Datasets can also be stored as [Lance](https://lance.org) tables for random access directly from object storage (see [LanceDB dataset backend](#lancedb-dataset-backend)).
 
 ## Installation
 
@@ -172,7 +172,7 @@ lerobot-train \
   </figure>
 </div>
 
-## Lance storage format
+## LanceDB dataset backend
 
 A `v3` dataset can also be stored as [Lance](https://lance.org) tables. The tabular data lives in a `frames.lance` table, the MP4 videos in a blob-encoded `videos.lance` table, and `meta/` stays exactly the same. The format is declared by `"storage_format": "lance"` in `meta/info.json`, and `LeRobotDataset` picks the reader from it. The public API, the item dictionaries and the training pipeline are the same as for the default format.
 
@@ -182,7 +182,7 @@ What it gives you:
 - **Convert once, at about the cost of a file copy.** Videos are stored as blobs without re-encoding, so items are bit-identical to the source. DROID converts in 34 minutes.
 - **The training tables are also queryable.** Filter, search and add columns with LanceDB on the same tables the trainer reads, and visualize any episode in Foxglove straight from where the data lives.
 
-For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/integrations/lerobotdataset).
+For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
 
 Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
 
@@ -214,6 +214,8 @@ lerobot-train \
   --dataset.repo_type=bucket \
   --policy.type=act
 ```
+
+Visualization works the same way: `lerobot-dataset-viz --display-mode foxglove` serves any episode of a Lance dataset to [Foxglove](https://foxglove.dev) straight from where it lives, fetching only the frames on screen, with no MCAP export or download.
 
 For remote roots only `meta/` is materialized locally, from the dataset's `meta` table. Data files are never downloaded. The default Parquet/MP4 format on buckets is streaming-only, so the map-style path above applies to `storage_format: "lance"`.
 
@@ -383,4 +385,4 @@ Without calling `finalize()`, your parquet files will be incomplete and the data
 
 ### Lance
 
-Lance is now supported natively as a storage format, see [Lance storage format](#lance-storage-format) above. The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading. That package now provides the converter.
+Lance is now supported natively as a storage format, see [LanceDB dataset backend](#lancedb-dataset-backend) above. The `LeRobotLanceDataset` classes from the `lerobot-lancedb` package are no longer needed for reading. That package now provides the converter.
