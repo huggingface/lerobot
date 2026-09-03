@@ -19,7 +19,7 @@ This docs will guide you to:
 - **Hub-native streaming**: Consume datasets directly from the Hub with `StreamingLeRobotDataset`.
 - **Lower file-system pressure**: Fewer, larger files ⇒ faster initialization and fewer issues at scale.
 - **Unified organization**: Clean directory layout with consistent path templates across data and videos.
-- **Pluggable storage formats**: Datasets can also be stored as [LanceDB](https://lancedb.com) tables for random access and indexing directly from object storage (see [LanceDB dataset backend](#lancedb-dataset-backend)).
+- **Dataset storage backends**: Datasets can also be stored as [LanceDB](https://lancedb.com) tables for random access and indexing directly from object storage (see [LanceDB dataset backend](#lancedb-dataset-backend)).
 
 ## Installation
 
@@ -176,7 +176,7 @@ lerobot-train \
 
 A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, plus scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training all run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a blob-encoded `videos` table for the MP4s. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
 
-- **Train straight from object storage with the GPUs fed.** Random frames are read in place from the Hub, HF Storage Buckets or any object store, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first. Example: 10,000 steps of SmolVLA on DROID (27.6M frames) from S3 on 8xH100 in 1 h 27 m, with the GPUs waiting on data 1.7% of the time.
+- **Train straight from object storage with the GPUs fed.** Random frames are read in place from the Hub, HF Storage Buckets or any object store, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first.
 - **Convert once, at about the cost of a file copy.** Videos are stored as blobs without re-encoding, so items are bit-identical to the source. DROID converts in 34 minutes.
 - **One copy for everything.** Filter, search and add columns with LanceDB on the tables the trainer reads, and scrub any episode in Foxglove from where it lives.
 
