@@ -531,6 +531,7 @@ def record(
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
                         display_mode=cfg.display_mode,
+						display_compressed_images=display_compressed_images,
                     )
 
                 if events["rerecord_episode"]:
