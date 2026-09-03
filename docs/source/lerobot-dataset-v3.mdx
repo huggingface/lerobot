@@ -174,11 +174,11 @@ lerobot-train \
 
 ## LanceDB dataset backend
 
-A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, plus scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training all run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a blob-encoded `videos` table for the MP4s. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
+A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, and scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a `videos` table holding the MP4s as blobs. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
 
 - **Train straight from object storage with the GPUs fed.** Random frames are read in place from the Hub, HF Storage Buckets or any object store, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first.
-- **Convert once, at about the cost of a file copy.** Videos are stored as blobs without re-encoding, so items are bit-identical to the source. DROID converts in 34 minutes.
-- **One copy for everything.** Filter, search and add columns with LanceDB on the tables the trainer reads, and scrub any episode in Foxglove from where it lives.
+- **Convert at about the cost of a file copy.** Videos are not re-encoded, so items are bit-identical to the source. DROID converts in 34 minutes.
+- **Zero-copy feature engineering.** Add columns such as scores, embeddings or corrected labels to the tables the trainer reads, without rewriting the videos or copying the dataset, then filter and search on them with the indexes. The reader ignores columns it does not know.
 
 For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
 
