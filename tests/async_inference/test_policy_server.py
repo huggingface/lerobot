@@ -217,3 +217,42 @@ def test_predict_action_chunk(monkeypatch, policy_server):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
+
+
+@skip_if_package_missing("grpcio", "grpc")
+def test_send_observations_splits_receive_and_deserialize_metrics(policy_server, caplog):
+    """`SendObservations` reports receive wait and deserialization separately.
+
+    Regression guard for issue #2458: the old code started the deserialize timer
+    before the blocking chunk receive, so transport/receive wait was hidden
+    inside the "Deserialization time" metric. The two must now be timed
+    independently and the received payload size must be surfaced so a slow
+    end-to-end report can be attributed to the network rather than the decoder.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    from lerobot.async_inference.safe_serialization import serialize_observation
+    from lerobot.transport.utils import send_bytes_in_chunks
+
+    obs = _make_obs(torch.zeros(6), timestep=1, must_go=True)
+    obs_bytes = serialize_observation(obs)
+
+    # Re-chunk exactly like the client does. `receive_bytes_in_chunks` only reads
+    # `.transfer_state` and `.data`, so a lightweight stand-in for the gRPC
+    # Observation message is enough and keeps the test off the wire.
+    request_iterator = send_bytes_in_chunks(obs_bytes, SimpleNamespace)
+    context = SimpleNamespace(peer=lambda: "test-peer")
+
+    with caplog.at_level(logging.DEBUG, logger="policy_server"):
+        policy_server.SendObservations(request_iterator, context)
+
+    # The observation round-tripped through the safe decoder and was enqueued.
+    assert policy_server.observation_queue.qsize() == 1
+
+    # Receive and deserialization are reported as two distinct metrics.
+    assert "Receive time:" in caplog.text
+    assert "Deserialization time:" in caplog.text
+
+    # The exact received payload size is surfaced for diagnostics.
+    assert f"Received bytes: {len(obs_bytes)}" in caplog.text
