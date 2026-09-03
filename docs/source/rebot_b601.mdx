@@ -31,12 +31,13 @@ This pulls in `motorbridge` (CAN motor control for the B601-DM follower) and `mo
 
 ## Registered device types
 
-| Type                     | Kind                                         |
-| ------------------------ | -------------------------------------------- |
-| `rebot_b601_follower`    | single-arm B601-DM follower robot            |
-| `bi_rebot_b601_follower` | bimanual (dual-arm) follower robot           |
-| `rebot_102_leader`       | single-arm reBot Arm 102 leader teleoperator |
-| `bi_rebot_102_leader`    | bimanual (dual-arm) leader teleoperator      |
+| Type                     | Kind                                                 |
+| ------------------------ | ---------------------------------------------------- |
+| `rebot_b601_follower`    | single-arm B601-DM follower robot                    |
+| `rebot_b601_rs_follower` | single-arm B601-RS (RobStride motors) follower robot |
+| `bi_rebot_b601_follower` | bimanual (dual-arm) follower robot                   |
+| `rebot_102_leader`       | single-arm reBot Arm 102 leader teleoperator         |
+| `bi_rebot_102_leader`    | bimanual (dual-arm) leader teleoperator              |
 
 The bimanual types compose two single-arm instances and namespace each arm's
 observation/action keys with a `left_` / `right_` prefix. Per-arm settings are
@@ -178,6 +179,55 @@ lerobot-teleoperate \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.joint_directions='{"shoulder_pan":-1,"shoulder_lift":-1,"elbow_flex":1,"wrist_flex":1,"wrist_yaw":1,"wrist_roll":-1,"gripper":-6}'
 ```
+
+## RS build (RobStride motors)
+
+The B601-RS is the same arm fitted with RobStride RS-series CAN motors (RS06 on the shoulder/elbow joints, RS00 on the wrists and gripper) instead of Damiao motors. LeRobot drives them natively over CAN with the RobStride vendor protocol, so the follower needs `python-can` instead of `motorbridge`. Teleoperating with the reBot Arm 102 leader still needs the `rebot` extra for the leader's servos:
+
+```bash
+pip install 'lerobot[robstride]'        # RS follower only
+pip install 'lerobot[robstride,rebot]'  # RS follower + reBot Arm 102 leader
+```
+
+Bring up the CAN interface first (the RobStride protocol uses classic CAN at 1 Mbps, no CAN FD):
+
+```bash
+sudo ip link set can0 up type can bitrate 1000000
+```
+
+Everything else — joint names, degrees, the zero-pose calibration flow, the reBot Arm 102 leader — works exactly like the DM build. Use the `rebot_b601_rs_follower` type and point it at the CAN channel:
+
+```bash
+lerobot-calibrate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower
+
+lerobot-teleoperate \
+    --robot.type=rebot_b601_rs_follower \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+By default the arm runs in the motors' Position mode with per-joint speed limits (`--robot.position_speed_limit`). Set `--robot.control_mode=mit` for MIT-style impedance control with the `--robot.mit_kp` / `--robot.mit_kd` gains; the gripper then uses `--robot.gripper_mit_kp` / `--robot.gripper_mit_kd` (RobStride motors have no FORCE_POS mode).
+
+<Tip warning={true}>
+  On disconnect the motors are torque-disabled by default and the arm becomes
+  back-drivable: hold the arm or park it in a stable rest pose before
+  disconnecting, otherwise it falls under gravity. Set
+  `--robot.disable_torque_on_disconnect=false` to keep the motors holding.
+</Tip>
+
+<Tip warning={true}>
+  The RS motors' multi-turn count is volatile across power cycles: geared joints
+  with more than one turn of travel (the gripper) can wake up reading `physical
+  + 360°·k`. The follower refuses to enable torque on an implausible reading —
+  move the joint back into range by hand (close the gripper against its stop)
+  and re-run `lerobot-calibrate` before continuing.
+</Tip>
 
 ## Recording datasets
 
