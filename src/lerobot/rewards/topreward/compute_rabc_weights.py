@@ -73,9 +73,10 @@ DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
 
 def _require_dataset_dependencies() -> None:
     """Require packages used only by dataset scoring and parquet IO."""
-    require_package("datasets", extra="dataset")
-    require_package("av", extra="dataset")
     require_package("pyarrow", extra="dataset")
+    if LeRobotDataset is None:
+        require_package("datasets", extra="dataset")
+        require_package("av", extra="dataset")
 
 
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:

@@ -45,29 +45,55 @@ Usage:
 The output is saved to the dataset's local cache directory as 'sarm_progress.parquet'.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+else:
+    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 from .modeling_sarm import SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
 from .sarm_utils import normalize_stage_tau
 
 
+def _require_dataset_dependencies() -> None:
+    """Require packages used only when loading a LeRobot dataset."""
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+
+
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read reward_model_path from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
+    assert pq is not None
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -88,6 +114,9 @@ def load_sarm_resources(
     Returns:
         Tuple of (dataset, reward_model, preprocessor)
     """
+    _require_dataset_dependencies()
+    assert LeRobotDataset is not None
+
     logging.info(f"Loading model: {reward_model_path}")
     reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.config.device = device
@@ -474,6 +503,9 @@ def compute_sarm_progress(
         output_dir: Directory to save visualizations
         stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
     """
+    require_package("pyarrow", extra="dataset")
+    assert pa is not None and pq is not None
+
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
     # Set preprocessor to eval mode to disable augmentations
@@ -779,6 +811,8 @@ Examples:
     reward_model_path = args.reward_model_path
     if reward_model_path is None:
         # Load dataset to find parquet path
+        _require_dataset_dependencies()
+        assert LeRobotDataset is not None
         temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=False)
         parquet_path = Path(temp_dataset.root) / "sarm_progress.parquet"
         reward_model_path = get_reward_model_path_from_parquet(parquet_path)
