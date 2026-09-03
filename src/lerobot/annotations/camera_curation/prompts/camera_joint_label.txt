@@ -132,6 +132,14 @@ anchored part alone.
 
 Robot motion alone is NOT sufficient.
 
+A LARGE ARM SWINGING IN AND OUT IS FIXED, NOT WRIST. A big arm that sweeps across
+the frame or enters and leaves it (common on an overhead/top view — it swoops in
+to pick, then retracts) is the ARM moving through a stationary scene, however much
+of the frame it covers. Do NOT read dramatic ARM motion as CAMERA motion. The
+decider is the STATIC BACKGROUND: if the table / baseplate grid / corner markers /
+workspace boundary stay REGISTERED across frames, it is FIXED no matter how
+violently the arm moves; only the static landmarks themselves drifting means wrist.
+
 Object motion alone is NOT sufficient (track a STATIONARY object for the drift
 check above).
 

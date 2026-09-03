@@ -203,6 +203,18 @@ camera moved -> wrist.
 
 Movement of the ROBOT alone is NOT evidence of camera movement.
 
+A LARGE ARM SWINGING IN AND OUT IS FIXED, NOT WRIST. A big robot arm that sweeps
+across the frame, or enters and leaves it, or swings dramatically between frames,
+is the ARM MOVING THROUGH a stationary scene — that is a FIXED camera, however
+much of the frame the arm covers. Do NOT mistake dramatic ARM motion for CAMERA
+motion. This is common on an overhead/top view of a workspace: the arm swoops in
+to pick and retracts, filling then clearing the frame, while the table/baseplate
+stays put. The DECIDER is the STATIC BACKGROUND, not the arm: if the fixed
+landmarks (the table, the baseplate stud grid, corner markers, tape, the workspace
+boundary) stay REGISTERED in place across the frames, it is FIXED — no matter how
+violently the arm moves. Only when those STATIC landmarks themselves translate or
+change scale is it a wrist.
+
 Movement of manipulated OBJECTS alone is NOT evidence of camera movement (track a
 STATIONARY object instead, per the drift check above).
 
