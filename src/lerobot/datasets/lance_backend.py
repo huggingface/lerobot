@@ -260,9 +260,6 @@ class LanceDatasetReader(BaseDatasetReader):
     def _ensure_open(self) -> None:
         if self._frames_perm is not None:
             return
-        if self.meta.video_keys:
-            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-            self._decode_pool = ThreadPoolExecutor(max_workers=16)
         db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
         table = db.open_table(FRAMES_TABLE)
         n_rows = table.count_rows()
@@ -274,6 +271,8 @@ class LanceDatasetReader(BaseDatasetReader):
         frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
+            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
+            self._decode_pool = ThreadPoolExecutor(max_workers=16)
         # Publish last: a failure above leaves the reader closed rather than half-open.
         self._frames_perm = frames_perm
 

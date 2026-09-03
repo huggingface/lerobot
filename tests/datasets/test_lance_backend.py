@@ -34,7 +34,7 @@ from lerobot_lancedb.convert import convert
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets import lance_utils
+from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
@@ -215,6 +215,47 @@ def test_video_parity(video_dataset_roots):
     lance_u8 = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, return_uint8=True)
     item = lance_u8[0]
     assert item[video_key].dtype == torch.uint8
+
+
+def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
+    _, lance_root = video_dataset_roots
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    reader = lance_ds.reader
+    # the video row-id map is built at construction and survives pickling
+    assert reader._video_row_ids
+    assert pickle.loads(pickle.dumps(reader))._video_row_ids == reader._video_row_ids
+
+    def fail_open(*args, **kwargs):
+        raise OSError("simulated 429")
+
+    monkeypatch.setattr(lance_backend.Permutation, "identity", fail_open)
+    with pytest.raises(OSError):
+        lance_ds[0]
+    # nothing was published, so the next read starts over
+    assert reader._frames_perm is None
+    assert reader._prefetch_pool is None
+    monkeypatch.undo()
+    lance_ds[0]
+
+
+def test_sparse_source_fetches_handle_once():
+    class Handle:
+        opened = 0
+
+        def read_range(self, pos, n):
+            return b"x" * n
+
+    def open_handle():
+        Handle.opened += 1
+        return Handle()
+
+    source = lance_utils._SparseBlobSource(8, open_handle)
+    source.add(0, b"abcd")
+    assert source.read(4) == b"abcd"
+    assert Handle.opened == 0  # buffered reads never touch the handle
+    assert source.read(2) == b"xx"
+    assert source.read(2) == b"xx"
+    assert Handle.opened == 1  # one handle for every miss
 
 
 def test_storage_format_routing(video_dataset_roots):
