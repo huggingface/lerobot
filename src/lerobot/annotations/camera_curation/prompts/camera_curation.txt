@@ -158,23 +158,32 @@ Strong evidence includes:
   - a visible part of the wrist/gripper may remain relatively stable in camera
     coordinates while the static environment moves.
 
-ROBOT PART ANCHORED IN THE FOREGROUND (a wrist signal ONLY together with a moving
-background): a piece of the ROBOT ITSELF may sit large and close in the near
-foreground, anchored at roughly the same place in the frame — a gripper jaw or
-finger, the end-effector, the wrist housing, or a smooth ARM LINK, often oversized,
-edge-cropped, blurry, or a dark featureless blob. This ALONE does NOT make it a
-wrist: it is a wrist ONLY when that anchored part stays put WHILE THE WORKSPACE /
-BACKGROUND CLEARLY SHIFTS behind it (static landmarks — table edges, the box, tape
-marks — translate or change scale). That combination means the camera rides on the
-arm -> wrist ("a bit of the robot fixed in view, watching the world go by").
+LOOKING OUT PAST YOUR OWN GRIPPER (the decisive wrist cue). The defining look of a
+wrist camera is that you are mounted just BEHIND the robot's own gripper, looking
+FORWARD past it at what it is about to grasp: the gripper's JAWS / OPENING sit
+anchored in the near foreground and FACE AWAY FROM THE CAMERA, into the workspace,
+framing the target object beyond them. When you see this — the gripper opening
+forward into the scene from a fixed foreground anchor — it is a wrist camera, even
+without obvious background drift (Pi-robot-style: black jaws at the bottom edge,
+opening out over the table toward the object).
 
-CRUCIAL CONTRAST — anchored robot part + STATIC background = FIXED, not wrist. A
-FIXED camera bolted to the table right next to the robot ALSO has a robot part
-(the base, a mounting bracket, part of the arm) permanently in the frame — but the
-background stays registered and the arm/gripper moves THROUGH the scene. So an
-overhead or side camera that always shows the robot's base in one corner, with a
-stable table/background, is FIXED. Do NOT call wrist from an anchored robot part
-unless the background actually moves with it.
+CRUCIAL — merely SEEING a gripper is NOT this cue. The signal is the gripper
+OPENING IN FRONT OF YOU into the workspace, not a gripper that simply appears
+somewhere in the frame:
+
+  - a FIXED camera also sees the gripper, but from the SIDE or at CHANGING angles
+    as the arm passes, and the gripper travels THROUGH the frame rather than
+    staying anchored opening-forward;
+  - on a FIXED top/overhead view the gripper reaches DOWN / away onto the workspace
+    (you look down ONTO it), it does not open forward past the lens;
+  - a robot BASE, a mounting bracket, or a bare ARM LINK anchored in a corner is
+    NOT a gripper-opening-forward — with a STATIC background that is a FIXED camera
+    bolted next to the robot (the base is always in view while the arm moves
+    through a stable scene).
+
+So: gripper anchored in the foreground with its opening facing AWAY into the
+workspace -> wrist. Any other "I can see a robot part" -> not decisive; fall back
+to the background-drift test (only a wrist makes the STATIC background shift).
 
 COMMONLY MISSED WRIST: a wrist camera often looks like a CLOSE-UP, roughly
 top-down view of the workspace with the gripper prominent, and is easily mistaken
