@@ -18,6 +18,7 @@
 from unittest.mock import patch
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import torch
 
@@ -35,9 +36,11 @@ from lerobot.datasets.dataset_tools import (
     modify_tasks,
     reencode_dataset,
     remove_feature,
+    rename_feature,
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
@@ -495,7 +498,9 @@ def test_modify_features_only_remove(sample_dataset, tmp_path):
 
 def test_modify_features_no_changes(sample_dataset, tmp_path):
     """Test error when modify_features is called with no changes."""
-    with pytest.raises(ValueError, match="Must specify at least one of add_features or remove_features"):
+    with pytest.raises(
+        ValueError, match="Must specify at least one of add_features, remove_features or rename_features"
+    ):
         modify_features(
             sample_dataset,
             output_dir=tmp_path / "modified",
@@ -1589,3 +1594,175 @@ def test_reencode_dataset_multi_key_multiprocessing(
     for vk in dataset.meta.video_keys:
         persisted_encoder = RGBEncoderConfig.from_video_info(persisted_info.features[vk].get("info", {}))
         assert persisted_encoder == target_cfg
+
+
+# ---------------------------------------------------------------------------
+# rename_feature
+# ---------------------------------------------------------------------------
+
+
+def _mock_hub(tmp_path):
+    """Context managers used by the other tests here to keep the hub out of the loop."""
+    return (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download"),
+    )
+
+
+def test_rename_feature_basic(sample_dataset, tmp_path):
+    """Renaming a feature moves it in the metadata and in the parquet data."""
+    mock_version, mock_download = _mock_hub(tmp_path)
+    with mock_version as mv, mock_download as md:
+        mv.return_value = "v3.0"
+        md.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        renamed = rename_feature(
+            sample_dataset,
+            {"observation.state": "observation.robot_state"},
+            output_dir=tmp_path / "renamed",
+        )
+
+    assert "observation.state" not in renamed.meta.features
+    assert "observation.robot_state" in renamed.meta.features
+    assert renamed.meta.features["observation.robot_state"]["shape"] == (4,)
+    assert len(renamed) == len(sample_dataset)
+
+    item = renamed[0]
+    assert "observation.robot_state" in item
+    assert "observation.state" not in item
+
+
+def test_rename_feature_carries_stats(sample_dataset, tmp_path):
+    """Stats must follow the rename instead of being silently dropped."""
+    mock_version, mock_download = _mock_hub(tmp_path)
+    with mock_version as mv, mock_download as md:
+        mv.return_value = "v3.0"
+        md.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        renamed = rename_feature(
+            sample_dataset,
+            {"observation.state": "observation.robot_state"},
+            output_dir=tmp_path / "renamed",
+        )
+
+    assert "observation.robot_state" in renamed.meta.stats
+    assert "observation.state" not in renamed.meta.stats
+    np.testing.assert_allclose(
+        renamed.meta.stats["observation.robot_state"]["mean"],
+        sample_dataset.meta.stats["observation.state"]["mean"],
+    )
+
+
+def test_rename_feature_swap(sample_dataset, tmp_path):
+    """Swapping two names in one call is allowed and does not collide."""
+    mock_version, mock_download = _mock_hub(tmp_path)
+    with mock_version as mv, mock_download as md:
+        mv.return_value = "v3.0"
+        md.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        feature_info = {"dtype": "float32", "shape": (6,), "names": None}
+        with_extra = add_features(
+            sample_dataset,
+            features={"action_b": (np.random.randn(50, 6).astype(np.float32), feature_info)},
+            output_dir=tmp_path / "with_extra",
+        )
+        swapped = rename_feature(
+            with_extra,
+            {"action": "action_b", "action_b": "action"},
+            output_dir=tmp_path / "swapped",
+        )
+
+    assert set(swapped.meta.features) == set(with_extra.meta.features)
+
+
+def test_modify_features_add_remove_and_rename(sample_dataset, tmp_path):
+    """add / remove / rename compose in a single pass."""
+    feature_info = {"dtype": "float32", "shape": (1,), "names": None}
+
+    mock_version, mock_download = _mock_hub(tmp_path)
+    with mock_version as mv, mock_download as md:
+        mv.return_value = "v3.0"
+        md.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        with_reward = add_features(
+            sample_dataset,
+            features={"reward": (np.random.randn(50, 1).astype(np.float32), feature_info)},
+            output_dir=tmp_path / "with_reward",
+        )
+        modified = modify_features(
+            with_reward,
+            add_features={"success": (np.random.randn(50, 1).astype(np.float32), feature_info)},
+            remove_features="reward",
+            rename_features={"observation.state": "observation.robot_state"},
+            output_dir=tmp_path / "modified",
+        )
+
+    assert "success" in modified.meta.features
+    assert "reward" not in modified.meta.features
+    assert "observation.robot_state" in modified.meta.features
+    assert "observation.state" not in modified.meta.features
+    assert len(modified) == 50
+
+
+@pytest.mark.parametrize(
+    ("mapping", "match"),
+    [
+        ({"does.not.exist": "whatever"}, "not found in dataset"),
+        ({"observation.state": "action"}, "already exists"),
+        ({"timestamp": "t"}, "Cannot rename required features"),
+        ({"observation.state": "x", "action": "x"}, "Duplicate rename targets"),
+    ],
+)
+def test_rename_feature_validation(sample_dataset, tmp_path, mapping, match):
+    with pytest.raises(ValueError, match=match):
+        rename_feature(sample_dataset, mapping, output_dir=tmp_path / "nope")
+
+
+def test_rename_feature_requires_mapping(sample_dataset, tmp_path):
+    with pytest.raises(ValueError, match="No feature mapping provided"):
+        rename_feature(sample_dataset, {}, output_dir=tmp_path / "nope")
+
+
+@require_h264
+def test_rename_video_feature_moves_files(tmp_path, empty_lerobot_dataset_factory, features_factory):
+    """Renaming a video feature moves its files and rewrites the episode metadata columns."""
+    features = features_factory(use_videos=True)
+    dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        features=features,
+        use_videos=True,
+    )
+    add_frames(dataset, num_frames=4)
+    dataset.save_episode()
+    dataset.finalize()
+
+    # Reload so the metadata reflects what is on disk.
+    dataset = LeRobotDataset(dataset.repo_id, root=dataset.root)
+
+    old_key = dataset.meta.video_keys[0]
+    new_key = "observation.images.renamed_cam"
+
+    mock_version, mock_download = _mock_hub(tmp_path)
+    with mock_version as mv, mock_download as md:
+        mv.return_value = "v3.0"
+        md.side_effect = lambda repo_id, **kwargs: str(kwargs.get("local_dir", tmp_path))
+
+        renamed = rename_feature(dataset, {old_key: new_key}, output_dir=tmp_path / "renamed")
+
+    assert new_key in renamed.meta.video_keys
+    assert old_key not in renamed.meta.video_keys
+
+    # The video file has to exist under the new key's directory.
+    video_path = renamed.root / renamed.meta.get_video_file_path(0, new_key)
+    assert video_path.is_file(), f"missing renamed video at {video_path}"
+    assert not (renamed.root / "videos" / old_key).exists()
+
+    # Episode metadata columns must have followed the rename.
+    ep_files = sorted((renamed.root / "meta/episodes").glob("*/*.parquet"))
+    assert ep_files
+    columns = set()
+    for f in ep_files:
+        columns.update(pq.read_table(f).column_names)
+    assert any(c.startswith(f"videos/{new_key}/") for c in columns)
+    assert not any(c.startswith(f"videos/{old_key}/") for c in columns)
+    assert not any(c.startswith(f"stats/{old_key}/") for c in columns)
