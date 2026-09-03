@@ -135,6 +135,8 @@ class EpisodicStrategyConfig(RolloutStrategyConfig):
 
     Records ``dataset.num_episodes`` episodes of maximum ``dataset.episode_time_s`` each.
     After each episode, runs ``dataset.reset_time_s`` seconds of reset time.
+    ``--duration`` is a per-episode cap here: when set and ``dataset.episode_time_s``
+    is not, it is used as the episode length.
 
     Keyboard controls:
         Right arrow  — end current episode or reset phase early
@@ -378,6 +380,19 @@ class RolloutConfig:
                 raise ValueError(
                     "DAgger num_episodes must be set either via --strategy.num_episodes or --dataset.num_episodes"
                 )
+
+        # Episodic: --duration caps a single episode, not the whole session (the
+        # session ends after --dataset.num_episodes episodes).
+        if isinstance(self.strategy, EpisodicStrategyConfig) and self.duration > 0:
+            if parser.parse_arg("dataset.episode_time_s") is not None:
+                logger.warning(
+                    "Both --duration and --dataset.episode_time_s are set for the episodic strategy; "
+                    "using --dataset.episode_time_s=%s and ignoring --duration.",
+                    self.dataset.episode_time_s,
+                )
+            else:
+                logger.info("Propagating --duration=%s to --dataset.episode_time_s", self.duration)
+                self.dataset.episode_time_s = self.duration
 
         # --- Policy loading ---
         if self.robot is None:
