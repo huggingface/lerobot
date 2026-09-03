@@ -292,6 +292,49 @@ lerobot-rollout \
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
 
+### Third-party inference backends
+
+Installed LeRobot plugins can add an inference backend without modifying the
+factory. Define a named config and register a builder when the plugin module is
+imported:
+
+```python
+from dataclasses import dataclass
+
+from lerobot.rollout import (
+    InferenceEngineConfig,
+    register_inference_engine,
+)
+
+
+@InferenceEngineConfig.register_subclass("my_backend")
+@dataclass
+class MyBackendConfig(InferenceEngineConfig):
+    queue_size: int = 30
+
+
+@register_inference_engine(MyBackendConfig)
+def build_my_backend(config: MyBackendConfig, **context):
+    return MyInferenceEngine(
+        config=config,
+        policy=context["policy"],
+        preprocessor=context["preprocessor"],
+        postprocessor=context["postprocessor"],
+        robot_wrapper=context["robot_wrapper"],
+        shutdown_event=context["shutdown_event"],
+    )
+```
+
+Package the module under one of the names discovered by
+`register_third_party_plugins` (for example, `lerobot_policy_my_backend`). The
+plugin is imported before CLI parsing, so its config is available as
+`--inference.type=my_backend`.
+
+Registration uses the exact config type and rejects duplicates. A plugin
+cannot silently replace `sync`, `rtc`, or another installed backend. Builders
+receive the rollout construction context as keyword arguments; use only the
+fields the backend needs.
+
 ---
 
 ## Interactive Sessions

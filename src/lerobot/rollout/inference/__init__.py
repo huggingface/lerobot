@@ -24,6 +24,7 @@ from .factory import (
     RTCInferenceConfig,
     SyncInferenceConfig,
     create_inference_engine,
+    register_inference_engine,
 )
 from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
@@ -39,4 +40,5 @@ __all__ = [
     "SyncInferenceConfig",
     "SyncInferenceEngine",
     "create_inference_engine",
+    "register_inference_engine",
 ]
