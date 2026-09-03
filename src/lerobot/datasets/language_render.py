@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import re
 from collections.abc import Sequence
 from typing import Any
 
-from lerobot.configs.recipe import DEFAULT_BINDINGS, PLACEHOLDER_RE, TrainingRecipe
+from lerobot.configs.recipe import DEFAULT_BINDINGS, TrainingRecipe, render_message_turns
 from lerobot.utils.utils import unwrap_scalar
 
 from .language import LANGUAGE_PERSISTENT, column_for_style
@@ -189,6 +188,8 @@ def render_sample(
             return vqa_rendered
 
     selected_recipe = _select_recipe(recipe, sample_idx)
+    if selected_recipe is None:
+        return None
     bindings = _resolve_bindings(
         selected_recipe,
         persistent=persistent_rows,
@@ -253,26 +254,27 @@ def _render_vqa_if_present(
     return renderable[-1][1]
 
 
-def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe:
-    """Pick a deterministic blend component for ``sample_idx`` (or return ``recipe``)."""
+def _select_recipe(recipe: TrainingRecipe, sample_idx: int) -> TrainingRecipe | None:
+    """Pick a deterministic non-routed component for an ordinary sample."""
     if recipe.blend is None:
         return recipe
 
-    total_weight = sum(component.weight or 0.0 for component in recipe.blend.values())
+    components = [component for component in recipe.blend.values() if component.route is None]
+    total_weight = sum(component.weight or 0.0 for component in components)
     if total_weight <= 0:
-        raise ValueError("Blend weights must sum to a positive value.")
+        return None
 
     digest = hashlib.blake2b(str(sample_idx).encode(), digest_size=8).digest()
     draw = int.from_bytes(digest, "big") / 2**64 * total_weight
     cumulative = 0.0
     last_component: TrainingRecipe | None = None
-    for component in recipe.blend.values():
+    for component in components:
         last_component = component
         cumulative += component.weight or 0.0
         if draw < cumulative:
             return component
     if last_component is None:
-        raise ValueError("Blend recipes must contain at least one component.")
+        return None
     return last_component
 
 
@@ -400,79 +402,15 @@ def _render_message_recipe(
     """Expand ``recipe.messages`` into rendered chat messages using ``bindings``."""
     if recipe.messages is None:
         raise ValueError("Cannot render a blend recipe as a message recipe.")
-    messages: list[dict[str, Any]] = []
-    streams: list[str | None] = []
-    target_indices: list[int] = []
-
-    for turn in recipe.messages:
-        if turn.if_present is not None and bindings.get(turn.if_present) is None:
-            continue
-
-        message = {"role": turn.role}
-        if turn.content is not None:
-            message["content"] = _render_content(turn.content, bindings)
-
-        if turn.tool_calls_from is not None:
-            row = bindings.get(turn.tool_calls_from)
-            tool_calls = row.get("tool_calls") if isinstance(row, dict) else None
-            if tool_calls:
-                message["tool_calls"] = copy.deepcopy(tool_calls)
-
-        message_idx = len(messages)
-        messages.append(message)
-        streams.append(turn.stream)
-        if turn.target:
-            target_indices.append(message_idx)
+    rendered = render_message_turns(recipe.messages, bindings)
 
     # Keep samples with either text targets or low-level action supervision.
-    has_low_level = any(stream == "low_level" for stream in streams)
-    if not target_indices and not has_low_level:
+    has_low_level = any(stream == "low_level" for stream in rendered["message_streams"])
+    if not rendered["target_message_indices"] and not has_low_level:
         return None
 
-    rendered = {
-        "messages": messages,
-        "message_streams": streams,
-        "target_message_indices": target_indices,
-    }
     _validate_rendered(rendered)
     return rendered
-
-
-def _render_content(
-    content: str | list[dict[str, Any]],
-    bindings: dict[str, LanguageRow | str | None],
-) -> str | list[dict[str, Any]]:
-    """Substitute bindings into a string or each string field of multimodal blocks."""
-    if isinstance(content, str):
-        return _substitute(content, bindings)
-
-    rendered_blocks = []
-    for block in content:
-        rendered_block = copy.deepcopy(block)
-        for key, value in rendered_block.items():
-            if isinstance(value, str):
-                rendered_block[key] = _substitute(value, bindings)
-        rendered_blocks.append(rendered_block)
-    return rendered_blocks
-
-
-def _substitute(template: str, bindings: dict[str, LanguageRow | str | None]) -> str:
-    """Replace ``${name}`` placeholders in ``template`` with their bound values."""
-
-    def replace(match: re.Match[str]) -> str:
-        """Resolve a single ``${name}`` match to its bound string value."""
-        name = match.group(1)
-        if name not in bindings:
-            raise ValueError(f"Unknown template binding: {name!r}")
-        value = bindings[name]
-        if value is None:
-            return ""
-        if isinstance(value, dict):
-            content = value.get("content")
-            return "" if content is None else str(content)
-        return str(value)
-
-    return PLACEHOLDER_RE.sub(replace, template)
 
 
 def _validate_rendered(rendered: RenderedMessages) -> None:

@@ -49,6 +49,49 @@ def test_render_messages_step_noops_without_language_columns_or_task():
     assert RenderMessagesStep(recipe)(transition) == transition
 
 
+def test_render_messages_step_can_disable_training_fallback():
+    recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
+    transition = create_transition(complementary_data={"task": "pick up the cup"})
+
+    assert RenderMessagesStep(recipe, render_training=False)(transition) is transition
+    assert RenderMessagesStep(recipe, render_training=False).get_config()["render_training"] is False
+
+
+def test_raw_language_remains_authoritative_when_messages_are_already_present():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(role="user", content="${task}", stream="low_level"),
+            MessageTurn(role="assistant", content="${subtask}", stream="high_level", target=True),
+        ]
+    )
+    transition = create_transition(
+        complementary_data={
+            "task": "pick the cube",
+            "timestamp": 0.0,
+            "messages": [{"role": "user", "content": "stale"}],
+            "language_persistent": [
+                {
+                    "role": "assistant",
+                    "content": "reach carefully",
+                    "style": "subtask",
+                    "timestamp": 0.0,
+                }
+            ],
+            "language_events": [],
+        }
+    )
+
+    output = RenderMessagesStep(recipe)(transition)
+    data = output[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert data["messages"] == [
+        {"role": "user", "content": "pick the cube"},
+        {"role": "assistant", "content": "reach carefully"},
+    ]
+    assert data["message_streams"] == ["low_level", "high_level"]
+    assert data["target_message_indices"] == [1]
+
+
 def test_render_messages_step_renders_and_drops_raw_language():
     recipe = TrainingRecipe(
         messages=[
@@ -173,6 +216,34 @@ def test_render_messages_step_rejects_mismatched_non_empty_language_batches():
     )
 
     with pytest.raises(ValueError, match="must have equal lengths"):
+        RenderMessagesStep(recipe)(transition)
+
+
+def test_render_messages_step_rejects_an_entirely_unrenderable_batch():
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant",
+                content="${subtask}",
+                stream="high_level",
+                target=True,
+                if_present="subtask",
+            )
+        ]
+    )
+    transition = create_transition(
+        complementary_data={
+            "task": [None, None],
+            "timestamp": torch.tensor([0.0, 1.0]),
+            "language_persistent": [[], []],
+            "language_events": [
+                [{"style": "unmatched", "timestamp": 0.0}],
+                [{"style": "unmatched", "timestamp": 1.0}],
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="produced no renderable samples"):
         RenderMessagesStep(recipe)(transition)
 
 

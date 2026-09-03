@@ -49,6 +49,11 @@ INFO = "info"
 QUERY_KIND = "query_kind"
 QUERY_TEXT = "query_text"
 
+# Raw semantic-language dataset columns. These live here so lightweight policy
+# processors do not need to import the optional datasets/pyarrow stack.
+LANGUAGE_PERSISTENT = "language_persistent"
+LANGUAGE_EVENTS = "language_events"
+
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
 

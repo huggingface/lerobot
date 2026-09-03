@@ -445,9 +445,13 @@ def test_vqa_frame_is_consumed_over_the_weighted_blend():
             recipe=recipe, persistent=PERSISTENT, events=EVENTS_AT_1, t=1.0, sample_idx=sample_idx, task="x"
         )
         assert rendered["messages"][-1]["content"] == '{"count": 2}', sample_idx
-    # A frame WITHOUT a vqa event falls back to the normal weighted blend.
-    rendered = render_sample(recipe=recipe, persistent=PERSISTENT, events=[], t=1.0, sample_idx=0, task="x")
-    assert rendered["messages"][-1]["content"] == "a subtask"
+    # A frame WITHOUT a VQA event selects only from the ordinary components;
+    # the routed VQA weight is not spent on action-only fallback samples.
+    for sample_idx in range(20):
+        rendered = render_sample(
+            recipe=recipe, persistent=PERSISTENT, events=[], t=1.0, sample_idx=sample_idx, task="x"
+        )
+        assert rendered["messages"][-1]["content"] == "a subtask", sample_idx
 
 
 def test_emitted_at_persistent_tolerates_small_timestamp_drift():
