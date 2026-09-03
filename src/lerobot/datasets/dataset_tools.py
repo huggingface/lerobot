@@ -93,8 +93,12 @@ def _load_episode_with_stats(src_dataset: LeRobotDataset, episode_idx: int) -> d
         dict containing episode metadata and stats
     """
     ep_meta = src_dataset.meta.episodes[episode_idx]
-    chunk_idx = ep_meta["meta/episodes/chunk_index"]
-    file_idx = ep_meta["meta/episodes/file_index"]
+    # Datasets converted in bulk (write_episodes(), e.g. the v2.1->v3.0 converter) write a
+    # single episodes parquet file and never add these self-referencing columns -- only the
+    # live/buffered recording writer does. write_episodes() also guarantees single-file
+    # layout whenever it skips them, so (0, 0) is the correct fallback location.
+    chunk_idx = ep_meta.get("meta/episodes/chunk_index", 0)
+    file_idx = ep_meta.get("meta/episodes/file_index", 0)
 
     parquet_path = src_dataset.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     df = pd.read_parquet(parquet_path)
@@ -891,6 +895,19 @@ def _copy_and_reindex_episodes_metadata(
     if src_dataset.meta.episodes is None:
         src_dataset.meta.episodes = load_episodes(src_dataset.meta.root)
 
+    # Bulk-converted datasets (write_episodes(), e.g. lerobot/libero via the v2.1->v3.0
+    # converter) don't store a per-episode "tasks" column -- only each frame's task_index
+    # does. Derive an episode_index -> task text fallback from the frame-level data in
+    # that case (task registration in dst_meta itself is already handled from frame-level
+    # task_index by _copy_and_reindex_data, independently of this column).
+    episode_tasks_fallback = None
+    if "tasks" not in src_dataset.meta.episodes.column_names:
+        task_text_by_index = {int(idx): name for name, idx in src_dataset.meta.tasks["task_index"].items()}
+        frame_tasks = src_dataset.select_columns(["episode_index", "task_index"])
+        episode_tasks_fallback = {}
+        for ep_idx, task_idx in zip(frame_tasks["episode_index"], frame_tasks["task_index"], strict=True):
+            episode_tasks_fallback.setdefault(int(ep_idx), task_text_by_index[int(task_idx)])
+
     all_stats = []
     total_frames = 0
 
@@ -942,9 +959,10 @@ def _copy_and_reindex_episodes_metadata(
 
         all_stats.append(episode_stats)
 
+        tasks = [episode_tasks_fallback[old_idx]] if episode_tasks_fallback is not None else src_episode["tasks"]
         episode_dict = {
             "episode_index": new_idx,
-            "tasks": src_episode["tasks"],
+            "tasks": tasks,
             "length": src_episode["length"],
         }
         episode_dict.update(episode_meta)
