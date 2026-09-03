@@ -13,7 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Visualize data of **all** frames of any episode of a dataset of type LeRobotDataset.
+""" Visualize data of **all** frames of any episode(s) of a dataset of type LeRobotDataset.
+
+Multi-episode extension: Supports single episode, multiple specific episodes,
+a range of episodes, or all episodes — each as a separate Rerun recording.
 
 Requires: pip install 'lerobot[dataset_viz]'  (includes dataset + viz extras)
 
@@ -29,16 +32,38 @@ save disk space. The compression factor applied has been tuned to not affect suc
 
 Examples:
 
-- Visualize data stored on a local machine:
+- Visualize a single episode:
 ```
-local$ lerobot-dataset-viz \
+local$ python viz_multi.py \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
 
+- Visualize multiple specific episodes:
+```
+local$ python viz_multi.py \
+    --repo-id lerobot/pusht \
+    --episode-indices 0,1,2,3
+```
+
+- Visualize a range of episodes:
+```
+local$ python viz_multi.py \
+    --repo-id lerobot/pusht \
+    --episode-start 0 \
+    --episode-end 20
+```
+
+- Visualize all episodes:
+```
+local$ python viz_multi.py \
+    --repo-id lerobot/pusht \
+    --all
+```
+
 - Visualize data stored on a distant machine with a local viewer:
 ```
-distant$ lerobot-dataset-viz \
+distant$ python viz_multi.py \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --save 1 \
@@ -50,7 +75,7 @@ local$ rerun lerobot_pusht_episode_0.rrd
 
 - Visualize data stored on a distant machine through streaming:
 ```
-distant$ lerobot-dataset-viz \
+distant$ python viz_multi.py \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --mode distant \
@@ -61,7 +86,7 @@ local$ rerun rerun+http://IP:GRPC_PORT/proxy
 
 - Visualize data in Foxglove with a seekable, scrubbable timeline:
 ```
-local$ lerobot-dataset-viz \
+local$ python viz_multi.py \
     --repo-id lerobot/pusht \
     --episode-index 0 \
     --display-mode foxglove
@@ -93,6 +118,36 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FOXGLOVE_PORT = 8765
 DEFAULT_RERUN_PORT = 9090
+
+
+def get_episode_indices(args, repo_id, root, tolerance_s) -> list[int]:
+    """Resolve which episodes to visualize based on CLI arguments.
+
+    Priority: --all > --episode-indices > --episode-start+--episode-end > --episode-index > default [0].
+    """
+    # --all: load dataset metadata to get total episode count
+    if args.all:
+        tmp_dataset = LeRobotDataset(
+            repo_id,
+            root=root,
+            tolerance_s=tolerance_s,
+        )
+        return list(range(tmp_dataset.num_episodes))
+
+    # --episode-indices: parse comma-separated list, e.g. "0,3,5"
+    if args.episode_indices is not None:
+        return [int(x) for x in args.episode_indices.split(",")]
+
+    # --episode-start + --episode-end: inclusive range
+    if args.episode_start is not None and args.episode_end is not None:
+        return list(range(args.episode_start, args.episode_end + 1))
+
+    # --episode-index: single episode (original behaviour)
+    if args.episode_index is not None:
+        return [args.episode_index]
+
+    # Default: show episode 0
+    return [0]
 
 
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
@@ -157,6 +212,69 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
     return rrb.Blueprint(rrb.Grid(*views))
 
 
+def log_episode_frames(
+    dataloader,
+    recording: "RecordingStream",
+    depth_meter: float,
+    depth_ranges: dict[str, tuple[float, float]],
+    camera_keys: list[str],
+    depth_keys: set[str],
+    display_compressed_images: bool,
+):
+    """Log all frames of a single episode to the given recording stream.
+
+    Uses recording methods directly to avoid any ambiguity about which recording
+    receives the data.
+    """
+    import rerun as rr
+
+    first_index = None
+    for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
+        if first_index is None:
+            first_index = batch["index"][0].item()
+
+        # iterate over the batch
+        for i in range(len(batch["index"])):
+            recording.set_time("frame_index", sequence=batch["index"][i].item() - first_index)
+            recording.set_time("timestamp", timestamp=batch["timestamp"][i].item())
+
+            # display each camera image (or depth map)
+            for key in camera_keys:
+                if key in depth_keys:
+                    depth = to_hwc_float32_numpy(batch[key][i])
+                    depth_entity = rr.DepthImage(
+                        depth,
+                        meter=depth_meter,
+                        colormap=rr.components.Colormap.Viridis,
+                        depth_range=depth_ranges.get(key),
+                    )
+                    recording.log(key, depth_entity)
+                else:
+                    img = to_hwc_uint8_numpy(batch[key][i])
+                    if display_compressed_images:
+                        img_entity = rr.Image(img).compress()
+                    else:
+                        img_entity = rr.Image(img)
+                    recording.log(key, img_entity)
+
+            # display the action space (e.g. actuators command)
+            if ACTION in batch:
+                recording.log(ACTION, rr.Scalars(batch[ACTION][i].numpy()))
+
+            # display the observed state space (e.g. agent position in joint space)
+            if OBS_STATE in batch:
+                recording.log("state", rr.Scalars(batch[OBS_STATE][i].numpy()))
+
+            if DONE in batch:
+                recording.log(DONE, rr.Scalars(batch[DONE][i].item()))
+
+            if REWARD in batch:
+                recording.log(REWARD, rr.Scalars(batch[REWARD][i].item()))
+
+            if SUCCESS in batch:
+                recording.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
+
+
 def visualize_dataset(
     dataset: LeRobotDataset,
     episode_index: int,
@@ -173,6 +291,10 @@ def visualize_dataset(
     autoplay: bool = True,
     **kwargs,
 ) -> Path | None:
+    """Log a single episode to Rerun as its own recording.
+
+    Returns the path to the saved .rrd file if ``save=True``, otherwise None.
+    """
     if display_mode == "foxglove":
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
@@ -201,8 +323,6 @@ def visualize_dataset(
         batch_size=batch_size,
     )
 
-    logging.info("Starting Rerun")
-
     if mode not in ["local", "distant"]:
         raise ValueError(mode)
 
@@ -210,26 +330,29 @@ def visualize_dataset(
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
+    from rerun import RecordingStream
 
-    spawn_local_viewer = mode == "local" and not save
-    blueprint = build_blueprint_from_dataset(dataset)
-    rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer, default_blueprint=blueprint)
-
-    # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
-    # when iterating on a dataloader with `num_workers` > 0
-    # TODO(rcadene): remove `gc.collect` when rerun version 0.16 is out, which includes a fix
-    gc.collect()
+    # Create a dedicated recording for this episode.
+    # Using RecordingStream directly (not rr.init()) allows us to create multiple
+    # distinct recordings within the same process without triggering the cleanup
+    # that rr.init() does (which flushes and destroys previous recordings).
+    recording = RecordingStream(
+        repo_id,
+        recording_id=f"episode_{episode_index}",
+        make_default=True,
+    )
 
     if mode == "distant":
-        server_uri = rr.serve_grpc(grpc_port=grpc_port)
-        logging.info(f"Connect to a Rerun Server: rerun rerun+http://IP:{grpc_port}/proxy")
-        rr.serve_web_viewer(
-            open_browser=False,
-            web_port=web_port if web_port is not None else DEFAULT_RERUN_PORT,
-            connect_to=server_uri,
-        )
+        recording.connect_grpc(f"rerun+http://127.0.0.1:{grpc_port}/proxy")
+        logging.info(f"Connect to a Rerun Server: rerun rerun+http://127.0.0.1:{grpc_port}/proxy")
 
-    logging.info("Logging to Rerun")
+    # Build and send the blueprint
+    blueprint = build_blueprint_from_dataset(dataset)
+    recording.send_blueprint(blueprint)
+
+    # Manually call python garbage collector after creating the recording to avoid
+    # hanging in a blocking flush when iterating on a dataloader with num_workers > 0
+    gc.collect()
 
     # Depth frames and stats are dequantized to the dataset's depth_output_unit on load.
     depth_meter = 1000.0 if dataset.depth_output_unit == DEPTH_MILLIMETER_UNIT else 1.0
@@ -244,55 +367,24 @@ def visualize_dataset(
         hi = stats["q99"] if "q99" in stats else stats["max"]
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
 
-    first_index = None
-    for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
-        if first_index is None:
-            first_index = batch["index"][0].item()
+    logging.info("Logging to Rerun")
 
-        # iterate over the batch
-        for i in range(len(batch["index"])):
-            rr.set_time("frame_index", sequence=batch["index"][i].item() - first_index)
-            rr.set_time("timestamp", timestamp=batch["timestamp"][i].item())
-
-            # display each camera image (or depth map)
-            for key in dataset.meta.camera_keys:
-                if key in dataset.meta.depth_keys:
-                    depth = to_hwc_float32_numpy(batch[key][i])
-                    depth_entity = rr.DepthImage(
-                        depth,
-                        meter=depth_meter,
-                        colormap=rr.components.Colormap.Viridis,
-                        depth_range=depth_ranges.get(key),
-                    )
-                    rr.log(key, entity=depth_entity)
-                else:
-                    img = to_hwc_uint8_numpy(batch[key][i])
-                    img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
-                    rr.log(key, entity=img_entity)
-
-            # display the action space (e.g. actuators command)
-            if ACTION in batch:
-                rr.log(ACTION, rr.Scalars(batch[ACTION][i].numpy()))
-
-            # display the observed state space (e.g. agent position in joint space)
-            if OBS_STATE in batch:
-                rr.log("state", rr.Scalars(batch[OBS_STATE][i].numpy()))
-
-            if DONE in batch:
-                rr.log(DONE, rr.Scalars(batch[DONE][i].item()))
-
-            if REWARD in batch:
-                rr.log(REWARD, rr.Scalars(batch[REWARD][i].item()))
-
-            if SUCCESS in batch:
-                rr.log(SUCCESS, rr.Scalars(batch[SUCCESS][i].item()))
+    log_episode_frames(
+        dataloader,
+        recording,
+        depth_meter,
+        depth_ranges,
+        dataset.meta.camera_keys,
+        set(dataset.meta.depth_keys),
+        display_compressed_images,
+    )
 
     # save .rrd locally
     if mode == "local" and save:
         output_dir.mkdir(parents=True, exist_ok=True)
         repo_id_str = repo_id.replace("/", "_")
         rrd_path = output_dir / f"{repo_id_str}_episode_{episode_index}.rrd"
-        rr.save(rrd_path)
+        recording.save(str(rrd_path))
         return rrd_path
 
     elif mode == "distant":
@@ -316,8 +408,31 @@ def main():
     parser.add_argument(
         "--episode-index",
         type=int,
-        required=True,
-        help="Episode to visualize.",
+        default=None,
+        help="Visualize a single episode (e.g. `--episode-index 0`).",
+    )
+    parser.add_argument(
+        "--episode-indices",
+        type=str,
+        default=None,
+        help="Visualize multiple episodes (e.g. `--episode-indices 0,1,2,3`).",
+    )
+    parser.add_argument(
+        "--episode-start",
+        type=int,
+        default=None,
+        help="Start episode index for a range (use with `--episode-end`).",
+    )
+    parser.add_argument(
+        "--episode-end",
+        type=int,
+        default=None,
+        help="End episode index for a range (use with `--episode-start`).",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Visualize all episodes in the dataset.",
     )
     parser.add_argument(
         "--root",
@@ -439,16 +554,119 @@ def main():
                 ", ".join(f"--{name.replace('_', '-')}" for name in ignored),
             )
 
-    kwargs = vars(args)
-    repo_id = kwargs.pop("repo_id")
-    root = kwargs.pop("root")
-    tolerance_s = kwargs.pop("tolerance_s")
+        # Foxglove only supports a single episode
+        if args.all or args.episode_indices is not None or (args.episode_start is not None and args.episode_end is not None):
+            raise ValueError(
+                "Foxglove display mode only supports a single episode. "
+                "Use `--episode-index N` or switch to `--display-mode rerun`."
+            )
 
     init_logging()
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, episodes=[args.episode_index], root=root, tolerance_s=tolerance_s)
 
-    visualize_dataset(dataset, **kwargs)
+    repo_id = args.repo_id
+    root = args.root
+    tolerance_s = args.tolerance_s
+
+    episode_indices = get_episode_indices(args, repo_id, root, tolerance_s)
+    logging.info(f"Loading episodes: {episode_indices}")
+
+    # Build kwargs dict for visualize_dataset (excluding episode-selection args)
+    viz_kwargs = {
+        "batch_size": args.batch_size,
+        "num_workers": args.num_workers,
+        "mode": args.mode,
+        "web_port": args.web_port,
+        "grpc_port": args.grpc_port,
+        "save": args.save,
+        "output_dir": args.output_dir,
+        "display_compressed_images": args.display_compressed_images,
+        "display_mode": args.display_mode,
+        "host": args.host,
+        "autoplay": args.autoplay,
+    }
+
+    # Import rerun once
+    from lerobot.utils.import_utils import require_package
+
+    require_package("rerun-sdk", extra="viz", import_name="rerun")
+    import rerun as rr
+    from rerun import RecordingStream
+
+    # Keep a reference to all RecordingStream objects to prevent Python GC
+    # from destroying them while other episodes are still logging.
+    all_recordings_pool: list[RecordingStream] = []
+
+    for i, ep_idx in enumerate(episode_indices):
+        logging.info(f"Episode {ep_idx}/{episode_indices[-1]}")
+
+        dataset = LeRobotDataset(
+            repo_id,
+            episodes=[ep_idx],
+            root=root,
+            tolerance_s=tolerance_s,
+        )
+
+        if args.mode == "local" and not args.save and i == 0:
+            # First episode in local mode: rr.init() with spawn=True opens the viewer
+            # and creates the first recording in one call.
+            rr.init(
+                repo_id,
+                recording_id=f"episode_{ep_idx}",
+                spawn=True,
+                default_blueprint=build_blueprint_from_dataset(dataset),
+            )
+            gc.collect()
+            recording = rr.get_data_recording()
+        elif args.mode == "local" and not args.save and i > 0:
+            # Subsequent episodes: create a RecordingStream that connects to the
+            # already-running viewer via gRPC (default rerun+http://127.0.0.1:9876/proxy).
+            rec = RecordingStream(
+                repo_id,
+                recording_id=f"episode_{ep_idx}",
+                make_default=True,
+            )
+            rec.connect_grpc()
+            rec.send_blueprint(build_blueprint_from_dataset(dataset))
+            gc.collect()
+            recording = rec
+            all_recordings_pool.append(rec)
+        else:
+            # save mode or distant mode: use visualize_dataset helper
+            visualize_dataset(
+                dataset,
+                episode_index=ep_idx,
+                **viz_kwargs,
+            )
+            continue
+
+        # Build dataloader for this episode
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            num_workers=args.num_workers,
+            batch_size=args.batch_size,
+        )
+
+        # Depth config
+        depth_meter = 1000.0 if dataset.depth_output_unit == DEPTH_MILLIMETER_UNIT else 1.0
+        depth_ranges = {}
+        for key in dataset.meta.depth_keys:
+            stats = (dataset.meta.stats or {}).get(key)
+            if not stats:
+                continue
+            lo = stats["q01"] if "q01" in stats else stats["min"]
+            hi = stats["q99"] if "q99" in stats else stats["max"]
+            depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
+
+        log_episode_frames(
+            dataloader,
+            recording,
+            depth_meter,
+            depth_ranges,
+            dataset.meta.camera_keys,
+            set(dataset.meta.depth_keys),
+            args.display_compressed_images,
+        )
 
 
 if __name__ == "__main__":
