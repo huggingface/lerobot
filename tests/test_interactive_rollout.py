@@ -692,6 +692,30 @@ def test_drop_queued_actions_clears_the_queues_dict_convention():
     assert len(policy._queues["observation.state"]) == 1  # other episode state is left alone
 
 
+def test_queued_action_count_reads_both_queue_conventions():
+    """The sync engine keys the relative-action anchor hold off this count, so it must agree
+    with drop_queued_actions() on both the bare-deque and the ``_queues`` dict conventions."""
+    from collections import deque
+
+    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.utils.constants import ACTION
+
+    bare_deque_policy = SimpleNamespace(  # act / pi0 / fastwam / lingbot-va style
+        _action_queue_attrs=PreTrainedPolicy._action_queue_attrs,
+        _action_queue=deque([1, 2, 3]),
+    )
+    assert PreTrainedPolicy.queued_action_count(bare_deque_policy) == 3
+
+    queues_dict_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
+        _action_queue_attrs=PreTrainedPolicy._action_queue_attrs,
+        _queues={ACTION: deque([1, 2]), "observation.state": deque([9, 9, 9])},
+    )
+    assert PreTrainedPolicy.queued_action_count(queues_dict_policy) == 2  # history is not counted
+
+    never_chunks_policy = SimpleNamespace(_action_queue_attrs=PreTrainedPolicy._action_queue_attrs)
+    assert PreTrainedPolicy.queued_action_count(never_chunks_policy) == 0
+
+
 # --- Sentry strategy: restartable run() segments + dispatched-action task labels ---
 
 

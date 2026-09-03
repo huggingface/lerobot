@@ -85,7 +85,7 @@ from lerobot.envs import (
 from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import PolicyProcessorPipeline, find_relative_action_step, pinned_relative_anchor
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
@@ -257,6 +257,17 @@ def rollout(
     all_successes = []
     all_dones = []
 
+    # A relative-action policy predicts a chunk of offsets anchored to the state at prediction
+    # time, but this loop reruns the pre/post pipeline every step, which would re-anchor queued
+    # actions to the current (moved) state. Pin the anchor per chunk, as SyncInferenceEngine does.
+    # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
+    # so it inherits the queue's batching assumptions rather than adding any: every sub-env
+    # refills on the same step, and a sub-env that finished early is frozen by
+    # FreezeAfterEpisodeEnd and its transitions discarded.
+    relative_step = find_relative_action_step(preprocessor)
+    if relative_step is not None:
+        logging.info("Relative actions enabled: chunk anchor pinned per predicted chunk")
+
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
@@ -288,9 +299,14 @@ def rollout(
             # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
             observation = env_preprocessor(observation)
 
-            observation = preprocessor(observation)
-            with torch.inference_mode():
-                action = policy.select_action(observation)
+            # Hold the chunk anchor across ticks that serve an already-queued action, so a
+            # relative-action chunk resolves against the state it was generated from instead of
+            # drifting with the arm. The postprocessor runs outside the block: that is where
+            # AbsoluteActionsProcessorStep reads the anchor this restores.
+            with pinned_relative_anchor(relative_step, policy):
+                observation = preprocessor(observation)
+                with torch.inference_mode():
+                    action = policy.select_action(observation)
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
             action = postprocessor(action)
