@@ -24,7 +24,7 @@ import torch
 from datasets import load_dataset
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
-from lerobot.utils.constants import HF_LEROBOT_HOME, LOOKAHEAD_BACKTRACKTABLE, LOOKBACK_BACKTRACKTABLE
+from lerobot.utils.constants import HF_LEROBOT_HOME
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .depth_utils import MM_PER_METRE, dequantize_depth
@@ -453,29 +453,24 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         rng.shuffle(frames_buffer)
         yield from frames_buffer
 
-    def _get_window_steps(
-        self, delta_timestamps: dict[str, list[float]] | None = None, dynamic_bounds: bool = False
-    ) -> tuple[int, int]:
-        if delta_timestamps is None:
+    def _get_window_steps(self) -> tuple[int, int]:
+        """Tightest lookback/lookahead windows (in frames) needed to serve `delta_indices`.
+
+        Derived from `delta_indices` (not `delta_timestamps * fps`) so the bounds match
+        exactly what `_get_delta_frames` indexes with, rounding included. Clamped to 1
+        since `Backtrackable` requires history >= 1 and lookahead > 0.
+        """
+        if self.delta_indices is None:
             return 1, 1
 
-        if not dynamic_bounds:
-            # Fix the windows
-            lookback = LOOKBACK_BACKTRACKTABLE
-            lookahead = LOOKAHEAD_BACKTRACKTABLE
-        else:
-            # Dynamically adjust the windows based on the given delta_timesteps
-            all_timestamps = sum(delta_timestamps.values(), [])
-            lookback = min(all_timestamps) * self.fps
-            lookahead = max(all_timestamps) * self.fps
-
-            # When lookback is >=0 it means no negative timesteps have been provided
-            lookback = 0 if lookback >= 0 else (lookback * -1)
-
+        all_indices = sum(self.delta_indices.values(), [])
+        # `_back_buf` also holds the current item, so peeking back n steps needs history n + 1.
+        lookback = max(1, 1 - min(all_indices))
+        lookahead = max(1, max(all_indices))
         return lookback, lookahead
 
     def _make_backtrackable_dataset(self, dataset: datasets.IterableDataset) -> Backtrackable:
-        lookback, lookahead = self._get_window_steps(self.delta_timestamps)
+        lookback, lookahead = self._get_window_steps()
         return Backtrackable(dataset, history=lookback, lookahead=lookahead)
 
     def _make_timestamps_from_indices(

@@ -24,6 +24,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.streaming_dataset as streaming_dataset_module
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.feature_utils import get_delta_indices
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.datasets.utils import safe_shard
 from lerobot.utils.constants import ACTION
@@ -480,6 +481,31 @@ def test_frames_with_delta_consistency_with_shards(
         assert all(t[1] for t in key_checks), (
             f"Checking {list(filter(lambda t: not t[1], key_checks))[0][0]} left and right were found different (i: {i}, frame_idx: {frame_idx})"
         )
+
+
+@pytest.mark.parametrize(
+    "delta_indices, expected",
+    [
+        (None, (1, 1)),  # no deltas: minimal valid Backtrackable windows
+        # history = deepest peek_back + 1 slot for the current item held in _back_buf
+        ({"state": [-3, 0], "action": [0, 3, 6]}, (4, 6)),  # extremes across all keys
+        ({"action": [0, 1, 2]}, (1, 2)),  # future-only: lookback clamped to 1
+        ({"state": [-5, 0]}, (6, 1)),  # past-only: lookahead clamped to 1
+    ],
+)
+def test_window_steps_tight_bounds(delta_indices, expected):
+    ds = SimpleNamespace(delta_indices=delta_indices)
+    assert StreamingLeRobotDataset._get_window_steps(ds) == expected
+
+
+def test_window_steps_match_delta_indices_rounding():
+    # -0.999s @ 30fps rounds to index -30; a bound derived from the float product
+    # (-29.97 truncated to 29) would silently pad a real frame. Bounds must come
+    # from get_delta_indices so they match what _get_delta_frames indexes with.
+    delta_indices = get_delta_indices({"state": [-0.999, 0.999]}, fps=30)
+    assert delta_indices == {"state": [-30, 30]}
+    ds = SimpleNamespace(delta_indices=delta_indices)
+    assert StreamingLeRobotDataset._get_window_steps(ds) == (31, 30)
 
 
 class _StopConstructionError(Exception):
