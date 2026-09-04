@@ -32,7 +32,7 @@
     "pick-place-wall-v3": "Pick a puck, bypass a wall and place the puck",
     "pick-out-of-hole-v3": "Pick up a puck from a hole",
     "reach-v3": "Reach a goal position",
-    "push-back-v3": "Push the puck to a goal",
+    "push-back-v3": "Push the puck back toward the robot to the goal",
     "push-v3": "Push the puck to a goal",
     "pick-place-v3": "Pick and place a puck to a goal",
     "plate-slide-v3": "Slide a plate into a cabinet",
