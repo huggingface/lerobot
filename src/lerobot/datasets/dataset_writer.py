@@ -278,6 +278,35 @@ class DatasetWriter:
 
         validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
 
+        # A frame shortfall (dropped PNG write or encoder back-pressure) would misalign frames with
+        # the tabular data, so discard the episode. Flush async writes first for a final on-disk count.
+        self._wait_image_writer()
+        episode_index = episode_buffer["episode_index"]
+        if isinstance(episode_index, np.ndarray):
+            episode_index = int(episode_index.flat[0])
+        episode_length = episode_buffer["size"]
+        streaming = self._streaming_encoder is not None
+        mismatched = {}
+        for key in self._meta.camera_keys:
+            if key in self._meta.depth_keys:
+                continue
+            if streaming and key in self._meta.video_keys:
+                produced = episode_length - self._streaming_encoder.dropped_frame_count(key)
+            else:
+                img_dir = self._get_image_file_dir(episode_index, key)
+                produced = len(list(img_dir.glob("*.png"))) if img_dir.is_dir() else 0
+            if produced != episode_length:
+                mismatched[key] = produced
+        if mismatched:
+            details = ", ".join(f"{key}: {count} frame(s)" for key, count in mismatched.items())
+            logger.warning(
+                "\n" + "!" * 80 + f"\nEpisode {episode_index}: number of stored frames does not match the "
+                f"{episode_length} recorded frames ({details}).\n"
+                "Discarding this episode and moving on.\n" + "!" * 80
+            )
+            self.clear_episode_buffer(delete_images=True)
+            return
+
         # size and task are special cases that won't be added to hf_dataset
         episode_length = episode_buffer.pop("size")
         tasks = episode_buffer.pop("task")
