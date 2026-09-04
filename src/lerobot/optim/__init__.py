@@ -15,6 +15,8 @@
 from .optimizers import (
     AdamConfig as AdamConfig,
     AdamWConfig as AdamWConfig,
+    LingbotAdamWConfig as LingbotAdamWConfig,
+    LingbotMuonConfig as LingbotMuonConfig,
     MultiAdamConfig as MultiAdamConfig,
     OptimizerConfig as OptimizerConfig,
     SGDConfig as SGDConfig,
@@ -40,6 +42,8 @@ __all__ = [
     # Optimizer configs
     "AdamConfig",
     "AdamWConfig",
+    "LingbotAdamWConfig",
+    "LingbotMuonConfig",
     "MultiAdamConfig",
     "OptimizerConfig",
     "SGDConfig",

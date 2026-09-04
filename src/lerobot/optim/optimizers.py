@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -104,6 +105,9 @@ class AdamWConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
+    # torch.optim.AdamW fused=True: single CUDA kernel per param group instead of
+    # the foreach loop over _fused ops; faster step on GPU, same math.
+    fused: bool = False
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
@@ -226,7 +230,181 @@ class XVLAAdamWConfig(OptimizerConfig):
         )
 
 
-@OptimizerConfig.register_subclass("multi_adam")
+# Routed-expert parameters of the LingBot-VLA v2 sparse-MoE action expert, stored
+# fused per decoder layer (upstream FQN shape: ...layers.<N>.mlp.experts....).
+_LINGBOT_EXPERT_RE = re.compile(r"(?:^|\.)layers\.\d+\.mlp\.experts\.")
+
+
+@OptimizerConfig.register_subclass("lingbot_adamw")
+@dataclass
+class LingbotAdamWConfig(OptimizerConfig):
+    """AdamW with the upstream LingBot-VLA v2 MoE expert-LR scaling.
+
+    Mirrors upstream ``train_lingbotvla.py::get_moe_param_groups`` (enabled by
+    ``use_moe_expert_lr`` in ``configs/vla/robotwin/robotwin.yaml``): routed-expert
+    parameters train at ``lr * expert_lr_scale`` where the upstream recipe uses
+    ``(token_num_experts / token_top_k) ** 0.5`` (= sqrt(32/4) ≈ 2.83). Everything
+    else — including the vision tower, which upstream trains at the base LR under
+    Muon (its ``get_param_groups``/``vit_lr`` path is dead code, never called) —
+    stays at the base LR.
+
+    ``expert_lr_scale = 1.0`` reproduces plain single-group AdamW numerically.
+
+    Parameter Groups:
+        - Group 0 (experts): FQNs matching ``...layers.<N>.mlp.experts....``
+          at ``lr * expert_lr_scale``
+        - Group 1 (other): everything else at ``lr``
+
+    Params may be a ``dict(name -> Parameter)`` from
+    ``policy.get_optim_params()`` (required for name matching); a plain iterable
+    falls back to a single base-LR group.
+    """
+
+    lr: float = 1e-5
+    betas: tuple[float, float] = (0.9, 0.95)
+    eps: float = 1e-8
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 1.0
+    expert_lr_scale: float = 1.0
+    # torch.optim.AdamW fused=True: single CUDA kernel per param group; same math.
+    fused: bool = False
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        if not isinstance(params, dict):
+            flat = [p for p in params if p.requires_grad]
+            param_groups: list[dict[str, Any]] = [{"params": flat, "lr": self.lr, "name": "other"}]
+        else:
+            expert_group, other_group = [], []
+            for name, p in params.items():
+                if not p.requires_grad:
+                    continue
+                (expert_group if _LINGBOT_EXPERT_RE.search(name) else other_group).append(p)
+            param_groups = [
+                {
+                    "params": expert_group,
+                    "lr": self.lr * self.expert_lr_scale,
+                    "name": "experts",
+                },
+                {"params": other_group, "lr": self.lr, "name": "other"},
+            ]
+
+        # Filter out empty groups
+        param_groups = [g for g in param_groups if len(g["params"]) > 0]
+
+        return torch.optim.AdamW(
+            param_groups,
+            betas=self.betas,
+            eps=self.eps,
+            weight_decay=self.weight_decay,
+            fused=self.fused,
+        )
+
+
+@OptimizerConfig.register_subclass("lingbot_muon")
+@dataclass
+class LingbotMuonConfig(OptimizerConfig):
+    """Upstream LingBot-VLA v2 Muon + AdamW hybrid for the lerobot trainer.
+
+    Mirrors upstream ``train_lingbotvla.py::build_muon_optimizer``: 2D weights
+    and the 3D fused MoE expert stacks optimize with ``DistributedMuon``
+    (Newton-Schulz orthogonalized momentum, ``adjust_lr_fn="match_rms_adamw"``
+    i.e. ``lr * 0.2 * sqrt(max(fan_out, fan_in))``); 1D params (biases, norms)
+    and embeddings / ``lm_head`` fall back to AdamW with the official recipe's
+    betas ``(0.9, 0.95)``.
+
+    Routing-expert parameters (FQNs matching ``...layers.<N>.mlp.experts....``)
+    get ``lr * expert_lr_scale`` inside *both* children, reproducing upstream's
+    ``use_moe_expert_lr`` grouping (official scale sqrt(32/4) ≈ 2.83).
+
+    Safety: under plain DDP / single-process the Newton-Schulz input is the full
+    gradient, which is correct. Under FSDP2 the vendored DTensor mega-batch path
+    gathers each shard group before orthogonalizing, also correct. FSDP1 exposes
+    dim-0 gradient shards to the optimizer, which would make Newton-Schulz
+    silently wrong — ``lerobot_train`` rejects that combination.
+
+    Params must be a ``dict(name -> Parameter)`` (from
+    ``policy.get_optim_params()``) so names can drive the split.
+    """
+
+    lr: float = 1e-5
+    weight_decay: float = 0.0
+    momentum: float = 0.95
+    nesterov: bool = True
+    ns_steps: int = 5
+    adjust_lr_fn: str = "match_rms_adamw"
+    adamw_betas: tuple[float, float] = (0.9, 0.95)
+    adamw_eps: float = 1e-8
+    grad_clip_norm: float = 1.0
+    expert_lr_scale: float = 1.0
+    # Extra FQN substrings routed to AdamW in addition to the built-in
+    # embedding/lm_head patterns (upstream ``muon_exclude_name_patterns``).
+    extra_adamw_name_patterns: tuple[str, ...] = ()
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        from lerobot.optim.muon import CombinedOptimizer, DistributedMuon
+
+        if not isinstance(params, dict):
+            raise TypeError(
+                "LingbotMuonConfig requires named parameters (dict from policy.get_optim_params()) "
+                "to route embedding/lm_head/expert params."
+            )
+
+        muon_pairs, adamw_pairs = [], []
+        from lerobot.optim.muon import _DEFAULT_ADAMW_NAME_PATTERNS
+
+        for name, p in params.items():
+            if not p.requires_grad:
+                continue
+            lname = name.lower()
+            forced_adamw = (
+                p.ndim not in (2, 3)
+                or any(pat in lname for pat in _DEFAULT_ADAMW_NAME_PATTERNS)
+                or any(pat and pat.lower() in lname for pat in self.extra_adamw_name_patterns)
+            )
+            (adamw_pairs if forced_adamw else muon_pairs).append((name, p))
+
+        def _scaled_groups(pairs: list[tuple[str, torch.Tensor]]) -> list[dict[str, Any]]:
+            base, scaled = [], []
+            for name, p in pairs:
+                (scaled if _LINGBOT_EXPERT_RE.search(name) else base).append(p)
+            groups: list[dict[str, Any]] = [{"params": base, "lr": self.lr, "name": "other"}]
+            if scaled:
+                groups.append(
+                    {"params": scaled, "lr": self.lr * self.expert_lr_scale, "name": "experts"}
+                )
+            return [g for g in groups if g["params"]]
+
+        muon_groups = _scaled_groups(muon_pairs)
+        if not muon_groups:
+            raise RuntimeError(
+                "LingbotMuonConfig found no Muon-eligible (2D/3D) parameters; use 'lingbot_adamw' instead."
+            )
+        inner: list[torch.optim.Optimizer] = [
+            DistributedMuon(
+                muon_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay,
+                momentum=self.momentum,
+                nesterov=self.nesterov,
+                ns_steps=self.ns_steps,
+                adjust_lr_fn=self.adjust_lr_fn,
+            )
+        ]
+        adamw_groups = _scaled_groups(adamw_pairs)
+        if adamw_groups:
+            inner.append(
+                torch.optim.AdamW(
+                    adamw_groups,
+                    lr=self.lr,
+                    betas=self.adamw_betas,
+                    eps=self.adamw_eps,
+                    weight_decay=self.weight_decay,
+                    fused=False,
+                )
+            )
+        return CombinedOptimizer(inner)
+
+
 @dataclass
 class MultiAdamConfig(OptimizerConfig):
     """Configuration for multiple Adam optimizers with different parameter groups.

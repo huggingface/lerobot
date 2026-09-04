@@ -246,19 +246,40 @@ def load_training_state(
     return step, optimizer, scheduler
 
 
+def _is_fsdp2(model) -> bool:
+    """Whether ``model`` is an FSDP2 ``fully_shard`` module.
+
+    FSDP1 wraps the root in ``FullyShardedDataParallel``; FSDP2 mutates wrapped modules to implement
+    ``FSDPModule``. The two APIs have incompatible optimizer-state conversion paths, so this check
+    must stay local to the checkpoint helpers rather than relying on Accelerate's shared FSDP enum.
+    """
+    from torch.distributed.fsdp import FSDPModule
+
+    return isinstance(model, FSDPModule)
+
+
 def gather_fsdp_state_dicts(model, optimizer) -> tuple[dict, dict]:
     """Gather the full (unsharded) model and optimizer state dicts under FSDP.
 
-    `model.state_dict()` and `FSDP.optim_state_dict(...)` are cross-rank collectives, so this must be
-    called on *every* rank with the prepared (FSDP-wrapped) `model` and `optimizer`. With
-    `rank0_only=True` and `offload_to_cpu=True`, every rank runs the all-gather but only rank 0
-    materializes the full dicts (the others get empty dicts) and they are kept on CPU to bound GPU
-    memory. The returned optimizer state dict is keyed by parameter FQNs and is world-size
-    independent; `load_fsdp_optimizer_state` reshards it on resume.
-
-    Returns:
-        (model_state_dict, optim_state_dict): full dicts on rank 0, empty dicts on other ranks.
+    This must run on every rank with the prepared model and optimizer. FSDP1's ``state_dict_type``
+    and FSDP2's distributed-checkpoint APIs both materialize CPU full state only on rank 0; other
+    ranks receive empty dictionaries. The resulting parameter-FQN keyed optimizer state is portable
+    across FSDP world sizes and is reshaped by ``load_fsdp_optimizer_state`` on resume.
     """
+    if _is_fsdp2(model):
+        from torch.distributed.checkpoint.state_dict import (
+            StateDictOptions,
+            get_model_state_dict,
+            get_optimizer_state_dict,
+        )
+
+        # FSDP2 returns the full CPU tensors only on rank 0, matching the FSDP1 rank0_only
+        # contract below; non-main ranks still join the collective but receive empty dictionaries.
+        options = StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True)
+        return get_model_state_dict(model, options=options), get_optimizer_state_dict(
+            model, optimizer, options=options
+        )
+
     from torch.distributed.fsdp import (
         FullOptimStateDictConfig,
         FullStateDictConfig,
@@ -275,13 +296,26 @@ def gather_fsdp_state_dicts(model, optimizer) -> tuple[dict, dict]:
 
 
 def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
-    """Load the FSDP optimizer state (saved as safetensors) and reshard it into the optimizer.
+    """Load a portable FSDP optimizer state into the prepared optimizer.
 
-    This is a cross-rank collective and must be called on every rank *after* `accelerator.prepare()`
-    with the prepared (FSDP-wrapped) `model` and `optimizer`. The saved state is the full,
-    world-size-independent optimizer state (keyed by parameter FQNs); `FSDP.optim_state_dict_to_load`
-    reshards it to the current FSDP topology, so resume on a different number of GPUs works.
+    This cross-rank operation runs after ``accelerator.prepare()``. FSDP1 converts the saved full
+    state into its current shard topology, while FSDP2 performs the corresponding DTensor-aware
+    conversion in ``set_optimizer_state_dict``. Do not call ``optimizer.load_state_dict`` after the
+    FSDP2 setter: it has already installed the correctly sharded state.
     """
+    full_osd = load_optimizer_state_dict(checkpoint_dir / TRAINING_STATE_DIR)
+
+    if _is_fsdp2(model):
+        from torch.distributed.checkpoint.state_dict import StateDictOptions, set_optimizer_state_dict
+
+        set_optimizer_state_dict(
+            model,
+            optimizer,
+            full_osd,
+            options=StateDictOptions(full_state_dict=True, cpu_offload=True, broadcast_from_rank0=True),
+        )
+        return
+
     from torch.distributed.fsdp import (
         FullOptimStateDictConfig,
         FullStateDictConfig,
@@ -289,8 +323,7 @@ def load_fsdp_optimizer_state(model, optimizer, checkpoint_dir: Path) -> None:
         StateDictType,
     )
 
-    # Every rank reads the same full state from the (shared) checkpoint dir, so rank0_only=False.
-    full_osd = load_optimizer_state_dict(checkpoint_dir / TRAINING_STATE_DIR)
+    # Every rank reads the same full state from the shared checkpoint directory.
     state_cfg = FullStateDictConfig(rank0_only=False)
     optim_cfg = FullOptimStateDictConfig(rank0_only=False)
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, state_cfg, optim_cfg):
