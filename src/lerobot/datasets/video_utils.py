@@ -1022,6 +1022,17 @@ class StreamingVideoEncoder:
                     f"Consider using vcodec='auto' for hardware encoding or increasing encoder_queue_maxsize."
                 )
 
+    def dropped_frame_count(self, video_key: str) -> int:
+        """Return frames dropped for ``video_key`` in the current episode from encoder back-pressure.
+
+        Args:
+            video_key: Video feature key.
+
+        Returns:
+            Dropped frame count; ``recorded_frames - dropped`` equals the frames encoded.
+        """
+        return self._dropped_frames.get(video_key, 0)
+
     def finish_episode(self) -> dict[str, tuple[Path, dict | None]]:
         """Finish encoding the current episode.
 
