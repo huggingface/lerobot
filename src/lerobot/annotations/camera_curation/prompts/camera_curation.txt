@@ -337,11 +337,14 @@ image-left/image-right directly to robot-left/robot-right.
 
 top
 
-Use "top" for a genuinely OVERHEAD or NEAR-OVERHEAD camera.
+Use "top" for a camera that looks predominantly DOWN ONTO the workspace from
+ABOVE.
 
-The camera should be physically above the manipulation area and look mainly
-DOWN ONTO the workspace. This is a canonical overhead role, but it does NOT need
-to be perfect nadir / bird's-eye.
+It does NOT need to be near-nadir / perfect bird's-eye. A clearly downward-looking
+overhead view counts as "top" even with noticeable perspective or a moderately
+oblique angle, as long as you are looking DOWN ONTO the work surface (seeing mostly
+the tops of things) rather than ACROSS it from beside the workspace. Lean toward
+"top" for any camera mounted above and aimed down at the manipulation area.
 
 Positive evidence for "top":
 
@@ -403,8 +406,9 @@ TOP VS SIDE — REQUIRED GEOMETRIC TEST
 For every fixed camera that could plausibly be either top or side, explicitly
 compare:
 
-  A. genuinely OVERHEAD / near-nadir -> "top"
-  B. any clearly OBLIQUE / diagonal / perimeter view -> side
+  A. looking predominantly DOWN ONTO the workspace (need NOT be near-nadir; some
+     obliqueness/perspective is fine) -> "top"
+  B. clearly looking ACROSS the workspace from BESIDE it / the perimeter -> side
 
 Use physical camera position relative to the workspace as the PRIMARY criterion,
 and viewing direction as supporting evidence.
@@ -417,9 +421,11 @@ Do NOT use any single secondary cue as a veto. In particular:
   - a large tabletop does NOT automatically mean top;
   - an elevated camera does NOT automatically mean top.
 
-When the geometry is genuinely borderline, ask whether the camera is physically
-OVER the workspace or around its PERIMETER. If that cannot be established,
-prefer "side". Reserve "top" for a clearly genuine overhead camera role.
+When the geometry is genuinely borderline, LEAN "top": if the camera is clearly
+looking DOWN onto the workspace (work surface dominant, mostly the tops of things),
+label it "top" even with noticeable obliqueness or perspective. Reserve "side" for
+a camera that clearly views the workspace from AROUND / BESIDE it — looking ACROSS
+from the perimeter, strong near-to-far depth, objects seen mainly by their sides.
 
 SIDE DIRECTION
 
