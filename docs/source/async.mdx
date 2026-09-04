@@ -138,6 +138,32 @@ serve(config)
 
 This listens on `localhost:8080` for an incoming connection from the associated`RobotClient`, which will communicate which policy to run during the first client-server handshake.
 
+### Using ZeroMQ Transport (`--transport=zmq`)
+
+By default, `async_inference` uses `gRPC` over HTTP/2 (`--transport=grpc`). You can also select `ZeroMQ` (`--transport=zmq`) for lower overhead or intra-machine Unix domain sockets (`ipc://`):
+
+```bash
+# Policy Server over ZeroMQ (TCP)
+python -m lerobot.async_inference.policy_server \
+     --host=127.0.0.1 \
+     --port=5555 \
+     --transport=zmq
+
+# Policy Server over ZeroMQ (IPC - local Unix domain socket for maximum speed)
+python -m lerobot.async_inference.policy_server \
+     --host=ipc:///tmp/lerobot_async.ipc \
+     --transport=zmq
+```
+
+Corresponding client command:
+
+```bash
+python -m lerobot.async_inference.robot_client \
+    --server_address=tcp://127.0.0.1:5555 \
+    --transport=zmq \
+    ...
+```
+
 ---
 
 ## Launch the Robot Client

@@ -13,15 +13,18 @@
 # limitations under the License.
 
 """
-Example command:
+Example commands:
+
+1. gRPC over TCP (default):
 ```shell
 python src/lerobot/async_inference/robot_client.py \
+    --transport=grpc \
+    --server_address=127.0.0.1:8080 \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=black \
     --task="dummy" \
-    --server_address=127.0.0.1:8080 \
     --policy_type=act \
     --pretrained_name_or_path=user/model \
     --policy_device=mps \
@@ -30,6 +33,30 @@ python src/lerobot/async_inference/robot_client.py \
     --chunk_size_threshold=0.5 \
     --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
+```
+
+2. ZeroMQ over TCP:
+```shell
+python src/lerobot/async_inference/robot_client.py \
+    --transport=zmq \
+    --server_address=tcp://127.0.0.1:8080 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --task="dummy" \
+    --policy_type=act \
+    --pretrained_name_or_path=user/model
+```
+
+3. ZeroMQ over IPC (Unix Domain Socket - optimal for local hardware running both robot & server):
+```shell
+python src/lerobot/async_inference/robot_client.py \
+    --transport=zmq \
+    --server_address=ipc:///tmp/policy_server.sock \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --task="dummy" \
+    --policy_type=act \
+    --pretrained_name_or_path=user/model
 ```
 """
 
@@ -76,7 +103,7 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.import_utils import register_third_party_plugins, require_package
 
 from .configs import RobotClientConfig
 from .helpers import (
@@ -112,6 +139,7 @@ class RobotClient:
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
+        self.transport = config.transport
 
         self.policy_config = RemotePolicyConfig(
             config.policy_type,
@@ -120,11 +148,36 @@ class RobotClient:
             config.actions_per_chunk,
             config.policy_device,
         )
-        self.channel = grpc.insecure_channel(
-            self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
-        )
-        self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
-        self.logger.info(f"Initializing client to connect to server at {self.server_address}")
+
+        if self.transport == "zmq":
+            require_package("pyzmq", extra="async", import_name="zmq")
+            import zmq
+
+            if not (
+                self.server_address.startswith("tcp://")
+                or self.server_address.startswith("ipc://")
+                or self.server_address.startswith("inproc://")
+            ):
+                self.zmq_address = f"tcp://{self.server_address}"
+            else:
+                self.zmq_address = self.server_address
+
+            self.zmq_context = zmq.Context.instance()
+            self.zmq_cmd_socket = self.zmq_context.socket(zmq.REQ)
+            self.zmq_cmd_socket.connect(self.zmq_address)
+
+            self.zmq_obs_socket = self.zmq_context.socket(zmq.REQ)
+            self.zmq_obs_socket.connect(self.zmq_address)
+
+            self.channel = None
+            self.stub = None
+        else:
+            self.channel = grpc.insecure_channel(
+                self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
+            )
+            self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
+
+        self.logger.info(f"Initializing client to connect to server at {self.server_address} ({self.transport})")
 
         self.shutdown_event = threading.Event()
 
@@ -158,13 +211,19 @@ class RobotClient:
         try:
             # client-server handshake
             start_time = time.perf_counter()
-            self.stub.Ready(services_pb2.Empty())
+            if self.transport == "zmq":
+                self.zmq_cmd_socket.send_multipart([b"ready", b""])
+                res = self.zmq_cmd_socket.recv()
+                if res != b"ok":
+                    raise RuntimeError(f"Unexpected response to ready: {res}")
+            else:
+                self.stub.Ready(services_pb2.Empty())
+
             end_time = time.perf_counter()
             self.logger.debug(f"Connected to policy server in {end_time - start_time:.4f}s")
 
             # send policy instructions
             policy_config_bytes = pickle.dumps(self.policy_config)
-            policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
             self.logger.info("Sending policy instructions to policy server")
             self.logger.debug(
@@ -173,13 +232,20 @@ class RobotClient:
                 f"Device: {self.policy_config.device}"
             )
 
-            self.stub.SendPolicyInstructions(policy_setup)
+            if self.transport == "zmq":
+                self.zmq_cmd_socket.send_multipart([b"send_policy_instructions", policy_config_bytes])
+                res = self.zmq_cmd_socket.recv()
+                if res != b"ok":
+                    raise RuntimeError(f"Unexpected response to send_policy_instructions: {res}")
+            else:
+                policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
+                self.stub.SendPolicyInstructions(policy_setup)
 
             self.shutdown_event.clear()
 
             return True
 
-        except grpc.RpcError as e:
+        except Exception as e:
             self.logger.error(f"Failed to connect to policy server: {e}")
             return False
 
@@ -190,7 +256,12 @@ class RobotClient:
         self.robot.disconnect()
         self.logger.debug("Robot disconnected")
 
-        self.channel.close()
+        if self.transport == "zmq":
+            if hasattr(self, "zmq_obs_socket"):
+                self.zmq_obs_socket.close(linger=0)
+        else:
+            if self.channel is not None:
+                self.channel.close()
         self.logger.debug("Client stopped, channel closed")
 
     def send_observation(
@@ -211,19 +282,23 @@ class RobotClient:
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
 
         try:
-            observation_iterator = send_bytes_in_chunks(
-                observation_bytes,
-                services_pb2.Observation,
-                log_prefix="[CLIENT] Observation",
-                silent=True,
-            )
-            _ = self.stub.SendObservations(observation_iterator)
+            if self.transport == "zmq":
+                self.zmq_obs_socket.send_multipart([b"send_observation", observation_bytes])
+                _ = self.zmq_obs_socket.recv()
+            else:
+                observation_iterator = send_bytes_in_chunks(
+                    observation_bytes,
+                    services_pb2.Observation,
+                    log_prefix="[CLIENT] Observation",
+                    silent=True,
+                )
+                _ = self.stub.SendObservations(observation_iterator)
             obs_timestep = obs.get_timestep()
             self.logger.debug(f"Sent observation #{obs_timestep} | ")
 
             return True
 
-        except grpc.RpcError as e:
+        except Exception as e:
             self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
             return False
 
@@ -285,91 +360,113 @@ class RobotClient:
         self.start_barrier.wait()
         self.logger.info("Action receiving thread starting")
 
-        while self.running:
-            try:
-                # Use StreamActions to get a stream of actions from the server
-                actions_chunk = self.stub.GetActions(services_pb2.Empty())
-                if len(actions_chunk.data) == 0:
-                    continue  # received `Empty` from server, wait for next call
+        try:
+            while self.running:
+                try:
+                    if self.transport == "zmq":
+                        import zmq
 
-                receive_time = time.time()
+                        try:
+                            self.zmq_cmd_socket.send_multipart([b"get_actions", b""])
+                            while self.running:
+                                if self.zmq_cmd_socket.poll(timeout=200) != 0:
+                                    actions_bytes = self.zmq_cmd_socket.recv()
+                                    break
+                            else:
+                                break
+                        except zmq.ZMQError as e:
+                            self.logger.error(f"ZMQ Error receiving actions: {e}")
+                            break
+                    else:
+                        actions_chunk = self.stub.GetActions(services_pb2.Empty())
+                        actions_bytes = actions_chunk.data
 
-                # Deserialize bytes back into list[TimedAction]
-                deserialize_start = time.perf_counter()
-                timed_actions = pickle.loads(actions_chunk.data)  # nosec
-                deserialize_time = time.perf_counter() - deserialize_start
+                    if len(actions_bytes) == 0:
+                        time.sleep(0.001)
+                        continue  # received empty response from server, wait for next call
 
-                # Log device type of received actions
-                if len(timed_actions) > 0:
-                    received_device = timed_actions[0].get_action().device.type
-                    self.logger.debug(f"Received actions on device: {received_device}")
+                    receive_time = time.time()
 
-                # Move actions to client_device (e.g., for downstream planners that need GPU)
-                client_device = self.config.client_device
-                if client_device != "cpu":
-                    for timed_action in timed_actions:
-                        if timed_action.get_action().device.type != client_device:
-                            timed_action.action = timed_action.get_action().to(client_device)
-                    self.logger.debug(f"Converted actions to device: {client_device}")
-                else:
-                    self.logger.debug(f"Actions kept on device: {client_device}")
+                    # Deserialize bytes back into list[TimedAction]
+                    deserialize_start = time.perf_counter()
+                    timed_actions = pickle.loads(actions_bytes)  # nosec
+                    deserialize_time = time.perf_counter() - deserialize_start
 
-                self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
+                    # Log device type of received actions
+                    if len(timed_actions) > 0:
+                        received_device = timed_actions[0].get_action().device.type
+                        self.logger.debug(f"Received actions on device: {received_device}")
 
-                # Calculate network latency if we have matching observations
-                if len(timed_actions) > 0 and verbose:
-                    with self.latest_action_lock:
-                        latest_action = self.latest_action
+                    # Move actions to client_device (e.g., for downstream planners that need GPU)
+                    client_device = self.config.client_device
+                    if client_device != "cpu":
+                        for timed_action in timed_actions:
+                            if timed_action.get_action().device.type != client_device:
+                                timed_action.action = timed_action.get_action().to(client_device)
+                        self.logger.debug(f"Converted actions to device: {client_device}")
+                    else:
+                        self.logger.debug(f"Actions kept on device: {client_device}")
 
-                    self.logger.debug(f"Current latest action: {latest_action}")
+                    self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
-                    # Get queue state before changes
-                    old_size, old_timesteps = self._inspect_action_queue()
-                    if not old_timesteps:
-                        old_timesteps = [latest_action]  # queue was empty
+                    # Calculate network latency if we have matching observations
+                    if len(timed_actions) > 0 and verbose:
+                        with self.latest_action_lock:
+                            latest_action = self.latest_action
 
-                    # Log incoming actions
-                    incoming_timesteps = [a.get_timestep() for a in timed_actions]
+                        self.logger.debug(f"Current latest action: {latest_action}")
 
-                    first_action_timestep = timed_actions[0].get_timestep()
-                    server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
+                        # Get queue state before changes
+                        old_size, old_timesteps = self._inspect_action_queue()
+                        if not old_timesteps:
+                            old_timesteps = [latest_action]  # queue was empty
 
-                    self.logger.info(
-                        f"Received action chunk for step #{first_action_timestep} | "
-                        f"Latest action: #{latest_action} | "
-                        f"Incoming actions: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
-                        f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
-                        f"Deserialization time: {deserialize_time * 1000:.2f}ms"
-                    )
+                        # Log incoming actions
+                        incoming_timesteps = [a.get_timestep() for a in timed_actions]
 
-                # Update action queue
-                start_time = time.perf_counter()
-                self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
-                queue_update_time = time.perf_counter() - start_time
+                        first_action_timestep = timed_actions[0].get_timestep()
+                        server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
 
-                self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
+                        self.logger.info(
+                            f"Received action chunk for step #{first_action_timestep} | "
+                            f"Latest action: #{latest_action} | "
+                            f"Incoming actions: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
+                            f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
+                            f"Deserialization time: {deserialize_time * 1000:.2f}ms"
+                        )
 
-                if verbose:
-                    # Get queue state after changes
-                    new_size, new_timesteps = self._inspect_action_queue()
+                    # Update action queue
+                    start_time = time.perf_counter()
+                    self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
+                    queue_update_time = time.perf_counter() - start_time
 
-                    with self.latest_action_lock:
-                        latest_action = self.latest_action
+                    self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
 
-                    self.logger.info(
-                        f"Latest action: {latest_action} | "
-                        f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
-                        f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
-                        f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
-                    )
-                    self.logger.debug(
-                        f"Queue update complete ({queue_update_time:.6f}s) | "
-                        f"Before: {old_size} items | "
-                        f"After: {new_size} items | "
-                    )
+                    if verbose:
+                        # Get queue state after changes
+                        new_size, new_timesteps = self._inspect_action_queue()
 
-            except grpc.RpcError as e:
-                self.logger.error(f"Error receiving actions: {e}")
+                        with self.latest_action_lock:
+                            latest_action = self.latest_action
+
+                        self.logger.info(
+                            f"Latest action: {latest_action} | "
+                            f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
+                            f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
+                            f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
+                        )
+                        self.logger.debug(
+                            f"Queue update complete ({queue_update_time:.6f}s) | "
+                            f"Before: {old_size} items | "
+                            f"After: {new_size} items | "
+                        )
+
+                except grpc.RpcError as e:
+                    self.logger.error(f"Error receiving actions: {e}")
+        finally:
+            if self.transport == "zmq" and hasattr(self, "zmq_cmd_socket"):
+                self.zmq_cmd_socket.close(linger=0)
+                self.logger.debug("ZMQ command socket closed in receive_actions thread")
 
     def actions_available(self):
         """Check if there are actions available in the queue"""

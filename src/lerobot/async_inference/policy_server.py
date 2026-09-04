@@ -13,14 +13,34 @@
 # limitations under the License.
 
 """
-Example:
+Examples:
+
+1. gRPC over TCP (default):
 ```shell
 python -m lerobot.async_inference.policy_server \
      --host=127.0.0.1 \
      --port=8080 \
+     --transport=grpc \
      --fps=30 \
      --inference_latency=0.033 \
      --obs_queue_timeout=1
+```
+
+2. ZeroMQ over TCP:
+```shell
+python -m lerobot.async_inference.policy_server \
+     --host=127.0.0.1 \
+     --port=8080 \
+     --transport=zmq \
+     --fps=30
+```
+
+3. ZeroMQ over IPC (Unix Domain Socket - optimal for local hardware running both robot & server):
+```shell
+python -m lerobot.async_inference.policy_server \
+     --host=ipc:///tmp/policy_server.sock \
+     --transport=zmq \
+     --fps=30
 ```
 """
 
@@ -105,24 +125,20 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         with self._predicted_timesteps_lock:
             self._predicted_timesteps = set()
 
-    def Ready(self, request, context):  # noqa: N802
-        client_id = context.peer()
+    def _handle_ready(self, client_id: str) -> None:
         self.logger.info(f"Client {client_id} connected and ready")
         self._reset_server()
         self.shutdown_event.clear()
 
+    def Ready(self, request, context):  # noqa: N802
+        client_id = context.peer()
+        self._handle_ready(client_id)
         return services_pb2.Empty()
 
-    def SendPolicyInstructions(self, request, context):  # noqa: N802
-        """Receive policy instructions from the robot client"""
-
+    def _handle_policy_instructions(self, policy_specs: RemotePolicyConfig, client_id: str) -> None:
         if not self.running:
             self.logger.warning("Server is not running. Ignoring policy instructions.")
-            return services_pb2.Empty()
-
-        client_id = context.peer()
-
-        policy_specs = pickle.loads(request.data)  # nosec
+            return
 
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
@@ -168,23 +184,15 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
+    def SendPolicyInstructions(self, request, context):  # noqa: N802
+        """Receive policy instructions from the robot client"""
+        client_id = context.peer()
+        policy_specs = pickle.loads(request.data)  # nosec
+        self._handle_policy_instructions(policy_specs, client_id)
         return services_pb2.Empty()
 
-    def SendObservations(self, request_iterator, context):  # noqa: N802
-        """Receive observations from the robot client"""
-        client_id = context.peer()
-        self.logger.debug(f"Receiving observations from {client_id}")
-
+    def _handle_send_observation(self, timed_observation: TimedObservation, client_id: str) -> None:
         receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(
-            request_iterator, None, self.shutdown_event, self.logger
-        )  # blocking call while looping over request_iterator
-        timed_observation = pickle.loads(received_bytes)  # nosec
-        deserialize_time = time.perf_counter() - start_deserialize
-
-        self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
-
         obs_timestep = timed_observation.get_timestep()
         obs_timestamp = timed_observation.get_timestamp()
 
@@ -198,29 +206,29 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f"One-way latency: {(receive_time - obs_timestamp) * 1000:.2f}ms"
         )
 
-        self.logger.debug(
-            f"Server timestamp: {receive_time:.6f} | "
-            f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
-        )
-
-        if not self._enqueue_observation(
-            timed_observation  # wrapping a RawObservation
-        ):
+        if not self._enqueue_observation(timed_observation):
             self.logger.debug(f"Observation #{obs_timestep} has been filtered out")
+
+    def SendObservations(self, request_iterator, context):  # noqa: N802
+        """Receive observations from the robot client"""
+        client_id = context.peer()
+        self.logger.debug(f"Receiving observations from {client_id}")
+
+        received_bytes = receive_bytes_in_chunks(
+            request_iterator, None, self.shutdown_event, self.logger
+        )  # blocking call while looping over request_iterator
+        timed_observation = pickle.loads(received_bytes)  # nosec
+        self._handle_send_observation(timed_observation, client_id)
 
         return services_pb2.Empty()
 
-    def GetActions(self, request, context):  # noqa: N802
-        """Returns actions to the robot client. Actions are sent as a single
-        chunk, containing multiple actions."""
-        client_id = context.peer()
-        self.logger.debug(f"Client {client_id} connected for action streaming")
-
-        # Generate action based on the most recent observation and its timestep
+    def _handle_get_actions(self, client_id: str, block: bool = True) -> bytes:
         try:
             getactions_starts = time.perf_counter()
-            obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
+            if block:
+                obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
+            else:
+                obs = self.observation_queue.get_nowait()
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
@@ -235,9 +243,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             start_time = time.perf_counter()
             actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
-
-            # Create and return the action chunk
-            actions = services_pb2.Actions(data=actions_bytes)
 
             self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
@@ -255,15 +260,24 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 max(0, self.config.inference_latency - max(0, time.perf_counter() - getactions_starts))
             )  # sleep controls inference latency
 
-            return actions
+            return actions_bytes
 
         except Empty:  # no observation added to queue in obs_queue_timeout
-            return services_pb2.Empty()
+            return b""
 
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
+            return b""
 
+    def GetActions(self, request, context):  # noqa: N802
+        """Returns actions to the robot client. Actions are sent as a single
+        chunk, containing multiple actions."""
+        client_id = context.peer()
+        self.logger.debug(f"Client {client_id} connected for action streaming")
+        actions_bytes = self._handle_get_actions(client_id)
+        if not actions_bytes:
             return services_pb2.Empty()
+        return services_pb2.Actions(data=actions_bytes)
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
         """Check if the observation is valid to be processed by the policy"""
@@ -410,6 +424,79 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.info("Server stopping...")
 
 
+def serve_zmq(cfg: PolicyServerConfig, policy_server: PolicyServer):
+    """Start the PolicyServer using ZeroMQ transport."""
+    import zmq
+    from lerobot.utils.import_utils import require_package
+
+    require_package("pyzmq", extra="async", import_name="zmq")
+
+    context = zmq.Context.instance()
+    socket = context.socket(zmq.ROUTER)
+
+    if cfg.host.startswith("tcp://") or cfg.host.startswith("ipc://") or cfg.host.startswith("inproc://"):
+        bind_address = cfg.host
+    else:
+        bind_address = f"tcp://{cfg.host}:{cfg.port}"
+
+    socket.bind(bind_address)
+    policy_server.logger.info(f"PolicyServer (ZeroMQ) bound to {bind_address}")
+
+    poller = zmq.Poller()
+    poller.register(socket, zmq.POLLIN)
+
+    try:
+        while policy_server.running:
+            events = dict(poller.poll(timeout=200))
+            if socket in events:
+                frames = socket.recv_multipart()
+                if not frames:
+                    continue
+
+                client_id_bytes = frames[0]
+                client_id = client_id_bytes.hex()
+
+                idx = 1
+                if idx < len(frames) and frames[idx] == b"":
+                    idx += 1
+
+                if idx >= len(frames):
+                    continue
+
+                cmd = frames[idx]
+                payload = frames[idx + 1] if len(frames) > idx + 1 else b""
+
+                if cmd == b"ready":
+                    policy_server._handle_ready(client_id)
+                    socket.send_multipart([client_id_bytes, b"", b"ok"])
+
+                elif cmd == b"send_policy_instructions":
+                    policy_specs = pickle.loads(payload)  # nosec
+                    policy_server._handle_policy_instructions(policy_specs, client_id)
+                    socket.send_multipart([client_id_bytes, b"", b"ok"])
+
+                elif cmd == b"send_observation":
+                    timed_obs = pickle.loads(payload)  # nosec
+                    policy_server._handle_send_observation(timed_obs, client_id)
+                    socket.send_multipart([client_id_bytes, b"", b"ok"])
+
+                elif cmd == b"get_actions":
+                    actions_bytes = policy_server._handle_get_actions(client_id, block=False)
+                    socket.send_multipart([client_id_bytes, b"", actions_bytes])
+
+                else:
+                    policy_server.logger.warning(f"Unknown ZMQ command: {cmd}")
+                    socket.send_multipart([client_id_bytes, b"", b"error: unknown command"])
+
+    finally:
+        try:
+            poller.unregister(socket)
+        except Exception:
+            pass
+        socket.close(linger=0)
+        policy_server.logger.info("ZeroMQ PolicyServer socket closed")
+
+
 @draccus.wrap()
 def serve(cfg: PolicyServerConfig):
     """Start the PolicyServer with the given configuration.
@@ -422,17 +509,20 @@ def serve(cfg: PolicyServerConfig):
     # Create the server instance first
     policy_server = PolicyServer(cfg)
 
-    # Setup and start gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
-    server.add_insecure_port(f"{cfg.host}:{cfg.port}")
+    if cfg.transport == "zmq":
+        serve_zmq(cfg, policy_server)
+    else:
+        # Setup and start gRPC server
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
+        server.add_insecure_port(f"{cfg.host}:{cfg.port}")
 
-    policy_server.logger.info(f"PolicyServer started on {cfg.host}:{cfg.port}")
-    server.start()
+        policy_server.logger.info(f"PolicyServer started on {cfg.host}:{cfg.port}")
+        server.start()
 
-    server.wait_for_termination()
+        server.wait_for_termination()
 
-    policy_server.logger.info("Server terminated")
+        policy_server.logger.info("Server terminated")
 
 
 if __name__ == "__main__":
