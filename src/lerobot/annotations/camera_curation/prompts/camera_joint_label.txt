@@ -135,6 +135,14 @@ over a static background is a fixed camera bolted next to the robot. So: gripper
 parked in the foreground aligned with the view, same place every frame -> wrist;
 otherwise not decisive, fall back to the background-drift test.
 
+EXACT-POSITION TEST (decisive when the view looks static): a fixed camera mounted
+CLOSE to the arm can also show a big, nearly-still foreground gripper, so compare
+the gripper's image position in the FIRST vs LAST sampled frame. WRIST = bolted to
+the camera, so the gripper is pinned to the EXACT same spot the whole episode.
+FIXED = over the episode the arm reaches/grasps/retracts, so its gripper shifts to
+DIFFERENT image positions; any such shift means the arm is moving through a
+stationary camera -> fixed, however prominent the gripper.
+
 Robot motion alone is NOT sufficient.
 
 A LARGE ARM SWINGING IN AND OUT IS FIXED, NOT WRIST. A big arm that sweeps across

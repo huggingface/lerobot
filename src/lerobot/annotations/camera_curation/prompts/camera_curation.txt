@@ -176,6 +176,25 @@ The single thing that matters is that a gripper is rigidly present in the
 foreground, aligned with the view, LOCKED to the camera (same position/orientation
 across frames). That only happens when the camera rides on the wrist -> wrist.
 
+THE EXACT-POSITION TEST (decisive when the view looks STATIC). A fixed camera
+mounted CLOSE to the arm can also put a big gripper in the foreground and look
+nearly still — so a prominent foreground gripper is NOT enough by itself. The tell
+is whether the gripper is pinned to the EXACT SAME image position across the WHOLE
+episode:
+
+  - WRIST: the gripper is bolted to the camera, so it occupies the exact same spot
+    and pose in EVERY frame from the first to the last — it never wanders, because
+    the arm and camera move together. Rock-solid constancy over the whole episode
+    -> wrist.
+  - FIXED: over a full episode the arm does its task (reach, grasp, pour, retract),
+    so its gripper appears at DIFFERENT image positions across the frames — even a
+    close, hovering arm shifts noticeably from the first frame to the last. Any such
+    shift of the gripper's image position across the episode -> FIXED (the arm is
+    moving through a stationary camera), no matter how prominent the gripper is.
+
+So compare the gripper's image position in the FIRST vs the LAST sampled frame: if
+it is essentially IDENTICAL, wrist; if it has moved, fixed.
+
 CONTRAST with merely SEEING a gripper somewhere (NOT this cue):
 
   - a FIXED camera also sees the gripper, but it TRAVELS through the frame — at
