@@ -677,9 +677,7 @@ def compute_sarm_progress(
         table_data["progress_dense"] = np.array(all_progress_dense, dtype=np.float32)
 
     # Sort by index
-    df = pa.table(table_data).to_pandas()
-    df = df.sort_values("index").reset_index(drop=True)
-    final_table = pa.Table.from_pandas(df, preserve_index=False)
+    final_table = pa.table(table_data).sort_by([("index", "ascending")])
 
     # Add metadata with reward model path
     metadata = {b"reward_model_path": reward_model_path.encode()}
@@ -694,17 +692,19 @@ def compute_sarm_progress(
     logging.info(f"Saved {len(final_table)} frame progress values to {output_path}")
 
     # Print statistics
-    if "progress_sparse" in df.columns:
-        valid = df["progress_sparse"].dropna()
+    if "progress_sparse" in table_data:
+        values = table_data["progress_sparse"]
+        valid = values[~np.isnan(values)]
         logging.info(
-            f"Sparse progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"Sparse progress: mean={valid.mean():.4f}, std={valid.std(ddof=1):.4f}, "
             f"min={valid.min():.4f}, max={valid.max():.4f}"
         )
 
-    if "progress_dense" in df.columns:
-        valid = df["progress_dense"].dropna()
+    if "progress_dense" in table_data:
+        values = table_data["progress_dense"]
+        valid = values[~np.isnan(values)]
         logging.info(
-            f"Dense progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"Dense progress: mean={valid.mean():.4f}, std={valid.std(ddof=1):.4f}, "
             f"min={valid.min():.4f}, max={valid.max():.4f}"
         )
 
