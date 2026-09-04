@@ -69,23 +69,22 @@ In LeRobot datasets, the preprocessor reads:
 - `progress`: frame-level progress clamped to `[0, 1]`.
 - `success_probability`: frame-level sigmoid probabilities.
 
-Frame selection and thresholding are explicit consumer decisions. The serialized `reward_output` and `success_threshold` fields remain load-compatible with existing checkpoints but do not alter these typed predictions.
+The model does not select a frame or convert probabilities into binary success. Consumers make those decisions explicitly.
 
-### Migrating from the legacy scalar API
+Older RoboMeter configurations may contain `reward_output` and `success_threshold`. LeRobot still accepts these fields so existing checkpoints load, but `predict_progress()` does not use them.
 
-The previous scalar API selected a signal using `reward_output`, selected its last frame, and optionally thresholded success. Replace that implicit behavior at the consumer boundary:
+### Migrating from the scalar API
 
-```python
+````python
 prediction = reward_model.predict_progress(batch)
 
-# Previous reward_output="progress" behavior
+# Last-frame progress
 reward = prediction.progress[:, -1]
 
-# Previous reward_output="success" behavior
-reward = (prediction.success_probability[:, -1] > cfg.success_threshold).float()
-```
-
-The legacy `compute_rabc_weights` command remains intentionally progress-only because its `progress_sparse` artifact is consumed as a progress curve. Future generic scoring adapters will expose signal selection explicitly rather than reading the compatibility-only `reward_output` field.
+# Last-frame binary success
+reward = (
+    prediction.success_probability[:, -1] > success_threshold
+).float()
 
 ## Usage
 
@@ -99,7 +98,7 @@ cfg = RobometerConfig(
     device="cuda",
 )
 reward_model = RobometerRewardModel.from_pretrained(cfg.pretrained_path, config=cfg)
-```
+````
 
 ### Encode Frames and Compute a Reward
 

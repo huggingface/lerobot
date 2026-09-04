@@ -46,18 +46,14 @@ This ensures identical task states map to consistent progress values, even acros
 
 ### Programmatic inference
 
-After running the SARM preprocessor, call the model's typed progress capability. It returns a `SARMPrediction`:
+After preprocessing the inputs, put the model in evaluation mode and call `predict_progress()`:
 
-```python
+````python
 reward_model.eval()
-prediction = reward_model.predict_progress(processed_batch, head_mode="sparse")
-progress = prediction.progress
-stage_probabilities = prediction.stage_probabilities
-stage_confidence = prediction.stage_confidence
-valid_mask = prediction.valid_mask
-```
-
-The three numeric outputs are detached float32 tensors on the model device and preserve the `(batch, time)` axes (`stage_probabilities` adds a final stage axis). They can be passed into a differentiable downstream consumer, but gradients do not flow back through SARM; use the model's training `forward()` method for SARM optimization. `valid_mask` is a boolean `(batch, time)` tensor derived from the processor's sequence lengths; values at false positions are padding artifacts and must not be consumed. As with other trainable PyTorch modules, callers choose training or evaluation mode explicitly; `from_pretrained()` already returns the model in evaluation mode. Consumers explicitly select a valid frame corresponding to their sampling strategy. The older `calculate_rewards()` helper remains available for NumPy-oriented research code.
+prediction = reward_model.predict_progress(
+    processed_batch,
+    head_mode="sparse",
+)
 
 ## Inputs and Targets (What the new code expects)
 
@@ -103,7 +99,7 @@ You can choose from **3 annotation modes** that determine how progress labels ar
 
 ```bash
 pip install -e ".[sarm]"
-```
+````
 
 Workflow:
 
