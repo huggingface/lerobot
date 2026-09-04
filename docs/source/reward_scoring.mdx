@@ -17,9 +17,9 @@ LeRobot's offline scoring workflow runs a reward model over dataset episodes and
              │ shared runner     │
              │ validate + resume │
              └─────────┬─────────┘
-                       │ atomic episode parts
+                       │ completed episode files (resume state)
                        ▼
-            reward_signals/robometer.parquet
+            reward_signals/<model-type>.parquet
               (versioned signal sidecar)
                        │
                        ▼
@@ -30,7 +30,7 @@ The model adapter owns model-specific sampling and preprocessing. The shared run
 
 ## Score a Dataset
 
-The scoring command currently supports RoboMeter:
+The scoring command currently supports RoboMeter and RynnValue. For RoboMeter:
 
 ```bash
 uv run lerobot-score-dataset \
@@ -41,7 +41,22 @@ uv run lerobot-score-dataset \
 
 By default, the sidecar is written to `reward_signals/robometer.parquet` under the local dataset root. Use `--output_path=/path/signals.parquet` to choose another location and `--episodes='[0,1]'` to select episodes.
 
-Pass `--push_to_hub=true` to upload the completed sidecar to `reward_signals/robometer.parquet` in the dataset repository. Atomic episode parts are local staging data: they remain available after an interrupted run and are removed after the final sidecar is published successfully.
+For RynnValue:
+
+```bash
+uv run lerobot-score-dataset \
+    --dataset_repo_id=lerobot/example-dataset \
+    --reward_model_path=/path/to/converted-rynnvalue \
+    --device=cuda \
+    --inference_fps=1 \
+    --max_frames=8 \
+    --robot_description="a single-arm robot" \
+    --camera_description="a fixed third-person camera"
+```
+
+Its default output is `reward_signals/rynnvalue.parquet`. Pass `--horizon_s=SECONDS` only when a task-level horizon is known and bounded progress is needed. Raw remaining time and potential are always retained.
+
+Pass `--push_to_hub=true` to upload the completed sidecar to `reward_signals/<model-type>.parquet` in the dataset repository. Completed episode files are local staging data: they remain available after an interrupted run and are removed after the final sidecar is published successfully.
 
 For an immutable run, pass commit hashes through `--dataset_revision` and `--reward_model_revision`. The requested revisions are stored in provenance and must match when resuming.
 
@@ -71,7 +86,7 @@ descriptors = get_signal_descriptors(table)
 provenance = get_scoring_provenance(table)
 ```
 
-Application code for RoboMeter should use `score_robometer_dataset()`. Adapter authors use `score_dataset(dataset, scorer, ...)`, and consumers use `read_frame_signals()`.
+Application code should use its model-specific entry point, such as `score_robometer_dataset()` or `score_rynnvalue_dataset()`. Adapter authors use `score_dataset(dataset, scorer, ...)`, and consumers use `read_frame_signals()`.
 
 A scorer returns one `FrameSignals` object per episode. Frame indices may be dense or sparse, but must be episode-local, unique, strictly increasing, and aligned with one-dimensional numeric signal arrays.
 
