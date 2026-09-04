@@ -44,6 +44,18 @@ Where:
 
 This ensures identical task states map to consistent progress values, even across demonstrations of different lengths.
 
+### Programmatic inference
+
+After preprocessing the inputs, put the model in evaluation mode and call `predict_progress()`:
+
+```python
+reward_model.eval()
+prediction = reward_model.predict_progress(
+    processed_batch,
+    head_mode="sparse",
+)
+```
+
 ## Inputs and Targets (What the new code expects)
 
 SARM is trained through its processor (`src/lerobot/rewards/sarm/processor_sarm.py`), which:

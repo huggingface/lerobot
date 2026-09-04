@@ -130,7 +130,8 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
         reward_model = reward_cls(**kwargs)
 
     reward_model.to(cfg.device)
-    assert isinstance(reward_model, torch.nn.Module)
+    if not isinstance(reward_model, torch.nn.Module):
+        raise TypeError(f"Expected a torch.nn.Module, got {type(reward_model).__name__}")
 
     return reward_model
 

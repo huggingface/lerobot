@@ -56,7 +56,9 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
-    reward_output: str = "progress"  # "progress" or "success"
+    # Retained so existing checkpoints keep loading. ``predict_progress``
+    # returns both signals; consumers choose frames and apply thresholds.
+    reward_output: str = "progress"
     success_threshold: float = 0.5
 
     license: str | None = "apache-2.0"

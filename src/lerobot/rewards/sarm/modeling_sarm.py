@@ -25,6 +25,9 @@ Paper: https://arxiv.org/abs/2509.25358
 import json
 import logging
 import random
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -32,6 +35,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
+from lerobot.rewards.capabilities import ProgressPrediction
 from lerobot.utils.constants import OBS_STR
 
 from ..pretrained import PreTrainedRewardModel
@@ -138,7 +142,8 @@ class StageTransformer(nn.Module):
         Returns:
             Stage logits (B, T, num_classes)
         """
-        assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
+        if scheme not in self.heads:
+            raise ValueError(f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}.")
 
         B, N, T, _ = img_seq.shape  # noqa: N806
         D = self.d_model  # noqa: N806
@@ -288,7 +293,8 @@ class SubtaskTransformer(nn.Module):
         Returns:
             Tau predictions (B, T) in [0, 1] via sigmoid
         """
-        assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
+        if scheme not in self.heads:
+            raise ValueError(f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}.")
 
         B, N, T, _ = img_seq.shape  # noqa: N806
         D = self.d_model  # noqa: N806
@@ -349,6 +355,23 @@ def gen_stage_emb(num_classes: int, targets: torch.Tensor) -> torch.Tensor:
     stage_onehot = torch.eye(C, device=targets.device)[idx]  # (B, T, C)
     stage_onehot = stage_onehot.unsqueeze(1)  # (B, 1, T, C)
     return stage_onehot
+
+
+@dataclass(frozen=True)
+class SARMPrediction(ProgressPrediction):
+    """SARM frame signals on the model device.
+
+    ``progress``, ``stage_confidence``, and ``valid_mask`` have shape
+    ``(batch, time)``.
+    ``stage_probabilities`` has shape ``(batch, time, stages)``.
+
+    Values at positions where ``valid_mask`` is false are padding artifacts and
+    must not be consumed as predictions.
+    """
+
+    stage_probabilities: Tensor
+    stage_confidence: Tensor
+    valid_mask: Tensor
 
 
 class SARMRewardModel(PreTrainedRewardModel):
@@ -469,101 +492,93 @@ class SARMRewardModel(PreTrainedRewardModel):
         self.subtask_model.to(device)
         return self
 
-    def compute_reward(self, batch: dict[str, Tensor]) -> Tensor:
-        """Compute dense progress reward in [0, 1] from batch.
-
-        Expects batch to contain:
-        - "observation_features" or video embeddings: (B, T, 512)
-        - "language_embedding" or text embeddings: (B, 512)
-        - optionally "observation.state": (B, T, state_dim)
-        """
-        text_emb = batch.get("language_embedding", batch.get("text_features"))
-        video_emb = batch.get("observation_features", batch.get("video_features"))
-        state = batch.get("observation.state", batch.get("state_features"))
-
-        rewards = self.calculate_rewards(text_emb, video_emb, state)
-        if isinstance(rewards, np.ndarray):
-            rewards = torch.from_numpy(rewards).float()
-        return rewards
-
     @torch.no_grad()
-    def calculate_rewards(
+    def predict_progress(
         self,
-        text_embeddings: np.ndarray | torch.Tensor,
-        video_embeddings: np.ndarray | torch.Tensor,
-        state_features: np.ndarray | torch.Tensor | None = None,
-        lengths: np.ndarray | torch.Tensor | None = None,
-        return_all_frames: bool = False,
-        return_stages: bool = False,
-        return_confidence: bool = False,
-        head_mode: str | None = "sparse",
-        frame_index: int | None = None,
-    ) -> np.ndarray | tuple:
-        """
-        Calculate rewards for given text, video, and state representations.
-
-        This is the canonical method for SARM reward computation, used for:
-        - Inference/visualization
-        - RA-BC weight computation
+        batch: Mapping[str, Any],
+        *,
+        head_mode: Literal["sparse", "dense"] = "sparse",
+    ) -> SARMPrediction:
+        """Predict progress and stage signals for every encoded frame.
 
         Args:
-            text_embeddings: Encoded text representations (batch_size, 512)
-            video_embeddings: Encoded video representations (batch_size, num_frames, 512)
-            state_features: Joint state features (batch_size, num_frames, state_dim)
-            lengths: Valid sequence lengths (batch_size,)
-            return_all_frames: If True, return rewards for all frames
-            return_stages: If True, also return stage predictions
-            return_confidence: If True, also return stage confidence
-            head_mode: Which head to use ("sparse" or "dense")
-            frame_index: Index of the target frame to extract (default: n_obs_steps).
+            batch: Processor output containing ``text_features`` and
+                ``video_features``, plus optional ``state_features`` and
+                ``lengths``.
+            head_mode: Annotation head to evaluate.
 
         Returns:
-            Rewards and optionally stage probs/confidence.
+            Batched float32 tensors on the model device, plus a boolean
+            ``valid_mask`` derived from ``lengths``. Consumers select a valid
+            frame that corresponds to their sampling strategy.
         """
-        if isinstance(text_embeddings, np.ndarray):
-            text_embeddings = torch.tensor(text_embeddings, dtype=torch.float32)
-        if isinstance(video_embeddings, np.ndarray):
-            video_embeddings = torch.tensor(video_embeddings, dtype=torch.float32)
-        if state_features is not None and isinstance(state_features, np.ndarray):
-            state_features = torch.tensor(state_features, dtype=torch.float32)
+        if "text_features" not in batch:
+            raise KeyError("SARM batch missing `text_features` (run SARMEncodingProcessorStep first)")
+        if "video_features" not in batch:
+            raise KeyError("SARM batch missing `video_features` (run SARMEncodingProcessorStep first)")
+        if head_mode not in {"sparse", "dense"}:
+            raise ValueError(f"head_mode must be 'sparse' or 'dense', got {head_mode!r}")
+        if head_mode == "dense" and not self.config.uses_dual_heads:
+            raise ValueError(
+                f"SARM dense predictions require annotation_mode='dense_only' or 'dual', "
+                f"got {self.config.annotation_mode!r}"
+            )
 
-        # Handle single sample case
-        if text_embeddings.dim() == 1:
+        device = next(self.stage_model.parameters()).device
+        text_embeddings = batch["text_features"]
+        video_embeddings = batch["video_features"]
+        state_features = batch.get("state_features")
+        lengths = batch.get("lengths")
+
+        if not isinstance(text_embeddings, Tensor):
+            text_embeddings = torch.as_tensor(text_embeddings, dtype=torch.float32)
+        if not isinstance(video_embeddings, Tensor):
+            video_embeddings = torch.as_tensor(video_embeddings, dtype=torch.float32)
+        if state_features is not None and not isinstance(state_features, Tensor):
+            state_features = torch.as_tensor(state_features, dtype=torch.float32)
+
+        if text_embeddings.ndim == 1:
+            # Handle single sample case
             text_embeddings = text_embeddings.unsqueeze(0)
             video_embeddings = video_embeddings.unsqueeze(0)
             if state_features is not None:
                 state_features = state_features.unsqueeze(0)
-            single_sample = True
-        else:
-            single_sample = False
 
-        batch_size = video_embeddings.shape[0]
-        seq_len = video_embeddings.shape[1]
+        batch_size, seq_len = video_embeddings.shape[:2]
 
         scheme = head_mode
 
         # Default lengths if not provided
         if lengths is None:
             lengths = torch.full((batch_size,), seq_len, dtype=torch.int32)
-        elif isinstance(lengths, np.ndarray):
-            lengths = torch.tensor(lengths, dtype=torch.int32)
+        elif not isinstance(lengths, Tensor):
+            lengths = torch.as_tensor(lengths, dtype=torch.int32)
+
+        if lengths.ndim != 1 or lengths.shape[0] != batch_size:
+            raise ValueError(f"SARM `lengths` must have shape ({batch_size},), got {tuple(lengths.shape)}")
+        if torch.any(lengths < 1) or torch.any(lengths > seq_len):
+            raise ValueError(f"SARM `lengths` values must be in [1, {seq_len}], got {lengths.tolist()}")
 
         # Reshape video to (B, N, T, D) for multi-camera format
         # Currently single camera: (B, T, D) -> (B, 1, T, D)
-        img_seq = video_embeddings.unsqueeze(1).to(self.device)
-        lang_emb = text_embeddings.to(self.device)
+        img_seq = video_embeddings.unsqueeze(1).to(device)
+        lang_emb = text_embeddings.to(device)
         state = (
-            state_features.to(self.device)
+            state_features.to(device)
             if state_features is not None
-            else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=self.device)
+            else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=device)
         )
-        lens = lengths.to(self.device)
+        lens = lengths.to(device)
 
         # Pad state to max_state_dim
         state = pad_state_to_max_dim(state, self.config.max_state_dim)
 
+        valid_mask = torch.arange(seq_len, device=device).unsqueeze(0) < lens.unsqueeze(1)
+
         # Get num_classes for this scheme
         num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
+        if num_classes is None:
+            raise ValueError(f"SARM {scheme!r} head has no configured stages")
 
         # Run stage model
         stage_logits = self.stage_model(img_seq, lang_emb, state, lens, scheme=scheme)
@@ -596,6 +611,69 @@ class SARMRewardModel(PreTrainedRewardModel):
                 temporal_proportions=self.config.dense_temporal_proportions,
                 subtask_names=self.config.dense_subtask_names,
             )
+
+        return SARMPrediction(
+            progress=normalized_reward.float(),
+            stage_probabilities=stage_probs.float(),
+            stage_confidence=stage_conf.float(),
+            valid_mask=valid_mask,
+        )
+
+    @torch.no_grad()
+    def calculate_rewards(
+        self,
+        text_embeddings: np.ndarray | torch.Tensor,
+        video_embeddings: np.ndarray | torch.Tensor,
+        state_features: np.ndarray | torch.Tensor | None = None,
+        lengths: np.ndarray | torch.Tensor | None = None,
+        return_all_frames: bool = False,
+        return_stages: bool = False,
+        return_confidence: bool = False,
+        head_mode: str | None = "sparse",
+        frame_index: int | None = None,
+    ) -> np.ndarray | tuple:
+        """
+        Calculate rewards for given text, video, and state representations.
+
+        This compatibility method is used for:
+        - Inference/visualization by existing research code
+        - RA-BC weight computation
+
+        New tensor-based consumers should call :meth:`predict_progress`.
+
+        Args:
+            text_embeddings: Encoded text representations (batch_size, 512)
+            video_embeddings: Encoded video representations (batch_size, num_frames, 512)
+            state_features: Joint state features (batch_size, num_frames, state_dim)
+            lengths: Valid sequence lengths (batch_size,)
+            return_all_frames: If True, return rewards for all frames
+            return_stages: If True, also return stage predictions
+            return_confidence: If True, also return stage confidence
+            head_mode: Which head to use ("sparse" or "dense")
+            frame_index: Index of the target frame to extract (default: n_obs_steps).
+
+        Returns:
+            Rewards and optionally stage probs/confidence.
+        """
+        if head_mode is None:
+            head_mode = "sparse"
+        if head_mode not in {"sparse", "dense"}:
+            raise ValueError(f"head_mode must be 'sparse' or 'dense', got {head_mode!r}")
+
+        single_sample = text_embeddings.ndim == 1
+        prediction = self.predict_progress(
+            {
+                "text_features": text_embeddings,
+                "video_features": video_embeddings,
+                "state_features": state_features,
+                "lengths": lengths,
+            },
+            head_mode=head_mode,
+        )
+
+        normalized_reward = prediction.progress
+        stage_probs = prediction.stage_probabilities
+        stage_conf = prediction.stage_confidence
 
         # Default frame index is n_obs_steps (last observation frame)
         if frame_index is None:

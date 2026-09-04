@@ -45,29 +45,56 @@ Usage:
 The output is saved to the dataset's local cache directory as 'sarm_progress.parquet'.
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.datasets import LeRobotDataset
+from lerobot.utils.import_utils import (
+    _av_available,
+    _datasets_available,
+    _pyarrow_available,
+    require_package,
+)
+
+if TYPE_CHECKING or _pyarrow_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+else:
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset
+else:
+    LeRobotDataset = None  # type: ignore[assignment, misc]
 
 from .modeling_sarm import SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
 from .sarm_utils import normalize_stage_tau
 
 
+def _require_dataset_dependencies() -> None:
+    """Require packages used only when loading a LeRobot dataset."""
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+
+
 def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     """Read reward_model_path from parquet metadata if available."""
     if not parquet_path.exists():
         return None
+    require_package("pyarrow", extra="dataset")
+    if pq is None:
+        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -88,6 +115,10 @@ def load_sarm_resources(
     Returns:
         Tuple of (dataset, reward_model, preprocessor)
     """
+    _require_dataset_dependencies()
+    if LeRobotDataset is None:
+        raise ImportError("SARM dataset scoring requires LeRobotDataset")
+
     logging.info(f"Loading model: {reward_model_path}")
     reward_model = SARMRewardModel.from_pretrained(reward_model_path)
     reward_model.config.device = device
@@ -346,27 +377,17 @@ def visualize_sarm_predictions(
                         )
 
                     # Predictions
-                    reward, stage_probs = reward_model.calculate_rewards(
-                        text_embeddings=text_features,
-                        video_embeddings=video_features,
-                        state_features=state_features,
-                        lengths=lengths,
-                        return_all_frames=True,
-                        return_stages=True,
+                    prediction = reward_model.predict_progress(
+                        {
+                            "text_features": text_features,
+                            "video_features": video_features,
+                            "state_features": state_features,
+                            "lengths": lengths,
+                        },
                         head_mode=scheme,
                     )
-
-                    # Handle both tensor and numpy outputs
-                    if isinstance(reward, torch.Tensor):
-                        reward = reward.cpu().numpy()
-                        stage_probs = stage_probs.cpu().numpy()
-
-                    if reward.ndim == 2:
-                        sd["viz_progress"][local_idx] = reward[0, target_idx]
-                        sd["viz_stages"][local_idx] = stage_probs[0, target_idx, :]
-                    else:
-                        sd["viz_progress"][local_idx] = reward[target_idx]
-                        sd["viz_stages"][local_idx] = stage_probs[target_idx, :]
+                    sd["viz_progress"][local_idx] = prediction.progress[0, target_idx].cpu().item()
+                    sd["viz_stages"][local_idx] = prediction.stage_probabilities[0, target_idx].cpu().numpy()
 
                 # Clear GPU memory after each frame
                 del processed, video_features, text_features
@@ -484,6 +505,10 @@ def compute_sarm_progress(
         output_dir: Directory to save visualizations
         stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
     """
+    require_package("pyarrow", extra="dataset")
+    if pa is None or pq is None:
+        raise ImportError("SARM dataset scoring requires pyarrow")
+
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
     # Set preprocessor to eval mode to disable augmentations
@@ -569,35 +594,29 @@ def compute_sarm_progress(
 
                     # Compute sparse prediction for center frame
                     if compute_sparse:
-                        sparse_progress = reward_model.calculate_rewards(
-                            text_embeddings=text_features,
-                            video_embeddings=video_features,
-                            state_features=state_features,
-                            lengths=lengths,
-                            return_all_frames=True,
+                        sparse_prediction = reward_model.predict_progress(
+                            {
+                                "text_features": text_features,
+                                "video_features": video_features,
+                                "state_features": state_features,
+                                "lengths": lengths,
+                            },
                             head_mode="sparse",
                         )
-                        sparse_val = float(
-                            sparse_progress[0, center_idx]
-                            if sparse_progress.ndim == 2
-                            else sparse_progress[center_idx]
-                        )
+                        sparse_val = sparse_prediction.progress[0, center_idx].cpu().item()
 
                     # Compute dense prediction for center frame
                     if compute_dense:
-                        dense_progress = reward_model.calculate_rewards(
-                            text_embeddings=text_features,
-                            video_embeddings=video_features,
-                            state_features=state_features,
-                            lengths=lengths,
-                            return_all_frames=True,
+                        dense_prediction = reward_model.predict_progress(
+                            {
+                                "text_features": text_features,
+                                "video_features": video_features,
+                                "state_features": state_features,
+                                "lengths": lengths,
+                            },
                             head_mode="dense",
                         )
-                        dense_val = float(
-                            dense_progress[0, center_idx]
-                            if dense_progress.ndim == 2
-                            else dense_progress[center_idx]
-                        )
+                        dense_val = dense_prediction.progress[0, center_idx].cpu().item()
 
                     frame_results[query_idx] = (sparse_val, dense_val)
 
@@ -658,9 +677,7 @@ def compute_sarm_progress(
         table_data["progress_dense"] = np.array(all_progress_dense, dtype=np.float32)
 
     # Sort by index
-    df = pa.table(table_data).to_pandas()
-    df = df.sort_values("index").reset_index(drop=True)
-    final_table = pa.Table.from_pandas(df, preserve_index=False)
+    final_table = pa.table(table_data).sort_by([("index", "ascending")])
 
     # Add metadata with reward model path
     metadata = {b"reward_model_path": reward_model_path.encode()}
@@ -675,17 +692,19 @@ def compute_sarm_progress(
     logging.info(f"Saved {len(final_table)} frame progress values to {output_path}")
 
     # Print statistics
-    if "progress_sparse" in df.columns:
-        valid = df["progress_sparse"].dropna()
+    if "progress_sparse" in table_data:
+        values = table_data["progress_sparse"]
+        valid = values[~np.isnan(values)]
         logging.info(
-            f"Sparse progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"Sparse progress: mean={valid.mean():.4f}, std={valid.std(ddof=1):.4f}, "
             f"min={valid.min():.4f}, max={valid.max():.4f}"
         )
 
-    if "progress_dense" in df.columns:
-        valid = df["progress_dense"].dropna()
+    if "progress_dense" in table_data:
+        values = table_data["progress_dense"]
+        valid = values[~np.isnan(values)]
         logging.info(
-            f"Dense progress: mean={valid.mean():.4f}, std={valid.std():.4f}, "
+            f"Dense progress: mean={valid.mean():.4f}, std={valid.std(ddof=1):.4f}, "
             f"min={valid.min():.4f}, max={valid.max():.4f}"
         )
 
@@ -795,6 +814,9 @@ Examples:
     reward_model_path = args.reward_model_path
     if reward_model_path is None:
         # Load dataset to find parquet path
+        _require_dataset_dependencies()
+        if LeRobotDataset is None:
+            raise ImportError("SARM dataset scoring requires LeRobotDataset")
         temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=False)
         parquet_path = Path(temp_dataset.root) / "sarm_progress.parquet"
         reward_model_path = get_reward_model_path_from_parquet(parquet_path)
