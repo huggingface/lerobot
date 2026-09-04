@@ -510,9 +510,10 @@ def encode_video_frames(
         output_stream.pix_fmt = pix_fmt
         output_stream.width = width
         output_stream.height = height
+        output_stream.time_base = Fraction(1, fps)
 
         # Loop through input frames and encode them
-        for input_data in input_list:
+        for frame_count, input_data in enumerate(input_list):
             with Image.open(input_data) as input_image:
                 if is_depth:
                     input_frame = quantize_depth(
@@ -527,6 +528,8 @@ def encode_video_frames(
                 else:
                     input_image = input_image.convert("RGB")
                     input_frame = av.VideoFrame.from_image(input_image)
+                input_frame.pts = frame_count
+                input_frame.time_base = Fraction(1, fps)
                 packet = output_stream.encode(input_frame)
                 if packet:
                     output.mux(packet)
