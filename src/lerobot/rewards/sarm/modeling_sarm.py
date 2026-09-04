@@ -142,7 +142,8 @@ class StageTransformer(nn.Module):
         Returns:
             Stage logits (B, T, num_classes)
         """
-        assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
+        if scheme not in self.heads:
+            raise ValueError(f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}.")
 
         B, N, T, _ = img_seq.shape  # noqa: N806
         D = self.d_model  # noqa: N806
@@ -292,7 +293,8 @@ class SubtaskTransformer(nn.Module):
         Returns:
             Tau predictions (B, T) in [0, 1] via sigmoid
         """
-        assert scheme in self.heads, f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}."
+        if scheme not in self.heads:
+            raise ValueError(f"Unknown scheme '{scheme}'. Use one of {list(self.heads.keys())}.")
 
         B, N, T, _ = img_seq.shape  # noqa: N806
         D = self.d_model  # noqa: N806
@@ -536,12 +538,17 @@ class SARMRewardModel(PreTrainedRewardModel):
             state_features = torch.as_tensor(state_features, dtype=torch.float32)
 
         if text_embeddings.ndim == 1:
+            # Handle single sample case
             text_embeddings = text_embeddings.unsqueeze(0)
             video_embeddings = video_embeddings.unsqueeze(0)
             if state_features is not None:
                 state_features = state_features.unsqueeze(0)
 
         batch_size, seq_len = video_embeddings.shape[:2]
+
+        scheme = head_mode
+
+        # Default lengths if not provided
         if lengths is None:
             lengths = torch.full((batch_size,), seq_len, dtype=torch.int32)
         elif not isinstance(lengths, Tensor):
@@ -552,6 +559,8 @@ class SARMRewardModel(PreTrainedRewardModel):
         if torch.any(lengths < 1) or torch.any(lengths > seq_len):
             raise ValueError(f"SARM `lengths` values must be in [1, {seq_len}], got {lengths.tolist()}")
 
+        # Reshape video to (B, N, T, D) for multi-camera format
+        # Currently single camera: (B, T, D) -> (B, 1, T, D)
         img_seq = video_embeddings.unsqueeze(1).to(device)
         lang_emb = text_embeddings.to(device)
         state = (
@@ -559,42 +568,54 @@ class SARMRewardModel(PreTrainedRewardModel):
             if state_features is not None
             else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=device)
         )
-        state = pad_state_to_max_dim(state, self.config.max_state_dim)
         lens = lengths.to(device)
+
+        # Pad state to max_state_dim
+        state = pad_state_to_max_dim(state, self.config.max_state_dim)
+
         valid_mask = torch.arange(seq_len, device=device).unsqueeze(0) < lens.unsqueeze(1)
 
-        num_classes = self.config.num_sparse_stages if head_mode == "sparse" else self.config.num_dense_stages
+        # Get num_classes for this scheme
+        num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
         if num_classes is None:
-            raise ValueError(f"SARM {head_mode!r} head has no configured stages")
+            raise ValueError(f"SARM {scheme!r} head has no configured stages")
 
-        stage_logits = self.stage_model(img_seq, lang_emb, state, lens, scheme=head_mode)
-        stage_probabilities = F.softmax(stage_logits, dim=-1)
-        stage_index = stage_probabilities.argmax(dim=-1)
-        stage_confidence = stage_probabilities.gather(-1, stage_index.unsqueeze(-1)).squeeze(-1)
+        # Run stage model
+        stage_logits = self.stage_model(img_seq, lang_emb, state, lens, scheme=scheme)
+        stage_probs = F.softmax(stage_logits, dim=-1)  # (B, T, num_classes)
+        stage_idx = stage_probs.argmax(dim=-1)  # (B, T)
+        stage_conf = stage_probs.gather(-1, stage_idx.unsqueeze(-1)).squeeze(-1)  # (B, T)
 
-        stage_onehot = F.one_hot(stage_index, num_classes=num_classes).float().unsqueeze(1)
-        tau = self.subtask_model(img_seq, lang_emb, state, lens, stage_onehot, scheme=head_mode)
-        raw_progress = stage_index.float() + tau
+        # Create one-hot stage prior
+        stage_onehot = F.one_hot(stage_idx, num_classes=num_classes).float()  # (B, T, C)
+        stage_emb = stage_onehot.unsqueeze(1)  # (B, 1, T, C)
 
-        if head_mode == "sparse":
-            progress = normalize_stage_tau(
-                raw_progress,
+        # Run subtask model
+        tau_pred = self.subtask_model(img_seq, lang_emb, state, lens, stage_emb, scheme=scheme)
+
+        # Compute final reward: stage + tau
+        raw_reward = stage_idx.float() + tau_pred  # (B, T)
+
+        # Normalize to [0, 1] using temporal proportions for proper weighting
+        if scheme == "sparse":
+            normalized_reward = normalize_stage_tau(
+                raw_reward,
                 num_stages=num_classes,
                 temporal_proportions=self.config.sparse_temporal_proportions,
                 subtask_names=self.config.sparse_subtask_names,
             )
         else:
-            progress = normalize_stage_tau(
-                raw_progress,
+            normalized_reward = normalize_stage_tau(
+                raw_reward,
                 num_stages=num_classes,
                 temporal_proportions=self.config.dense_temporal_proportions,
                 subtask_names=self.config.dense_subtask_names,
             )
 
         return SARMPrediction(
-            progress=progress.float(),
-            stage_probabilities=stage_probabilities.float(),
-            stage_confidence=stage_confidence.float(),
+            progress=normalized_reward.float(),
+            stage_probabilities=stage_probs.float(),
+            stage_confidence=stage_conf.float(),
             valid_mask=valid_mask,
         )
 
@@ -611,7 +632,12 @@ class SARMRewardModel(PreTrainedRewardModel):
         head_mode: str | None = "sparse",
         frame_index: int | None = None,
     ) -> np.ndarray | tuple:
-        """Compatibility wrapper returning NumPy arrays.
+        """
+        Calculate rewards for given text, video, and state representations.
+
+        This compatibility method is used for:
+        - Inference/visualization by existing research code
+        - RA-BC weight computation
 
         New tensor-based consumers should call :meth:`predict_progress`.
 
@@ -645,22 +671,31 @@ class SARMRewardModel(PreTrainedRewardModel):
             head_mode=head_mode,
         )
 
+        normalized_reward = prediction.progress
+        stage_probs = prediction.stage_probabilities
+        stage_conf = prediction.stage_confidence
+
+        # Default frame index is n_obs_steps (last observation frame)
         if frame_index is None:
             frame_index = self.config.n_obs_steps
 
-        rewards = prediction.progress if return_all_frames else prediction.progress[:, frame_index]
-        rewards = rewards.cpu().numpy()
+        # Prepare outputs (batch mode or no smoothing)
+        if return_all_frames:
+            rewards = normalized_reward.cpu().numpy()
+        else:
+            rewards = normalized_reward[:, frame_index].cpu().numpy()
+
         if single_sample:
-            rewards = rewards[0]
+            rewards = rewards[0] if not return_all_frames else rewards[0]
 
         outputs = [rewards]
         if return_stages:
-            probs = prediction.stage_probabilities.cpu().numpy()
+            probs = stage_probs.cpu().numpy()
             if single_sample:
                 probs = probs[0]
             outputs.append(probs)
         if return_confidence:
-            conf = prediction.stage_confidence.cpu().numpy()
+            conf = stage_conf.cpu().numpy()
             if single_sample:
                 conf = conf[0]
             outputs.append(conf)

@@ -130,7 +130,7 @@ class TOPRewardModel(PreTrainedRewardModel):
         inputs["logits_to_keep"] = 2
 
         self.eval()
-        with torch.inference_mode():
+        with torch.no_grad():
             outputs = self.model(**inputs)
         logits = outputs.logits
         return -cross_entropy(logits[:, -2, :].float(), labels[:, -1], reduction="none")

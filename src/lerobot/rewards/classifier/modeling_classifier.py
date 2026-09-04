@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from collections.abc import Mapping
 
 import torch
 from torch import Tensor, nn
@@ -267,8 +266,8 @@ class Classifier(PreTrainedRewardModel):
 
         return loss, output_dict
 
-    def predict_reward(self, batch: Mapping[str, Tensor], threshold: float = 0.5) -> Tensor:
-        """Return thresholded success or the most likely reward class."""
+    def predict_reward(self, batch, threshold=0.5):
+        """Eval method. Returns predicted reward with the decision threshold as argument."""
         # Extract images from batch dict
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
 

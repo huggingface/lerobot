@@ -15,8 +15,9 @@
 """Consumer-facing reward-model capability types.
 
 Reward models expose semantic methods instead of implementing one universal
-scalar-reward method. Protocols in this module are typing seams for consumers;
-they do not participate in model registration or runtime dispatch.
+scalar-reward method. These protocols describe the methods that consumers may
+rely on for static type checking. They do not register, construct,
+or select reward-model implementations at runtime.
 """
 
 from collections.abc import Mapping
@@ -28,7 +29,7 @@ from torch import Tensor
 
 @dataclass(frozen=True)
 class ProgressPrediction:
-    """Per-frame progress values with shape ``(batch, time)``."""
+    """Per-frame progress values with shape `(batch, time)`."""
 
     progress: Tensor
 
@@ -36,4 +37,7 @@ class ProgressPrediction:
 class ProgressPredictor(Protocol):
     """A model that predicts frame-aligned progress from encoded inputs."""
 
-    def predict_progress(self, batch: Mapping[str, Any]) -> ProgressPrediction: ...
+    def predict_progress(
+        self,
+        batch: Mapping[str, Any],
+    ) -> ProgressPrediction: ...

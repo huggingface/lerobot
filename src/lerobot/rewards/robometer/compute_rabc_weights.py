@@ -96,7 +96,8 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     if not parquet_path.exists():
         return None
     require_package("pyarrow", extra="dataset")
-    assert pq is not None
+    if pq is None:
+        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -163,7 +164,8 @@ def compute_robometer_progress(
     if num_subsampled_frames < 1:
         raise ValueError(f"num_subsampled_frames must be >= 1, got {num_subsampled_frames}")
     _require_dataset_dependencies()
-    assert pa is not None and pq is not None and LeRobotDataset is not None
+    if pa is None or pq is None or LeRobotDataset is None:
+        raise ImportError("Robometer dataset scoring requires pyarrow and LeRobotDataset")
 
     logging.info(f"Loading Robometer: {reward_model_path}")
     config = RobometerConfig(pretrained_path=reward_model_path, device=device)
@@ -307,7 +309,8 @@ Examples:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     _require_dataset_dependencies()
-    assert LeRobotDataset is not None
+    if LeRobotDataset is None:
+        raise ImportError("Robometer dataset scoring requires LeRobotDataset")
 
     reward_model_path = args.reward_model_path
     if reward_model_path is None:
