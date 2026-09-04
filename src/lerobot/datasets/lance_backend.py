@@ -33,6 +33,7 @@ import json
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,6 +72,9 @@ from .lance_utils import (  # noqa: F401
 )
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
+
+# Keep generated OR trees comfortably below Lance/DataFusion expression-depth limits.
+_ROW_ID_QUERY_BATCH_SIZE = 100
 
 
 class LanceDatasetReader(BaseDatasetReader):
@@ -482,28 +486,33 @@ class LanceDatasetReader(BaseDatasetReader):
         unresolved = sorted({key for key in file_keys if key not in self._video_row_ids})
         if not unresolved:
             return
-        clauses = []
-        for key, chunk, file in unresolved:
-            safe_key = key.replace("'", "''")
-            clauses.append(
-                f"(video_key = '{safe_key}' AND chunk_index = {int(chunk)} AND file_index = {int(file)})"
+
+        resolved = {}
+        for key_batch in batched(unresolved, _ROW_ID_QUERY_BATCH_SIZE):
+            clauses = []
+            for key, chunk, file in key_batch:
+                safe_key = key.replace("'", "''")
+                clauses.append(
+                    f"(video_key = '{safe_key}' AND chunk_index = {int(chunk)} AND file_index = {int(file)})"
+                )
+            found = (
+                self._videos_table.search()
+                .where(" OR ".join(clauses))
+                .select(["video_key", "chunk_index", "file_index"])
+                .with_row_id(True)
+                .to_arrow()
             )
-        found = (
-            self._videos_table.search()
-            .where(" OR ".join(clauses))
-            .select(["video_key", "chunk_index", "file_index"])
-            .with_row_id(True)
-            .to_arrow()
-        )
-        for row in found.to_pylist():
-            self._video_row_ids[(row["video_key"], row["chunk_index"], row["file_index"])] = row["_rowid"]
-        missing = [key for key in unresolved if key not in self._video_row_ids]
+            for row in found.to_pylist():
+                resolved[(row["video_key"], row["chunk_index"], row["file_index"])] = row["_rowid"]
+
+        missing = [key for key in unresolved if key not in resolved]
         if missing:
             raise ValueError(
                 f"videos table is missing {len(missing)} file(s) referenced by episode "
                 f"metadata, e.g. {missing[:3]}. The dataset is incomplete or "
                 "was converted against different metadata."
             )
+        self._video_row_ids.update(resolved)
 
     def _prepare_files(
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
