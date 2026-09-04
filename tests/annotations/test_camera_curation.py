@@ -484,6 +484,37 @@ def test_direction_from_key_name():
     assert v.view_label == "front_side"
 
 
+def test_mount_from_key_name():
+    cfg = CameraCurationConfig(view_vocabulary=VOCAB, mount_from_key_name=True)
+
+    def _run(key, resp):
+        return {x.camera_key: x for x in curate_cameras({key: [_tiny_image()]}, cfg, _queued_vlm([resp]))}[key]
+
+    # Key says wrist but VLM called it fixed/left_side -> forced robot_mounted/left_wrist.
+    v = _run("observation.images.left_wrist",
+             {"usable": True, "mount_type": "fixed", "view_label": "left_side"})
+    assert (v.mount_type, v.view_label) == ("robot_mounted", "left_wrist")
+    # Key says side but VLM called it wrist -> forced fixed; VLM's wrist label invalid
+    # -> fall back to the key's position (left_side).
+    v = _run("observation.images.left_side",
+             {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"})
+    assert (v.mount_type, v.view_label) == ("fixed", "left_side")
+    # Key says top but VLM gave a valid fixed position (side) -> mount forced fixed,
+    # the VLM's top-vs-side label is KEPT (owner top/side naming is unreliable).
+    v = _run("observation.images.top",
+             {"usable": True, "mount_type": "fixed", "view_label": "side"})
+    assert (v.mount_type, v.view_label) == ("fixed", "side")
+    # Generic key -> untouched.
+    v = _run("observation.images.cam0",
+             {"usable": True, "mount_type": "robot_mounted", "view_label": "wrist"})
+    assert (v.mount_type, v.view_label) == ("robot_mounted", "wrist")
+    # Off by default -> untouched.
+    cfg_off = CameraCurationConfig(view_vocabulary=VOCAB)
+    v = {x.camera_key: x for x in curate_cameras({"observation.images.left_wrist": [_tiny_image()]}, cfg_off,
+         _queued_vlm([{"usable": True, "mount_type": "fixed", "view_label": "left_side"}]))}["observation.images.left_wrist"]
+    assert (v.mount_type, v.view_label) == ("fixed", "left_side")
+
+
 def test_derive_left_right_from_localization():
     cfg = CameraCurationConfig(view_vocabulary=VOCAB, derive_left_right_from_localization=True)
 
