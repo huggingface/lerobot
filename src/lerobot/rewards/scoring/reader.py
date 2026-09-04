@@ -53,7 +53,8 @@ _MISSING_VALUES = {"forbidden", "nan"}
 def _require_pyarrow() -> None:
     """Require the parquet dependency only when scoring IO is used."""
     require_package("pyarrow", extra="dataset")
-    assert pa is not None and pq is not None
+    if pa is None or pq is None:
+        raise ImportError("Reward scoring IO requires pyarrow")
 
 
 def _canonical_json(value: Any, *, label: str) -> str:
