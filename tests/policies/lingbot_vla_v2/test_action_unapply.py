@@ -49,7 +49,7 @@ norm_stats: {norm_stats_path}
 
 
 def _unapply_transform(tmp_path, mean, std):
-    from lerobot.policies.lingbot_vla_v2.feature_transform import FeatureTransform
+    from lerobot.policies.lingbot_vla_v2.preprocessing.feature_transform import FeatureTransform
 
     norm_stats_path = tmp_path / "norm_stats.json"
     norm_stats_path.write_text(

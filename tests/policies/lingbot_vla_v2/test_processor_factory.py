@@ -6,6 +6,13 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+import pytest
+
+# Importing the config pulls in the policy package __init__, which imports the
+# modeling module and its heavy deps (transformers, einops, ...). Skip on CI
+# tiers where those optional extras are not installed.
+pytest.importorskip("transformers")
+
 from lerobot.policies import factory
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 
@@ -38,13 +45,19 @@ def test_saved_checkpoint_filters_normalizer_overrides(monkeypatch):
 
     assert isinstance(preprocessor, DummyPipeline)
     assert isinstance(postprocessor, DummyPipeline)
-    assert loaded_calls == [
-        (
-            "policy_preprocessor.json",
-            {
-                "device_processor": {"device": "cuda"},
-                "rename_observations_processor": {"rename_map": {}},
-            },
-        ),
-        ("policy_postprocessor.json", {"device_processor": {"device": "cuda"}}),
-    ]
+    assert len(loaded_calls) == 2
+
+    pre_filename, pre_overrides = loaded_calls[0]
+    assert pre_filename == "policy_preprocessor.json"
+    # Normalizer keys must be dropped (this pipeline has no such steps), the two
+    # real steps pass through untouched, and the serialized feature-transform
+    # config (self-contained checkpoints) rides along as a third key.
+    assert set(pre_overrides) == {
+        "device_processor",
+        "rename_observations_processor",
+        "lingbot_vla_v2_feature_transform",
+    }
+    assert pre_overrides["device_processor"] == {"device": "cuda"}
+    assert pre_overrides["rename_observations_processor"] == {"rename_map": {}}
+
+    assert loaded_calls[1] == ("policy_postprocessor.json", {"device_processor": {"device": "cuda"}})

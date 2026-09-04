@@ -44,7 +44,7 @@ def _per_token_reference(experts, routing_weights, selected_experts, hidden_stat
 
 
 def test_grouped_expert_eager_matches_per_token_reference():
-    from lerobot.policies.lingbot_vla_v2.qwen2_action_expert import Qwen2FusedExperts
+    from lerobot.policies.lingbot_vla_v2.model_core.qwen2_action_expert import Qwen2FusedExperts
 
     torch.manual_seed(0)
     num_experts, hidden, inter, top_k = 6, 16, 8, 2
@@ -65,7 +65,7 @@ def test_grouped_expert_eager_matches_per_token_reference():
 
 def test_grouped_expert_eager_handles_unused_experts():
     """Experts with no routed tokens must be skipped without error and not contribute."""
-    from lerobot.policies.lingbot_vla_v2.qwen2_action_expert import Qwen2FusedExperts
+    from lerobot.policies.lingbot_vla_v2.model_core.qwen2_action_expert import Qwen2FusedExperts
 
     torch.manual_seed(1)
     num_experts, hidden, inter, top_k = 8, 16, 8, 1

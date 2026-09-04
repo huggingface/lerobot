@@ -62,8 +62,8 @@ norm_stats: {norm_stats_path}
 def so101_feature_transform(tmp_path):
     from transformers import AutoProcessor
 
-    from lerobot.policies.lingbot_vla_v2.feature_transform import FeatureTransform
-    from lerobot.policies.lingbot_vla_v2.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
+    from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import apply_lingbot_qwen3_vl_patch
+    from lerobot.policies.lingbot_vla_v2.preprocessing.feature_transform import FeatureTransform
 
     norm_stats_path = tmp_path / "norm_stats.json"
     norm_stats_path.write_text(
@@ -80,7 +80,7 @@ def so101_feature_transform(tmp_path):
     robot_config_path.write_text(SO101_ROBOT_CONFIG.format(norm_stats_path=norm_stats_path))
 
     apply_lingbot_qwen3_vl_patch()
-    processor = AutoProcessor.from_pretrained(QWEN3VL_PATH, padding_side="right", trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(QWEN3VL_PATH, padding_side="right")
     data_config = SimpleNamespace(
         joints=["{'arm.position': 6}"],
         norm_type=["{'arm.position': 'meanstd'}"],

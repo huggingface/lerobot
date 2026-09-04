@@ -31,7 +31,7 @@ def _valid_mask(bsize, seq):
 
 @pytest.mark.parametrize("num_kv_heads", [2, 4])  # GQA (2) and MHA (4)
 def test_sdpa_matches_eager(num_kv_heads):
-    from lerobot.policies.lingbot_vla_v2.utils import (
+    from lerobot.policies.lingbot_vla_v2.model_core.utils import (
         our_eager_attention_forward,
         our_sdpa_attention_forward,
     )
