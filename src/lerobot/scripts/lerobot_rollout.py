@@ -26,6 +26,8 @@ Strategies
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
     --strategy.type=episodic   Episode-oriented recording with reset phases
+    --strategy.type=<name>     Any strategy from an installed ``lerobot_strategy_*``
+                               package (see "Bring your own strategy" in the docs)
 
 Inference backends
 ------------------
@@ -43,6 +45,17 @@ Usage examples
         --robot.type=koch_follower \\
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
+
+    # Interactive session: the robot stays idle until /start is typed, then /subtask,
+    # /vqa, /autosteer, /reset and /stop drive the run from stdin. With
+    # --strategy.type=sentry it also records, labeling frames with their task.
+    lerobot-rollout \\
+        --strategy.type=base \\
+        --policy.path=lerobot/act_koch_real \\
+        --robot.type=koch_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --task="pick up cube" \\
+        --interactive=true
 
     # Base mode — RTC inference for slow VLAs (Pi0, Pi0.5, SmolVLA)
     lerobot-rollout \\
@@ -165,6 +178,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     omx_follower,
     openarm_follower,
     reachy2,
@@ -172,7 +186,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
+from lerobot.rollout import (
+    InteractiveSession,
+    LinkedEvent,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -214,6 +234,10 @@ def rollout(cfg: RolloutConfig):
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
+    if cfg.interactive:
+        # /reset and /stop end the control loop via the local flag; process signals still
+        # propagate through the parent event.
+        shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
     ctx = build_rollout_context(cfg, shutdown_event)
@@ -229,8 +253,12 @@ def rollout(cfg: RolloutConfig):
 
     try:
         strategy.setup(ctx)
-        logger.info("Rollout setup complete, starting rollout...")
-        strategy.run(ctx)
+        if cfg.interactive:
+            logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
+            InteractiveSession(strategy, ctx).run()
+        else:
+            logger.info("Rollout setup complete, starting rollout...")
+            strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:

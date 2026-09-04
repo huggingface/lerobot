@@ -57,6 +57,7 @@ def test_streaming_dataset_forwards_token_to_metadata_without_retaining_it(
         requested_root,
         streaming_dataset_module.CODEBASE_VERSION,
         force_cache_sync=False,
+        repo_type="dataset",
         token=token,
     )
     assert ensure_sidecar.call_args.kwargs["token"] is (None if from_local else token)

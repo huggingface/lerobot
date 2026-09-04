@@ -39,7 +39,9 @@ def streaming_data_root(
         return configured_data_root.rstrip("/")
     if requested_root is not None:
         return str(Path(requested_root).expanduser())
-    return f"hf://datasets/{meta.repo_id}@{meta.revision}"
+    if getattr(meta, "repo_type", "dataset") == "bucket":
+        return meta.url_root
+    return f"{getattr(meta, 'url_root', f'hf://datasets/{meta.repo_id}')}@{meta.revision}"
 
 
 def make_sidecar_spec(meta: LeRobotDatasetMetadata, data_root: str) -> SidecarSpec:

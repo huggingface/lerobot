@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
 
   # Runs at 02:00
-  # schedule:
-  #   - cron: "0 2 * * *"
+  schedule:
+    - cron: "0 2 * * *"
 
 env:
   CLOSE_ISSUE_MESSAGE: >
@@ -31,7 +31,7 @@ env:
     Feel free to reopen if is still relevant, or to ping a collaborator if you have any questions.
   WARN_ISSUE_MESSAGE: >
     This issue has been automatically marked as stale because it has not had
-    recent activity (1 year). It will be closed if no further activity occurs.
+    recent activity (1 year). It will be closed if no further activity occurs within 30 days.
     Any change, comment or update to this issue will reset this count.
     Thank you for your contributions.
   WARN_PR_MESSAGE: >
@@ -61,8 +61,8 @@ jobs:
           exempt-pr-labels: never-stale
           days-before-issue-stale: 365
           days-before-issue-close: 30
-          days-before-pr-stale: 365
-          days-before-pr-close: 30
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
           delete-branch: true
           close-issue-message: ${{ env.CLOSE_ISSUE_MESSAGE }}
           close-pr-message: ${{ env.CLOSE_PR_MESSAGE }}

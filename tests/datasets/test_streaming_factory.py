@@ -27,7 +27,11 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
             captured["kwargs"] = kwargs
             self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
 
-    monkeypatch.setattr(factory, "LeRobotDatasetMetadata", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        factory,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
+    )
     monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: {"action": [0.0]})
     monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
     dataset_config = DatasetConfig(
@@ -49,6 +53,7 @@ def test_factory_wires_production_streaming_settings(monkeypatch):
         trainable_config=object(),
         num_workers=0,
         tolerance_s=1e-4,
+        rename_map={},
     )
 
     dataset = factory.make_dataset(cfg)

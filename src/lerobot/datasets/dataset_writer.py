@@ -386,6 +386,9 @@ class DatasetWriter:
                 self._episodes_since_last_encoding = 0
 
         if episode_data is None:
+            # Post-save cleanup deliberately does not go through clear_episode_buffer():
+            # staging frames of video cameras must survive here — the (possibly batched)
+            # encoder still needs them and deletes them once each video is written.
             if len(self._meta.image_keys) > 0:
                 self._delete_camera_frame_dirs(self._meta.image_keys)
             self.episode_buffer = self._create_episode_buffer()
@@ -486,7 +489,9 @@ class DatasetWriter:
             self._pq_writer = pq.ParquetWriter(
                 path, schema=table.schema, compression="snappy", use_dictionary=True
             )
-        self._pq_writer.write_table(table)
+        # row_group_size >= episode length keeps one row group per episode (episode<->row-group
+        # alignment) even for episodes exceeding PyArrow's default 1Mi-row split threshold.
+        self._pq_writer.write_table(table, row_group_size=table.num_rows or None)
 
         metadata = {
             "data/chunk_index": chunk_idx,
