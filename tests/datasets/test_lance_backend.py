@@ -17,6 +17,7 @@
 items as over the default parquet/mp4 layout, through the same public class."""
 
 import json
+import math
 import pickle
 from pathlib import Path
 
@@ -30,6 +31,7 @@ pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test
 import lancedb
 import pyarrow as pa
 import pyarrow.parquet as pq
+from lancedb.index import BTree
 from lerobot_lancedb.convert import convert
 
 from lerobot.configs.default import DatasetConfig
@@ -38,7 +40,11 @@ from lerobot.datasets import lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
+from lerobot.datasets.lance_backend import (
+    _ROW_ID_QUERY_BATCH_SIZE,
+    LanceDatasetReader,
+    lance_mp_context,
+)
 from lerobot.datasets.language import (
     LANGUAGE_COLUMNS,
     LANGUAGE_EVENTS,
@@ -215,6 +221,122 @@ def test_video_parity(video_dataset_roots):
     lance_u8 = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, return_uint8=True)
     item = lance_u8[0]
     assert item[video_key].dtype == torch.uint8
+
+
+def test_lazy_row_id_resolution(video_dataset_roots):
+    """Opening a video dataset must not scan the whole videos table.
+
+    Row ids are resolved per batch, so ``_video_row_ids`` starts empty at open
+    and grows only with the files each read actually touches. A full scan here
+    would issue one ranged read per fragment — thousands of requests on a large
+    remote Blob V2 table — and every DataLoader worker would repeat it.
+    """
+    _, lance_root = video_dataset_roots
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    reader = ds.reader
+    assert isinstance(reader, LanceDatasetReader)
+    assert reader.meta.video_keys  # fixture has video (and depth) cameras
+
+    # Opening resolves no row ids: the cache is empty until a batch is read.
+    reader._ensure_open()
+    assert reader._video_row_ids == {}
+
+    def files_for(ep_idx: int) -> set[tuple]:
+        return {reader._video_file_key(key, ep_idx) for key in reader.meta.video_keys}
+
+    # Reading a frame resolves exactly that episode's video files, nothing else.
+    ep0 = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(0))
+    ds[0]
+    assert set(reader._video_row_ids) == files_for(ep0)
+    # every resolved id maps to a real videos-table row
+    assert all(isinstance(v, int) for v in reader._video_row_ids.values())
+
+    # Reading another episode adds only its files; already-resolved ids are reused.
+    last = len(ds) - 1
+    ep_last = reader._episode_index_for_abs_idx(reader._resolve_abs_idx(last))
+    resolved_before = dict(reader._video_row_ids)
+    ds[last]
+    assert set(reader._video_row_ids) == files_for(ep0) | files_for(ep_last)
+    for key, row_id in resolved_before.items():
+        assert reader._video_row_ids[key] == row_id  # cached, not re-resolved to a new value
+
+    # A referenced file that isn't in the table fails scoped to that file,
+    # naming it, instead of silently returning wrong frames.
+    bogus = ("observation.images.does_not_exist", 0, 999999)
+    with pytest.raises(ValueError, match="missing.*does_not_exist"):
+        reader._resolve_row_ids([bogus])
+
+
+def test_row_id_resolution_batches_large_predicates(tmp_path):
+    class QuerySpy:
+        def __init__(self, query, predicates):
+            self.query = query
+            self.predicates = predicates
+
+        def where(self, predicate):
+            self.predicates.append(predicate)
+            self.query = self.query.where(predicate)
+            return self
+
+        def select(self, columns):
+            self.query = self.query.select(columns)
+            return self
+
+        def with_row_id(self, enabled):
+            self.query = self.query.with_row_id(enabled)
+            return self
+
+        def to_arrow(self):
+            return self.query.to_arrow()
+
+    class TableSpy:
+        def __init__(self, table):
+            self.table = table
+            self.predicates = []
+
+        def search(self):
+            return QuerySpy(self.table.search(), self.predicates)
+
+    num_files = 501
+    file_keys = [(f"camera_{file_index}", 0, file_index) for file_index in range(num_files)]
+    table = lancedb.connect(tmp_path).create_table(
+        "videos",
+        pa.table(
+            {
+                "video_key": [key for key, _, _ in file_keys],
+                "chunk_index": [chunk for _, chunk, _ in file_keys],
+                "file_index": [file for _, _, file in file_keys],
+            }
+        ),
+    )
+    table.create_index("video_key", config=BTree())
+
+    reader = object.__new__(LanceDatasetReader)
+    reader._videos_table = TableSpy(table)
+    reader._video_row_ids = {}
+    reader._resolve_row_ids(file_keys)
+
+    assert len(reader._videos_table.predicates) == math.ceil(num_files / _ROW_ID_QUERY_BATCH_SIZE)
+    assert all(
+        predicate.count("video_key =") <= _ROW_ID_QUERY_BATCH_SIZE
+        for predicate in reader._videos_table.predicates
+    )
+    assert set(reader._video_row_ids) == set(file_keys)
+
+    # Cached keys do not issue any more queries.
+    reader._resolve_row_ids(file_keys)
+    assert len(reader._videos_table.predicates) == math.ceil(num_files / _ROW_ID_QUERY_BATCH_SIZE)
+
+    # Missing rows are checked after all chunks and do not partially update the cache.
+    reader._video_row_ids = {}
+    reader._videos_table.predicates.clear()
+    missing = [("missing_camera_1", 0, num_files), ("missing_camera_2", 0, num_files + 1)]
+    with pytest.raises(ValueError, match="missing 2 file"):
+        reader._resolve_row_ids([*file_keys, *missing])
+    assert len(reader._videos_table.predicates) == math.ceil(
+        (num_files + len(missing)) / _ROW_ID_QUERY_BATCH_SIZE
+    )
+    assert reader._video_row_ids == {}
 
 
 def test_storage_format_routing(video_dataset_roots):
