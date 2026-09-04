@@ -84,7 +84,8 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     if not parquet_path.exists():
         return None
     require_package("pyarrow", extra="dataset")
-    assert pq is not None
+    if pq is None:
+        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -184,7 +185,8 @@ def compute_topreward_progress(
 ) -> Path:
     """Run TOPReward over a dataset and write per-frame progress."""
     _require_dataset_dependencies()
-    assert pa is not None and pq is not None and LeRobotDataset is not None
+    if pa is None or pq is None or LeRobotDataset is None:
+        raise ImportError("TOPReward dataset scoring requires pyarrow and LeRobotDataset")
 
     if reward_model_path is not None:
         logging.info(f"Loading TOPReward config from: {reward_model_path}")

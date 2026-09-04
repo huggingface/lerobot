@@ -93,7 +93,8 @@ def get_reward_model_path_from_parquet(parquet_path: Path) -> str | None:
     if not parquet_path.exists():
         return None
     require_package("pyarrow", extra="dataset")
-    assert pq is not None
+    if pq is None:
+        raise ImportError("pyarrow.parquet is required to read reward-model metadata")
     try:
         metadata = pq.read_metadata(parquet_path).schema.to_arrow_schema().metadata
         if metadata and b"reward_model_path" in metadata:
@@ -115,7 +116,8 @@ def load_sarm_resources(
         Tuple of (dataset, reward_model, preprocessor)
     """
     _require_dataset_dependencies()
-    assert LeRobotDataset is not None
+    if LeRobotDataset is None:
+        raise ImportError("SARM dataset scoring requires LeRobotDataset")
 
     logging.info(f"Loading model: {reward_model_path}")
     reward_model = SARMRewardModel.from_pretrained(reward_model_path)
@@ -504,7 +506,8 @@ def compute_sarm_progress(
         stride: Compute progress every N frames, interpolate the rest (default: 1 = every frame)
     """
     require_package("pyarrow", extra="dataset")
-    assert pa is not None and pq is not None
+    if pa is None or pq is None:
+        raise ImportError("SARM dataset scoring requires pyarrow")
 
     dataset, reward_model, preprocess = load_sarm_resources(dataset_repo_id, reward_model_path, device)
 
@@ -812,7 +815,8 @@ Examples:
     if reward_model_path is None:
         # Load dataset to find parquet path
         _require_dataset_dependencies()
-        assert LeRobotDataset is not None
+        if LeRobotDataset is None:
+            raise ImportError("SARM dataset scoring requires LeRobotDataset")
         temp_dataset = LeRobotDataset(args.dataset_repo_id, download_videos=False)
         parquet_path = Path(temp_dataset.root) / "sarm_progress.parquet"
         reward_model_path = get_reward_model_path_from_parquet(parquet_path)

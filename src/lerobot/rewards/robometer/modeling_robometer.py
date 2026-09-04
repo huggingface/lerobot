@@ -243,17 +243,22 @@ class RobometerRewardModel(PreTrainedRewardModel):
         inputs = {key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()}
 
         self.eval()
-        with torch.inference_mode():
+        with torch.no_grad():
             progress_logits, success_logits = self._compute_rbm_logits(inputs)
 
-        progress = (
+        progress_pred = (
             convert_bins_to_continuous(progress_logits.float())
             if self.config.use_discrete_progress
             else progress_logits.float()
         )
+        # Match upstream Robometer's ``extract_rewards_from_output``: per-frame
+        # progress predictions are clamped to ``[0, 1]`` before being returned.
+        progress_pred = progress_pred.clamp(0.0, 1.0)
+        success_probs = torch.sigmoid(success_logits.float())
+
         return RobometerPrediction(
-            progress=progress.clamp(0.0, 1.0),
-            success_probability=torch.sigmoid(success_logits.float()),
+            progress=progress_pred,
+            success_probability=success_probs,
         )
 
     def _compute_rbm_logits(
