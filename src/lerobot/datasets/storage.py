@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import importlib
+import logging
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +26,20 @@ if TYPE_CHECKING:
     from .dataset_metadata import LeRobotDatasetMetadata
     from .dataset_reader import BaseDatasetReader
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_STORAGE_FORMAT = "lerobot"
+
+# Entry point group an installed package declares to serve a storage format
+# without the application having to import it first::
+#
+#     [project.entry-points."lerobot.dataset_readers"]
+#     my_format = "my_package.my_reader"
+#
+# The value names the module implementing the contract below. Entry points are
+# read for their names only -- the module is still imported lazily, on first
+# use -- so a plugin's optional dependencies stay optional.
+DATASET_READER_ENTRY_POINT_GROUP = "lerobot.dataset_readers"
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
@@ -35,6 +50,7 @@ DEFAULT_STORAGE_FORMAT = "lerobot"
 # ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
 # object-store roots.
 _DATASET_READER_MODULES: dict[str, str] = {}
+_PLUGINS_DISCOVERED = False
 
 
 def register_dataset_reader(storage_format: str, module: str) -> None:
@@ -48,12 +64,53 @@ def register_dataset_reader(storage_format: str, module: str) -> None:
 register_dataset_reader("lance", "lerobot.datasets.lance_backend")
 
 
+def _discover_plugin_readers() -> None:
+    """Register storage formats advertised by installed packages, once.
+
+    Called before every registry lookup rather than at import, so the scan costs
+    nothing until a dataset is actually opened.
+
+    Built-in formats win: an entry point may not take a name that is already
+    registered, so installing a package cannot silently change how ``lerobot``
+    or ``lance`` datasets are read. A plugin that fails to register is skipped
+    with a warning -- one broken package must not stop the others, nor stop
+    datasets loading at all.
+    """
+    global _PLUGINS_DISCOVERED
+    if _PLUGINS_DISCOVERED:
+        return
+    # Set before scanning: a failing scan must not be retried on every lookup.
+    _PLUGINS_DISCOVERED = True
+    try:
+        discovered = list(entry_points(group=DATASET_READER_ENTRY_POINT_GROUP))
+    except Exception as error:  # pragma: no cover -- importlib.metadata is robust
+        logger.warning("Could not read %r entry points: %s", DATASET_READER_ENTRY_POINT_GROUP, error)
+        return
+
+    for entry_point in discovered:
+        try:
+            # Registering through the public function is what keeps built-ins
+            # safe: it rejects DEFAULT_STORAGE_FORMAT and any name already taken,
+            # so an installed package cannot claim "lerobot" or "lance".
+            # ``.module`` (not ``.value``) so a "pkg.mod:attr" spelling still
+            # resolves to the module the contract is defined on.
+            register_dataset_reader(entry_point.name, entry_point.module)
+        except Exception as error:
+            logger.warning(
+                "Ignoring dataset reader plugin %r (from %r): %s",
+                entry_point.name,
+                entry_point.value,
+                error,
+            )
+
+
 def is_remote_uri(root: str | Path) -> bool:
     """True for object-store style roots (``hf://…``, ``file://…``, …)."""
     return "://" in str(root)
 
 
 def _reader_module(storage_format: str):
+    _discover_plugin_readers()
     module_name = _DATASET_READER_MODULES.get(storage_format)
     if module_name is None:
         raise ValueError(
@@ -85,8 +142,9 @@ def localize_remote_root(
     locally, so each backend is asked in turn to recognize and localize the
     root. Data files are never downloaded — backends read them in place.
     """
+    _discover_plugin_readers()
     errors = []
-    for storage_format in _DATASET_READER_MODULES:
+    for storage_format in list(_DATASET_READER_MODULES):
         try:
             return _reader_module(storage_format).localize_root(
                 repo_id, root, revision, token=token, force_cache_sync=force_cache_sync

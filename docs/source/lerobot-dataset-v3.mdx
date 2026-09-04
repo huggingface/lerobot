@@ -368,3 +368,53 @@ dataset = LeRobotLanceVideoDataset(
 ```
 
 Join the discussion on [Github](https://github.com/huggingface/lerobot/issues/3608) and explore the `lerobot-lancedb` documentation [here](https://lancedb.github.io/lerobot-lancedb/).
+
+### Bring your own storage backend
+
+`LeRobotDataset` stays the one public class no matter where the data actually lives. Which
+reader serves it is decided by the `storage_format` field in `meta/info.json`: `"lerobot"`
+(the default parquet/mp4 layout), `"lance"`, or a format contributed by an installed package.
+
+A backend is a module exposing two names:
+
+- `DATASET_READER` — a class implementing
+  [`BaseDatasetReader`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/datasets/dataset_reader.py),
+  constructed with the keyword arguments `meta`, `root`, `episodes`, `delta_timestamps`,
+  `image_transforms`, `tolerance_s`, `revision`, `return_uint8`, `depth_output_unit` and `token`.
+  It must be picklable, so `DataLoader` workers can reopen their own connections.
+- `localize_root(repo_id, root, revision, token=..., force_cache_sync=...)` — materializes
+  `meta/` locally for an object-store root and returns the directory holding it. Raise
+  `FileNotFoundError` if the root is not yours, so the other registered formats still get
+  their turn.
+
+Declare an entry point so your format is available as soon as your package is installed:
+
+```toml
+# in your package's pyproject.toml
+[project.entry-points."lerobot.dataset_readers"]
+my_format = "my_package.my_reader"
+```
+
+That's the whole integration — users need no import and no configuration:
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+# meta/info.json declares "storage_format": "my_format"
+dataset = LeRobotDataset("me/my-dataset", root="s3://bucket/my-dataset")
+```
+
+Notes on the mechanism:
+
+- Entry points are read for their names only. Your module is imported on first use, not at
+  discovery, so your backend's dependencies stay optional for everyone who doesn't use it.
+- Built-in formats win. An entry point cannot claim `lerobot` or `lance`, so installing a
+  package can never silently change how existing datasets are read.
+- A plugin that fails to register is skipped with a warning; one broken package does not stop
+  the others, or stop datasets from loading at all.
+
+If you would rather register explicitly — for a format defined in the same application that
+consumes it — call `register_dataset_reader("my_format", "my_package.my_reader")` before
+constructing the dataset. Entry points exist for the case where the code opening the dataset
+(`lerobot-dataset-viz`, `lerobot-train`, someone else's training script) has no reason to know
+your package exists.
