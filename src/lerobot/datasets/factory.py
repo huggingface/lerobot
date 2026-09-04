@@ -102,7 +102,7 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -165,9 +165,21 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
-                max_num_shards=cfg.num_workers,
+                max_num_shards=max(1, cfg.num_workers),
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,
+                depth_output_unit=cfg.dataset.depth_output_unit,
+                video_backend=cfg.dataset.video_backend,
+                data_root=cfg.dataset.streaming_data_root,
+                episode_pool_size=cfg.dataset.streaming_episode_pool_size,
+                prefetch_episodes=cfg.dataset.streaming_prefetch_episodes,
+                byte_budget_gb=cfg.dataset.streaming_byte_budget_gb,
+                decode_threads=cfg.dataset.streaming_decode_threads,
+                decoded_queue_size=cfg.dataset.streaming_decoded_queue_size,
+                max_open_decoders=cfg.dataset.streaming_max_open_decoders,
+                native_http_connections=cfg.dataset.streaming_native_http_connections,
+                native_http_subranges=cfg.dataset.streaming_native_http_subranges,
+                repeat=True,
                 repo_type=cfg.dataset.repo_type,
             )
     else:
@@ -197,7 +209,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
 def make_train_eval_datasets(
     cfg: TrainPipelineConfig,
-) -> tuple[LeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
+) -> tuple[LeRobotDataset | StreamingLeRobotDataset | MultiLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
